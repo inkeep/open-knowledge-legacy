@@ -8,7 +8,7 @@
  *   - semantic errors:
  *     - text not found → 404 `urn:ok:error:target-not-found` (post-identity)
  *     - explicit offset stale → 409 `urn:ok:error:stale-target` (post-identity)
- *     - reserved docname → 400 `urn:ok:error:reserved-docname` (post-identity)
+ *     - reserved docname → 400 `urn:ok:error:reserved-doc-name` (post-identity)
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -114,7 +114,7 @@ describe('agent-patch envelope (RFC 9457)', () => {
     }
   });
 
-  test('reserved docname emits urn:ok:error:reserved-docname', async () => {
+  test('reserved docname emits urn:ok:error:reserved-doc-name', async () => {
     const res = await postPatch({
       docName: '__system__',
       find: 'anything',
@@ -125,7 +125,7 @@ describe('agent-patch envelope (RFC 9457)', () => {
     const parsed = ProblemDetailsSchema.safeParse(body);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.data.type).toBe('urn:ok:error:reserved-doc-name');
     }
   });
 

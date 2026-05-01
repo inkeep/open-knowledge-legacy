@@ -444,9 +444,28 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
  * (collab-server-not-running 503; SPA-fallthrough 404). Mirrors
  * `errorResponse(...)` in `packages/server/src/http/error-response.ts` so
  * client-side `ProblemDetailsSchema.safeParse` flows match across both
- * processes — same wire shape, same headers (problem+json + nosniff +
- * no-store). Schema-validates the body to fail loud if the URN token isn't
- * registered in `ProblemTypeSchema`.
+ * processes.
+ *
+ * **Intentional divergences from `errorResponse(...)`** — documented so
+ * future readers don't try to "consolidate":
+ *
+ *   - **No `apiErrorCounter()` increment.** The CLI process has no OTel
+ *     SDK initialization (CLI lacks the server's telemetry infra entirely).
+ *     Adding a counter call here would be a no-op at best; at worst it
+ *     would lazy-initialize a meter the rest of the CLI doesn't use.
+ *   - **No Pino `log.error()` call.** CLI uses different logging
+ *     conventions (console + structured warn-style for events asserted in
+ *     tests). The server's `getLogger()` is a Pino instance not present
+ *     in the CLI runtime.
+ *   - **Adds `Cache-Control: no-store`** that the server helper doesn't.
+ *     `ok ui` is a dev-mode preview server; clients should never cache its
+ *     503/404 fallthroughs (e.g., on collab-server restart). The main
+ *     server's responses are routed through Vite/asset middleware that
+ *     handles caching policy at a different layer.
+ *
+ * Beyond those three divergences, the wire shape, header set, schema
+ * validation behavior, and URN closed-enum discipline are identical to
+ * `errorResponse(...)`.
  */
 function emitProblem(
   res: ServerResponse,

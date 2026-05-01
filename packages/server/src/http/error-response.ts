@@ -62,8 +62,15 @@ interface ErrorResponseOptions {
    * (§3.2). Use for typed structured data callers must read without parsing
    * `detail` strings (e.g. `colliding: [{existing, incoming, to}]` on
    * managed-rename collisions).
+   *
+   * Reserved RFC 9457 core fields (`type`/`title`/`status`/`instance`/`detail`)
+   * are excluded from the type — passing them as extensions would be silently
+   * dropped by the merge order at line ~110, so the type-system disallows the
+   * footgun at compile time.
    */
-  extensions?: Record<string, unknown>;
+  extensions?: Record<string, unknown> & {
+    [K in 'type' | 'title' | 'status' | 'instance' | 'detail']?: never;
+  };
   /** Optional headers merged into the response head (e.g. `Allow:` on 405). */
   extraHeaders?: Record<string, string>;
   /**
@@ -76,7 +83,9 @@ interface ErrorResponseOptions {
 /**
  * Emit an RFC 9457 Problem Details error response.
  *
- * @param res - Node HTTP response. Must not have written a head yet.
+ * @param res - Node HTTP response. If the head has already been written,
+ *   the call is suppressed and logged (defense-in-depth against async races
+ *   and programming errors at any of the ~286 call sites).
  * @param status - HTTP status code, 4xx or 5xx. Mirrored to body.status (D22).
  * @param type - URN problem type (`urn:ok:error:<kebab>` per D38). Closed enum.
  * @param title - Required short human-readable English summary (D14).
@@ -90,6 +99,27 @@ export function errorResponse(
   options: ErrorResponseOptions = {},
 ): void {
   const instance = options.instance ?? randomUUID();
+
+  // Defense-in-depth: if a handler has already started writing (async race,
+  // programming error at any of the ~286 call sites), `res.writeHead()`
+  // would throw `ERR_HTTP_HEADERS_SENT` and lose the original error. Mirror
+  // `createStreamingErrorWriter`'s `writableEnded` guard so the sync path
+  // is similarly defensive. Log the suppression so the failure stays loud
+  // in dev tools / production telemetry instead of silently disappearing.
+  if (res.headersSent) {
+    log.error(
+      {
+        event: 'api.error.double-write',
+        instance,
+        type,
+        status,
+        handler: options.handler,
+      },
+      'errorResponse called after headers already sent — suppressed',
+    );
+    return;
+  }
+
   const body: ProblemDetails = {
     type,
     title,
@@ -98,9 +128,38 @@ export function errorResponse(
     ...(options.detail ? { detail: options.detail } : {}),
   };
   // Defense-in-depth: validate the body against the schema. A bad
-  // `errorResponse` call (e.g., missing title) is caught here before the
-  // bytes leave the process.
-  ProblemDetailsSchema.parse(body);
+  // `errorResponse` call (e.g., empty title hitting `min(1)`) would have
+  // crashed via throwing `.parse()` before any bytes left the process —
+  // the original error that triggered `errorResponse` would be lost and
+  // the client would get no HTTP response at all. Use `safeParse` and emit
+  // a hardcoded fallback ProblemDetails so the client still gets a typed
+  // response while the validation failure stays loud in logs + telemetry.
+  const validated = ProblemDetailsSchema.safeParse(body);
+  if (!validated.success) {
+    log.error(
+      {
+        event: 'api.error.malformed-envelope',
+        issues: validated.error.issues,
+        body,
+        handler: options.handler,
+      },
+      'errorResponse produced an invalid ProblemDetails body — emitting fallback',
+    );
+    res.writeHead(status, {
+      'Content-Type': 'application/problem+json',
+      'X-Content-Type-Options': 'nosniff',
+      ...options.extraHeaders,
+    });
+    res.end(
+      JSON.stringify({
+        type: 'urn:ok:error:internal-server-error' satisfies ProblemType,
+        title: 'Internal server error.',
+        status,
+        instance,
+      }),
+    );
+    return;
+  }
 
   // RFC 9457 §3.2 extension members: emitted alongside `body` after schema
   // validation so the closed `ProblemDetails` shape stays the floor and

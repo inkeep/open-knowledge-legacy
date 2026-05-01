@@ -586,7 +586,7 @@ describe('file operation API routes', () => {
 
     expect(result.status).toBe(400);
     const reservedBody = JSON.parse(result.body) as Record<string, unknown>;
-    expect(reservedBody.type).toBe('urn:ok:error:reserved-docname');
+    expect(reservedBody.type).toBe('urn:ok:error:reserved-doc-name');
     expect(reservedBody.title).toContain('Reserved document names cannot be renamed');
   });
 
@@ -664,7 +664,7 @@ describe('file operation API routes', () => {
     expect(result.status).toBe(400);
     {
       const parsed = JSON.parse(result.body) as Record<string, unknown>;
-      expect(parsed.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.type).toBe('urn:ok:error:reserved-doc-name');
       expect(parsed.title).toContain('.ok is a reserved directory');
     }
   });
@@ -688,7 +688,7 @@ describe('file operation API routes', () => {
     expect(result.status).toBe(400);
     {
       const parsed = JSON.parse(result.body) as Record<string, unknown>;
-      expect(parsed.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.type).toBe('urn:ok:error:reserved-doc-name');
       expect(parsed.title).toContain('.ok is a reserved directory');
     }
   });

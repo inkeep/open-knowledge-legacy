@@ -83,7 +83,7 @@ const ORPHAN_MODE_LABELS: Record<OrphanMode, string> = {
 
 async function fetchOrphans(mode: OrphanMode): Promise<OrphanEntry[]> {
   const res = await fetch(`/api/orphans?mode=${encodeURIComponent(mode)}`);
-  const body: unknown = await res.json();
+  const body = (await res.json().catch(() => null)) as unknown;
   if (!res.ok) {
     const problem = ProblemDetailsSchema.safeParse(body);
     throw new Error(
@@ -97,7 +97,7 @@ async function fetchOrphans(mode: OrphanMode): Promise<OrphanEntry[]> {
 
 async function fetchHubs(limit: number): Promise<HubEntry[]> {
   const res = await fetch(`/api/hubs?limit=${encodeURIComponent(String(limit))}`);
-  const body: unknown = await res.json();
+  const body = (await res.json().catch(() => null)) as unknown;
   if (!res.ok) {
     const problem = ProblemDetailsSchema.safeParse(body);
     throw new Error(

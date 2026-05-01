@@ -7,7 +7,7 @@
  *   - body-shape errors (pre-identity, anonymous): malformed JSON, missing
  *     POST method → `urn:ok:error:invalid-request` / `method-not-allowed`.
  *   - semantic errors (post-identity, attributed): reserved doc name →
- *     `urn:ok:error:reserved-docname`.
+ *     `urn:ok:error:reserved-doc-name`.
  *
  * Real server + real handler + real schema. Mocks only the in-process
  * test-harness boundary.
@@ -54,7 +54,7 @@ describe('agent-write envelope (RFC 9457)', () => {
     expect((body as Record<string, unknown>).ok).toBeUndefined();
   });
 
-  test('reserved docname emits urn:ok:error:reserved-docname', async () => {
+  test('reserved docname emits urn:ok:error:reserved-doc-name', async () => {
     // `__system__` is a reserved synthetic doc; the handler short-circuits
     // before any Y.Doc mutation. Note: this rejection is post-identity
     // (semantic, attributed), not body-shape.
@@ -66,7 +66,7 @@ describe('agent-write envelope (RFC 9457)', () => {
     const parsed = ProblemDetailsSchema.safeParse(body);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.data.type).toBe('urn:ok:error:reserved-doc-name');
       expect(parsed.data.status).toBe(400);
       expect(parsed.data.title.length).toBeGreaterThan(0);
       expect(parsed.data.instance).toBeDefined();

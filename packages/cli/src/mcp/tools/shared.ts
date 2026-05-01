@@ -322,9 +322,12 @@ async function parseHttpResponse(res: Response): Promise<{ ok: boolean; [key: st
     return { ok: false, error: `Server returned HTTP ${res.status} with non-JSON body` };
   }
   if (!res.ok) {
-    // Prefer RFC 9457 `title` (post-D22 server emits problem+json on errors).
-    // Fall back to legacy `error`/`message` strings for unmigrated handlers
-    // and test mocks that haven't been updated yet, then `type`/`HTTP NNN`.
+    // Prefer RFC 9457 `title` (post-D22 server emits problem+json on every
+    // error path; FR17 fail-on-any-occurrence enforces this for our handlers).
+    // The `error`/`message` fallback arms remain as defensive coverage for
+    // (a) test mocks that emit legacy shapes, (b) non-server intermediaries
+    // (reverse proxies, load balancers, gateways) that synthesize their own
+    // error bodies. Then `type`/`HTTP NNN` as last resorts.
     const errBody = body as Partial<{
       title: string;
       type: string;

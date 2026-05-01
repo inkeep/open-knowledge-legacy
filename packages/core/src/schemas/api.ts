@@ -119,6 +119,14 @@ export type PrincipalResponse = z.infer<typeof PrincipalResponseSchema>;
  *
  * Naming convention: `urn:ok:error:<kebab-action-or-condition>`.
  * Adding a new token = single edit here + the handler PR that emits it.
+ *
+ * Domain-prefix convention: when a token names a noun the API operates on
+ * (e.g. documents), use the **same prefix the codebase uses for the entity**.
+ * Documents are referred to as `doc` (matching the `docName` parameter and
+ * the cluster-B CRUD verbs), so document-related tokens use the `doc-`
+ * prefix uniformly: `doc-not-found`, `doc-already-exists`, `doc-not-open`,
+ * `doc-not-available`, `reserved-doc-name`. Avoid mixed/compound forms
+ * (`document-`, `docname`) — they create cognitive load for SDK consumers.
  */
 export const ProblemTypeSchema = z.enum([
   // Upload-side (covers all 5 UploadWriteReason variants 1:1)
@@ -132,6 +140,7 @@ export const ProblemTypeSchema = z.enum([
   // Cross-handler shared
   'urn:ok:error:method-not-allowed',
   'urn:ok:error:invalid-request',
+  'urn:ok:error:payload-too-large',
   'urn:ok:error:internal-server-error',
   // /api/local-op/* security gate (shared by all local-op endpoints)
   'urn:ok:error:loopback-required',
@@ -148,7 +157,7 @@ export const ProblemTypeSchema = z.enum([
   // identity, attributed). `target-not-found` / `stale-target` /
   // `frontmatter-edit-not-supported` are handleAgentPatch-specific.
   // `no-active-session` is handleAgentUndo-specific.
-  'urn:ok:error:reserved-docname',
+  'urn:ok:error:reserved-doc-name',
   'urn:ok:error:target-not-found',
   'urn:ok:error:stale-target',
   'urn:ok:error:frontmatter-edit-not-supported',
@@ -161,7 +170,7 @@ export const ProblemTypeSchema = z.enum([
   // shadow-repo-unavailable startup state separately from internal-error.
   'urn:ok:error:doc-not-found',
   'urn:ok:error:doc-already-exists',
-  'urn:ok:error:document-not-open',
+  'urn:ok:error:doc-not-open',
   'urn:ok:error:rollback-not-configured',
   // Cluster C: document/links read part 1 (US-008). `document-not-available`
   // distinguishes hocuspocus-document-load failure from `doc-not-found`
@@ -169,7 +178,7 @@ export const ProblemTypeSchema = z.enum([
   // `backlink-index-not-configured` flags the (rare) startup state where
   // the backlink index hasn't initialized yet — distinct from internal
   // errors during read.
-  'urn:ok:error:document-not-available',
+  'urn:ok:error:doc-not-available',
   'urn:ok:error:backlink-index-not-configured',
   // Cluster D: orphans / hubs / dead-links / suggest-links (US-009).
   // No new tokens — reuses cluster-C `backlink-index-not-configured`,

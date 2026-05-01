@@ -128,32 +128,36 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
       }
 
       const terminated = await consumeAuthEventStream(res.body, (line): 'terminal' | 'continue' => {
+        // Narrow try/catch to JSON.parse only — event-processing errors (e.g.
+        // server bug emitting `{type:'error'}` without `problem`) propagate
+        // instead of being silently swallowed alongside malformed JSON.
+        let event: DeviceEvent;
         try {
-          const event = JSON.parse(line) as DeviceEvent;
-          if (event.type === 'verification') {
-            setUserCode(event.user_code);
-            setVerificationUri(event.verification_uri);
-            setTimeLeft(event.expires_in * 1000);
-            void copyToClipboard(event.user_code).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
-            });
-          } else if (event.type === 'complete') {
-            setPolling(false);
-            onSuccess({
-              login: event.login,
-              name: event.name,
-              email: event.email,
-              avatarUrl: event.avatarUrl,
-            });
-            return 'terminal';
-          } else if (event.type === 'error') {
-            setError(event.problem.title);
-            setPolling(false);
-            return 'terminal';
-          }
+          event = JSON.parse(line) as DeviceEvent;
         } catch {
-          /* ignore malformed line */
+          return 'continue'; // malformed JSON line
+        }
+        if (event.type === 'verification') {
+          setUserCode(event.user_code);
+          setVerificationUri(event.verification_uri);
+          setTimeLeft(event.expires_in * 1000);
+          void copyToClipboard(event.user_code).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          });
+        } else if (event.type === 'complete') {
+          setPolling(false);
+          onSuccess({
+            login: event.login,
+            name: event.name,
+            email: event.email,
+            avatarUrl: event.avatarUrl,
+          });
+          return 'terminal';
+        } else if (event.type === 'error') {
+          setError(event.problem?.title ?? 'Sign-in error');
+          setPolling(false);
+          return 'terminal';
         }
         return 'continue';
       });
@@ -321,23 +325,26 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
         return;
       }
       const terminated = await consumeAuthEventStream(res.body, (line): 'terminal' | 'continue' => {
+        // Narrow try/catch to JSON.parse only — event-processing errors
+        // propagate instead of being silently swallowed.
+        let event: DeviceEvent;
         try {
-          const event = JSON.parse(line) as DeviceEvent;
-          if (event.type === 'complete') {
-            onSuccess({
-              login: event.login,
-              name: event.name,
-              email: event.email,
-            });
-            setLoading(false);
-            return 'terminal';
-          } else if (event.type === 'error') {
-            setError(event.problem.title);
-            setLoading(false);
-            return 'terminal';
-          }
+          event = JSON.parse(line) as DeviceEvent;
         } catch {
-          /* ignore */
+          return 'continue';
+        }
+        if (event.type === 'complete') {
+          onSuccess({
+            login: event.login,
+            name: event.name,
+            email: event.email,
+          });
+          setLoading(false);
+          return 'terminal';
+        } else if (event.type === 'error') {
+          setError(event.problem?.title ?? 'Sign-in error');
+          setLoading(false);
+          return 'terminal';
         }
         return 'continue';
       });

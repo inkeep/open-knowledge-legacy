@@ -1,6 +1,7 @@
 import {
   type HeadingEntry,
   PageHeadingsSuccessSchema,
+  PagesSuccessSchema,
   ProblemDetailsSchema,
 } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
@@ -141,9 +142,25 @@ export function wikiLinkMatcher(config: {
 
 export async function fetchPages(): Promise<PageItem[]> {
   const r = await fetch('/api/pages');
-  if (!r.ok) throw new Error(`/api/pages responded with ${r.status}`);
-  const data = (await r.json()) as { pages?: Array<{ docName: string; title: string }> };
-  return Array.isArray(data.pages) ? data.pages : [];
+  let body: unknown;
+  try {
+    body = await r.json();
+  } catch (cause) {
+    throw new HttpResponseParseError('Pages response was not JSON', {
+      cause,
+      status: r.status,
+    });
+  }
+  if (!r.ok) {
+    const problem = ProblemDetailsSchema.safeParse(body);
+    throw new Error(problem.success ? problem.data.title : `/api/pages responded with ${r.status}`);
+  }
+  const success = PagesSuccessSchema.safeParse(body);
+  if (!success.success) {
+    console.warn('[wiki-link-suggestion] /api/pages response schema drift:', success.error);
+    return [];
+  }
+  return success.data.pages;
 }
 
 export async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
@@ -164,7 +181,10 @@ export async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
     );
   }
   const success = PageHeadingsSuccessSchema.safeParse(body);
-  if (!success.success) return [];
+  if (!success.success) {
+    console.warn('[wiki-link-suggestion] /api/page-headings response schema drift:', success.error);
+    return [];
+  }
   return success.data.headings ?? [];
 }
 

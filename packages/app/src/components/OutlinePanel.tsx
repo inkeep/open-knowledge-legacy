@@ -1,4 +1,8 @@
-import { PageHeadingsSuccessSchema, ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
+import {
+  type HeadingEntry,
+  PageHeadingsSuccessSchema,
+  ProblemDetailsSchema,
+} from '@inkeep/open-knowledge-core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { usePageList } from '@/components/PageListContext';
@@ -26,12 +30,6 @@ import { cn } from '@/lib/utils';
  * `stories/wiki-links-next/STORY.md` §S4.TQ3 lands on for similar reasons.
  */
 const OUTLINE_INVALIDATE_DEBOUNCE_MS = 300;
-
-interface HeadingEntry {
-  level: number;
-  text: string;
-  slug: string;
-}
 
 async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
   const res = await fetch(`/api/page-headings?docName=${encodeURIComponent(docName)}`);

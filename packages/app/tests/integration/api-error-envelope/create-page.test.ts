@@ -5,7 +5,7 @@
  *   - happy path: status 200, `Content-Type: application/json`, body parses
  *     against `CreatePageSuccessSchema`, no `ok: true` discriminator.
  *   - missing path → `urn:ok:error:invalid-request` (schema rejection).
- *   - reserved docname → `urn:ok:error:reserved-docname`.
+ *   - reserved docname → `urn:ok:error:reserved-doc-name`.
  *   - duplicate path → `urn:ok:error:doc-already-exists` (409).
  *   - path traversal → `urn:ok:error:path-escape`.
  *   - unsupported extension → `urn:ok:error:invalid-request`.
@@ -77,14 +77,14 @@ describe('create-page envelope (RFC 9457)', () => {
     }
   });
 
-  test('reserved docname emits urn:ok:error:reserved-docname', async () => {
+  test('reserved docname emits urn:ok:error:reserved-doc-name', async () => {
     const res = await postCreate({ path: '__system__.md' });
     expect(res.status).toBe(400);
     const body = await res.json();
     const parsed = ProblemDetailsSchema.safeParse(body);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.data.type).toBe('urn:ok:error:reserved-doc-name');
     }
   });
 

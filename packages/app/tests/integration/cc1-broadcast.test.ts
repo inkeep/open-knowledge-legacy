@@ -200,7 +200,7 @@ describe('CC1 broadcast — L1 integration', () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.type).toBe('urn:ok:error:reserved-docname');
+    expect(body.type).toBe('urn:ok:error:reserved-doc-name');
     expect(String(body.title)).toContain('reserved');
   });
 

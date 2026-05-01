@@ -180,7 +180,7 @@ describe('GET /api/suggest-links', () => {
       );
       expect(reservedDocName.status).toBe(400);
       const reservedBody = JSON.parse(reservedDocName.body) as { type: string; title: string };
-      expect(reservedBody.type).toBe('urn:ok:error:reserved-docname');
+      expect(reservedBody.type).toBe('urn:ok:error:reserved-doc-name');
       expect(reservedBody.title).toContain('__system__');
 
       const missingPage = await callRoute(

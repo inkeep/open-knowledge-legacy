@@ -7,7 +7,7 @@
  *     `ok: true` discriminator.
  *   - missing connectionId → `urn:ok:error:invalid-request` (pre-identity).
  *   - no active session → 404 `urn:ok:error:no-active-session` (post-identity).
- *   - reserved docname → 400 `urn:ok:error:reserved-docname` (post-identity).
+ *   - reserved docname → 400 `urn:ok:error:reserved-doc-name` (post-identity).
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -88,7 +88,7 @@ describe('agent-undo envelope (RFC 9457)', () => {
     }
   });
 
-  test('reserved docname emits urn:ok:error:reserved-docname', async () => {
+  test('reserved docname emits urn:ok:error:reserved-doc-name', async () => {
     const res = await postUndo({
       docName: '__system__',
       connectionId: 'agent-anyone',
@@ -99,7 +99,7 @@ describe('agent-undo envelope (RFC 9457)', () => {
     const parsed = ProblemDetailsSchema.safeParse(body);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.data.type).toBe('urn:ok:error:reserved-doc-name');
     }
   });
 

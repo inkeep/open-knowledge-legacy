@@ -4,7 +4,7 @@
  * Asserts the canonical RFC 9457 wire shape for `GET /api/suggest-links?docName=...`:
  *   - missing docName query param → `urn:ok:error:invalid-request`.
  *   - unsafe docName → `urn:ok:error:invalid-request`.
- *   - reserved (system / config) docName → `urn:ok:error:reserved-docname`.
+ *   - reserved (system / config) docName → `urn:ok:error:reserved-doc-name`.
  *   - non-existent docName → `urn:ok:error:doc-not-found`.
  *   - method-not-allowed on POST emits `urn:ok:error:method-not-allowed` +
  *     `Allow: GET` header.
@@ -57,14 +57,14 @@ describe('suggest-links envelope (RFC 9457)', () => {
     }
   });
 
-  test('reserved docName emits urn:ok:error:reserved-docname', async () => {
+  test('reserved docName emits urn:ok:error:reserved-doc-name', async () => {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/suggest-links?docName=__system__`);
     expect(res.status).toBe(400);
     const body = await res.json();
     const parsed = ProblemDetailsSchema.safeParse(body);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.data.type).toBe('urn:ok:error:reserved-doc-name');
       expect(parsed.data.title).toContain('__system__');
     }
   });

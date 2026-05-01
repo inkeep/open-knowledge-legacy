@@ -7,7 +7,7 @@
  *     optional hints/summary), no `ok: true` discriminator.
  *   - missing markdown → `urn:ok:error:invalid-request` (pre-identity body
  *     shape rejection from `withValidation`).
- *   - reserved docname → `urn:ok:error:reserved-docname` (post-identity semantic).
+ *   - reserved docname → `urn:ok:error:reserved-doc-name` (post-identity semantic).
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -90,7 +90,7 @@ describe('agent-write-md envelope (RFC 9457)', () => {
     }
   });
 
-  test('reserved docname emits urn:ok:error:reserved-docname', async () => {
+  test('reserved docname emits urn:ok:error:reserved-doc-name', async () => {
     const res = await postWriteMd({
       markdown: '# Should reject',
       position: 'replace',
@@ -103,7 +103,7 @@ describe('agent-write-md envelope (RFC 9457)', () => {
     const parsed = ProblemDetailsSchema.safeParse(body);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.data.type).toBe('urn:ok:error:reserved-doc-name');
       expect(parsed.data.status).toBe(400);
     }
   });

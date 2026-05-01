@@ -5,7 +5,7 @@
  * Asserts the canonical RFC 9457 wire shape for
  * `GET /api/agent-burst-diff?agentId=...&docName=...&stackIndex=...`:
  *   - missing agentId / docName → 400 `urn:ok:error:invalid-request`.
- *   - reserved docname → 400 `urn:ok:error:reserved-docname`.
+ *   - reserved docname → 400 `urn:ok:error:reserved-doc-name`.
  *   - non-numeric / negative stackIndex → 400 `urn:ok:error:invalid-request`.
  *   - no active session → 404 `urn:ok:error:no-active-session`.
  *   - method-not-allowed on POST → 405 `urn:ok:error:method-not-allowed`.
@@ -60,7 +60,7 @@ describe('agent-burst-diff envelope (RFC 9457)', () => {
     }
   });
 
-  test('reserved docname emits 400 urn:ok:error:reserved-docname', async () => {
+  test('reserved docname emits 400 urn:ok:error:reserved-doc-name', async () => {
     const res = await fetch(
       `http://127.0.0.1:${server.port}/api/agent-burst-diff?agentId=agent-x&docName=__system__&stackIndex=0`,
     );
@@ -69,7 +69,7 @@ describe('agent-burst-diff envelope (RFC 9457)', () => {
     const parsed = ProblemDetailsSchema.safeParse(await res.json());
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.data.type).toBe('urn:ok:error:reserved-doc-name');
     }
   });
 

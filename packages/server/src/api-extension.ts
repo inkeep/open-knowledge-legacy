@@ -2040,7 +2040,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           errorResponse(
             res,
             400,
-            'urn:ok:error:reserved-docname',
+            'urn:ok:error:reserved-doc-name',
             `'${docName}' is a reserved document name.`,
             { handler: 'agent-write' },
           );
@@ -2147,7 +2147,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           errorResponse(
             res,
             400,
-            'urn:ok:error:reserved-docname',
+            'urn:ok:error:reserved-doc-name',
             `'${resolvedDocName}' is a reserved document name.`,
             { handler: 'agent-write-md' },
           );
@@ -2284,7 +2284,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           errorResponse(
             res,
             400,
-            'urn:ok:error:reserved-docname',
+            'urn:ok:error:reserved-doc-name',
             `'${docName}' is a reserved document name.`,
             { handler: 'document-read' },
           );
@@ -2327,7 +2327,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             errorResponse(
               res,
               500,
-              'urn:ok:error:document-not-available',
+              'urn:ok:error:doc-not-available',
               'Document is not available.',
               { handler: 'document-read' },
             );
@@ -2858,7 +2858,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           errorResponse(
             res,
             400,
-            'urn:ok:error:reserved-docname',
+            'urn:ok:error:reserved-doc-name',
             `'${docName}' is a reserved document name.`,
             { handler: 'agent-patch' },
           );
@@ -3086,7 +3086,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           errorResponse(
             res,
             400,
-            'urn:ok:error:reserved-docname',
+            'urn:ok:error:reserved-doc-name',
             `'${docName}' is a reserved document name.`,
             { handler: 'agent-undo' },
           );
@@ -3262,7 +3262,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           errorResponse(
             res,
             400,
-            'urn:ok:error:reserved-docname',
+            'urn:ok:error:reserved-doc-name',
             `'${docName}' is a reserved document name.`,
             { handler: 'agent-burst-diff' },
           );
@@ -3873,7 +3873,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             errorResponse(
               res,
               409,
-              'urn:ok:error:document-not-open',
+              'urn:ok:error:doc-not-open',
               'Document is not currently open — open it in the editor first.',
               { handler: 'diff' },
             );
@@ -3988,7 +3988,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           errorResponse(
             res,
             409,
-            'urn:ok:error:document-not-open',
+            'urn:ok:error:doc-not-open',
             'Document is not currently open — open it in the editor first.',
             { handler: 'rollback' },
           );
@@ -4651,7 +4651,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           errorResponse(
             res,
             400,
-            'urn:ok:error:reserved-docname',
+            'urn:ok:error:reserved-doc-name',
             `'${candidateDocName}' is a reserved document name.`,
             { handler: 'create-page' },
           );
@@ -4814,7 +4814,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           errorResponse(
             res,
             400,
-            'urn:ok:error:reserved-docname',
+            'urn:ok:error:reserved-doc-name',
             'Reserved document names cannot be renamed.',
             { handler: 'rename-path' },
           );
@@ -4831,9 +4831,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           toPath === '.ok' ||
           toPath.startsWith('.ok/')
         ) {
-          errorResponse(res, 400, 'urn:ok:error:reserved-docname', '.ok is a reserved directory.', {
-            handler: 'rename-path',
-          });
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            '.ok is a reserved directory.',
+            {
+              handler: 'rename-path',
+            },
+          );
           return;
         }
         if (fromPath === toPath) {
@@ -5102,7 +5108,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           errorResponse(
             res,
             400,
-            'urn:ok:error:reserved-docname',
+            'urn:ok:error:reserved-doc-name',
             `'${docName}' is a reserved document name.`,
             { handler: 'suggest-links' },
           );

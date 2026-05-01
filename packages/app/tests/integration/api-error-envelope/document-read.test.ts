@@ -5,7 +5,7 @@
  *   - happy path: status 200, `Content-Type: application/json`, body parses
  *     against `DocumentReadSuccessSchema`, no `ok` discriminator.
  *   - unsafe docName → `urn:ok:error:invalid-request`.
- *   - reserved (system) docName → `urn:ok:error:reserved-docname`.
+ *   - reserved (system) docName → `urn:ok:error:reserved-doc-name`.
  *   - method-not-allowed on POST emits `urn:ok:error:method-not-allowed` +
  *     `Allow: GET` header.
  */
@@ -59,7 +59,7 @@ describe('document-read envelope (RFC 9457)', () => {
     }
   });
 
-  test('reserved system docName emits urn:ok:error:reserved-docname', async () => {
+  test('reserved system docName emits urn:ok:error:reserved-doc-name', async () => {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/document?docName=__system__`);
     expect(res.status).toBe(400);
     expect(res.headers.get('content-type')).toBe('application/problem+json');
@@ -68,7 +68,7 @@ describe('document-read envelope (RFC 9457)', () => {
     const parsed = ProblemDetailsSchema.safeParse(body);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.data.type).toBe('urn:ok:error:reserved-doc-name');
     }
   });
 

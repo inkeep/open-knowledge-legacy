@@ -556,7 +556,7 @@ describe('StreamingProblemEventSchema (US-005, D36 c)', () => {
 
 describe('ProblemTypeSchema cluster A URN tokens', () => {
   test.each([
-    'urn:ok:error:reserved-docname',
+    'urn:ok:error:reserved-doc-name',
     'urn:ok:error:target-not-found',
     'urn:ok:error:stale-target',
     'urn:ok:error:no-active-session',
@@ -863,7 +863,7 @@ describe('Cluster B URN tokens (US-007)', () => {
     for (const token of [
       'urn:ok:error:doc-not-found',
       'urn:ok:error:doc-already-exists',
-      'urn:ok:error:document-not-open',
+      'urn:ok:error:doc-not-open',
       'urn:ok:error:rollback-not-configured',
     ]) {
       expect(ProblemTypeSchema.safeParse(token).success).toBe(true);
@@ -1141,7 +1141,7 @@ describe('RollbackSuccessSchema', () => {
 
 describe('ProblemTypeSchema cluster C URN tokens', () => {
   test('document-not-available is valid', () => {
-    expect(ProblemTypeSchema.safeParse('urn:ok:error:document-not-available').success).toBe(true);
+    expect(ProblemTypeSchema.safeParse('urn:ok:error:doc-not-available').success).toBe(true);
   });
   test('backlink-index-not-configured is valid', () => {
     expect(ProblemTypeSchema.safeParse('urn:ok:error:backlink-index-not-configured').success).toBe(

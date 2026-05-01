@@ -135,7 +135,7 @@ describe('/api/create-page — reserved name (QA-010)', () => {
   test('rejects __system__ with 400', async () => {
     const { status, body } = await createPage('__system__.md');
     expect(status).toBe(400);
-    expect(body.type).toBe('urn:ok:error:reserved-docname');
+    expect(body.type).toBe('urn:ok:error:reserved-doc-name');
     expect(body.title).toMatch(/reserved/i);
   });
 });

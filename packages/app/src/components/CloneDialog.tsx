@@ -280,26 +280,32 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
 
         for (const line of lines) {
           if (!line.trim()) continue;
+          // Narrow try/catch to JSON.parse only — event-processing errors
+          // (server bug emitting `{type:'error'}` without `problem`) propagate
+          // instead of being silently swallowed alongside malformed JSON.
+          let event: CloneEvent;
           try {
-            const event = JSON.parse(line) as CloneEvent;
-            if (event.type === 'progress') {
-              toast.loading(`${phaseLabel(event.phase)} — ${event.pct}%`, { id: toastId });
-            } else if (event.type === 'complete') {
-              toast.success('Clone complete — opening project', { id: toastId });
-              onOpenChange(false);
-              setCloning(false);
-              setAbortController(null);
-              // Redirect to the new server's port
-              window.location.href = `http://localhost:${event.port}`;
-              return;
-            } else if (event.type === 'error') {
-              toast.error(`Clone failed: ${event.problem.title}`, { id: toastId });
-              setCloning(false);
-              setAbortController(null);
-              return;
-            }
+            event = JSON.parse(line) as CloneEvent;
           } catch {
-            /* ignore malformed line */
+            continue; // malformed NDJSON line
+          }
+          if (event.type === 'progress') {
+            toast.loading(`${phaseLabel(event.phase)} — ${event.pct}%`, { id: toastId });
+          } else if (event.type === 'complete') {
+            toast.success('Clone complete — opening project', { id: toastId });
+            onOpenChange(false);
+            setCloning(false);
+            setAbortController(null);
+            // Redirect to the new server's port
+            window.location.href = `http://localhost:${event.port}`;
+            return;
+          } else if (event.type === 'error') {
+            toast.error(`Clone failed: ${event.problem?.title ?? 'Unknown error'}`, {
+              id: toastId,
+            });
+            setCloning(false);
+            setAbortController(null);
+            return;
           }
         }
       }

@@ -175,7 +175,10 @@ export function withValidation<T>(
       raw = await readRequestBody(req);
     } catch (err) {
       if (err instanceof PayloadTooLargeError) {
-        errorResponse(res, 413, 'urn:ok:error:invalid-request', 'Payload too large.', {
+        // Distinct URN from `urn:ok:error:invalid-request` so SDK consumers
+        // can branch on retry-class (413 → reduce payload, retry) vs
+        // bug-class (400 → fix request shape).
+        errorResponse(res, 413, 'urn:ok:error:payload-too-large', 'Payload too large.', {
           handler: options.handler,
           cause: err,
         });
