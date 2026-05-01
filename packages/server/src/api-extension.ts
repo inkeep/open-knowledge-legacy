@@ -56,6 +56,7 @@ import {
   LocalOpCloneRequestSchema,
   LocalOpOpenRequestSchema,
   type Principal,
+  type ProblemType,
   prependFrontmatter,
   RenamePathRequestSchema,
   type RescueEntryFlat,
@@ -1449,32 +1450,48 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   // Managed rename mutates overlapping backlink sets across many docs, so serialize it.
   const runSerialized = createSerializedRunner();
 
-  function toManagedRenamePublicError(error: unknown): { status: number; error: string } {
+  function toManagedRenamePublicError(error: unknown): {
+    status: number;
+    type: ProblemType;
+    error: string;
+  } {
     if (!(error instanceof Error)) {
-      return { status: 500, error: 'Failed to rename document' };
+      return {
+        status: 500,
+        type: 'urn:ok:error:internal-server-error',
+        error: 'Failed to rename document',
+      };
     }
     if (error instanceof ManagedRenameSourceNotFoundError) {
-      return { status: 404, error: error.message };
+      return { status: 404, type: 'urn:ok:error:doc-not-found', error: error.message };
     }
     if (error instanceof ManagedRenameDestinationExistsError) {
-      return { status: 409, error: error.message };
+      return { status: 409, type: 'urn:ok:error:doc-already-exists', error: error.message };
     }
     if (error instanceof ManagedRenameSourceTypeMismatchError) {
-      return { status: 400, error: error.message };
+      return { status: 400, type: 'urn:ok:error:invalid-request', error: error.message };
     }
     if (error.message.startsWith('Cannot rename missing document:')) {
-      return { status: 404, error: error.message };
+      return { status: 404, type: 'urn:ok:error:doc-not-found', error: error.message };
     }
     if (error.message.startsWith('Cannot snapshot missing document:')) {
-      return { status: 404, error: error.message };
+      return { status: 404, type: 'urn:ok:error:doc-not-found', error: error.message };
     }
     if (error.message.startsWith('symlink-escape:')) {
-      return { status: 400, error: error.message };
+      return { status: 400, type: 'urn:ok:error:path-escape', error: error.message };
     }
     if (error.message === 'Managed rename requires backlink index support') {
-      return { status: 503, error: error.message };
+      return {
+        status: 503,
+        type: 'urn:ok:error:internal-server-error',
+        error: error.message,
+      };
     }
-    return { status: 500, error: 'Failed to rename document' };
+    return {
+      status: 500,
+      type: 'urn:ok:error:internal-server-error',
+      error: 'Failed to rename document',
+    };
   }
 
   async function captureAndCloseDocuments(docNames: string[]): Promise<Map<string, string>> {
@@ -4872,9 +4889,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           if (err instanceof ManagedRenameCollisionError) {
             errorResponse(res, 409, 'urn:ok:error:doc-already-exists', err.message, {
               handler: 'rename-path',
-              detail: `colliding: ${err.colliding
-                .map((c) => `${c.existing}→${c.incoming}@${c.to}`)
-                .join(', ')}`,
+              extensions: { colliding: err.colliding },
               cause: err,
             });
             return;
@@ -4959,8 +4974,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       } catch (e) {
         console.error('[rename-path]', e);
-        const { status, error } = toManagedRenamePublicError(e);
-        errorResponse(res, status, 'urn:ok:error:internal-server-error', error, {
+        const { status, type, error } = toManagedRenamePublicError(e);
+        errorResponse(res, status, type, error, {
           handler: 'rename-path',
           cause: e,
         });

@@ -338,7 +338,15 @@ async function parseHttpResponse(res: Response): Promise<{ ok: boolean; [key: st
       (typeof errBody?.message === 'string' && errBody.message.length > 0 && errBody.message) ||
       (typeof errBody?.type === 'string' && errBody.type.length > 0 && errBody.type) ||
       `HTTP ${res.status}`;
-    return { ok: false, error: errorMsg, problem: body, status: res.status };
+    // Lift extension members from the body so callers reading
+    // `result.<extensionField>` work on both legacy `{ok:false, ...extras}`
+    // and RFC 9457 `application/problem+json` shapes (the schema is
+    // `.loose()`, so extensions like `colliding` ride on the body).
+    const extensions =
+      body && typeof body === 'object' && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : {};
+    return { ...extensions, ok: false, error: errorMsg, problem: body, status: res.status };
   }
   // Success: server emits flat `{...data}` post-D22. Wrap with `{ok: true}`
   // so MCP tools can keep their `if (!result.ok) return error` short-circuit.

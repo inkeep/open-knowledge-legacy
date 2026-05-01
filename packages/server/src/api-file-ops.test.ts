@@ -261,10 +261,10 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(404);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'Document not found: nonexistent-doc',
-    });
+    const parsed = JSON.parse(result.body) as Record<string, unknown>;
+    expect(parsed.type).toBe('urn:ok:error:doc-not-found');
+    expect(parsed.title).toContain('Document not found');
+    expect(parsed.title).toContain('nonexistent-doc');
 
     // Critical: NO empty Y.Doc was materialized in `Hocuspocus.documents`
     // for the missing name. The downstream phantom-file path that depends
@@ -278,7 +278,7 @@ describe('file operation API routes', () => {
     // already-loaded referring document` above.
     const ok = await callApi(dir, '/api/document?docName=real-doc', 'GET', {}, { hocuspocus });
     expect(ok.status).toBe(200);
-    expect((JSON.parse(ok.body) as { ok: boolean }).ok).toBe(true);
+    expect((JSON.parse(ok.body) as { docName: string }).docName).toBe('real-doc');
   });
 
   test('rename does NOT materialize a phantom file for an in-memory-only backlink source', async () => {
@@ -610,10 +610,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'Source path is not a folder',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:invalid-request');
+      expect(parsed.title).toContain('Source path is not a folder');
+    }
   });
 
   test('managed rename with kind:file on a .md-named directory returns 400 (type mismatch)', async () => {
@@ -636,10 +637,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'Source path is not a file',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:invalid-request');
+      expect(parsed.title).toContain('Source path is not a file');
+    }
   });
 
   test('managed rename rejects .ok as a destination (reserved directory)', async () => {
@@ -660,10 +662,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: '.ok is a reserved directory',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.title).toContain('.ok is a reserved directory');
+    }
   });
 
   test('managed rename rejects .ok subpath as a destination', async () => {
@@ -683,10 +686,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: '.ok is a reserved directory',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:reserved-docname');
+      expect(parsed.title).toContain('.ok is a reserved directory');
+    }
   });
 
   test('managed rename returns 404 when the source document is missing', async () => {

@@ -57,6 +57,13 @@ interface ErrorResponseOptions {
   instance?: string;
   /** Optional longer human-readable explanation (RFC 9457 `detail`). */
   detail?: string;
+  /**
+   * Optional RFC 9457 extension members merged onto the problem+json body
+   * (§3.2). Use for typed structured data callers must read without parsing
+   * `detail` strings (e.g. `colliding: [{existing, incoming, to}]` on
+   * managed-rename collisions).
+   */
+  extensions?: Record<string, unknown>;
   /** Optional headers merged into the response head (e.g. `Allow:` on 405). */
   extraHeaders?: Record<string, string>;
   /**
@@ -95,6 +102,14 @@ export function errorResponse(
   // bytes leave the process.
   ProblemDetailsSchema.parse(body);
 
+  // RFC 9457 §3.2 extension members: emitted alongside `body` after schema
+  // validation so the closed `ProblemDetails` shape stays the floor and
+  // extensions ride as additional fields. The schema is `.loose()`, so
+  // round-tripping through `safeParse` on the client preserves them.
+  const wireBody: Record<string, unknown> = options.extensions
+    ? { ...options.extensions, ...body }
+    : body;
+
   apiErrorCounter().add(1, {
     type,
     ...(options.handler ? { handler: options.handler } : {}),
@@ -118,7 +133,7 @@ export function errorResponse(
     'X-Content-Type-Options': 'nosniff',
     ...options.extraHeaders,
   });
-  res.end(JSON.stringify(body));
+  res.end(JSON.stringify(wireBody));
 }
 
 /**

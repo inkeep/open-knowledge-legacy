@@ -77,11 +77,9 @@ describe('Managed rename — loaded-Y.Doc rewrite path (QA-040 / QA-008)', () =>
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      ok: boolean;
       renamed: unknown[];
       rewrittenDocs: unknown[];
     };
-    expect(body.ok).toBe(true);
     expect(body.renamed).toHaveLength(1);
     expect(body.rewrittenDocs.length).toBeGreaterThan(0);
 

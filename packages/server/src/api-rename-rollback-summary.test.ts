@@ -639,10 +639,10 @@ describe('handleRenamePath — actor identity routing', () => {
     });
 
     expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({
-      ok: false,
-      error: 'Case-only renames are not supported',
-    });
+    const parsed = JSON.parse(response.body) as Record<string, unknown>;
+    expect(parsed.type).toBe('urn:ok:error:invalid-request');
+    expect(typeof parsed.title).toBe('string');
+    expect(String(parsed.title)).toContain('Case-only');
   });
 
   test('non-string summary returns 400 before rename', async () => {
@@ -806,10 +806,9 @@ describe('handleRenamePath — content-filter admission (FR11)', () => {
     );
 
     expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({
-      ok: false,
-      error: 'Destination document is excluded by the workspace content config',
-    });
+    const parsed = JSON.parse(response.body) as Record<string, unknown>;
+    expect(parsed.type).toBe('urn:ok:error:invalid-request');
+    expect(String(parsed.title)).toContain('Destination document is excluded');
     expect(readFileSync(join(tmpDir, 'notes.md'), 'utf-8')).toBe('# Notes\n');
   });
 
@@ -829,10 +828,9 @@ describe('handleRenamePath — content-filter admission (FR11)', () => {
     );
 
     expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({
-      ok: false,
-      error: 'Destination folder is excluded by the workspace content config',
-    });
+    const parsed = JSON.parse(response.body) as Record<string, unknown>;
+    expect(parsed.type).toBe('urn:ok:error:invalid-request');
+    expect(String(parsed.title)).toContain('Destination folder is excluded');
     expect(readFileSync(join(folder, 'auth.md'), 'utf-8')).toBe('# Auth\n');
   });
 
@@ -851,7 +849,6 @@ describe('handleRenamePath — content-filter admission (FR11)', () => {
 
     expect(response.status).toBe(200);
     const parsed = JSON.parse(response.body);
-    expect(parsed.ok).toBe(true);
     expect(parsed.renamed).toEqual([{ fromDocName: 'notes', toDocName: 'renamed' }]);
   });
 
