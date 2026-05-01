@@ -3,15 +3,12 @@ import { sep } from 'node:path';
 import { classifyFsPath } from './fs-traced.ts';
 
 /**
- * FR2 verification — the rename flips the path-segment substrings the
- * classifier matches on (`.open-knowledge` → `.ok`, `.git/open-knowledge`
- * → `.git/ok`), but the emitted bucket-label strings (`'shadow-repo'`,
- * `'ok-internal'`, `'lock'`, `'principal'`, `'conflict'`, `'content-md'`,
- * `'git'`, `'other'`) MUST stay stable to keep telemetry cardinality bounded.
- *
- * Without this gate, post-rename shadow-repo writes would silently fall
- * through the classifier ladder and bucket as `'git'`, breaking the
- * Tempo dashboard's shadow-repo split.
+ * The classifier matches on path-segment substrings. The emitted bucket
+ * labels (`'shadow-repo'`, `'ok-internal'`, `'lock'`, `'principal'`,
+ * `'conflict'`, `'content-md'`, `'git'`, `'other'`) are load-bearing for
+ * telemetry cardinality discipline — Tempo dashboards key off these strings.
+ * If the labels drift, shadow-repo writes silently fall through to `'git'`
+ * and break the dashboard split.
  */
 describe('classifyFsPath', () => {
   // `sep` keeps these tests cross-platform — on macOS / Linux that's '/',

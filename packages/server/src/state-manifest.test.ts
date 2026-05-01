@@ -68,25 +68,21 @@ describe('detectProjectShape', () => {
     }
   });
 
-  test('FR3 contract — only the .git/ok shadow path triggers adopt (not .git/open-knowledge legacy)', () => {
-    // After the 2026-04-30 rename, `detectProjectShape` MUST be called with the
-    // new `.git/ok` shadow path (per `assertCompatibleStateManifest` callers).
-    // Spec FR3 narrows the signal: a project with neither `.git/ok` nor a
-    // manifest is fresh — even if it has the legacy `.git/open-knowledge/`
-    // shadow left over from a pre-rename worktree.
-    const root = mkdtempSync(join(tmpdir(), 'state-manifest-fr3-'));
+  test('only the configured shadowRepoDir triggers adopt — unrelated dirs nearby do not leak', () => {
+    // Existence of unrelated directories under `.git/` (e.g. left over from a
+    // prior tooling layout) MUST NOT affect the signal — `detectProjectShape`
+    // checks only the path it was passed.
+    const root = mkdtempSync(join(tmpdir(), 'state-manifest-shadow-only-'));
     try {
       const lockDir = join(root, '.ok');
-      const newShadow = join(root, '.git', 'ok');
-      const legacyShadow = join(root, '.git', 'open-knowledge');
+      const shadowRepoDir = join(root, '.git', 'ok');
+      const unrelatedSiblingDir = join(root, '.git', 'some-other-tooling-dir');
 
-      // Pre-rename leftover only — no `.git/ok`. Should be fresh.
-      mkdirSync(legacyShadow, { recursive: true });
-      expect(detectProjectShape({ lockDir, shadowRepoDir: newShadow })).toBe('fresh');
+      mkdirSync(unrelatedSiblingDir, { recursive: true });
+      expect(detectProjectShape({ lockDir, shadowRepoDir })).toBe('fresh');
 
-      // Once `.git/ok` exists, adopt fires.
-      mkdirSync(newShadow, { recursive: true });
-      expect(detectProjectShape({ lockDir, shadowRepoDir: newShadow })).toBe('adopt');
+      mkdirSync(shadowRepoDir, { recursive: true });
+      expect(detectProjectShape({ lockDir, shadowRepoDir })).toBe('adopt');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

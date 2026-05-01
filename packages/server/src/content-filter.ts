@@ -9,10 +9,9 @@
  *   - nested `.gitignore` and `.okignore` files at any folder depth
  *   - the `.git` directory (always excluded — `node-ignore` does not auto-add it)
  *
- * `content.include` and `content.exclude` were removed in the 2026-04-30
- * `.open-knowledge/` → `.ok/` rename — extension gating happens upstream via
- * `isSupportedDocFile()` (`packages/server/src/doc-extensions.ts`), and
- * exclusions live in `.okignore` instead of YAML.
+ * Extension gating happens upstream via `isSupportedDocFile()`
+ * (`packages/server/src/doc-extensions.ts`); exclusions live in `.okignore`
+ * (no YAML include/exclude keys).
  *
  * Used by the file watcher to decide which files belong in the content index
  * and by the CLI preview helper to enumerate the same set without booting the
