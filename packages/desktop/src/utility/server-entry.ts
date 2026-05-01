@@ -1,5 +1,9 @@
 import { rename, writeFile } from 'node:fs/promises';
-import type { BootedServer, BootServerOptions } from '@inkeep/open-knowledge-server';
+import {
+  type BootedServer,
+  type BootServerOptions,
+  ConfigSchema,
+} from '@inkeep/open-knowledge-server';
 import { type KeyringSmokeResult, runKeyringSmoke } from './keyring-smoke.ts';
 
 export type { KeyringSmokeResult } from './keyring-smoke.ts';
@@ -41,7 +45,6 @@ export interface UtilityErrorMessage {
     startedAt: string;
     worktreeRoot: string;
     kind?: 'interactive' | 'mcp-spawned';
-    parentPid?: number;
     capabilities?: string[];
   };
 }
@@ -142,8 +145,10 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
   async function handleInit(msg: UtilityInitMessage) {
     try {
       const server = await deps.importServer();
+      const config = ConfigSchema.parse({});
       booted = await server.bootServer({
         ...msg.opts,
+        config,
         attachUiSibling: false, // D36 — no `ok ui` sibling under Electron
         idleShutdownMs: null, // D36 — BrowserWindow lifecycle owns utility lifetime
         skipAutoInit: false,

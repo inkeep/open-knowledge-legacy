@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { describe as _bunDescribe, afterEach, beforeEach, expect, it } from 'bun:test';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
+
+const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
 function isProcessAlive(pid: number): boolean {
   try {

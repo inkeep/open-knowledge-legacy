@@ -1,13 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { getLogger } from './logger.ts';
-import { PROTOCOL_VERSION, RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';
+import { RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';
 
 export const STATE_MANIFEST_FILENAME = 'state.json';
 
 export interface StateManifestWriter {
   runtimeVersion: string;
-  protocolVersion: number;
   adoptedAt?: string;
 }
 
@@ -63,7 +62,6 @@ function isStateManifestRecord(value: unknown): value is StateManifestRecord {
   if (!v.createdBy || typeof v.createdBy !== 'object') return false;
   const c = v.createdBy as Record<string, unknown>;
   if (typeof c.runtimeVersion !== 'string') return false;
-  if (typeof c.protocolVersion !== 'number') return false;
   return true;
 }
 
@@ -111,7 +109,6 @@ interface AssertCompatibleStateManifestOptions {
   shadowRepoDir: string;
   currentStateSchemaVersion?: number;
   currentRuntimeVersion?: string;
-  currentProtocolVersion?: number;
   now?: () => Date;
 }
 
@@ -121,7 +118,6 @@ export function assertCompatibleStateManifest(
   const log = getLogger('state-manifest');
   const currentStateSchemaVersion = opts.currentStateSchemaVersion ?? STATE_SCHEMA_VERSION;
   const currentRuntimeVersion = opts.currentRuntimeVersion ?? RUNTIME_VERSION;
-  const currentProtocolVersion = opts.currentProtocolVersion ?? PROTOCOL_VERSION;
   const now = (opts.now ?? (() => new Date()))();
   const nowIso = now.toISOString();
   const path = manifestPath(opts.lockDir);
@@ -138,8 +134,7 @@ export function assertCompatibleStateManifest(
           `State manifest at ${path} declares stateSchemaVersion=${m.stateSchemaVersion} ` +
           `but this binary supports ${currentStateSchemaVersion}. ` +
           `Refusing to boot — on-the-fly migration is out of scope. ` +
-          `(Manifest written by runtime ${m.createdBy.runtimeVersion}, ` +
-          `protocol ${m.createdBy.protocolVersion}.)`,
+          `(Manifest written by runtime ${m.createdBy.runtimeVersion}.)`,
       });
     }
     try {
@@ -147,7 +142,6 @@ export function assertCompatibleStateManifest(
         ...m,
         lastWriteBy: {
           runtimeVersion: currentRuntimeVersion,
-          protocolVersion: currentProtocolVersion,
           at: nowIso,
         },
       };
@@ -170,7 +164,6 @@ export function assertCompatibleStateManifest(
       createdAt: nowIso,
       createdBy: {
         runtimeVersion: currentRuntimeVersion,
-        protocolVersion: currentProtocolVersion,
       },
     };
     writeStateManifest(opts.lockDir, fresh);
@@ -186,7 +179,6 @@ export function assertCompatibleStateManifest(
     createdAt: nowIso,
     createdBy: {
       runtimeVersion: currentRuntimeVersion,
-      protocolVersion: currentProtocolVersion,
       adoptedAt: nowIso,
     },
   };

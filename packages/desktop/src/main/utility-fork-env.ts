@@ -3,6 +3,5 @@ export function buildUtilityForkEnv(parentEnv: NodeJS.ProcessEnv = process.env):
     ...parentEnv,
     OK_ELECTRON_PROTOCOL_HOST: '1',
     OK_LOCK_KIND: 'interactive',
-    OK_PARENT_PID: String(process.pid),
   };
 }

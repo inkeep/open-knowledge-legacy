@@ -59,6 +59,7 @@ import {
   iconFromClientName,
 } from './agent-sessions.ts';
 import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
+import { isAllowedApiOrigin } from './api-origin.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
   createInstalledAgentsProbe,
@@ -765,21 +766,6 @@ function isSafeDocName(docName: string): boolean {
     docName.includes('\x00') ||
     docName.includes('\\')
   );
-}
-
-function isAllowedApiOrigin(origin: string): boolean {
-  if (origin === 'null') return true; // file:// / packaged Electron renderer
-  try {
-    const { hostname } = new URL(origin);
-    return (
-      hostname === 'localhost' ||
-      hostname === '::1' ||
-      hostname === '[::1]' ||
-      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
-    );
-  } catch {
-    return false;
-  }
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
@@ -4238,7 +4224,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       cwd: absDir,
       detached: true,
       stdio: ['ignore', 'ignore', 'pipe'],
-      env: { ...process.env, OK_LOCK_KIND: 'interactive', OK_PARENT_PID: String(process.pid) },
+      env: { ...process.env, OK_LOCK_KIND: 'interactive' },
     });
 
     const stderrChunks: Buffer[] = [];

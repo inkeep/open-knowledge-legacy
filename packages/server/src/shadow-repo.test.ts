@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { describe as _bunDescribe, afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
+
+const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
+
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

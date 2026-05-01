@@ -33,6 +33,7 @@ describe('runInit', () => {
   let fakeHome: string;
   const originalPlatform = process.platform;
   const originalHome = process.env.HOME;
+  const originalArgv1 = process.argv[1];
 
   const claudeConfigPath = () => resolveClaudeCodeConfigPath({ home: fakeHome });
   const cursorConfigPath = () => resolveCursorConfigPath({ home: fakeHome });
@@ -41,6 +42,9 @@ describe('runInit', () => {
   const windsurfConfigPath = () => resolveWindsurfConfigPath({ home: fakeHome });
   const devRepoRoot = () => join(testDir, 'local-open-knowledge');
   const devCliEntryPath = () => join(devRepoRoot(), 'packages', 'cli', 'src', 'cli.ts');
+  const enableDevMcp = () => {
+    process.argv[1] = devCliEntryPath();
+  };
   const expectedDevMcpEntry = () => ({
     command: 'node',
     args: [join(devRepoRoot(), 'packages', 'cli', 'dist', 'cli.mjs'), 'mcp'],
@@ -88,6 +92,7 @@ describe('runInit', () => {
     } else {
       process.env.HOME = originalHome;
     }
+    process.argv[1] = originalArgv1;
     rmSync(testDir, { recursive: true, force: true });
   });
 
@@ -148,7 +153,8 @@ describe('runInit', () => {
   });
 
   it('writes a local dev MCP entry when --dev-mcp is enabled', async () => {
-    const result = await runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+    enableDevMcp();
+    const result = await runInitForTest({ devMcp: true });
 
     expect(result.mcpAction).toBe('written');
 
@@ -231,7 +237,8 @@ describe('runInit', () => {
       ),
     );
 
-    const result = await runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+    enableDevMcp();
+    const result = await runInitForTest({ devMcp: true });
     expect(result.mcpAction).toBe('overwritten');
     expect(result.editors[0].action).toBe('overwritten');
 
@@ -354,10 +361,10 @@ describe('runInit', () => {
 
     it('writes the dev MCP env block to Codex TOML configs', async () => {
       mkdirSync(dirname(codexConfigPath()), { recursive: true });
+      enableDevMcp();
       const result = await runInitForTest({
         editors: ['codex'],
         devMcp: true,
-        cliEntryPath: devCliEntryPath(),
       });
 
       expect(result.editors).toHaveLength(1);
@@ -741,7 +748,8 @@ describe('runInit', () => {
     });
 
     it('writes a local dev launch target when --dev-mcp is enabled', async () => {
-      const result = await runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+      enableDevMcp();
+      const result = await runInitForTest({ devMcp: true });
 
       expect(result.launchJson?.action).toBe('created');
 
@@ -798,7 +806,8 @@ describe('runInit', () => {
         ),
       );
 
-      const result = await runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+      enableDevMcp();
+      const result = await runInitForTest({ devMcp: true });
       expect(result.launchJson?.action).toBe('merged');
 
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
@@ -1532,7 +1541,7 @@ describe('writeUserMcpConfigs', () => {
     expect(existsSync(join(fakeHome, '.mcp.json'))).toBe(false);
   });
 
-  it('unconditionally overwrites a differing existing entry (M6b always-write semantic)', async () => {
+  it('unconditionally overwrites a differing existing entry (always-write semantic)', async () => {
     const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
     mkdirSync(dirname(claudePath), { recursive: true });
     writeFileSync(

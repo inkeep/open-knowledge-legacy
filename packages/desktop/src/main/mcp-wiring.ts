@@ -145,34 +145,11 @@ export function resolveCliPath(executablePath: string, fs: McpWiringFsOps = defa
 
 export type ForceComputeTarget = Pick<EditorMcpTarget, 'isCompatible'>;
 
-export function computeForce(
+export function isPublishedCanonical(
   existing: Record<string, unknown>,
   target: ForceComputeTarget,
 ): boolean {
-  if (target.isCompatible(existing, '', { mode: 'published' })) return true;
-  if (isHistoricalNpxVariant(existing)) return true;
-  if (isPriorCliPathShape(existing)) return true;
-  return false;
-}
-
-function isHistoricalNpxVariant(existing: Record<string, unknown>): boolean {
-  if (existing.command !== 'npx') return false;
-  if (!Array.isArray(existing.args)) return false;
-  return (
-    existing.args.length === 3 &&
-    existing.args[0] === '-y' &&
-    existing.args[1] === '@inkeep/open-knowledge' &&
-    existing.args[2] === 'mcp'
-  );
-}
-
-function isPriorCliPathShape(existing: Record<string, unknown>): boolean {
-  if (typeof existing.command !== 'string') return false;
-  if (existing.command === 'npx') return false;
-  if (!Array.isArray(existing.args)) return false;
-  if (existing.args.length !== 1 || existing.args[0] !== 'mcp') return false;
-  const basename = existing.command.split('/').pop();
-  return basename === 'ok' || basename === 'ok.sh' || basename === 'open-knowledge';
+  return target.isCompatible(existing, '', { mode: 'published' });
 }
 
 export function formatPartialFailureMessage(
@@ -312,7 +289,7 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
       try {
         const existing = cli.readExistingMcpEntry(id, home);
         if (existing !== null) {
-          willReplace = computeForce(existing, target);
+          willReplace = isPublishedCanonical(existing, target);
         }
       } catch (err) {
         logger.info('willReplace probe failed for editor', {
@@ -366,7 +343,7 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
         editorsToWrite.push(editor);
         continue;
       }
-      if (computeForce(existing, target)) {
+      if (isPublishedCanonical(existing, target)) {
         editorsToWrite.push(editor);
       } else {
         logger.event({

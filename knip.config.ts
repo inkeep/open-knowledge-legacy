@@ -26,7 +26,7 @@ export default {
       entry: [
         'src/**/*.test.{ts,tsx}',
         'tests/**/*.{test,e2e}.ts',
-        'tests/integration/idb-preload.ts', // bunfig.toml `[test] preload`
+        'tests/integration/idb-preload.ts',
         'tests/perf/profile.ts',
         'tests/perf/lib/*.ts',
       ],
@@ -50,15 +50,12 @@ export default {
     'packages/server': {
       entry: ['src/**/*.test.ts'],
       project: 'src/**',
+      ignoreFiles: ['src/mcp/tools/frontmatter-patch.ts'],
     },
     'packages/cli': {
       entry: ['src/**/*.test.ts', 'scripts/*.ts', 'tests/**/*.ts'],
       ignoreDependencies: [
         '@inkeep/open-knowledge-app', // the CLI's `build:assets` script runs `cp -r ../app/dist dist/public`
-      ],
-      ignoreFiles: [
-        'src/mcp/tools.ts', // historical reference stub; live registry is src/mcp/tools/index.ts
-        'src/mcp/tools/frontmatter-patch.ts',
       ],
     },
     'packages/desktop': {

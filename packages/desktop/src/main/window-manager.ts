@@ -81,7 +81,6 @@ export interface ServerLockMetadataLike {
   startedAt: string;
   worktreeRoot: string;
   kind?: 'interactive' | 'mcp-spawned';
-  parentPid?: number;
   capabilities?: string[];
 }
 
@@ -455,9 +454,6 @@ export class WindowManager {
     if (lock.kind === 'mcp-spawned') return refuse('kind-mcp-spawned');
     if (lock.capabilities !== undefined && !lock.capabilities.includes('ws')) {
       return refuse('capabilities-missing-ws');
-    }
-    if (lock.parentPid !== undefined && !alive(lock.parentPid)) {
-      return refuse('parent-pid-dead');
     }
     return lock;
   }

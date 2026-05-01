@@ -1,16 +1,15 @@
 import type { Server as HttpServer } from 'node:http';
-import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
+import type { Config } from './config/schema.ts';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';
-import { handleCollabSocketError } from './metrics.ts';
-import { isProcessAlive } from './process-alive.ts';
+import { createMcpHttpHandler } from './mcp-http.ts';
+import { mountMcpAndApi } from './mcp-mount.ts';
 import type { EnsureProjectGitResult } from './project-git.ts';
 import { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
-const DEFAULT_PARENT_DEATH_POLL_MS = 5_000;
-
 const DEFAULT_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
+const DESTROY_STEP_TIMEOUT_MS = 5000;
 
 export interface BootServerOptions
   extends Pick<
@@ -32,8 +31,8 @@ export interface BootServerOptions
     | 'shadowRepo'
     | 'enableTestRoutes'
     | 'lockKind'
-    | 'parentPid'
   > {
+  config: Config;
   skipAutoInit?: boolean;
   attachUiSibling?: boolean;
   idleShutdownMs?: number | null;
@@ -43,8 +42,6 @@ export interface BootServerOptions
   idleShutdownHandler?: (destroyServer: () => Promise<void>) => () => Promise<void>;
   log?: PinoLogger;
   keepaliveGraceMs?: number;
-  parentDeathPollMs?: number;
-  parentAliveCheck?: (pid: number) => boolean;
   skipStateManifestCheck?: boolean;
 }
 
@@ -71,18 +68,11 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     process.env.OK_LOCK_KIND === 'mcp-spawned' || process.env.OK_LOCK_KIND === 'interactive'
       ? process.env.OK_LOCK_KIND
       : undefined;
-  const envParentPidRaw = process.env.OK_PARENT_PID;
-  const envParentPid =
-    typeof envParentPidRaw === 'string' && /^[0-9]+$/.test(envParentPidRaw)
-      ? Number.parseInt(envParentPidRaw, 10)
-      : undefined;
   const lockKind = opts.lockKind ?? envLockKind ?? 'interactive';
-  const parentPid = opts.parentPid ?? envParentPid;
 
   initTelemetry();
 
   const { createServer: createHttpServer } = await import('node:http');
-  const { WebSocketServer } = await import('ws');
   const { updateServerLockPort } = await import('./server-lock.ts');
 
   let didGitInit = false;
@@ -119,7 +109,6 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     localOpCliArgs: opts.localOpCliArgs,
     onAgentWrite: opts.onAgentWrite,
     lockKind,
-    parentPid,
     skipStateManifestCheck: opts.skipStateManifestCheck,
   });
 
@@ -129,154 +118,36 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     ready,
     degraded,
     lockDir,
+    sessionManager,
+    agentFocusBroadcaster,
     agentPresenceBroadcaster,
   } = serverInstance;
 
-  const httpServer = createHttpServer((req, res) => {
-    const url = req.url?.split('?')[0];
-    if (url?.startsWith('/api/')) {
-      hocuspocus
-        // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
-        .hooks('onRequest', { request: req, response: res } as any)
-        .then(() => {
-          if (res.writableEnded || res.headersSent) return;
-          res.statusCode = 404;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'API route not found', path: url }));
-        })
-        .catch((err) => {
-          log.error({ err }, 'Unhandled onRequest error');
-          if (!res.writableEnded && !res.headersSent) {
-            res.writeHead(500);
-            res.end('Internal server error');
-          } else if (!res.writableEnded) {
-            res.end();
-          }
-        });
-      return;
-    }
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: 'Not found. The React UI is served by `ok ui` (default port 3000).',
-        path: url ?? '/',
-      }),
-    );
+  const mcpHost = (() => {
+    const host = opts.host ?? 'localhost';
+    if (host === '0.0.0.0' || host === '::') return 'localhost';
+    return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  })();
+  let boundPort = opts.port ?? 0;
+  const mcpHttpHandler = createMcpHttpHandler({
+    contentDir: opts.contentDir,
+    projectDir: opts.projectDir ?? opts.contentDir,
+    config: opts.config,
+    getServerUrl: () => `http://${mcpHost}:${boundPort}`,
+    log,
   });
 
-  const wss = new WebSocketServer({ noServer: true });
-  wss.on('error', (err) => {
-    log.error({ err }, 'WebSocketServer error');
-  });
+  const httpServer = createHttpServer();
 
-  const KEEPALIVE_GRACE_MS = opts.keepaliveGraceMs ?? 10_000;
-  const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const keepaliveGraceInflight = new Set<Promise<void>>();
-  let shuttingDown = false;
-
-  httpServer.on('upgrade', (req, socket, head) => {
-    if (req.url?.startsWith('/collab/keepalive')) {
-      socket.on('error', (err: NodeJS.ErrnoException) => {
-        if (handleCollabSocketError(err)) return;
-        log.error({ err }, 'MCP keepalive socket error');
-      });
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        const connectionId = parseKeepaliveConnectionId(req.url);
-
-        if (connectionId) {
-          const existing = keepaliveGraceTimers.get(connectionId);
-          if (existing !== undefined) {
-            clearTimeout(existing);
-            keepaliveGraceTimers.delete(connectionId);
-            log.info({ connectionId }, '[keepalive] reconnect during grace — timer cancelled');
-          }
-        }
-
-        const pingTimer = setInterval(() => {
-          try {
-            ws.ping();
-          } catch {}
-        }, 30_000);
-        pingTimer.unref?.();
-
-        const tsRefreshTimer = connectionId
-          ? setInterval(() => {
-              agentPresenceBroadcaster?.bumpPresenceTs(toBroadcasterKey(connectionId));
-            }, 3_000)
-          : null;
-        tsRefreshTimer?.unref?.();
-
-        ws.on('close', () => {
-          clearInterval(pingTimer);
-          if (tsRefreshTimer !== null) clearInterval(tsRefreshTimer);
-          if (!connectionId) return;
-          const timer = setTimeout(() => {
-            keepaliveGraceTimers.delete(connectionId);
-            if (shuttingDown) return;
-            const work = (async () => {
-              log.info({ connectionId }, '[keepalive] grace expired — cleaning up sessions');
-              try {
-                await serverInstance.sessionManager.closeAllForAgent(connectionId);
-              } catch (err) {
-                log.error({ err, connectionId }, '[keepalive] closeAllForAgent failed');
-              }
-              try {
-                serverInstance.agentFocusBroadcaster?.clearFocus(connectionId);
-              } catch (err) {
-                log.error({ err, connectionId }, '[keepalive] clearFocus failed');
-              }
-              try {
-                agentPresenceBroadcaster?.clearPresence(toBroadcasterKey(connectionId));
-              } catch (err) {
-                log.error({ err, connectionId }, '[keepalive] clearPresence failed');
-              }
-            })();
-            keepaliveGraceInflight.add(work);
-            work.finally(() => keepaliveGraceInflight.delete(work));
-          }, KEEPALIVE_GRACE_MS);
-          timer.unref?.();
-          keepaliveGraceTimers.set(connectionId, timer);
-          log.info(
-            { connectionId, graceMs: KEEPALIVE_GRACE_MS },
-            '[keepalive] disconnected — grace timer started',
-          );
-        });
-        ws.on('error', (err: NodeJS.ErrnoException) => {
-          if (!handleCollabSocketError(err)) {
-            log.error({ err }, 'MCP keepalive WS error');
-          }
-          ws.terminate();
-        });
-      });
-      return;
-    }
-
-    if (req.url?.startsWith('/collab')) {
-      socket.on('error', (err: NodeJS.ErrnoException) => {
-        if (handleCollabSocketError(err)) return;
-        log.error({ err }, 'Upgrade socket error');
-      });
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        const clientConnection = hocuspocus.handleConnection(
-          ws as unknown as WebSocket,
-          req as unknown as Request,
-        );
-        ws.on('message', (data: ArrayBuffer | Buffer) => {
-          clientConnection.handleMessage(
-            data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data),
-          );
-        });
-        ws.on('close', (code: number, reason: Buffer) => {
-          clientConnection.handleClose({ code, reason: reason.toString() });
-        });
-        ws.on('error', (err: NodeJS.ErrnoException) => {
-          if (!handleCollabSocketError(err)) {
-            log.error({ err }, 'WebSocket error');
-          }
-          ws.terminate();
-        });
-      });
-    }
+  const mount = mountMcpAndApi({
+    httpServer,
+    hocuspocus,
+    mcpHttpHandler,
+    log,
+    sessionManager,
+    agentFocusBroadcaster,
+    agentPresenceBroadcaster,
+    keepaliveGraceMs: opts.keepaliveGraceMs,
   });
 
   let idleHandle: IdleShutdownHandle | null = null;
@@ -308,6 +179,7 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
 
   const addr = httpServer.address();
   const realPort = typeof addr === 'object' && addr !== null ? addr.port : (opts.port ?? 0);
+  boundPort = realPort;
   updateServerLockPort(lockDir, realPort);
 
   if (attachUi && opts.spawnUiSiblingFn) {
@@ -319,74 +191,72 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   }
 
   let destroyed = false;
-  let parentDeathPoll: ReturnType<typeof setInterval> | null = null;
+  const withDestroyTimeout = async (name: string, work: () => Promise<void>): Promise<void> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        work(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error(`${name} timed out after ${DESTROY_STEP_TIMEOUT_MS}ms`));
+          }, DESTROY_STEP_TIMEOUT_MS);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
   const destroy = async (): Promise<void> => {
     if (destroyed) return;
     destroyed = true;
-    shuttingDown = true;
-    if (parentDeathPoll !== null) {
-      clearInterval(parentDeathPoll);
-      parentDeathPoll = null;
-    }
+    const errors: unknown[] = [];
+    const runStep = async (name: string, work: () => Promise<void>): Promise<void> => {
+      try {
+        await withDestroyTimeout(name, work);
+      } catch (err) {
+        errors.push(err);
+        log.warn({ err, step: name }, 'bootServer destroy step failed');
+      }
+    };
+
     try {
       idleHandle?.detach();
     } catch (err) {
-      log.warn({ err }, '[bootServer.destroy] idleHandle.detach failed');
+      errors.push(err);
+      log.warn({ err, step: 'idleHandle.detach' }, 'bootServer destroy step failed');
     }
-    for (const timer of keepaliveGraceTimers.values()) {
-      clearTimeout(timer);
-    }
-    keepaliveGraceTimers.clear();
-    if (keepaliveGraceInflight.size > 0) {
-      await Promise.allSettled([...keepaliveGraceInflight]);
-    }
-    try {
-      try {
-        httpServer.closeAllConnections?.();
-      } catch (err) {
-        log.warn({ err }, '[bootServer.destroy] closeAllConnections failed');
-      }
-      let timer: NodeJS.Timeout | undefined;
-      try {
-        await Promise.race([
-          new Promise<void>((resolveClose) => httpServer.close(() => resolveClose())),
-          new Promise<void>((_, reject) => {
-            timer = setTimeout(
-              () => reject(new Error('httpServer.close timeout after 10s')),
-              10_000,
-            );
-          }),
-        ]).catch((err) => {
-          log.warn(
-            { err },
-            '[bootServer.destroy] httpServer.close did not complete within timeout',
+
+    await runStep('mount.shutdown', () => mount.shutdown());
+    await runStep('mcpHttpHandler.close', () => mcpHttpHandler.close());
+    await runStep(
+      'mount.wss.close',
+      () =>
+        new Promise<void>((resolveClose, rejectClose) => {
+          mount.wss.close((err) => (err ? rejectClose(err) : resolveClose()));
+        }),
+    );
+    await runStep('httpServer.closeAllConnections', async () => {
+      httpServer.closeAllConnections?.();
+    });
+    await runStep(
+      'httpServer.close',
+      () =>
+        new Promise<void>((resolveClose, rejectClose) => {
+          httpServer.close((err) =>
+            err && (err as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING'
+              ? rejectClose(err)
+              : resolveClose(),
           );
-        });
-      } finally {
-        if (timer !== undefined) clearTimeout(timer);
-      }
-    } finally {
-      await destroyHocuspocus();
-      await shutdownTelemetry();
+        }),
+    );
+    await runStep('destroyHocuspocus', () => destroyHocuspocus());
+    await runStep('shutdownTelemetry', () => shutdownTelemetry());
+
+    if (errors.length > 0) {
+      throw new AggregateError(errors, 'bootServer destroy completed with errors');
     }
   };
-
-  if (parentPid !== undefined) {
-    const pollMs = opts.parentDeathPollMs ?? DEFAULT_PARENT_DEATH_POLL_MS;
-    const aliveCheck = opts.parentAliveCheck ?? isProcessAlive;
-    parentDeathPoll = setInterval(() => {
-      if (destroyed) return;
-      if (aliveCheck(parentPid)) return;
-      log.warn(
-        { parentPid, lockKind },
-        '[boot] parent process gone — initiating graceful shutdown',
-      );
-      void destroy().catch((err) => {
-        log.error({ err, parentPid }, '[boot] parent-death shutdown failed');
-      });
-    }, pollMs);
-    parentDeathPoll.unref?.();
-  }
 
   return {
     httpServer,
@@ -400,15 +270,4 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     didGitInit,
     serverInstance,
   };
-}
-
-export function parseKeepaliveConnectionId(url: string | undefined): string | null {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url, 'http://localhost');
-    const connectionId = parsed.searchParams.get('connectionId');
-    return validateAgentId(connectionId);
-  } catch {
-    return null;
-  }
 }

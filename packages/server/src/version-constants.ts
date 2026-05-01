@@ -16,6 +16,4 @@ function readRuntimeVersion(): string {
 
 export const RUNTIME_VERSION: string = readRuntimeVersion();
 
-export const PROTOCOL_VERSION = 1 as const;
-
 export const STATE_SCHEMA_VERSION = 1 as const;

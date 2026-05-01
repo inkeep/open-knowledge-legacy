@@ -1,13 +1,6 @@
-export interface FolderFrontmatter {
-  title?: string;
-  description?: string;
-  tags?: string[];
-}
+import type { FolderFrontmatter, FolderRule } from '../config/schema.ts';
 
-export interface FolderRule {
-  match: string;
-  frontmatter: FolderFrontmatter;
-}
+export type { FolderFrontmatter, FolderRule };
 
 export interface FileEntry {
   path: string;

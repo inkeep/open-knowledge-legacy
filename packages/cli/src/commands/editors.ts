@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { basename, dirname, join, posix, resolve, sep, win32 } from 'node:path';
-import { MCP_SERVER_NAME } from '../constants.ts';
+import { MCP_SERVER_NAME } from '@inkeep/open-knowledge-server';
 import { isObject } from '../utils/is-object.ts';
 
 export type EditorId = 'claude' | 'claude-desktop' | 'cursor' | 'vscode' | 'windsurf' | 'codex';
@@ -17,29 +17,27 @@ export const ALL_EDITOR_IDS: EditorId[] = [
 const PUBLISHED_MCP_SERVER_COMMAND = 'npx';
 const PUBLISHED_MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
 const DEV_MCP_SERVER_COMMAND = 'node';
-const PINNED_MCP_SERVER_COMMAND = 'node';
 const DEV_MCP_ENV = {
   MCP_DEBUG: '1',
   OK_LOG_FILE: '/tmp/ok-mcp.log',
 } as const;
 
-type McpInstallMode = 'published' | 'dev' | 'pinned';
+type McpInstallMode = 'published' | 'dev';
 
 export interface McpInstallOptions {
   mode?: McpInstallMode;
-  cliEntryPath?: string;
   cliPath?: string;
   skipAvailabilityCheck?: boolean;
 }
 
-export function resolveDevCliDistPath(cliEntryPath = process.argv[1]): string {
-  if (!cliEntryPath) {
+export function resolveDevCliDistPath(entryPath: string = process.argv[1]): string {
+  if (!entryPath) {
     throw new Error(
       'Cannot infer the local CLI entry for --dev-mcp because process.argv[1] is empty.',
     );
   }
 
-  const resolvedEntry = resolve(cliEntryPath);
+  const resolvedEntry = resolve(entryPath);
   if (basename(resolvedEntry) === 'cli.mjs' && basename(dirname(resolvedEntry)) === 'dist') {
     return resolvedEntry;
   }
@@ -65,23 +63,10 @@ export function buildManagedServerEntry(options: McpInstallOptions = {}): Record
     };
   }
 
-  if (options.mode === 'pinned') {
-    const cliEntry = options.cliEntryPath ?? process.argv[1];
-    if (!cliEntry) {
-      throw new Error(
-        'Cannot pin MCP entry — process.argv[1] is empty. Pass --no-pin to use the default `npx` entry.',
-      );
-    }
-    return {
-      command: PINNED_MCP_SERVER_COMMAND,
-      args: [resolve(cliEntry), 'mcp'],
-    };
-  }
-
   if (options.mode === 'dev') {
     return {
       command: DEV_MCP_SERVER_COMMAND,
-      args: [resolveDevCliDistPath(options.cliEntryPath), 'mcp'],
+      args: [resolveDevCliDistPath(), 'mcp'],
       env: { ...DEV_MCP_ENV },
     };
   }

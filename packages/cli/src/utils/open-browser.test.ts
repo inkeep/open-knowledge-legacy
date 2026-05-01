@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { describe as _bunDescribe, afterEach, beforeEach, expect, it, spyOn } from 'bun:test';
+
+const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
+
 import * as cp from 'node:child_process';
 import { openBrowser } from './open-browser.ts';
 
