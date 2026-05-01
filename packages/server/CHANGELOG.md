@@ -1,5 +1,298 @@
 # @inkeep/open-knowledge-server
 
+## 0.4.0
+
+### Minor Changes
+
+- fbfe967: Asset-click parity closure (2026-04-24b amendment) — four defects closed end-to-end after dogfood surfaced a `.m4v` click flow that fell through to Vite's SPA fallback:
+
+  - Serve-side: widen `ASSET_EXTENSIONS` to common user-drop extensions; add `Content-Disposition` dispatch in the Vite plugin's sirv middleware (inline for renderable, attachment for everything else); harden SPA fallback to 404 for asset-extension paths sirv didn't serve.
+  - Renderer: FR-A5 `wikiLinkEmbed` NodeView (`packages/app/src/editor/extensions/wiki-link-embed.ts`) lands with InteractionLayer registration — drop-time chip clicks now route through `dispatchAssetClick` end-to-end.
+  - Classifier guard: softened `internal-link.ts` asset-branch guard to catch `sourceForm === 'wikiembed'` + has-extension hrefs regardless of `classifyMarkdownHref` return kind; `resolveAssetProjectPath` accepts leading-slash paths as project-root-relative.
+  - Security: widen `EXECUTABLE_BLOCKLIST_EXTENSIONS` with macOS installer classes (`.dmg`/`.pkg`/`.scpt`/`.applescript`/`.terminal`/`.prefpane`/`.mpkg`), URL-file classes (`.webloc`/`.inetloc`/`.fileloc`), cross-platform packages (`.jar`/`.appimage`/`.deb`/`.rpm`/`.msix`/`.appx`/`.ipa`/`.apk`), and Windows shortcut classes (`.pif`/`.scr`/`.lnk`/`.url`).
+
+  Classifier taxonomy cleanup (moving the asset-ext branch above the leading-slash guard in `classifyMarkdownHref` itself) is deferred to a follow-up PR — see `specs/2026-04-16-editor-asset-and-embed-surface/evidence/classifier-taxonomy-cleanup.md` for the full Option A vs Option B trade-off + Docmost/Obsidian peer-editor comparison.
+
+- fbfe967: feat(editor): asset upload + `![[file.ext]]` wiki-embed surface
+
+  Any file drop is accepted by the editor — there is no user-facing byte cap. PDFs, video, audio, archives, and fonts stop hitting the old "Unsupported file type" dead-end. The emit shape is picked by extension: markdown files (`.md` / `.mdx`) emit as `[[basename]]` wiki-links (link-semantic, navigable on Cmd-click, resolved via `fileIndex` — markdown is a first-class OK doc, not an opaque asset); images + typed renderable files (PDF, MP4, WebM, MP3, WAV, OGG, M4A, MOV) emit as `![[file.ext]]` wiki-embeds; opaque files emit as `[name](path)` markdown links. Uploads stream to disk end-to-end (memory footprint is O(1), not O(fileSize)), so the only rejection axis is disk fullness (`storage-full` → HTTP 507). See [`reports/streaming-upload-refactor/REPORT.md`](reports/streaming-upload-refactor/REPORT.md) for the refactor rationale.
+
+  Same-directory sha256 dedup returns existing paths on duplicate drops with a toast (`"Already at <path> — reusing."`). Renaming a doc that contains image refs recomputes the relative path; absolute refs and wiki-embed refs are untouched because the basename index resolves them dynamically.
+
+  New HTTP surface on the server:
+
+  - `POST /api/upload` — upload endpoint. Success response: `{ ok, src, path, deduped }` where `src` is the asset's basename and `path` is the contentDir-relative location (colocated with the referencing doc). Error responses carry a typed `error` reason (`malformed-upload` / `storage-full` / `storage-readonly` / `collision-exhaustion` / `storage-error`) plus a human-readable `message`.
+
+  No user-facing `upload.*` config. Attachment placement (co-located), emit shape (`![[...]]` for supported extensions), same-directory sha256 dedup with a toast notice, and the wiki-embed extension list are fixed defaults. Every value is a module-level constant in `@inkeep/open-knowledge-core/constants/upload.ts`. One-shot Obsidian-vault migration CLI deferred to a future spec — OK does not read `.obsidian/app.json` at runtime; refugees whose vault uses non-default config shape wait for the future migrator. Legacy configs still carrying `upload.*` keys parse cleanly (unknown keys are silently stripped).
+
+  File watcher now emits `asset-create` / `asset-delete` DiskEvents alongside the existing markdown events; CC1 `ch:'files'` signal coalesces both so file-sidebar and basename-index rebuilds piggyback on one broadcast. `sanitizeFilename` preserves Unicode code points (letters, digits, marks, punctuation, emoji) while stripping path separators and control bytes.
+
+  Full spec + decision log (D1–D-M): [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md). Operator-facing guide: [Assets and embeds](docs/content/guides/assets-and-embeds.mdx).
+
+  **Asset-click dispatcher + OS-integration surface (2026-04-23 amendment).** Click a `![[meeting.pdf]]` embed and the PDF opens predictably — a new browser tab in web, `shell.openPath` in Electron. Previously post-reload clicks routed through the doc-link navigator and failed silently (Gap 3b); Electron drop-time clicks replaced the editor window (Gap 4). Both gaps close.
+
+  - `ClassifiedLinkTarget` gains a first-class `{kind: 'asset', url, ext}` variant; `resolveAssetProjectPath` resolves relative hrefs against the source doc's directory.
+  - Renderer-side dispatcher + empty-at-landing viewer registry at `packages/app/src/editor/asset-dispatch/` — future PRs register PDF.js / image lightbox / video-audio viewers as ~40-60 LOC plugins without modifying the dispatch layer.
+  - Three new Electron IPC channels (`ok:shell:open-asset`, `ok:shell:reveal-asset`, `ok:shell:show-asset-menu`). Main-process `openAssetSafely` enforces path containment (`realpath` + `isPathWithinProject`), existence, and an executable-extension blocklist (`.exe`/`.sh`/`.html`/`.svg`/…) source-verified from Obsidian 1.12.7. Renderer sends project-relative paths; containment fires at the IPC boundary.
+  - Right-click any on-disk reference (asset chip, wiki-link chip, image) → native OS menu with Reveal in Finder / Show in Explorer + Open in default app + Copy link. Gesture-attested (main observes the click directly).
+  - Defense-in-depth: `setWindowOpenHandler` + `will-navigate` on the editor webContents intercept any asset URL that escapes the renderer dispatcher (pasted `<a href>`, plugin content, drop-time `<a target="_blank">`). Same path containment + blocklist enforced on every entry point.
+
+  Full amendment (US-A1..A6, FR-A1..A8, NG-A1..A6, D-A1..A12): [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md) §Post-finalization amendment (2026-04-23). Research: [`reports/electron-os-integration-patterns/`](reports/electron-os-integration-patterns/) + [`reports/editor-asset-embed-patterns-across-universe/`](reports/editor-asset-embed-patterns-across-universe/) D9.
+
+- 7242822: feat(cb-v2): generalizable file-upload prop affordance + legacy image-slash removal
+
+  Unifies the two parallel media-insertion paths that emerged on the lowercase media canonical pivot. The legacy `image` slash command (file-picker → `/api/upload-image` → inline image PM node) is removed; the descriptor-driven slash menu now carries the upload UX through the PropPanel `src` field.
+
+  Two new optional fields on `PropDefString` declare the affordance:
+
+  - **`accept?: readonly string[]`** — when set, the auto-rendered PropPanel control adds an upload icon-button next to the URL input. Wildcards (`image/*`) and `.ext` shortcuts are valid per the HTML `<input accept>` spec; the array is joined to a comma-string at the input boundary.
+  - **`autoFocus?: boolean`** — focuses this prop's input on PropPanel mount. Mirrors the React DOM convention. First match in declared order wins.
+
+  The `src` prop on each media descriptor (`htmlImgProps[0]`, `htmlVideoProps[0]`, `htmlAudioProps[0]`) carries both, so picking "Image" / "Video" / "Audio" from the slash menu now opens the PropPanel with `src` focused and an upload button ready.
+
+  Server endpoints `/api/upload-video` and `/api/upload-audio` mirror `/api/upload-image`'s atomic-write + magic-byte MIME validation discipline. Per-endpoint allowlists:
+
+  - `ALLOWED_VIDEO_MIME_TYPES`: `video/mp4`, `video/webm`, `video/ogg`
+  - `ALLOWED_AUDIO_MIME_TYPES`: `audio/mpeg`, `audio/wav`, `audio/ogg`, `audio/webm`
+
+  All three handlers share an internal `uploadMediaCore` helper — single source of truth for path validation, magic-byte sniffing, atomic write, and clipboard-paste filename synthesis. New uploads go through a generalized `uploadFile(file, accept) → Promise<{url}>` client helper that routes by MIME-type prefix (`image/`, `video/`, `audio/`).
+
+  What changed for authors:
+
+  - **Slash menu shows exactly 5 component-block entries**: Accordion, Audio, Callout, Image, Video. The old file-picker "Image" entry that uploaded directly is gone — the same UX now lives one click deeper, on the inserted block's PropPanel.
+  - **PropPanel `src` field has an upload icon-button** for image/video/audio descriptors. Click → native file picker constrained to the descriptor's MIME types → upload → URL fills. Loading state shows a spinner; errors surface a toast.
+  - **Drag-and-drop and paste-image flows are unchanged** — they still drop through `uploadAndInsert`, which now delegates the network round-trip to the new generalized `uploadFile` helper internally.
+
+  Internal: `accept` and `autoFocus` are added to `PropDefString` only (not Boolean/Number/Enum/ReactNode — D3 LOCKED). The PropPanel computes `getAutoFocusedPropName(props)` once and threads `isAutoFocused` to each PropControl, which marks the matching `<Input>` with both `autoFocus={true}` and `data-prop-autofocus=""` (the data-attr makes SSR test assertions tractable since React 19's autoFocus is client-only at runtime).
+
+- 7242822: feat: Component Blocks v2 — 5-pack foundation (Callout + Image + Video + Audio + Accordion)
+
+  The editor now ships five built-in component primitives — `Callout`, `Image`,
+  `Video`, `Audio`, and `Accordion` — each with a WYSIWYG settings panel, a
+  slash-command insertion menu, and lossless on-disk round-trip for both the
+  MDX form and the markdown form (where one exists). Every primitive is a
+  DIY React component on Open Knowledge's own brand (shadcn / Tailwind); the
+  editor bundle no longer pulls in `fumadocs-ui`'s React surface or its CSS
+  variable bridge.
+
+  What you get out of the box:
+
+  - **Callout** — five GFM alert types (`note` / `tip` / `important` /
+    `warning` / `caution`) plus optional `title` / `icon` / `color` / and
+    Obsidian-style foldable chrome (`> [!NOTE]+` / `-`). Authoring works in
+    any of three forms: GFM alert blockquote, foldable Obsidian opener, or
+    `<Callout type="…">…</Callout>` MDX JSX. Common alias tokens
+    (`success` → `tip`, `danger` → `caution`, etc.) fold to the GFM 5
+    on disk.
+  - **Image** — `<Image src=… alt=… width=… caption=… />` MDX, plus
+    standard CommonMark `![alt](src)`. Both forms render through the same
+    descriptor with click-to-zoom on by default; the MDX form additionally
+    exposes `caption` (renders as `<figure>` + `<figcaption>`), explicit
+    dimensions, and `loading` / `zoom` toggles.
+  - **Video** — pure HTML5 `<video>` wrapper with native controls. No
+    YouTube / Vimeo URL sniffing — embed services with a raw `<iframe>` in
+    MDX (matches Mintlify's pattern). `<track>` and `<source>` children
+    round-trip.
+  - **Audio** — pure HTML5 `<audio>` wrapper with native controls always
+    on. `<source>` and `<track>` children round-trip.
+  - **Accordion** — standalone HTML5 `<details>` / `<summary>` substrate,
+    no wrapper component required. Cross-browser exclusive grouping via
+    HTML5 `<details name="…">` (Chrome 120+, Safari 17.2+, Firefox 130+).
+    Authors can write either `<details><summary>X</summary>Y</details>` or
+    `<Accordion title="X">Y</Accordion>` — both render the same descriptor.
+
+  Other improvements:
+
+  - Auto-generated settings panel from each component's prop types
+    (string / boolean / number / enum) — no separate component prop docs
+    required.
+  - Slash-command insertion with sensible defaults; the settings panel
+    auto-opens on insertion so required fields are filled in before you
+    move on.
+  - Hover chrome with move-up / move-down / delete / settings buttons.
+  - Keyboard navigation throughout (Tab / Esc / arrow keys with
+    context-aware handling).
+  - Broken or unrecognized MDX components automatically open in an
+    embedded source-code editor so authored content stays editable —
+    nothing silently disappears.
+  - Both pristine and dirty save paths preserve the on-disk shape:
+    unedited blocks round-trip byte-for-byte; edited blocks canonicalize
+    to the MDX JSX form.
+
+  Breaking changes:
+
+  - Both the inline MDX element node (`jsxInline`) and the block MDX
+    component node (`jsxComponent`) changed PM-schema shape in this
+    release. `jsxInline` drops its `attributes` and `sourceRaw` attrs —
+    its text content IS the source of truth. `jsxComponent` widens from
+    an atom with a raw-content attr to a non-atom block with `block*`
+    children and new structured attrs (`componentName`, `kind`,
+    `attributes`, `sourceRaw`, `sourceDirty`, `props`). This is a
+    load-bearing change for collaborative editing — older clients
+    coexisting with this version in the same live session substitute
+    both nodes to `rawMdxFallback` (raw source preserved as editable
+    text) via the y-tiptap schema-throw substitution patch. Upgrade all
+    clients in a session together — both inline JSX authoring and
+    component-block authoring are affected, not just inline. Persisted
+    documents are unaffected; the on-disk MDX is preserved.
+  - Content using component names that are no longer built in
+    (`Tabs`, `Card`, `CardGroup`, `Steps`, `Banner`, `Files`,
+    `TypeTable`, `InlineTOC`, `Mermaid`, `AudioPlaceholder`, `ImageZoom`)
+    opens as an editable raw-source block. Content is preserved
+    verbatim. Rename `<AudioPlaceholder />` → `<Audio />` and
+    `<ImageZoom>` → `<Image>` to pick up the new descriptors.
+
+  The compound-component tier (Tabs + Tab grouping, Accordion grouping
+  with shared chrome, Steps + Step) is not built in today; it returns
+  when concrete dev-docs / help-center authoring demand surfaces. No
+  public API will change for existing 5-pack consumers when that
+  happens.
+
+  Bundle size:
+
+  - Main app bundle stays flat (~210 kB gzipped) — the `fumadocs-ui`
+    drop and 12-descriptor cut offset the 5-pack prop-surface widening
+    and new selection-chrome plugins.
+  - Total JS across lazy-loaded chunks grows ~100 kB gzipped (~978 kB →
+    ~1.08 MB) to accommodate CB-v2 feature surface (descriptor-dispatch
+    registry, V2 editor cache, SelectionStatePlugin + Breadcrumb +
+    SelectionAnnouncer + BlockDragHandle, nested CodeMirror for
+    `rawMdxFallback`, slash-command menu, canonical/compat descriptor
+    split with three additional read-only source-form descriptors
+    (GFMCallout, CommonMarkImage, HtmlDetailsAccordion) for round-trip
+    preservation). The `all JS chunks combined` size-limit ceiling is
+    raised 1050 → 1100 kB (~2% headroom) to match. Delivered via
+    on-demand chunk loading — users don't pay the full bill on first
+    paint.
+
+- fd31cf2: Config Editing Paths — end-to-end UX for editing Open Knowledge configuration:
+
+  - **Settings pane** in the editor area (Cmd-, / App menu / HelpPopover / Command Palette) with `This project` and `User` scope tabs. Each field auto-saves; per-field reset; modified-at-scope indicator on cross-scope fields.
+  - **Real-time sync** — Settings pane is bound to two Y.Text-only synthetic Hocuspocus docs (`__config__/workspace`, `__user__/config.yml`). External edits via CLI, MCP, IDE hand-edit, or another `ok start` instance propagate via a chokidar file watcher into Y.Text and refresh any open pane within ~500ms.
+  - **Three-layer defense-in-depth validation** — client walker (L1) → fs writer (L2) → persistence-hook (L3). Invalid mutations revert to LKG and surface a toast + brief field flash.
+  - **MCP tools** — `set_config`, `get_config`, `set_folder_rule`. fs-direct (no running server required); auto-scope inference via the inspectConfig ladder; mixed-scope rejection.
+  - **CLI** — `ok config validate` (exits 0/1 with source-located errors) + `ok config migrate` (idempotent codemod that drops `sync.*`, `persistence.{debounceMs,maxDebounceMs}`, `server.port`).
+  - **`ok init`** scaffolds the workspace `config.yml` with a magic-comment `$schema` URL pinned to the schema major (`v0`) + `@latest` of the npm package — additive schema changes reach existing users automatically; breaking changes bump the path to `v1` and old majors stay published forever.
+  - **Per-scope JSON Schemas** — `dist/schemas/v0/config.workspace.schema.json` and `…/config.user.schema.json` so VS Code's Red Hat YAML LSP only suggests fields valid AT the file's scope.
+  - **Schema cleanup** — drops `sync.*` (7), `persistence.{debounceMs,maxDebounceMs}` (2), `server.port` (1); adds `appearance.theme` and `appearance.editorModeDefault` (user-scope, both UNSET by default; chrome `<ThemeToggle>` writes through `userBinding.patch` so localStorage stays a derived cache). `content.*` is workspace-scope-only.
+  - **OTel** — five new `config.*` spans (`config.bind`, `config.patch`, `config.validate`, `config.persist`, `config.revert`) trace the full edit chain.
+
+- 9f0daa2: feat(frontmatter-editing-ux): top-of-document property panel + per-key `Y.Map('metadata')` storage + `frontmatter_patch` MCP tool. Frontmatter is now editable inline in WYSIWYG mode through typed widgets, and concurrent edits from a human and an agent to _different_ properties merge at the field level instead of clobbering each other through document-level last-write-wins.
+
+  - `@inkeep/open-knowledge-core` — new `packages/core/src/frontmatter/` module exporting `FrontmatterValueSchema`, `FrontmatterPatchSchema`, `FRONTMATTER_TYPES`, and the comment-preserving YAML codec (`parseFrontmatterYaml` / `serializeFrontmatterMap` over `yaml@2.x`'s `parseDocument`). Bridge readers/writers in `packages/core/src/bridge/frontmatter-y.ts` extended with `getFrontmatterMap`, `setFrontmatterFromYaml`, `setFrontmatterProperty`, and `composeFrontmatterForStore`. `getFrontmatter(doc)` now synthesizes from per-key entries when present, falls back to the legacy single-string slot otherwise — existing string-shape callers continue to compile unchanged.
+  - `@inkeep/open-knowledge-server` — `Y.Map('metadata')` now carries one entry per frontmatter property (`Y.Text` for editable strings, `Y.Array<Y.Text>` for lists, primitives for atomics). New `POST /api/frontmatter-patch` route + `handleFrontmatterPatch` handler applies JSON Merge Patch (RFC 7396) atomically under a per-session, **not paired** `formOrigin`. Observer A's metaMap deep-observer recomposes YAML+body and propagates to `Y.Text` after settlement. `onLoadDocument` runs an eager-on-load migration; `applyExternalChange` (file watcher) and Observer B reconciliation use per-key diff so undoing a single property reverts only that property. `onStoreDocument`'s `composeFrontmatterForStore` writes the legacy YAML byte-string verbatim when the per-key map still matches it — comments, blank lines, and scalar styles round-trip losslessly. `agent-patch` (`/api/agent-patch`) returns HTTP 400 on FM-intersecting find/replace calls with a migration hint pointing at `frontmatter_patch`. New OTel spans `frontmatter.patch` + `frontmatter.form_write`; new counter `ok.frontmatter.edit_surface_total` labels writes by source (`form` / `mcp-patch` / `mcp-write` / `file-watcher` / `source-mode`).
+  - `@inkeep/open-knowledge` — new `frontmatter_patch` MCP tool. Set / create / delete frontmatter properties with `{patch: {key: value | null}}`; optional `types` map overrides per-key widget inference (text / number / boolean / date / list); optional `summary` threads through to the per-contributor attribution journal under the same 80-char cap as the other write tools.
+  - `@inkeep/open-knowledge-app` — new top-of-document Properties panel above the body in WYSIWYG mode. Five widget types (Text / Number / Boolean / Date / List), inline add / delete / rename, type picker dropdown, per-row hover chrome, collapse via chevron, empty-state seeded via the editor toolbar's Add Properties button. All form interactions wire through `POST /api/frontmatter-patch` with `source: 'form'`.
+
+  Storage migration is automatic on document load — no user action required. The legacy single-string `metaMap.get('frontmatter')` slot is retained as a transitional byte-identical mirror so YAML comments and scalar styles survive `doc-load → no-op-edit → doc-save` round-trips. `frontmatter_patch` is the only MCP surface for frontmatter edits going forward; the soft-deprecation window for `agent-patch` FM-touching calls is closed and those now return HTTP 400.
+
+  Full spec + decision log: [`specs/2026-04-24-frontmatter-editing-ux/SPEC.md`](https://github.com/inkeep/open-knowledge/blob/main/specs/2026-04-24-frontmatter-editing-ux/SPEC.md).
+
+- 73a358d: feat(navigator): clone-from-GitHub end-to-end via IPC
+
+  The Project Navigator (the launcher window with no backing API server) can
+  now drive the full GitHub clone flow: Sign in via device-flow auth, browse
+  your repositories, clone, and spawn the cloned project as a new editor
+  window. Editor windows continue using the existing HTTP path — no
+  regression.
+
+  Server (`@inkeep/open-knowledge-server`):
+
+  - New public API in `local-ops/`: `runDeviceFlowSubprocess`,
+    `runCloneSubprocess`, `runAuthStatusSubprocess`, `runAuthReposSubprocess`,
+    `validateCloneInputs`. Framing-agnostic subprocess runners shared by
+    both the HTTP relay and the desktop IPC handlers — guarantees the two
+    paths can't drift.
+  - `CloneCompleteEvent.dir` is now required on the wire (was optional).
+    The HTTP relay always emits it; tightening the type retires the silent
+    no-op when downstream consumers checked `if (!dir) return`.
+
+  Desktop (`@inkeep/open-knowledge-desktop`):
+
+  - New IPC channels for streaming flows: `ok:local-op:auth:start` /
+    `ok:local-op:clone:start` (with `:event` push + `:cancel` siblings).
+  - New IPC channels for one-shot bounded queries:
+    `ok:local-op:auth:status` and `ok:local-op:auth:repos`.
+  - New bridge surface: `bridge.localOp.{auth.start, clone.start,
+authStatus, authRepos}`.
+
+  App (`@inkeep/open-knowledge-app`):
+
+  - `CloneDialog` accepts pluggable `transport` (clone subprocess) and
+    `authQueryTransport` (status + repos) props, defaulting to the existing
+    HTTP path. Navigator passes the IPC equivalents.
+  - `AuthModal` accepts a pluggable device-flow `transport`, same default
+    pattern.
+
+- 8a6cb2d: feat(rename): consolidate `/api/rename` and `/api/rename-path` into a single polymorphic endpoint, lift the link-rewrite spine, extend the recovery journal to v2, and add principal-attribution fallback for rename + rollback handlers.
+
+  **Breaking change** — `POST /api/rename` is **removed**. Clients (UI, MCP, scripts) must use `POST /api/rename-path` with the polymorphic body shape:
+
+  ```json
+  { "kind": "file" | "folder", "fromPath": "<path>", "toPath": "<path>", ...identity, "summary": "..." }
+  ```
+
+  The MCP `rename_document` tool's outward API is unchanged (parameters, response shape, identity passthrough are all functionally equivalent) — only the internal HTTP target changed.
+
+  **New capabilities:**
+
+  - Folder rename now rewrites all inbound wiki-links and supported markdown links across linking docs (was previously a CONFIRMED gap — folder rename moved files but left link text untouched).
+  - Folder rename is now crash-safe — process kill mid-batch is recoverable on next startup with no partial state.
+  - File rename via the consolidated endpoint now updates the in-memory backlink index (was missing on the file branch of `/api/rename-path`).
+  - UI-driven rename and rollback now attribute to the server-loaded principal (`principal-<uuid>`) when no agent identity is supplied. Body-supplied `principalId` is silently ignored — server's `getPrincipal()` is the only source of principal identity.
+
+  The recovery journal schema is bumped from v1 (single source/destination) to v2 (multi-doc `affectedDocs[]`). The v1 parser is preserved alongside v2 — legacy v1 journals on disk at startup still recover correctly.
+
+  Side-effect docs (backlink-rewrite cascades) remain anonymous for both agent-driven and principal-driven renames — only the renamed doc itself is attributed to the actor.
+
+  **Other behavior changes worth noting:**
+
+  - `POST /api/rollback` 500 responses no longer echo the underlying error message; clients now see a generic `Failed to roll back document` string. Eliminates a path / internal-state leak channel for an unauthenticated body endpoint.
+  - `ok init` adds `state.json` to the bootstrapped `.ok/.gitignore` alongside `sync-state.json` and `principal.json` — covers newly-added local-runtime state at `<contentDir>/.ok/state.json` (also emitted as a separate `init-gitignore-consolidation` changeset for the broader scaffold rework, but the `state.json` line specifically lands here).
+
+### Patch Changes
+
+- 8b64fdb: fix(server): asset-event-driven embed re-render fallback
+
+  When an asset is created or deleted outside a cross-branch git batch, the
+  server now scans open docs for `[[<basename>]]` references and re-parses
+  the doc's Y.Text source against the current `basenameIndex` via
+  `applyDiskContentToDoc` (the pure-CRDT helper — no spurious file-system
+  attribution, no reconciledBase advance, no disk read that would revert
+  unsaved user edits). Makes embed resolution self-healing for asset moves
+  that don't go through the head-watcher's cross-branch path — fixing a
+  Linux-CI flake where T17's test-doc was byte-identical across branches
+  and had no fallback re-render trigger when `parcel-watcher` missed the
+  `.git/HEAD` event.
+
+  Idempotent: `applyDiskContentToDoc`'s `updateYFragment` diffs against the
+  live XmlFragment, so re-parsing the same Y.Text source with the same
+  `basenameIndex` is a no-op on the Y.Doc. Skipped during cross-branch
+  batches (events are buffered and discarded), preserving the existing
+  reseed-then-reset ordering. Same-basename events firing in one parcel-
+  watcher batch (e.g. `mv` produces `asset-delete` + `asset-create`)
+  collapse into one re-render via a `setImmediate`-deferred dedup pass.
+
+  Includes T17 test-design fix (poll on actual post-switch invariant instead
+  of pre/post-equivalent embed count) and a new regression test
+  (`asset-move-rerenders-embeds.test.ts`) that exercises the asset-event
+  path independently of git.
+
+- 5d916f4: Recover safely from stale browser CRDT caches after server restarts.
+
+  This scopes client IndexedDB persistence by server epoch, adds server-side tripwires for duplicated persisted content, and records structured mismatch telemetry so stale-cache recovery is observable without replaying unsafe buffered edits.
+
+- Updated dependencies [fbfe967]
+- Updated dependencies [fbfe967]
+- Updated dependencies [f3ad7e9]
+- Updated dependencies [7242822]
+- Updated dependencies [7242822]
+- Updated dependencies [2732c81]
+- Updated dependencies [7242822]
+- Updated dependencies [fd31cf2]
+- Updated dependencies [9f0daa2]
+  - @inkeep/open-knowledge-core@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes

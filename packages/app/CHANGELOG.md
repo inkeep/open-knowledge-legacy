@@ -1,5 +1,331 @@
 # @inkeep/open-knowledge-app
 
+## 0.4.0
+
+### Minor Changes
+
+- fbfe967: Asset-click parity closure (2026-04-24b amendment) — four defects closed end-to-end after dogfood surfaced a `.m4v` click flow that fell through to Vite's SPA fallback:
+
+  - Serve-side: widen `ASSET_EXTENSIONS` to common user-drop extensions; add `Content-Disposition` dispatch in the Vite plugin's sirv middleware (inline for renderable, attachment for everything else); harden SPA fallback to 404 for asset-extension paths sirv didn't serve.
+  - Renderer: FR-A5 `wikiLinkEmbed` NodeView (`packages/app/src/editor/extensions/wiki-link-embed.ts`) lands with InteractionLayer registration — drop-time chip clicks now route through `dispatchAssetClick` end-to-end.
+  - Classifier guard: softened `internal-link.ts` asset-branch guard to catch `sourceForm === 'wikiembed'` + has-extension hrefs regardless of `classifyMarkdownHref` return kind; `resolveAssetProjectPath` accepts leading-slash paths as project-root-relative.
+  - Security: widen `EXECUTABLE_BLOCKLIST_EXTENSIONS` with macOS installer classes (`.dmg`/`.pkg`/`.scpt`/`.applescript`/`.terminal`/`.prefpane`/`.mpkg`), URL-file classes (`.webloc`/`.inetloc`/`.fileloc`), cross-platform packages (`.jar`/`.appimage`/`.deb`/`.rpm`/`.msix`/`.appx`/`.ipa`/`.apk`), and Windows shortcut classes (`.pif`/`.scr`/`.lnk`/`.url`).
+
+  Classifier taxonomy cleanup (moving the asset-ext branch above the leading-slash guard in `classifyMarkdownHref` itself) is deferred to a follow-up PR — see `specs/2026-04-16-editor-asset-and-embed-surface/evidence/classifier-taxonomy-cleanup.md` for the full Option A vs Option B trade-off + Docmost/Obsidian peer-editor comparison.
+
+- fbfe967: feat(editor): asset upload + `![[file.ext]]` wiki-embed surface
+
+  Any file drop is accepted by the editor — there is no user-facing byte cap. PDFs, video, audio, archives, and fonts stop hitting the old "Unsupported file type" dead-end. The emit shape is picked by extension: markdown files (`.md` / `.mdx`) emit as `[[basename]]` wiki-links (link-semantic, navigable on Cmd-click, resolved via `fileIndex` — markdown is a first-class OK doc, not an opaque asset); images + typed renderable files (PDF, MP4, WebM, MP3, WAV, OGG, M4A, MOV) emit as `![[file.ext]]` wiki-embeds; opaque files emit as `[name](path)` markdown links. Uploads stream to disk end-to-end (memory footprint is O(1), not O(fileSize)), so the only rejection axis is disk fullness (`storage-full` → HTTP 507). See [`reports/streaming-upload-refactor/REPORT.md`](reports/streaming-upload-refactor/REPORT.md) for the refactor rationale.
+
+  Same-directory sha256 dedup returns existing paths on duplicate drops with a toast (`"Already at <path> — reusing."`). Renaming a doc that contains image refs recomputes the relative path; absolute refs and wiki-embed refs are untouched because the basename index resolves them dynamically.
+
+  New HTTP surface on the server:
+
+  - `POST /api/upload` — upload endpoint. Success response: `{ ok, src, path, deduped }` where `src` is the asset's basename and `path` is the contentDir-relative location (colocated with the referencing doc). Error responses carry a typed `error` reason (`malformed-upload` / `storage-full` / `storage-readonly` / `collision-exhaustion` / `storage-error`) plus a human-readable `message`.
+
+  No user-facing `upload.*` config. Attachment placement (co-located), emit shape (`![[...]]` for supported extensions), same-directory sha256 dedup with a toast notice, and the wiki-embed extension list are fixed defaults. Every value is a module-level constant in `@inkeep/open-knowledge-core/constants/upload.ts`. One-shot Obsidian-vault migration CLI deferred to a future spec — OK does not read `.obsidian/app.json` at runtime; refugees whose vault uses non-default config shape wait for the future migrator. Legacy configs still carrying `upload.*` keys parse cleanly (unknown keys are silently stripped).
+
+  File watcher now emits `asset-create` / `asset-delete` DiskEvents alongside the existing markdown events; CC1 `ch:'files'` signal coalesces both so file-sidebar and basename-index rebuilds piggyback on one broadcast. `sanitizeFilename` preserves Unicode code points (letters, digits, marks, punctuation, emoji) while stripping path separators and control bytes.
+
+  Full spec + decision log (D1–D-M): [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md). Operator-facing guide: [Assets and embeds](docs/content/guides/assets-and-embeds.mdx).
+
+  **Asset-click dispatcher + OS-integration surface (2026-04-23 amendment).** Click a `![[meeting.pdf]]` embed and the PDF opens predictably — a new browser tab in web, `shell.openPath` in Electron. Previously post-reload clicks routed through the doc-link navigator and failed silently (Gap 3b); Electron drop-time clicks replaced the editor window (Gap 4). Both gaps close.
+
+  - `ClassifiedLinkTarget` gains a first-class `{kind: 'asset', url, ext}` variant; `resolveAssetProjectPath` resolves relative hrefs against the source doc's directory.
+  - Renderer-side dispatcher + empty-at-landing viewer registry at `packages/app/src/editor/asset-dispatch/` — future PRs register PDF.js / image lightbox / video-audio viewers as ~40-60 LOC plugins without modifying the dispatch layer.
+  - Three new Electron IPC channels (`ok:shell:open-asset`, `ok:shell:reveal-asset`, `ok:shell:show-asset-menu`). Main-process `openAssetSafely` enforces path containment (`realpath` + `isPathWithinProject`), existence, and an executable-extension blocklist (`.exe`/`.sh`/`.html`/`.svg`/…) source-verified from Obsidian 1.12.7. Renderer sends project-relative paths; containment fires at the IPC boundary.
+  - Right-click any on-disk reference (asset chip, wiki-link chip, image) → native OS menu with Reveal in Finder / Show in Explorer + Open in default app + Copy link. Gesture-attested (main observes the click directly).
+  - Defense-in-depth: `setWindowOpenHandler` + `will-navigate` on the editor webContents intercept any asset URL that escapes the renderer dispatcher (pasted `<a href>`, plugin content, drop-time `<a target="_blank">`). Same path containment + blocklist enforced on every entry point.
+
+  Full amendment (US-A1..A6, FR-A1..A8, NG-A1..A6, D-A1..A12): [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md) §Post-finalization amendment (2026-04-23). Research: [`reports/electron-os-integration-patterns/`](reports/electron-os-integration-patterns/) + [`reports/editor-asset-embed-patterns-across-universe/`](reports/editor-asset-embed-patterns-across-universe/) D9.
+
+- f3ad7e9: feat(cb-v2): empty-state placeholder for canonical media descriptors
+
+  Slash-inserting an `img`, `video`, or `audio` block now renders a
+  Notion-style "Add an image / a video / audio" pill instead of the
+  browser's broken-source UI. Clicking the pill opens the existing
+  PropPanel popover with the relevant input autofocused; once the URL is
+  filled in, the pill swaps for the rendered media.
+
+  The pill is descriptor-driven, so future canonicals get the same
+  empty-state UX automatically. A new optional field on `JsxComponentMeta`
+  lets a descriptor override the default copy and icon when the generic
+  fallback isn't natural English:
+
+  ```ts
+  placeholder?: { label?: string; icon?: string };
+  ```
+
+  The fallback ladder is:
+
+  - **Label** — `descriptor.placeholder.label` falls back to
+    `\`Add ${descriptor.displayName.toLowerCase()}\``.
+  - **Icon** — `descriptor.placeholder.icon` falls back to
+    `descriptor.icon`, then to `Box` if the icon name isn't registered in
+    the lucide map.
+
+  The pill renders only when an `autoFocus`-flagged required string prop
+  is empty (`src === ''` for the media trio). Container descriptors
+  (`hasChildren: true` — `Callout`, `Accordion`) keep their existing
+  empty-state UX through `emptyChildName` and never show the pill.
+
+  The pill spans the full doc-body width and sits above the regular
+  hover-revealed chrome bar (gear, move-up / move-down, delete). The
+  chrome stays visible in placeholder mode for parity with how the
+  chrome's gear-hint UX already surfaces on any other unconfigured
+  component (e.g. `<img alt="">`) — there is no special-cased hide.
+
+  To keep the wrapper's HTML5 drag-to-reorder working through the pill,
+  the placeholder is rendered as `<div role="button">` rather than a
+  native `<button>`; native buttons capture mousedown for activation and
+  prevent the wrapper's drag from initiating. Keyboard activation is
+  covered by both the wrapper's existing `handleKeyDown` (Enter/Space
+  when selected) and a local `onKeyDown` on the pill.
+
+  This is a pure render-time addition. Storage shape, MDX serialization,
+  and on-disk round-trip are unchanged — a fresh slash-inserted block
+  still serializes to `<img src="" />` and round-trips byte-identically.
+
+- 7242822: feat(cb-v2): lowercase media canonicals + PropPanel Advanced section + cross-app clipboard fidelity
+
+  Follow-up architectural pivot on the Component Blocks v2 5-pack. The three media canonicals are now lowercase HTML-tag-spelled — `img` / `video` / `audio` — replacing the capitalized `Image` / `Video` / `Audio` descriptors that shipped in the original 5-pack. PropPanel gains an "Advanced" collapsible section so the long tail of HTML-native attributes (`srcset`, `sizes`, `decoding`, `fetchpriority`, `crossorigin`, `referrerpolicy`, etc.) doesn't dominate the panel for common edits.
+
+  The rule formalized in `built-ins.ts`: a canonical descriptor goes lowercase when (a) the HTML primitive carries a complete-enough attribute set that nothing OK-specific needs to live as a prop, and (b) compositional wrappers (Frame, Figure, etc.) are the canonical home for OK-specific affordances around the primitive. Capitalized canonicals stay capitalized when HTML has no covering primitive (`Callout`) or the closest one is a structural subset (`Accordion` vs `<details>`).
+
+  What changed for authors:
+
+  - **Slash menu labels remain capitalized** ("Image" / "Video" / "Audio") via `displayName`, so the authoring UX is unchanged. The descriptor name (and the MDX bytes on disk) flip lowercase: a slash-menu insert now writes `<img src="…" alt="…" />` instead of `<Image …/>`.
+  - **`caption` and `zoom` are dropped** from the Image descriptor's prop surface. `zoom` becomes always-on inside the Image React component (click-to-zoom for every `<img>`); a future Frame v2 wrapper will host caption + border + decorations as a compositional element. `<figure>` / `<figcaption>` rendering is removed from the bare Image component.
+  - **PropPanel "Advanced" collapsible** — common props (`src`, `alt`, `width`, `height`) render flat; the HTML-native attribute tail collapses behind an "Advanced" trigger. The panel remembers per-descriptor open/closed state in localStorage. A count badge surfaces non-default-set advanced props.
+  - **Cross-app paste of media now lands as real `<img>` / `<video>` / `<audio>`** — the mdast→hast handler emits native HTML elements for lowercase media canonicals, so pasting from Open Knowledge into Slack / Notion / Gmail / Google Docs renders the actual asset instead of an escaped MDX source block (`<pre class="mdx-component"><code>&lt;img …&gt;</code></pre>`). Capitalized JSX (Callout, Accordion, custom components) continues to flow through the source-as-code shape until per-descriptor `toClipboardHast` lands as a follow-up.
+  - **The `CommonMarkImage` compat descriptor reroutes through `img`** — `![alt](src)` source forms still round-trip byte-identically, rendering through the same React component as canonical `img`. Compat descriptors are pure read-only round-trip preservers; for canonical-only features (srcset/sizes/etc.), insert a fresh Image block from the slash menu.
+
+  Internal: `imageProps` / `videoProps` / `audioProps` arrays are replaced with `htmlImgProps` (12 props) / `htmlVideoProps` (11 props) / `htmlAudioProps` (7 props), each split into common + advanced subsets. HTML attribute names use lowercase spelling on the descriptor side (`autoplay`, `playsinline`, `fetchpriority`) — the React components translate to camelCase at the JSX boundary so the emitted MDX matches the HTML spec exactly. The `autolink-void-html-guard.ts` PUA-protection layer gains a self-closing JSX-canonical exemption for `img` / `video` / `audio` so lowercase canonicals reach remark-mdx as `mdxJsxFlowElement` rather than being routed into raw-HTML protection.
+
+  Breaking changes:
+
+  - New slash-menu inserts emit lowercase `<img>` / `<video>` / `<audio>` to disk. Any pre-existing content written with capitalized `<Image>` / `<Video>` / `<Audio>` falls through to the wildcard fallback (`UnknownComponent` chrome) since those descriptor names are no longer registered. Greenfield posture: rename in place to recover the registered descriptor.
+  - `caption` and `zoom` props removed from the Image descriptor. Pre-existing `<Image caption="…" zoom={false} />` content keeps the props as wildcard attributes (preserved verbatim, no longer interpreted) until renamed to `<img>` and rewritten through Frame v2.
+
+  Bundle size: the all-JS-chunks ceiling raises from 1.15 MB → 1.2 MB to absorb the post-merge composition (this PR's lowercase pivot + PropPanel Advanced + Collapsible primitive on top of main's #311 client-side y-indexeddb buffer-and-replay, agent-activity-panel, statistics-footer). Main app bundle stays well under its 280 kB ceiling. Delivered via on-demand chunk loading — first-paint cost is unchanged.
+
+- 7242822: feat(cb-v2): generalizable file-upload prop affordance + legacy image-slash removal
+
+  Unifies the two parallel media-insertion paths that emerged on the lowercase media canonical pivot. The legacy `image` slash command (file-picker → `/api/upload-image` → inline image PM node) is removed; the descriptor-driven slash menu now carries the upload UX through the PropPanel `src` field.
+
+  Two new optional fields on `PropDefString` declare the affordance:
+
+  - **`accept?: readonly string[]`** — when set, the auto-rendered PropPanel control adds an upload icon-button next to the URL input. Wildcards (`image/*`) and `.ext` shortcuts are valid per the HTML `<input accept>` spec; the array is joined to a comma-string at the input boundary.
+  - **`autoFocus?: boolean`** — focuses this prop's input on PropPanel mount. Mirrors the React DOM convention. First match in declared order wins.
+
+  The `src` prop on each media descriptor (`htmlImgProps[0]`, `htmlVideoProps[0]`, `htmlAudioProps[0]`) carries both, so picking "Image" / "Video" / "Audio" from the slash menu now opens the PropPanel with `src` focused and an upload button ready.
+
+  Server endpoints `/api/upload-video` and `/api/upload-audio` mirror `/api/upload-image`'s atomic-write + magic-byte MIME validation discipline. Per-endpoint allowlists:
+
+  - `ALLOWED_VIDEO_MIME_TYPES`: `video/mp4`, `video/webm`, `video/ogg`
+  - `ALLOWED_AUDIO_MIME_TYPES`: `audio/mpeg`, `audio/wav`, `audio/ogg`, `audio/webm`
+
+  All three handlers share an internal `uploadMediaCore` helper — single source of truth for path validation, magic-byte sniffing, atomic write, and clipboard-paste filename synthesis. New uploads go through a generalized `uploadFile(file, accept) → Promise<{url}>` client helper that routes by MIME-type prefix (`image/`, `video/`, `audio/`).
+
+  What changed for authors:
+
+  - **Slash menu shows exactly 5 component-block entries**: Accordion, Audio, Callout, Image, Video. The old file-picker "Image" entry that uploaded directly is gone — the same UX now lives one click deeper, on the inserted block's PropPanel.
+  - **PropPanel `src` field has an upload icon-button** for image/video/audio descriptors. Click → native file picker constrained to the descriptor's MIME types → upload → URL fills. Loading state shows a spinner; errors surface a toast.
+  - **Drag-and-drop and paste-image flows are unchanged** — they still drop through `uploadAndInsert`, which now delegates the network round-trip to the new generalized `uploadFile` helper internally.
+
+  Internal: `accept` and `autoFocus` are added to `PropDefString` only (not Boolean/Number/Enum/ReactNode — D3 LOCKED). The PropPanel computes `getAutoFocusedPropName(props)` once and threads `isAutoFocused` to each PropControl, which marks the matching `<Input>` with both `autoFocus={true}` and `data-prop-autofocus=""` (the data-attr makes SSR test assertions tractable since React 19's autoFocus is client-only at runtime).
+
+- 2732c81: feat(clipboard): component contract + byte preservation across the paste matrix
+
+  Restores byte-preservation across the OK→OK / OK→external / external→OK / cross-machine clipboard paste matrix. Three independent additive layers on the existing pipeline:
+
+  1. **FR-13-first dispatcher reorder + heuristic extension.** The markdown-first ambiguity tiebreak now runs ahead of the `data-pm-slice` Branch C in both WYSIWYG and Source dispatchers — OK-canonical bytes route through `mdManager.parse` before PM-native parseFromClipboard can fight TipTap parseDOM rules. The `is-markdown.ts` heuristic gains six new signals (blockquote, inline code, paired emphasis, capitalized JSX, lowercase JSX-with-attr, raw-HTML-inline) so cross-machine markdown-text transport (raw `<Callout>` from email/Slack/file) recovers descriptor identity. The previous dispatcher order silently flipped `<img/>` JSX to `![alt](src)` (PR #310's lowercase pivot regression) and converted capitalized `<Callout>` to a `<pre class="mdx-component">` codeblock.
+
+  2. **Live-DOM walker as default outbound text/html mechanism.** `clipboardSerializer.serializeFragment` walks the live editor DOM via `view.nodeDOM(pos)`, clones each top-level slice node, and inlines allowlisted computed styles via `getComputedStyle`. The React render IS the cross-app HTML shape — `<aside class="callout">` for Callout, native `<img>` / `<video>` / `<audio>` for media, real `<details><summary>` for Accordion. Per-descriptor `JsxComponentMetaBase.toClipboardHast` is an OPTIONAL override for descriptors with hidden state (Tabs with conditionally-rendered children, Canvas with bitmap state); the v1 5-pack uses zero overrides. Activity-hidden subtrees (`view.nodeDOM(pos) === null`) fall through to a per-descriptor static palette so the case isn't silently empty.
+
+  3. **FR-20 escape contract at the walker boundary + build hygiene + chevron-as-real-DOM refactor.** The walker enforces four filter classes during the pairwise walk: computed-style allowlist, class blocklist, attribute blocklist, and URL-scheme allowlist via `isSafeWalkerUrl` for href/src/srcset/poster/formaction/xlink:href + `sanitizeEmbeddedUrlValue` for aria-label/aria-description/title + `sanitizeStyleAttrValue` for `style` payloads + `isDangerousEventHandlerAttr` for `on*`. Allowlist posture (not denylist) closes leading-whitespace bypass, srcset multi-URL bypass, novel-scheme fail-open, and `data:image/svg+xml` SVG-XSS host. `Callout.tsx` collapsible + `Accordion.tsx` chevron refactored from `::before` pseudo-element to real `<ChevronRight>` lucide icon (pseudo-elements don't survive `cloneNode`). `--conditions=development` dropped from per-package test scripts in `app`/`core`/`server`/`cli` so tests resolve to the same `dist/` artifact production consumers use.
+
+  New public exports from `@inkeep/open-knowledge-core`:
+
+  - `SAFE_URL_SCHEMES` — canonical scheme array (`['https', 'http', 'mailto', 'tel', 'ftp', 'sms']`); single source of truth for the URL allowlist used by the markdown pipeline (`isSafeUrl`), the clipboard walker (`isSafeWalkerUrl`), and the JSX-prop sanitizer (`URL_SCHEME_ALLOWLIST`).
+  - `SAFE_URL_SCHEME_RE` — regex form derived from `SAFE_URL_SCHEMES`, with relative-URL path-prefix alternates (`/`, `#`, `?`, `./`, `../`).
+  - `isSafeUrl(url)` — boolean classifier; trims leading whitespace before testing; treats empty strings as benign.
+  - `ClipboardHastContext` — type for the optional `descriptor.toClipboardHast` override signature.
+
+  Internal: `JsxComponentMetaBase` gains an OPTIONAL `toClipboardHast?` method. The clipboard module gains `clipboard-walker-fallback-fired`, `clipboard-walker-url-blocked`, and `clipboard-hast-override-invoked` (reserved) telemetry events. `RawMdxFallback.parseHTML` widens (additive per precedent #9) to accept both `div[data-raw-mdx-fallback]` (in-app NodeView) and `pre[data-raw-mdx-fallback]` (outbound walker shape) so OK→OK Branch C round-trip can reconstruct the rawMdxFallback node.
+
+  No breaking changes — every change is additive or behavior-preserving. Pre-existing `paste-fidelity.e2e.ts` wiki-link assertions updated to match the new walker chip shape (`data-wiki-link` parseDOM marker is preserved; cross-app destinations strip class/data attrs and surface the alias text consistent with NG-S6 destination-stripping).
+
+  **Cross-app render fidelity follow-up (post-Pass-5):**
+
+  - **`oklch()` / `oklab()` / `lab()` / `lch()` → `rgb()` conversion at copy time.** Modern Chrome's `getComputedStyle()` returns CSS Color 4 function literals; destination HTML renderers (Gmail, Notion, Slack-class) cannot parse these and fall back to default colors — invisible chevrons, missing accent borders. The walker's `buildInlineStyleFrom` now passes every value through `convertCssColors` (new export from `@inkeep/open-knowledge-core` clipboard-sanitize leaf) before emitting. Pure regex + math implementation; no dep added.
+  - **`OPT_OUT_ATTR` (`data-clipboard-omit`) promoted to public export.** First consumers wired: `JsxComponentView`'s chrome bar, stuck-state row, and add-child pill mark themselves so the walker drops the entire chrome subtree. `drag-handle.ts` opts out defensively. Editor toolbar SVGs (`lucide-trash2`, `lucide-settings2`, `lucide-arrow-up/down`) no longer leak into cross-app paste.
+  - **Inline lucide SVG → Unicode glyph at walker emit.** No major paste destination preserves inline `<svg>` (Gmail's image proxy refuses, Outlook retired SVG support in Sept 2025, Notion / Slack / Google Docs strip on paste). The walker now substitutes a `<span aria-hidden="true">{glyph}</span>` for each mapped `lucide-*` SVG via `replaceLucideIconsWithGlyphs` (new export). Color survives via the parent's already-inlined `style="color: rgb(...)"`. Six icons mapped (chevron-right, info, lightbulb, message-square-warning, alert-triangle, alert-octagon) covering the v1 5-pack. Unmapped lucide-\* classes surface a once-per-process `clipboard-walker-unmapped-lucide-icon` telemetry event so future descriptors don't silently regress. In-app render is unchanged — walker-localized.
+
+- fd31cf2: Config Editing Paths — end-to-end UX for editing Open Knowledge configuration:
+
+  - **Settings pane** in the editor area (Cmd-, / App menu / HelpPopover / Command Palette) with `This project` and `User` scope tabs. Each field auto-saves; per-field reset; modified-at-scope indicator on cross-scope fields.
+  - **Real-time sync** — Settings pane is bound to two Y.Text-only synthetic Hocuspocus docs (`__config__/workspace`, `__user__/config.yml`). External edits via CLI, MCP, IDE hand-edit, or another `ok start` instance propagate via a chokidar file watcher into Y.Text and refresh any open pane within ~500ms.
+  - **Three-layer defense-in-depth validation** — client walker (L1) → fs writer (L2) → persistence-hook (L3). Invalid mutations revert to LKG and surface a toast + brief field flash.
+  - **MCP tools** — `set_config`, `get_config`, `set_folder_rule`. fs-direct (no running server required); auto-scope inference via the inspectConfig ladder; mixed-scope rejection.
+  - **CLI** — `ok config validate` (exits 0/1 with source-located errors) + `ok config migrate` (idempotent codemod that drops `sync.*`, `persistence.{debounceMs,maxDebounceMs}`, `server.port`).
+  - **`ok init`** scaffolds the workspace `config.yml` with a magic-comment `$schema` URL pinned to the schema major (`v0`) + `@latest` of the npm package — additive schema changes reach existing users automatically; breaking changes bump the path to `v1` and old majors stay published forever.
+  - **Per-scope JSON Schemas** — `dist/schemas/v0/config.workspace.schema.json` and `…/config.user.schema.json` so VS Code's Red Hat YAML LSP only suggests fields valid AT the file's scope.
+  - **Schema cleanup** — drops `sync.*` (7), `persistence.{debounceMs,maxDebounceMs}` (2), `server.port` (1); adds `appearance.theme` and `appearance.editorModeDefault` (user-scope, both UNSET by default; chrome `<ThemeToggle>` writes through `userBinding.patch` so localStorage stays a derived cache). `content.*` is workspace-scope-only.
+  - **OTel** — five new `config.*` spans (`config.bind`, `config.patch`, `config.validate`, `config.persist`, `config.revert`) trace the full edit chain.
+
+- 9f0daa2: feat(frontmatter-editing-ux): top-of-document property panel + per-key `Y.Map('metadata')` storage + `frontmatter_patch` MCP tool. Frontmatter is now editable inline in WYSIWYG mode through typed widgets, and concurrent edits from a human and an agent to _different_ properties merge at the field level instead of clobbering each other through document-level last-write-wins.
+
+  - `@inkeep/open-knowledge-core` — new `packages/core/src/frontmatter/` module exporting `FrontmatterValueSchema`, `FrontmatterPatchSchema`, `FRONTMATTER_TYPES`, and the comment-preserving YAML codec (`parseFrontmatterYaml` / `serializeFrontmatterMap` over `yaml@2.x`'s `parseDocument`). Bridge readers/writers in `packages/core/src/bridge/frontmatter-y.ts` extended with `getFrontmatterMap`, `setFrontmatterFromYaml`, `setFrontmatterProperty`, and `composeFrontmatterForStore`. `getFrontmatter(doc)` now synthesizes from per-key entries when present, falls back to the legacy single-string slot otherwise — existing string-shape callers continue to compile unchanged.
+  - `@inkeep/open-knowledge-server` — `Y.Map('metadata')` now carries one entry per frontmatter property (`Y.Text` for editable strings, `Y.Array<Y.Text>` for lists, primitives for atomics). New `POST /api/frontmatter-patch` route + `handleFrontmatterPatch` handler applies JSON Merge Patch (RFC 7396) atomically under a per-session, **not paired** `formOrigin`. Observer A's metaMap deep-observer recomposes YAML+body and propagates to `Y.Text` after settlement. `onLoadDocument` runs an eager-on-load migration; `applyExternalChange` (file watcher) and Observer B reconciliation use per-key diff so undoing a single property reverts only that property. `onStoreDocument`'s `composeFrontmatterForStore` writes the legacy YAML byte-string verbatim when the per-key map still matches it — comments, blank lines, and scalar styles round-trip losslessly. `agent-patch` (`/api/agent-patch`) returns HTTP 400 on FM-intersecting find/replace calls with a migration hint pointing at `frontmatter_patch`. New OTel spans `frontmatter.patch` + `frontmatter.form_write`; new counter `ok.frontmatter.edit_surface_total` labels writes by source (`form` / `mcp-patch` / `mcp-write` / `file-watcher` / `source-mode`).
+  - `@inkeep/open-knowledge` — new `frontmatter_patch` MCP tool. Set / create / delete frontmatter properties with `{patch: {key: value | null}}`; optional `types` map overrides per-key widget inference (text / number / boolean / date / list); optional `summary` threads through to the per-contributor attribution journal under the same 80-char cap as the other write tools.
+  - `@inkeep/open-knowledge-app` — new top-of-document Properties panel above the body in WYSIWYG mode. Five widget types (Text / Number / Boolean / Date / List), inline add / delete / rename, type picker dropdown, per-row hover chrome, collapse via chevron, empty-state seeded via the editor toolbar's Add Properties button. All form interactions wire through `POST /api/frontmatter-patch` with `source: 'form'`.
+
+  Storage migration is automatic on document load — no user action required. The legacy single-string `metaMap.get('frontmatter')` slot is retained as a transitional byte-identical mirror so YAML comments and scalar styles survive `doc-load → no-op-edit → doc-save` round-trips. `frontmatter_patch` is the only MCP surface for frontmatter edits going forward; the soft-deprecation window for `agent-patch` FM-touching calls is closed and those now return HTTP 400.
+
+  Full spec + decision log: [`specs/2026-04-24-frontmatter-editing-ux/SPEC.md`](https://github.com/inkeep/open-knowledge/blob/main/specs/2026-04-24-frontmatter-editing-ux/SPEC.md).
+
+- 73a358d: feat(navigator): clone-from-GitHub end-to-end via IPC
+
+  The Project Navigator (the launcher window with no backing API server) can
+  now drive the full GitHub clone flow: Sign in via device-flow auth, browse
+  your repositories, clone, and spawn the cloned project as a new editor
+  window. Editor windows continue using the existing HTTP path — no
+  regression.
+
+  Server (`@inkeep/open-knowledge-server`):
+
+  - New public API in `local-ops/`: `runDeviceFlowSubprocess`,
+    `runCloneSubprocess`, `runAuthStatusSubprocess`, `runAuthReposSubprocess`,
+    `validateCloneInputs`. Framing-agnostic subprocess runners shared by
+    both the HTTP relay and the desktop IPC handlers — guarantees the two
+    paths can't drift.
+  - `CloneCompleteEvent.dir` is now required on the wire (was optional).
+    The HTTP relay always emits it; tightening the type retires the silent
+    no-op when downstream consumers checked `if (!dir) return`.
+
+  Desktop (`@inkeep/open-knowledge-desktop`):
+
+  - New IPC channels for streaming flows: `ok:local-op:auth:start` /
+    `ok:local-op:clone:start` (with `:event` push + `:cancel` siblings).
+  - New IPC channels for one-shot bounded queries:
+    `ok:local-op:auth:status` and `ok:local-op:auth:repos`.
+  - New bridge surface: `bridge.localOp.{auth.start, clone.start,
+authStatus, authRepos}`.
+
+  App (`@inkeep/open-knowledge-app`):
+
+  - `CloneDialog` accepts pluggable `transport` (clone subprocess) and
+    `authQueryTransport` (status + repos) props, defaulting to the existing
+    HTTP path. Navigator passes the IPC equivalents.
+  - `AuthModal` accepts a pluggable device-flow `transport`, same default
+    pattern.
+
+### Patch Changes
+
+- 6dec4bc: fix(cb-v2): return DOM focus to editor on PropPanel close
+
+  After the descriptor PropPanel popover closed via Escape (e.g. `/image` →
+  fill `src` → Escape), the next keystroke vanished — Radix's FocusScope
+  unmount restored focus to a stale `previouslyFocusedElement` (the gear
+  button or a now-detached slash-menu element) instead of the editor body.
+  The user had to click back into the editor before typing worked, breaking
+  the Notion-style "fill prop → Escape → continue typing" loop.
+
+  Override Radix's default close-time focus restore via `onCloseAutoFocus`
+  on `<PopoverContent>`, gated on self-closing-leaf descriptors so
+  containers (Callout/Accordion) keep the trigger-restore default. The
+  override runs synchronously inside Radix's `setTimeout(0)` close-tick,
+  beating the rAF-vs-setTimeout race the previous `editor.view.focus()`
+  in `handleOpenChange`'s rAF couldn't reliably win.
+
+- 8b64fdb: fix(server): asset-event-driven embed re-render fallback
+
+  When an asset is created or deleted outside a cross-branch git batch, the
+  server now scans open docs for `[[<basename>]]` references and re-parses
+  the doc's Y.Text source against the current `basenameIndex` via
+  `applyDiskContentToDoc` (the pure-CRDT helper — no spurious file-system
+  attribution, no reconciledBase advance, no disk read that would revert
+  unsaved user edits). Makes embed resolution self-healing for asset moves
+  that don't go through the head-watcher's cross-branch path — fixing a
+  Linux-CI flake where T17's test-doc was byte-identical across branches
+  and had no fallback re-render trigger when `parcel-watcher` missed the
+  `.git/HEAD` event.
+
+  Idempotent: `applyDiskContentToDoc`'s `updateYFragment` diffs against the
+  live XmlFragment, so re-parsing the same Y.Text source with the same
+  `basenameIndex` is a no-op on the Y.Doc. Skipped during cross-branch
+  batches (events are buffered and discarded), preserving the existing
+  reseed-then-reset ordering. Same-basename events firing in one parcel-
+  watcher batch (e.g. `mv` produces `asset-delete` + `asset-create`)
+  collapse into one re-render via a `setImmediate`-deferred dedup pass.
+
+  Includes T17 test-design fix (poll on actual post-switch invariant instead
+  of pre/post-equivalent embed count) and a new regression test
+  (`asset-move-rerenders-embeds.test.ts`) that exercises the asset-event
+  path independently of git.
+
+- 5d916f4: Recover safely from stale browser CRDT caches after server restarts.
+
+  This scopes client IndexedDB persistence by server epoch, adds server-side tripwires for duplicated persisted content, and records structured mismatch telemetry so stale-cache recovery is observable without replaying unsafe buffered edits.
+
+- 53fd6a8: fix(editor-cache): walk pool.entries on demote so non-V2-cached providers disconnect
+
+  `setActivityMountList`'s demote loop only consulted the V2 editor cache
+  (`tiptapCache` + `cmCache`) to find a doc's provider. When a doc was
+  `ProviderPool`-resident but not V2-cache-resident — defer-mounted +
+  `BYTES_CACHE_THRESHOLD`-rejected, which happens for multi-MB docs at small
+  `ACTIVITY_MOUNT_LIMIT` — the lookup returned null, the disconnect was
+  silently skipped, and the provider kept draining peer bytes into the local
+  Y.Doc forever. FR3b violated at limit=1.
+
+  Stash the `ProviderPool` reference on `subscribePoolEviction` (cleared on
+  its unsubscribe). The lookup now falls back to `pool.entries` so demote-
+  path disconnects fire for the full set of pool-resident docs, not just the
+  V2-cached subset.
+
+  Production exposure is currently dormant — shipped `ACTIVITY_MOUNT_LIMIT`
+  is 3, and the bug only manifests at limit=1 — but the silent-skip class is
+  removed so the contract holds if the limit ever changes or an unrelated
+  code path lands a doc in `pool.entries` without going through the cache.
+
+- 63a72de: fix(editor-cache): clear undoManager.restore on park/evict to break TipTap+Yjs leak chain
+
+  TipTap mount/destroy cycles were leaking ~30 MB per cycle on multi-MB
+  documents (heap-snapshot probe: 10× PROJECT navigations retained 10 full
+  editor DOM trees). Two cooperating upstream behaviors caused the chain —
+  Yjs `UndoManager`'s constructor registers a `doc.on('destroy', …)`
+  listener with no stable reference (so `UndoManager.destroy()` cannot
+  deregister it; verified unfixed across `yjs@13.6.30`, `v14.0.0-rc.13`,
+  and `main`), and `@tiptap/extension-collaboration`'s plugin-view destroy
+  assigns `undoManager.restore = closure` capturing the entire `EditorView`
+
+  - `ProsemirrorBinding` + `Editor` + PM document tree.
+
+  The cache now captures the per-editor UndoManager via `yUndoPluginKey`
+  before `editor.destroy()` and nulls `undoManager.restore` after destroy
+  returns at both call sites (`parkTiptapEditor` `__uncached` branch and
+  `evictTiptapEditor`). The leaked UndoManager itself remains in
+  `Y.Doc._observers` but its retained payload drops from ~30 MB to a few
+  hundred bytes per cycle — heap is now flat across PROJECT mount/destroy
+  cycles (0.14 MB/cycle drift, well below the noise floor).
+
+- Updated dependencies [fbfe967]
+- Updated dependencies [fbfe967]
+- Updated dependencies [f3ad7e9]
+- Updated dependencies [7242822]
+- Updated dependencies [7242822]
+- Updated dependencies [8b64fdb]
+- Updated dependencies [2732c81]
+- Updated dependencies [7242822]
+- Updated dependencies [fd31cf2]
+- Updated dependencies [5d916f4]
+- Updated dependencies [9f0daa2]
+- Updated dependencies [73a358d]
+- Updated dependencies [8a6cb2d]
+  - @inkeep/open-knowledge-core@0.4.0
+  - @inkeep/open-knowledge-server@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes
