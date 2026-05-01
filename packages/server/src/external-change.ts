@@ -7,7 +7,7 @@
  */
 
 import type { Hocuspocus } from '@hocuspocus/server';
-import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { applyFastDiff, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
@@ -55,23 +55,36 @@ export function applyDiskContentToDoc(
   resolveEmbed?: (basename: string, sourcePath: string) => string | null,
   sourcePath?: string,
 ): void {
-  const { body } = stripFrontmatter(content);
+  const { frontmatter, body } = stripFrontmatter(content);
   const parseOpts = resolveEmbed && sourcePath ? { resolveEmbed, sourcePath } : undefined;
   const parsedJson = mdManager.parseWithFallback(body, parseOpts);
   const pmNode = schema.nodeFromJSON(parsedJson);
   const xmlFragment = document.getXmlFragment('default');
 
+  // Y.Text body must match XmlFragment's serialization so the bridge invariant
+  // (`stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize
+  // (fragment))`) holds. Markdown has multiple equivalent representations for
+  // some constructs (NG7-NG11 — e.g. doc-start `---` → canonical `***` for
+  // thematic breaks; whitespace-collapse normalization in the mdast pipeline)
+  // — writing the raw disk bytes to Y.Text would diverge from XmlFragment's
+  // canonical form for any such input.
+  //
+  // FM region is preserved VERBATIM (D8/D26): `frontmatter` is the YAML
+  // bytes from disk, including user-authored indentation, scalar styles, and
+  // comments. The canonical-body composition only canonicalizes the body
+  // half. Malformed YAML round-trips as-is; the panel renders last-valid +
+  // a banner per D21.
+  const canonicalBody = mdManager.serialize(parsedJson);
+  const canonicalContent = prependFrontmatter(frontmatter, canonicalBody);
+
   document.transact(() => {
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
 
-    // Y.Text receives the full file content (FM + body) directly — the FM
-    // region IS the source of truth for FM (D8/D26). Malformed YAML on disk
-    // round-trips as-is; the panel renders last-valid + a banner per D21.
     const ytext = document.getText('source');
     const currentText = ytext.toString();
-    if (currentText !== content) {
-      applyFastDiff(ytext, currentText, content);
+    if (currentText !== canonicalContent) {
+      applyFastDiff(ytext, currentText, canonicalContent);
     }
   }, FILE_WATCHER_ORIGIN);
 }

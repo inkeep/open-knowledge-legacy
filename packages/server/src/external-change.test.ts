@@ -101,6 +101,52 @@ describe('applyExternalChange — throwing helper', () => {
     await conn.disconnect();
   });
 
+  test('(b4) FM-indent preserved verbatim; body canonicalized to match XmlFragment (bridge invariant)', async () => {
+    // Two parts of the same disk→CRDT contract:
+    //   - FM region is preserved EXACTLY (D8/D26 — user's YAML formatting,
+    //     including `  - characters` indent, must round-trip).
+    //   - Body region matches XmlFragment's canonical serialization
+    //     (bridge invariant — `stripTrailingWhitespace(ytext) ===
+    //     stripTrailingWhitespace(serialize(fragment))`). Markdown has
+    //     multiple equivalent representations (NG7 — doc-start `---` is
+    //     a thematic break that serializes to canonical `***`); writing
+    //     the raw disk bytes for these constructs would diverge.
+    const docName = 'test-fm-indent-body-canonical';
+    const conn = await hp.openDirectConnection(docName);
+    const doc = getDoc(conn);
+
+    const onDisk = '---\ntags:\n  - characters\n  - air-nomads\n---\n\n# Aang\n';
+    applyExternalChange(hp, docName, onDisk);
+
+    const ytext = doc.getText('source').toString();
+    // FM region byte-identical to disk (preserves indent + scalar style).
+    const { frontmatter } = stripFrontmatter(ytext);
+    expect(frontmatter).toBe('---\ntags:\n  - characters\n  - air-nomads\n---\n');
+
+    await conn.disconnect();
+  });
+
+  test('(b5) horizontal-rule canonicalization: doc-start `---` body becomes canonical `***`', async () => {
+    // NG7 — input markdown contains `---` (a thematic break) as the doc
+    // body. The mdast parser canonicalizes thematic-break markers to
+    // `***` on serialize. Y.Text's body half must hold the canonical
+    // form so the bridge invariant holds; if we wrote `---` verbatim
+    // to Y.Text but XmlFragment serialized to `***`, they'd diverge.
+    const docName = 'test-thematic-break-canonical';
+    const conn = await hp.openDirectConnection(docName);
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, docName, '---\n');
+
+    const ytext = doc.getText('source').toString();
+    // No FM block (single `---` doesn't match `^---\n…\n---`); the line
+    // is body content. After canonicalization Y.Text holds `***\n`.
+    expect(ytext).toContain('***');
+    expect(ytext).not.toContain('---');
+
+    await conn.disconnect();
+  });
+
   test('(c) Y.Text no-op — delete/insert skipped when content unchanged', async () => {
     const docName = 'test-ytext-noop';
     const conn = await hp.openDirectConnection(docName);
