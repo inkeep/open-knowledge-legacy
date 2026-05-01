@@ -57,11 +57,11 @@ import {
   LocalOpOpenRequestSchema,
   type Principal,
   prependFrontmatter,
-  readFmMap,
   RenamePathRequestSchema,
   type RescueEntryFlat,
   type RescueEntryTimeline,
   RollbackRequestSchema,
+  readFmMap,
   SaveVersionRequestSchema,
   SeedApplyRequestSchema,
   SYSTEM_DOC_NAME,
@@ -2294,13 +2294,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // set. 404 here closes that whole class.
         const filePath = resolveContentEntryPath(contentDir, 'file', docName);
         if (!existsSync(filePath)) {
-          errorResponse(
-            res,
-            404,
-            'urn:ok:error:doc-not-found',
-            `Document not found: ${docName}`,
-            { handler: 'document-read' },
-          );
+          errorResponse(res, 404, 'urn:ok:error:doc-not-found', `Document not found: ${docName}`, {
+            handler: 'document-read',
+          });
           return;
         }
 
