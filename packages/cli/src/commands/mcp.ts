@@ -26,6 +26,17 @@ import { OK_DIR } from '../constants.ts';
 import { startMcpServer } from '../mcp/server.ts';
 import { createProjectServerUrlResolver, parseSpawnTimeoutEnv } from '../mcp/server-discovery.ts';
 
+/**
+ * Pure predicate: should `ok mcp` refuse to start in this directory?
+ * True when no `--port` override is given AND `<projectDir>/.open-knowledge/`
+ * does not exist (i.e. the directory was never `ok init`'d). Exported for
+ * testing.
+ */
+export function shouldRefuseMcpStart(projectDir: string, port: string | undefined): boolean {
+  if (port !== undefined) return false;
+  return !existsSync(resolve(projectDir, OK_DIR));
+}
+
 export function mcpCommand(getConfig: () => Config): Command {
   const cmd = new Command('mcp')
     .description('Start MCP stdio server for project knowledge base')
@@ -43,11 +54,14 @@ export function mcpCommand(getConfig: () => Config): Command {
         // this gate, a globally-registered MCP would treat any cwd as an OK
         // project and (transitively, via auto-spawned `ok start`) scaffold
         // `.open-knowledge/`, `.git/`, and a shadow repo there. `--port`
-        // bypasses — explicit user intent.
-        if (opts.port === undefined && !existsSync(resolve(projectDir, OK_DIR))) {
+        // bypasses — explicit user intent. Non-zero exit aligns with how
+        // every other CLI precondition failure signals (config.ts, preview.ts,
+        // start.ts) so MCP hosts can distinguish refusal from clean shutdown.
+        if (shouldRefuseMcpStart(projectDir, opts.port)) {
           process.stderr.write(
             `[mcp] ${projectDir} is not an Open Knowledge project (no ${OK_DIR}/); exiting. Run \`ok init\` to scaffold one.\n`,
           );
+          process.exitCode = 1;
           return;
         }
 
