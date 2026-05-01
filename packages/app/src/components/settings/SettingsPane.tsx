@@ -524,7 +524,9 @@ function SyncSection() {
       <div className="rounded-md border p-3">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-medium">Git auto-sync</div>
+            <label htmlFor="settings-sync-toggle" className="text-sm font-medium">
+              Git auto-sync
+            </label>
             <p className="text-xs text-muted-foreground">
               {enabled
                 ? 'Auto-sync is on — your commits push and remote changes pull on intervals.'
@@ -532,6 +534,7 @@ function SyncSection() {
             </p>
           </div>
           <Switch
+            id="settings-sync-toggle"
             checked={enabled}
             disabled={disabledControl}
             onCheckedChange={onToggleRequest}

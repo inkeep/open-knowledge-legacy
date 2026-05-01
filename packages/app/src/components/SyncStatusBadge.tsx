@@ -62,8 +62,7 @@ function BadgeIcon({ status }: BadgeIconProps) {
       return <CloudOff className={`${cls} text-muted-foreground`} />;
     case 'auth-error':
       return <LogIn className={`${cls} text-destructive`} />;
-    case 'disabled':
-      return <CloudOff className={`${cls} text-muted-foreground`} />;
+    // 'disabled' state: badge is hidden via early return — no icon path.
     default:
       return <Cloud className={`${cls} text-muted-foreground`} />;
   }
@@ -85,8 +84,7 @@ function badgeLabel(status: GitSyncStatus): string {
       return '';
     case 'auth-error':
       return '';
-    case 'disabled':
-      return '';
+    // 'disabled' state: badge is hidden via early return — no label path.
     default:
       return '';
   }
