@@ -138,6 +138,7 @@ export function PageListProvider({ children }: { children: ReactNode }) {
     setError(null);
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run only on mount
   useEffect(() => {
     void refetch();
     const handleResume = () => {

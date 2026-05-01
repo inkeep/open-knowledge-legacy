@@ -75,6 +75,16 @@ jobs:
               ".github/workflows/monorepo-pr-bridge.yml": "copybara/public-open-knowledge-overlay/.github/workflows/monorepo-pr-bridge.yml",
               ".github/scripts/bridge-public-pr-to-monorepo.mjs": "copybara/public-open-knowledge-overlay/.github/scripts/bridge-public-pr-to-monorepo.mjs"
             }
+          # Drop pre-cutover internal-only paths from the bridged diff. Old
+          # `inkeep/open-knowledge` branches predate the agents-private cutover
+          # and contain reports/specs/etc. that the public mirror no longer
+          # exports; bridging those paths back through this workflow would
+          # re-introduce content that is already authoritative on
+          # agents-private under different intent.
+          BRIDGE_EXCLUDED_PATHS: >-
+            [".codex/", ".claude/", ".cursor/", ".openhands/", ".ok/",
+             "specs/", "reports/", "projects/", "stories/", "strategy/",
+             "private/", "ARCHITECTURE.md", "PRECEDENTS.md"]
         run: node .github/scripts/bridge-public-pr-to-monorepo.mjs sync
 
       - name: Handle public PR closure

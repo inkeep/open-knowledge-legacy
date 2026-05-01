@@ -1,4 +1,3 @@
-
 import type { Editor } from '@tiptap/react';
 import type { ReactNode } from 'react';
 import { resolveIcon } from '../registry/icons.ts';

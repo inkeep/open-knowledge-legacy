@@ -1,4 +1,3 @@
-
 interface OkFolderRule {
   match: string;
   frontmatter: { title?: string; description?: string; tags?: string[] };

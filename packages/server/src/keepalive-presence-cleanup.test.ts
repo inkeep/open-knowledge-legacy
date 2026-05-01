@@ -6,7 +6,6 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { WebSocket as WsClient } from 'ws';
 import { toBroadcasterKey } from './agent-id.ts';
 import { type BootedServer, bootServer } from './boot.ts';
-import { ConfigSchema } from './config/schema.ts';
 
 async function poll<T>(
   read: () => T,
@@ -29,7 +28,6 @@ async function bootTestServer(
   const contentDir = mkdtempSync(join(tmpdir(), 'ok-keepalive-test-'));
   writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
   const booted = await bootServer({
-    config: ConfigSchema.parse({}),
     contentDir,
     attachUiSibling: false,
     idleShutdownMs: null,
@@ -60,8 +58,7 @@ afterAll(async () => {
   for (const s of servers) {
     try {
       await tearDown(s);
-    } catch {
-    }
+    } catch {}
   }
 });
 

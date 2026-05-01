@@ -1,4 +1,3 @@
-
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 
 interface Listener {
@@ -25,6 +24,7 @@ const fakeWindow = {
 const origWindow = (globalThis as { window?: unknown }).window;
 (globalThis as { window?: unknown }).window = fakeWindow;
 
+// biome-ignore lint/suspicious/noExplicitAny: dynamic module surface for tests
 let mod: any;
 
 beforeAll(async () => {

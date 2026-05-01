@@ -1,4 +1,3 @@
-
 import { spawn } from 'node:child_process';
 import { existsSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -150,8 +149,7 @@ async function defaultRunAsAdmin(shellCmd: string, promptCopy: string): Promise<
       settle(() => {
         try {
           child.kill('SIGTERM');
-        } catch {
-        }
+        } catch {}
         reject(
           buildAdminFailureError(
             'spawn-error',
@@ -181,8 +179,7 @@ async function defaultRunAsAdmin(shellCmd: string, promptCopy: string): Promise<
       settle(() => {
         try {
           child.kill();
-        } catch {
-        }
+        } catch {}
         reject(buildAdminFailureError('spawn-error', err.message));
       });
     });
@@ -337,7 +334,6 @@ export async function uninstallCli(deps: CliInstallDeps): Promise<void> {
     buttons: ['OK'],
   });
 }
-
 
 export interface BrokenSymlinkRepairDeps {
   executablePath: string;

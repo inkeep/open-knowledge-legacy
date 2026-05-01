@@ -17,7 +17,6 @@ declare module 'micromark-util-types' {
   }
 }
 
-
 const CODE_BANG = 33; // !
 const CODE_LBRACKET = 91; // [
 const CODE_RBRACKET = 93; // ]
@@ -261,7 +260,6 @@ export function wikiLinkSyntax(): Extension {
   };
 }
 
-
 function enterWikiLink(this: CompileContext, token: Token) {
   this.enter(
     {
@@ -370,7 +368,6 @@ export const wikiLinkToMarkdown: {
   },
   unsafe: [{ character: '[', inConstruct: ['phrasing'] }],
 };
-
 
 const MICROMARK_EXT = wikiLinkSyntax();
 

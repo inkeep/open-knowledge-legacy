@@ -1,4 +1,3 @@
-
 import Link from '@tiptap/extension-link';
 
 export const LinkFidelity = Link.extend({

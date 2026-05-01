@@ -1,4 +1,3 @@
-
 import { IndexeddbPersistence } from 'y-indexeddb';
 import * as Y from 'yjs';
 

@@ -136,8 +136,7 @@ function runSpawn(
     const timer = setTimeout(() => {
       try {
         child.kill('SIGTERM');
-      } catch {
-      }
+      } catch {}
       settle({ kind: 'timeout', stderr });
     }, timeoutMs);
   });
@@ -256,7 +255,6 @@ export async function installUserSkill(
   return 'failed';
 }
 
-
 const DOWNLOADS_DIR = 'Downloads';
 const SKILL_FILENAME = 'openknowledge.skill';
 
@@ -268,10 +266,7 @@ export interface BuildAndOpenSkillOptions {
   homeDir?: string;
 }
 
-export type BuildAndOpenSkillStatus =
-  | 'installed'
-  | 'built'
-  | 'failed';
+export type BuildAndOpenSkillStatus = 'installed' | 'built' | 'failed';
 
 export interface BuildAndOpenSkillResult {
   status: BuildAndOpenSkillStatus;

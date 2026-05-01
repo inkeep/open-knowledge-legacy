@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import { Schema } from '@tiptap/pm/model';
 import { EditorState, NodeSelection } from '@tiptap/pm/state';
@@ -32,6 +31,7 @@ function makeEditor(doc: ReturnType<Schema['node']>) {
     doc,
     selection: NodeSelection.create(doc, 0),
   });
+  // biome-ignore lint/suspicious/noExplicitAny: formatSelectionMessage only touches editor.state.doc.resolve
   return { state } as any;
 }
 
@@ -82,6 +82,7 @@ describe('formatSelectionMessage', () => {
     const callout = jsx('Callout', [jsx('img'), jsx('img'), jsx('img')]);
     const doc = schema.node('doc', null, [callout]);
     const state = EditorState.create({ doc, selection: NodeSelection.create(doc, 3) });
+    // biome-ignore lint/suspicious/noExplicitAny: formatSelectionMessage only touches editor.state.doc.resolve
     const editor = { state } as any;
     const sel: BlockSelection = {
       selectedBlockId: 'image-b2',
@@ -100,6 +101,7 @@ describe('formatSelectionMessage', () => {
     const callout = jsx('Callout', [jsx('img')]);
     const doc = schema.node('doc', null, [callout]);
     const state = EditorState.create({ doc });
+    // biome-ignore lint/suspicious/noExplicitAny: formatSelectionMessage only touches editor.state.doc.resolve
     const editor = { state } as any;
     const sel: BlockSelection = {
       selectedBlockId: 'image-b2',
@@ -118,6 +120,7 @@ describe('formatSelectionMessage', () => {
     const callout = jsx('Callout', [jsx('FooBar')]);
     const doc = schema.node('doc', null, [callout]);
     const state = EditorState.create({ doc, selection: NodeSelection.create(doc, 1) });
+    // biome-ignore lint/suspicious/noExplicitAny: formatSelectionMessage only touches editor.state.doc.resolve
     const editor = { state } as any;
     const sel: BlockSelection = {
       selectedBlockId: 'foobar-b2',

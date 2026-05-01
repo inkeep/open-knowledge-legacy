@@ -1,4 +1,3 @@
-
 import { execFile } from 'node:child_process';
 import { join, posix as pathPosix, win32 as pathWin32 } from 'node:path';
 import type { HandoffStatsLine, SpawnOutcome } from '../shared/ipc-channels.ts';
@@ -155,8 +154,7 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
   try {
     const info = await deps.getApplicationInfoForProtocol('cursor://');
     if (info.path) binaryPath = info.path;
-  } catch {
-  }
+  } catch {}
 
   if (!binaryPath) {
     const fallback = deps.resolveCursorBinary ?? whichCursorReal;

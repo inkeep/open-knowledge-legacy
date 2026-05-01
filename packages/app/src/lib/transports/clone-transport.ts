@@ -1,4 +1,3 @@
-
 import type { OkDesktopBridge, OkLocalOpCloneEvent } from '@/lib/desktop-bridge-types';
 import { createBufferedAsyncStream } from './buffered-async-stream';
 
@@ -44,8 +43,7 @@ export function httpCloneTransport(): CloneTransport {
                 if (!line.trim()) continue;
                 try {
                   push(JSON.parse(line) as CloneEvent);
-                } catch {
-                }
+                } catch {}
               }
               if (signal.aborted) break;
             }

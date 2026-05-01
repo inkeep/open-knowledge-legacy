@@ -149,7 +149,6 @@ describe('Tier B fidelity: list markers', () => {
 });
 
 describe('Tier B fidelity: listItem PM-schema artifact stripping (R6d / US-011)', () => {
-
   test('listItem with code as first child round-trips byte-identically', () => {
     const input = '1. ```\n   foo\n   ```\n\n   bar\n';
     const r1 = mdManager.serialize(mdManager.parse(input));

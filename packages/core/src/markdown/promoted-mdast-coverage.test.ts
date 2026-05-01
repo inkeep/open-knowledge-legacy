@@ -1,4 +1,3 @@
-
 import { afterAll, describe, expect, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import type { Parents } from 'mdast';
@@ -15,6 +14,7 @@ afterAll(() => {
   resetParseHealth();
 });
 
+// biome-ignore lint/suspicious/noExplicitAny: handler tables accept loose shape at runtime; strict types would require enumerating every mdast type
 type AnyHandlerMap = Record<string, any>;
 
 function toMarkdownHasHandler(type: PromotedMdastType): boolean {
@@ -194,6 +194,7 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         handler = (toMarkdownHandlers as AnyHandlerMap)[type];
       }
       expect(handler).toBeDefined();
+      // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
       const out = (handler as any)(fixtures[type], undefined, minimalState, {});
       expect(typeof out).toBe('string');
       expect((out as string).length).toBeGreaterThan(0);

@@ -1,4 +1,3 @@
-
 import { expect, test, waitForActiveProviderSynced } from './_helpers';
 
 function agentId(label: string): string {
@@ -135,5 +134,4 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     expect(page.url()).toContain(`#/${docFoo}`);
     expect(page.url()).not.toContain(`#/${docBar}`);
   });
-
 });

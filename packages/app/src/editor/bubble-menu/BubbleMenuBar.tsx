@@ -51,8 +51,7 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
             popup.style.top = `${y}px`;
           }
         })
-        .catch(() => {
-        });
+        .catch(() => {});
     });
   };
 

@@ -169,7 +169,6 @@ describe('isSelfWrite', () => {
   });
 });
 
-
 describe('classifyEvents', () => {
   let tmpDir: string;
   let contentDir: string;
@@ -353,7 +352,6 @@ describe('classifyEvents', () => {
   });
 });
 
-
 describe('startWatcher file index', () => {
   let tmpDir: string;
   let contentDir: string;
@@ -508,7 +506,6 @@ describe('startWatcher file index', () => {
   });
 });
 
-
 describe('file-watcher ContentFilter refcount hooks', () => {
   let tmpDir: string;
   let contentDir: string;
@@ -603,7 +600,6 @@ describe('file-watcher ContentFilter refcount hooks', () => {
     expect(filter.isExcluded('fresh/pic.png')).toBe(false);
   });
 });
-
 
 describe('startWatcher symlink handling', () => {
   let tmpDir: string;

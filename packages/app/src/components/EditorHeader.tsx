@@ -117,6 +117,7 @@ export function EditorHeader({
   const renameDocRef = useRef<string | null>(null);
   const lastFailedValueRef = useRef<string | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeDocName is a trigger-only dep — the effect body only needs to re-run on change, not to read its value.
   useEffect(() => {
     cancelRequestedRef.current = true;
     renameDocRef.current = null;

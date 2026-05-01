@@ -1,4 +1,3 @@
-
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import type { ApiHelpers } from './_helpers';
@@ -37,7 +36,6 @@ async function selectFirstJsxComponent(page: Page, componentName: string) {
   }, componentName);
 }
 
-
 test('S1: ArrowDown selects next block with data-selection-origin=keyboard', async ({
   page,
   api,
@@ -64,7 +62,6 @@ test('S1: ArrowDown selects next block with data-selection-origin=keyboard', asy
   await expect(selectedWrapper).toHaveAttribute('data-selection-origin', 'keyboard');
 });
 
-
 test('S2: NodeSelection on a Callout emits data-selected=true on its wrapper', async ({
   page,
   api,
@@ -79,7 +76,6 @@ test('S2: NodeSelection on a Callout emits data-selected=true on its wrapper', a
   await expect(callout).toHaveAttribute('data-selected', 'true', { timeout: 5_000 });
   await expect(callout).toHaveAttribute('data-selection-origin', 'pointer');
 });
-
 
 test('S3: nested Callout/Accordion — only innermost paints halo', async ({ page, api }) => {
   await setupDoc(page, api, '<Callout type="note">\n\n<Accordion title="Inner" />\n\n</Callout>\n');
@@ -103,7 +99,6 @@ test('S3: nested Callout/Accordion — only innermost paints halo', async ({ pag
   expect(selectedCount).toBe(1);
 });
 
-
 test('S4: dragstart/dragend toggles data-dragging', async ({ page, api }) => {
   await setupDoc(page, api, '<img src="/p.png" alt="Draggable" />\n');
   await page.waitForSelector('.jsx-component-wrapper');
@@ -118,7 +113,6 @@ test('S4: dragstart/dragend toggles data-dragging', async ({ page, api }) => {
   await card.dispatchEvent('dragend');
   await expect(card).not.toHaveAttribute('data-dragging', 'true', { timeout: 2_000 });
 });
-
 
 test('S5: forced-colors emulation shows non-transparent halo border', async ({ page, api }) => {
   await page.emulateMedia({ forcedColors: 'active' });
@@ -137,7 +131,6 @@ test('S5: forced-colors emulation shows non-transparent halo border', async ({ p
   expect(borderColor).not.toBe('rgba(0, 0, 0, 0)');
 });
 
-
 test('S6: prefers-reduced-motion:reduce → halo transition-duration is 0s', async ({
   page,
   api,
@@ -152,7 +145,6 @@ test('S6: prefers-reduced-motion:reduce → halo transition-duration is 0s', asy
   });
   expect(transitionDuration === '0s' || transitionDuration === '').toBe(true);
 });
-
 
 test('S7: Breadcrumb shows ancestry; clicking ancestor flips selection', async ({ page, api }) => {
   await setupDoc(
@@ -182,7 +174,6 @@ test('S7: Breadcrumb shows ancestry; clicking ancestor flips selection', async (
   expect(innerAttr).toBeNull();
 });
 
-
 test('S8: aria-live textContent announces the selected block', async ({ page, api }) => {
   await setupDoc(
     page,
@@ -196,7 +187,6 @@ test('S8: aria-live textContent announces the selected block', async ({ page, ap
   const liveRegion = page.locator('[role="status"][aria-live="polite"]');
   await expect(liveRegion).toContainText('Selected: Accordion', { timeout: 2_000 });
 });
-
 
 test('S9: three-axis composition — dragging dominates over selected + needs-config', async ({
   page,
@@ -234,7 +224,6 @@ test('S9: three-axis composition — dragging dominates over selected + needs-co
   await card.dispatchEvent('dragend');
 });
 
-
 test('S10: clicking "Document" breadcrumb anchor clears selection via programmatic origin', async ({
   page,
   api,
@@ -258,7 +247,6 @@ test('S10: clicking "Document" breadcrumb anchor clears selection via programmat
   });
   expect(selectionKind).toBe('empty');
 });
-
 
 type InsetCase = { fixture: string; componentType: string; expectedInset: string };
 const INSET_CASES: InsetCase[] = [
@@ -296,7 +284,6 @@ for (const { fixture, componentType, expectedInset } of INSET_CASES) {
     expect(inset).toBe(expectedInset);
   });
 }
-
 
 test('S12: halo z-index is -1 and .component-children is fully visible when selected', async ({
   page,
@@ -338,7 +325,6 @@ test('S12: halo z-index is -1 and .component-children is fully visible when sele
   expect(contentState.height).toBeGreaterThan(0);
 });
 
-
 type CalloutCase = { type: string };
 const CALLOUT_TYPES: CalloutCase[] = [
   { type: 'info' },
@@ -370,8 +356,6 @@ for (const { type } of CALLOUT_TYPES) {
     expect(borderColor).not.toBe('');
   });
 }
-
-
 
 test('S14: tr.setMeta(SELECTION_ORIGIN_META_KEY) sets data-selection-origin=programmatic', async ({
   page,
@@ -410,7 +394,6 @@ test('S14: tr.setMeta(SELECTION_ORIGIN_META_KEY) sets data-selection-origin=prog
   await expect(card).toHaveAttribute('data-selected', 'true', { timeout: 2_000 });
   await expect(card).toHaveAttribute('data-selection-origin', 'programmatic');
 });
-
 
 test('S15: Breadcrumb footer height is constant across rapid selection changes', async ({
   page,
@@ -461,7 +444,6 @@ test('S15: Breadcrumb footer height is constant across rapid selection changes',
   expect(max - min).toBeLessThanOrEqual(1);
 });
 
-
 test('S16: axe-core — zero critical violations on selection-layer surfaces', async ({
   page,
   api,
@@ -496,7 +478,6 @@ test('S16: axe-core — zero critical violations on selection-layer surfaces', a
   }
   expect(blocking.length).toBe(0);
 });
-
 
 test('S17: Tab from editor reaches every non-innermost breadcrumb button in order', async ({
   page,
@@ -540,7 +521,6 @@ test('S17: Tab from editor reaches every non-innermost breadcrumb button in orde
   expect(seen).not.toContain('Accordion');
 });
 
-
 test('S18: rapid selection changes coalesce into a single aria-live announcement', async ({
   page,
   api,
@@ -558,10 +538,12 @@ test('S18: rapid selection changes coalesce into a single aria-live announcement
   await page.evaluate(() => {
     const region = document.querySelector('[role="status"][aria-live="polite"]');
     if (!region) throw new Error('live region not found');
+    // biome-ignore lint/suspicious/noExplicitAny: test-only global
     (window as any).__ariaLiveMutations = [];
     const obs = new MutationObserver((records) => {
       for (const r of records) {
         if (r.type === 'characterData' || r.type === 'childList') {
+          // biome-ignore lint/suspicious/noExplicitAny: test-only global
           (window as any).__ariaLiveMutations.push({
             text: region.textContent,
             at: performance.now(),
@@ -570,6 +552,7 @@ test('S18: rapid selection changes coalesce into a single aria-live announcement
       }
     });
     obs.observe(region, { characterData: true, childList: true, subtree: true });
+    // biome-ignore lint/suspicious/noExplicitAny: test-only global
     (window as any).__ariaLiveObserver = obs;
   });
 
@@ -591,6 +574,7 @@ test('S18: rapid selection changes coalesce into a single aria-live announcement
 
   await page.waitForFunction(
     () => {
+      // biome-ignore lint/suspicious/noExplicitAny: test-only global
       const mutations = ((window as any).__ariaLiveMutations ?? []) as Array<{
         text: string;
         at: number;
@@ -605,7 +589,9 @@ test('S18: rapid selection changes coalesce into a single aria-live announcement
   );
 
   const mutations = await page.evaluate(() => {
+    // biome-ignore lint/suspicious/noExplicitAny: test-only global
     const m = ((window as any).__ariaLiveMutations ?? []) as Array<{ text: string; at: number }>;
+    // biome-ignore lint/suspicious/noExplicitAny: test-only global
     (window as any).__ariaLiveObserver?.disconnect();
     return m;
   });
@@ -616,7 +602,6 @@ test('S18: rapid selection changes coalesce into a single aria-live announcement
   expect(contentMutations.length).toBeGreaterThanOrEqual(1);
   expect(contentMutations.length).toBeLessThan(3);
 });
-
 
 test('S19: clicking inside nested CM forwards focus as NodeSelection on rawMdxFallback', async ({
   page,
@@ -635,6 +620,7 @@ test('S19: clicking inside nested CM forwards focus as NodeSelection on rawMdxFa
     const sel = ed.state.selection;
     return {
       type: sel.constructor.name,
+      // biome-ignore lint/suspicious/noExplicitAny: test-only introspection of PM internals
       nodeType: (sel as any).node?.type?.name ?? null,
       from: sel.from,
     };
@@ -650,6 +636,7 @@ test('S19: clicking inside nested CM forwards focus as NodeSelection on rawMdxFa
       if (!ed) return false;
       const sel = ed.state.selection;
       if (sel.constructor.name !== 'NodeSelection') return false;
+      // biome-ignore lint/suspicious/noExplicitAny: test-only introspection
       return (sel as any).node?.type?.name === 'rawMdxFallback';
     },
     null,
@@ -662,6 +649,7 @@ test('S19: clicking inside nested CM forwards focus as NodeSelection on rawMdxFa
     const sel = ed.state.selection;
     return {
       type: sel.constructor.name,
+      // biome-ignore lint/suspicious/noExplicitAny: test-only introspection
       nodeType: (sel as any).node?.type?.name ?? null,
     };
   });

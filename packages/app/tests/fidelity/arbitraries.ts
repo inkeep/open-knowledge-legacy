@@ -1,6 +1,4 @@
-
 import * as fc from 'fast-check';
-
 
 const safeWord = fc.stringMatching(/^[a-zA-Z0-9]{1,12}$/);
 
@@ -12,7 +10,6 @@ const fidelityText = fc.oneof(
   phrase.map((p) => `${p} > greater`),
   phrase.map((p) => `${p} & < >`),
 );
-
 
 export const heading = fc
   .tuple(fc.integer({ min: 1, max: 6 }), phrase)
@@ -82,7 +79,6 @@ export const linkRefDef = fc.constantFrom(
   '[ref]: https://example.com',
 );
 
-
 const bold = phrase.map((text) => `**${text}**`);
 
 const boldUnderscore = phrase.map((text) => `__${text}__`);
@@ -120,7 +116,6 @@ export const blockquoteWithMarks = paragraphWithMarks.map((text) => `> ${text}`)
 export const listWithMarks = fc
   .array(paragraphWithMarks, { minLength: 2, maxLength: 3 })
   .map((items) => items.map((item) => `- ${item}`).join('\n'));
-
 
 export const autolink = fc
   .tuple(fc.constantFrom('https', 'http', 'mailto', 'ftp'), safeWord)
@@ -189,7 +184,6 @@ export const nestedBlockquote = fc.oneof(
     .map((items) => items.map((item) => `> - ${item}`).join('\n')),
 );
 
-
 export const block = fc.oneof(
   heading,
   paragraph,
@@ -242,7 +236,6 @@ const composeWithJoiners = <A>(blockArb: fc.Arbitrary<A & string>): fc.Arbitrary
 export const markdownDoc = composeWithJoiners(block as fc.Arbitrary<string>);
 
 export const markdownDocExtended = composeWithJoiners(blockExtended as fc.Arbitrary<string>);
-
 
 export const dangerousInline = fc.oneof(
   fc.constant('<'),

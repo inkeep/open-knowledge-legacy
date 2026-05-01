@@ -1,4 +1,3 @@
-
 import type { ImgHTMLAttributes } from 'react';
 import Zoom from 'react-medium-image-zoom';
 

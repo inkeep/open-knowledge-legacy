@@ -158,10 +158,12 @@ export function ConflictResolver({ open, onOpenChange }: ConflictResolverProps) 
     });
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is intentionally stable
   useEffect(() => {
     if (open) refresh();
   }, [open]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is intentionally stable
   useEffect(() => {
     return subscribeToDocumentsChanged((channels) => {
       if (channels.includes('sync-status') && open) {

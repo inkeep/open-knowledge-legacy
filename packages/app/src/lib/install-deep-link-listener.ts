@@ -1,4 +1,3 @@
-
 import type { OkDesktopBridge } from '@/lib/desktop-bridge-types';
 
 interface InstallDeepLinkListenerOptions {

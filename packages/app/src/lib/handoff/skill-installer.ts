@@ -1,4 +1,3 @@
-
 import type { OkDesktopBridge } from '@/lib/desktop-bridge-types';
 
 export type SkillInstallResult =
@@ -69,8 +68,7 @@ export function httpSkillInstaller(opts: HttpSkillInstallerOptions = {}): SkillI
           };
           const detail = typeof errBody.error === 'string' ? errBody.error : errBody.error?.message;
           if (detail) message = detail;
-        } catch {
-        }
+        } catch {}
         return { ok: false, reason: 'http-error', message };
       }
       let body: ServerSkillInstallResponse;

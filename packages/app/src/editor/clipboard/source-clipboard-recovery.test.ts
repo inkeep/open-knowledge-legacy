@@ -1,4 +1,3 @@
-
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { ChunkedInsertError } from '@inkeep/open-knowledge-core';
 
@@ -6,7 +5,9 @@ type ToastFn = { error: ReturnType<typeof mock> };
 const toastMock: ToastFn = { error: mock(() => {}) };
 mock.module('sonner', () => ({ toast: toastMock }));
 
+// biome-ignore lint/suspicious/noExplicitAny: test-scoped dynamic import
 let handleChunkedInsertFailure: any;
+// biome-ignore lint/suspicious/noExplicitAny: test-scoped dynamic import
 let mod: any;
 
 beforeEach(async () => {
@@ -28,6 +29,7 @@ interface DispatchCall {
 function makeFakeView(docLength = 1_000_000): {
   dispatch: ReturnType<typeof mock>;
   dispatches: DispatchCall[];
+  // biome-ignore lint/suspicious/noExplicitAny: fake view state for unit test
   state: any;
 } {
   const dispatches: DispatchCall[] = [];
@@ -63,6 +65,7 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'gdocs',
         html: '<p>1</p>'.repeat(10),
@@ -91,6 +94,7 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'word',
         html: '<p>x</p>',
@@ -113,6 +117,7 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'generic',
         html: '<p>x</p>',
@@ -135,6 +140,7 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'generic',
         html: '<p>x</p>',
@@ -157,6 +163,7 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'generic',
         html: '<p>x</p>',
@@ -172,6 +179,7 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     const { dispatch, dispatches, state } = makeFakeView();
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'notion',
         html: '<p>x</p>',
@@ -192,6 +200,7 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch: throwingDispatch, state: { doc: { length: 1_000_000 } } } as any,
         source: 'gmail',
         html: '<p>x</p>',
@@ -214,6 +223,7 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch: throwingDispatch, state: { doc: { length: 1_000_000 } } } as any,
         source: 'gmail',
         html: '<p>x</p>',
@@ -239,6 +249,7 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch: throwingDispatch, state: { doc: { length: 1_000_000 } } } as any,
         source: 'notion',
         html: '<p>x</p>',
@@ -257,6 +268,7 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     const { dispatch, state } = makeFakeView();
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'generic',
         html: '<p>x</p>',

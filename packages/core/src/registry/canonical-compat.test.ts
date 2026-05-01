@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import { builtInComponents, createRegistry } from './index.ts';
 import type { CompatMeta, JsxComponentMeta } from './types.ts';

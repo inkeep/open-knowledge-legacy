@@ -1,6 +1,4 @@
-
 import type { CDPSession } from '@playwright/test';
-
 
 export interface CdpTraceEvent {
   name: string;
@@ -27,7 +25,6 @@ export interface TraceSummary {
   cumulativeLayoutShift: number;
 }
 
-
 export const TRACE_CATEGORIES: readonly string[] = [
   'cc',
   'gpu',
@@ -40,9 +37,7 @@ export const TRACE_CATEGORIES: readonly string[] = [
   'disabled-by-default-v8.cpu_profiler',
 ] as const;
 
-
-
-
+// biome-ignore lint/suspicious/noExplicitAny: Playwright's dataCollectedPayload is mistyped; cast at the boundary.
 type DataCollectedHandler = (payload: any) => void;
 
 export async function traceStart(cdp: CDPSession): Promise<TraceToken> {
@@ -108,7 +103,6 @@ function coerceEvent(raw: Record<string, unknown>): CdpTraceEvent | null {
     ...(typeof raw.pid === 'number' ? { pid: raw.pid } : {}),
   };
 }
-
 
 export const LONG_TASK_THRESHOLD_MS = 50;
 

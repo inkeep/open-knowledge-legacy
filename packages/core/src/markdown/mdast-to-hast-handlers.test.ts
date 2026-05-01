@@ -1,10 +1,10 @@
-
 import { describe, expect, test } from 'bun:test';
 import type { MdxJsxFlowElement, MdxJsxTextElement } from 'mdast-util-mdx';
 import type { RawMdxFallbackMdast, WikiLinkMdast } from './mdast-augmentation.ts';
 import { mdastToHtml } from './mdast-to-html.ts';
 
 function html(tree: { type: 'root'; children: unknown[] }): string {
+  // biome-ignore lint/suspicious/noExplicitAny: test helpers stay loose to keep fixtures tidy
   return mdastToHtml(tree as any);
 }
 
@@ -455,5 +455,4 @@ describe('FR-20 adversarial fuzz — no unescaped <script> in any emitted HTML',
       expect(out).not.toContain('<iframe');
     }
   });
-
 });

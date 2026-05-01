@@ -1,7 +1,6 @@
 import { ChunkedInsertError, HtmlPayloadTooLargeError } from '@inkeep/open-knowledge-core';
 import type { ClipboardSource } from './detect-source.ts';
 
-
 type ClipboardEventName =
   | 'clipboard-slow-op'
   | 'clipboard-source-detected'

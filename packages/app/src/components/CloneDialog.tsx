@@ -92,6 +92,7 @@ export function CloneDialog({
   const cancelRef = useRef<(() => void) | null>(null);
   const toastIdRef = useRef<string | number | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedAuthQuery is stable per render
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -108,6 +109,7 @@ export function CloneDialog({
     };
   }, [open]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedAuthQuery is stable per render
   useEffect(() => {
     if (!isSignedIn || !open) return;
     let cancelled = false;

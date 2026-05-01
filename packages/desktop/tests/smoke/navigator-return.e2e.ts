@@ -1,4 +1,3 @@
-
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -127,8 +126,7 @@ async function closeAppSafely(app: ElectronApplication | null): Promise<void> {
   if (app === null) return;
   try {
     await app.close();
-  } catch {
-  }
+  } catch {}
 }
 
 test.describe('Project Navigator return-affordance smoke', () => {

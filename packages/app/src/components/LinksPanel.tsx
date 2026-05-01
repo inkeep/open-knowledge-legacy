@@ -285,6 +285,7 @@ function BacklinksSection({ docName }: { docName: string }) {
                   });
                   return (
                     <LinkRow
+                      // biome-ignore lint/suspicious/noArrayIndexKey: rows are stable per poll; source may repeat if API adds multiple edges per source
                       key={`${backlink.source}-${index}`}
                       icon={<File className="size-3.5" />}
                       title={backlink.title}

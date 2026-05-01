@@ -106,6 +106,7 @@ mcp:
     const result = await writeConfigPatch({
       cwd: testDir,
       scope: 'project',
+      // biome-ignore lint/suspicious/noExplicitAny: testing null-as-clear semantics
       patch: { mcp: { autoStart: null as any } },
     });
     expect(result.ok).toBe(true);
@@ -153,6 +154,7 @@ describe('writeConfigPatch — validation failures', () => {
     const result = await writeConfigPatch({
       cwd: testDir,
       scope: 'project',
+      // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed for the test
       patch: { appearance: { theme: 42 as any } },
     });
     expect(result.ok).toBe(false);
@@ -171,6 +173,7 @@ describe('writeConfigPatch — validation failures', () => {
     const result = await writeConfigPatch({
       cwd: testDir,
       scope: 'project',
+      // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed for the test
       patch: { appearance: { editorModeDefault: 'vim' as any } },
     });
     expect(result.ok).toBe(false);

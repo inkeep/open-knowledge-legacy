@@ -1,4 +1,3 @@
-
 import { Editor } from '@tiptap/core';
 import { EditorView } from '@tiptap/pm/view';
 import { PureEditorContent } from '@tiptap/react';
@@ -20,6 +19,7 @@ function wrapMethod<T extends Record<string, unknown>>(
 ): void {
   const original = target[key] as unknown as (...args: unknown[]) => unknown;
   if (typeof original !== 'function') {
+    // eslint-disable-next-line no-console -- diagnostic
     console.warn(`[cold-mount-instrumentation] target missing method "${key}"`);
     return;
   }
@@ -40,6 +40,7 @@ function wrapMethod<T extends Record<string, unknown>>(
       );
     }
   };
+  // biome-ignore lint/suspicious/noExplicitAny: prototype patch
   (target as any)[key] = wrapped;
 }
 
@@ -60,6 +61,7 @@ interface ProsemirrorBindingShape {
 
 interface EditorContentShape {
   props?: { editor?: unknown };
+  // biome-ignore lint/suspicious/noExplicitAny: react component internal
   [k: string]: any;
 }
 
@@ -201,8 +203,7 @@ export function installColdMountInstrumentation(): void {
       });
       obs.observe({ type: 'paint', buffered: true });
     }
-  } catch (_err) {
-  }
+  } catch (_err) {}
 
   (globalThis as unknown as Record<string, unknown>).__okColdMountInstrumented = true;
 }

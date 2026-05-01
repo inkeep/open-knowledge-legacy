@@ -4,7 +4,6 @@ import { hasAgentPresenceShape } from '@/lib/agent-presence';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { LruStringCache } from '@/lib/lru-string-cache';
 
-
 export interface BurstData {
   stackIndex: number;
   ts: number;
@@ -47,7 +46,6 @@ interface UseActivityPanelResult {
 const REFETCH_DEBOUNCE_MS = 500;
 
 const BURST_DIFF_CACHE_LIMIT = 64;
-
 
 async function fetchAgentActivity(connectionId: string): Promise<{
   sessionAlive: boolean;
@@ -95,7 +93,6 @@ async function fetchBurstDiffHttp(
   return body.diff ?? '';
 }
 
-
 export function useActivityPanel(connectionId: string | null): UseActivityPanelResult {
   const { systemProvider } = useDocumentContext();
   const [data, setData] = useState<ActivityPanelData | null>(null);
@@ -124,6 +121,7 @@ export function useActivityPanel(connectionId: string | null): UseActivityPanelR
       });
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: systemProvider captured via closure; writingDocs recomputes on its own effect below.
   useEffect(() => {
     if (!connectionId) {
       tokenRef.current++;
@@ -157,6 +155,7 @@ export function useActivityPanel(connectionId: string | null): UseActivityPanelR
     if (!systemProvider) return;
 
     const update = (): void => {
+      // biome-ignore lint/suspicious/noExplicitAny: Awareness typing differs across Hocuspocus versions.
       const awareness = (systemProvider as { awareness?: unknown }).awareness as any;
       if (!awareness) return;
       const writing = computeWritingDocs(systemProvider, connectionId);
@@ -167,6 +166,7 @@ export function useActivityPanel(connectionId: string | null): UseActivityPanelR
       });
     };
 
+    // biome-ignore lint/suspicious/noExplicitAny: Awareness typing differs across Hocuspocus versions.
     const awareness = (systemProvider as { awareness?: unknown }).awareness as any;
     if (!awareness || typeof awareness.on !== 'function') {
       update();
@@ -198,7 +198,6 @@ export function useActivityPanel(connectionId: string | null): UseActivityPanelR
 
   return { data, status, error, reload, fetchBurstDiff };
 }
-
 
 function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
   if (a.size !== b.size) return false;

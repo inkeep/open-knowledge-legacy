@@ -1,4 +1,3 @@
-
 import type { HandoffFailureReason, HandoffTarget } from '@inkeep/open-knowledge-core';
 
 export type HandoffHost = 'electron' | 'web';

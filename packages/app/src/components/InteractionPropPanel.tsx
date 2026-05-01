@@ -1,4 +1,3 @@
-
 import {
   autoUpdate,
   computePosition,
@@ -56,8 +55,7 @@ export const InteractionPropPanel: FC<InteractionPropPanelProps> = ({
             popup.style.top = `${y}px`;
           }
         })
-        .catch(() => {
-        });
+        .catch(() => {});
     });
     return stop;
   }, [triggerReference]);

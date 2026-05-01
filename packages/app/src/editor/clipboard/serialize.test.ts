@@ -1,4 +1,3 @@
-
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import type { Fragment } from '@tiptap/pm/model';
@@ -53,6 +52,7 @@ afterEach(() => {
 describe('createClipboardTextSerializer', () => {
   test('produces markdown from a slice via MarkdownManager.serialize', () => {
     const md = fakeMdManager();
+    // biome-ignore lint/suspicious/noExplicitAny: fake md manager shape
     const serializer = createClipboardTextSerializer({ mdManager: md as any });
     const text = serializer(makeSlice('hello'), fakeView());
     expect(text).toBe('# hello');
@@ -64,6 +64,7 @@ describe('createClipboardTextSerializer', () => {
     md.serialize = mock(() => {
       throw new Error('boom');
     });
+    // biome-ignore lint/suspicious/noExplicitAny: fake md manager shape
     const serializer = createClipboardTextSerializer({ mdManager: md as any });
     const text = serializer(makeSlice('hello world'), fakeView());
     expect(text).toContain('hello world');
@@ -71,6 +72,7 @@ describe('createClipboardTextSerializer', () => {
 
   test('never throws — even on an empty-selection slice', () => {
     const md = fakeMdManager();
+    // biome-ignore lint/suspicious/noExplicitAny: fake md manager shape
     const serializer = createClipboardTextSerializer({ mdManager: md as any });
     const emptyDoc = schema.node('doc', null, [schema.node('paragraph')]);
     const slice = emptyDoc.slice(0, emptyDoc.content.size);
@@ -79,7 +81,6 @@ describe('createClipboardTextSerializer', () => {
 });
 
 describe('createClipboardHtmlSerializer — walker→markdown tier dispatch', () => {
-
   function emptyFragment(): Fragment {
     return { firstChild: null } as unknown as Fragment;
   }
@@ -116,6 +117,7 @@ describe('createClipboardHtmlSerializer — walker→markdown tier dispatch', ()
 
     const md = fakeMdManager();
     const handle = createClipboardHtmlSerializer({
+      // biome-ignore lint/suspicious/noExplicitAny: fake md manager shape
       mdManager: md as any,
     });
     handle.setView(view);
@@ -133,6 +135,7 @@ describe('createClipboardHtmlSerializer — walker→markdown tier dispatch', ()
   test('no view attached → walker tier skipped → markdown tier returns target', () => {
     const md = fakeMdManager();
     const handle = createClipboardHtmlSerializer({
+      // biome-ignore lint/suspicious/noExplicitAny: fake md manager shape
       mdManager: md as any,
     });
 
@@ -158,6 +161,7 @@ describe('createClipboardHtmlSerializer — walker→markdown tier dispatch', ()
 
     const md = fakeMdManager();
     const handle = createClipboardHtmlSerializer({
+      // biome-ignore lint/suspicious/noExplicitAny: fake md manager shape
       mdManager: md as any,
     });
     handle.setView(view);

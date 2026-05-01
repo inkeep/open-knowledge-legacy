@@ -68,6 +68,7 @@ function Field({
   ...props
 }: React.ComponentProps<'div'> & VariantProps<typeof fieldVariants>) {
   return (
+    // biome-ignore lint/a11y/useSemanticElements: Field is a generic grouping container often nested inside a <label> (see the ChoiceCard pattern in RadioGroup); <fieldset> can't be a child of <label>, so we keep the div with role="group" for the a11y semantic.
     <div
       role="group"
       data-slot="field"

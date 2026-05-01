@@ -1,6 +1,6 @@
-
-import { type Config, resolveContentDir, resolveLockDir } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
+import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
+import type { Config } from '../config/schema.ts';
 import { inspectLock, type LockState } from './lock-state.ts';
 
 interface StopTargetPlan {

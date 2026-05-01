@@ -7,8 +7,9 @@ import { closeSync, existsSync as fsExistsSync, mkdirSync as fsMkdirSync, openSy
 import type { Server as HttpServer } from 'node:http';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import type { BootedServer, Config, PinoLogger } from '@inkeep/open-knowledge-server';
+import type { BootedServer, PinoLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
+import type { Config } from '../config/schema.ts';
 import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 import { resolveSelfSpawn } from './self-spawn.ts';
 
@@ -58,8 +59,7 @@ export function spawnOkUi(opts: SpawnOkUiOptions): ChildProcess {
   } finally {
     try {
       closeSync(stderrFd);
-    } catch {
-    }
+    } catch {}
   }
 }
 
@@ -185,8 +185,10 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   const { existsSync, mkdirSync } = await import('node:fs');
   const { resolve } = await import('node:path');
-  const { bootServer, ensureProjectGit, getLogger, isProcessAlive, readUiLock, resolveContentDir } =
-    await import('@inkeep/open-knowledge-server');
+  const { bootServer, ensureProjectGit, getLogger, isProcessAlive, readUiLock } = await import(
+    '@inkeep/open-knowledge-server'
+  );
+  const { resolveContentDir } = await import('../config/paths.ts');
 
   const log = opts.log ?? getLogger('start');
 
@@ -222,8 +224,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
         const uiUrl = `http://localhost:${ui.port}`;
         import('../utils/open-browser.ts')
           .then(({ openBrowser }) => openBrowser(uiUrl))
-          .catch(() => {
-          });
+          .catch(() => {});
       }
     : undefined;
 
@@ -257,7 +258,6 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
   };
 
   const booted: BootedServer = await bootServer({
-    config,
     contentDir,
     projectDir: cwd,
     contentRoot: config.content.dir,

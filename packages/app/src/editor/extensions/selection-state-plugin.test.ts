@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import { Schema } from '@tiptap/pm/model';
 import { EditorState, NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state';
@@ -12,7 +11,6 @@ import {
   SELECTION_ORIGIN_META_KEY,
   selectionStatePluginKey,
 } from './selection-state-plugin.ts';
-
 
 const schema = new Schema({
   nodes: {
@@ -57,7 +55,6 @@ function makeStateFromDoc(doc: ReturnType<Schema['node']>) {
   return EditorState.create({ doc, plugins: [makeStubPlugin()] });
 }
 
-
 const p = (text = ''): ReturnType<Schema['node']> =>
   text ? schema.node('paragraph', null, [schema.text(text)]) : schema.node('paragraph');
 
@@ -65,7 +62,6 @@ const jsx = (
   componentName: string,
   children: ReturnType<Schema['node']>[] = [],
 ): ReturnType<Schema['node']> => schema.node('jsxComponent', { componentName }, children);
-
 
 describe('deriveAncestorChain', () => {
   test('returns empty chain when selection is outside any jsxComponent', () => {
@@ -192,7 +188,6 @@ describe('deriveBlockSelection', () => {
 });
 
 describe('computeSelectionApply (real plugin apply path)', () => {
-
   const seed = (origin: BlockSelection['selectionOrigin']): BlockSelection => ({
     ...EMPTY,
     selectionOrigin: origin,

@@ -1,4 +1,3 @@
-
 import type { Nodes, Parents } from 'mdast';
 import type { MdxJsxAttribute, MdxJsxExpressionAttribute, MdxJsxFlowElement } from 'mdast-util-mdx';
 import type { Info, State } from 'mdast-util-to-markdown';
@@ -236,6 +235,7 @@ export const toMarkdownHandlers = {
     const boundary = mdxNode.data?.htmlBoundary;
     if (boundary && typeof boundary.opener === 'string' && typeof boundary.closer === 'string') {
       const childContent = state.containerFlow(
+        // biome-ignore lint/suspicious/noExplicitAny: safe cast for synthetic root
         { type: 'root', children: mdxNode.children ?? [] } as any,
         info,
       );
@@ -254,6 +254,7 @@ export const toMarkdownHandlers = {
     const closeTag = `</${name}>`;
 
     const childContent = state.containerFlow(
+      // biome-ignore lint/suspicious/noExplicitAny: safe cast for synthetic root
       { type: 'root', children: mdxNode.children } as any,
       info,
     );

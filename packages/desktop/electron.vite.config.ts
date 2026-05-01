@@ -4,7 +4,6 @@ import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import type { PluginOptions } from 'babel-plugin-react-compiler';
 import { defineConfig } from 'electron-vite';
 
-
 const reactCompilerConfig: PluginOptions = {
   panicThreshold: 'all_errors',
   environment: {

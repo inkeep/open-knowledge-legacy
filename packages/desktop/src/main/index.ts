@@ -1,4 +1,3 @@
-
 import { spawn } from 'node:child_process';
 import {
   existsSync,
@@ -111,8 +110,7 @@ function probeWsUpgrade(url: string, timeoutMs: number): Promise<boolean> {
       settled = true;
       try {
         ws.close();
-      } catch {
-      }
+      } catch {}
       resolveProbe(ok);
     };
     const ws = new WebSocket(url);
@@ -183,8 +181,7 @@ function runDriverBootSmokeInProduction(): void {
     quit: () => {
       try {
         app.quit();
-      } catch {
-      }
+      } catch {}
     },
     setTimeout: (fn, ms) => {
       setTimeout(fn, ms);
@@ -853,8 +850,7 @@ function bootPrimaryInstance(): void {
         warn: (data, message) => console.warn(message, data),
         info: (data, message) => console.info(message, data),
       },
-    }).catch(() => {
-    });
+    }).catch(() => {});
 
     autoUpdaterHandle = await bootAutoUpdater(() => import('electron-updater'), {
       ipcMain,

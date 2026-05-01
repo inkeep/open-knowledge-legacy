@@ -1,4 +1,3 @@
-
 import type { Locator, Page } from '@playwright/test';
 
 export function sidebarFileButton(page: Page, name: string): Locator {

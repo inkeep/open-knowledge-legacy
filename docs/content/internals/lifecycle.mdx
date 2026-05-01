@@ -29,42 +29,37 @@ Both processes live in the same `<contentDir>/.ok/` directory. Neither is a pare
 
 ## Zero-ceremony resume via `ok mcp`
 
-The MCP implementation lives inside the running `ok start` process at `/mcp`. Editors still launch `ok mcp` over stdio, but that process is only a transport shim: it resolves the live server URL, then proxies JSON-RPC frames between stdio and the Streamable HTTP MCP endpoint.
-
-When an agent calls its first MCP tool and there is no live `server.lock`, the shim detach-spawns `ok start` — which then detach-spawns `ok ui`. From nothing to a running pair in one tool call.
+When an agent calls its first MCP tool and there is no live `server.lock`, `ok mcp` detach-spawns `ok start` — which then detach-spawns `ok ui`. From nothing to a running pair in one tool call.
 
 ```text
-Agent call → editor launches ok mcp (stdio shim)
-             │
-             ├─ live server.lock? → proxy stdio ⇄ http://localhost:<port>/mcp
-             │
-             └─ no live lock + auto-start allowed
-                  → spawn(ok start) → spawn(ok ui)
-                         │
-                    server.lock
-                         ↓
-           shim polls every 100ms until port > 0
-           or 5s timeout (stderr captured in
-           last-spawn-error.log is surfaced to the editor)
+Agent call → ok mcp → decideAutoStart → spawn(ok start) → spawn(ok ui)
+                                               │
+                                          server.lock
+                                               ↓
+                                 MCP polls every 100ms until port > 0
+                                 or 5s timeout (stderr captured in
+                                 last-spawn-error.log is surfaced
+                                 in the first tool-result error)
 ```
 
 ### Precedence for the startup decision
 
-`resolveMcpHttpUrl` in `packages/cli/src/mcp/shim.ts` resolves the HTTP MCP endpoint before the stdio bridge starts:
+`decideAutoStart` in `packages/cli/src/commands/mcp.ts` is a pure function whose return value drives the MCP session's mode:
 
-| State                                        | Verdict                                                  |
-| -------------------------------------------- | -------------------------------------------------------- |
-| `--port <n>` CLI override with `n > 0`       | **proxy** — `http://<host>:<port>/mcp`                   |
-| Live `server.lock` with `port > 0`           | **proxy** — `http://localhost:<port>/mcp`                |
-| No live lock + auto-start allowed            | **spawn** `ok start`, then proxy to its `/mcp` endpoint  |
-| No live lock + `OK_MCP_AUTOSTART=0` env      | **exit 1** with a diagnostic                             |
-| No live lock + `mcp.autoStart: false` config | **exit 1** with a diagnostic                             |
+| State                                        | Verdict                                       |
+| -------------------------------------------- | --------------------------------------------- |
+| `--port <n>` CLI override with `n > 0`       | **connect** — `ws://<host>:<port>`            |
+| `--port 0`                                   | **disk-only**                                 |
+| Live `server.lock` with `port > 0`           | **connect** — regardless of auto-start config |
+| No live lock + auto-start allowed            | **spawn**                                     |
+| No live lock + `OK_MCP_AUTOSTART=0` env      | **disk-only**                                 |
+| No live lock + `mcp.autoStart: false` config | **disk-only**                                 |
 
-A live lock always wins over opt-out — `OK_MCP_AUTOSTART=0` only suppresses the spawn path, not connection to a user-started server. Env wins over config. There is no separate disk-only MCP server: if the shim cannot reach or start `ok start`, it fails fast so the editor surfaces the problem.
+A live lock always wins over opt-out — `OK_MCP_AUTOSTART=0` only suppresses the spawn path, not connection to a user-started server. Env wins over config.
 
 ### Why sibling, not embedded
 
-An earlier research report (`reports/zero-config-bunx-cli-packaging/REPORT.md` §D4 Open Question #1) considered embedding Hocuspocus inside the MCP stdio process. That was rejected: editors may terminate the stdio child when an agent session ends. Zero-Ceremony Resume instead detach-spawns a **sibling** — `ok start` runs in its own process group and remains alive for other editors until idle-shutdown sees no `/collab` clients. Closing the editor that first triggered the spawn no longer owns the server lifetime.
+An earlier research report (`reports/zero-config-bunx-cli-packaging/REPORT.md` §D4 Open Question #1) considered embedding Hocuspocus inside the MCP stdio process. That was rejected: Claude Code's "kill child on session end" model would tear the server down with the MCP stdio. Zero-Ceremony Resume instead detach-spawns a **sibling** — `ok start` runs in its own process group, independently alive when Claude Code signals the MCP stdio. Detachment of an embedded child wouldn't help; it's the sibling-vs-child distinction that matters (SPEC §10 D-003).
 
 ## Idle-shutdown
 

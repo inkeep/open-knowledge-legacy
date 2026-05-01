@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import * as Y from 'yjs';
 import type { FrontmatterDocProvider, FrontmatterSnapshot } from './bind-frontmatter-doc.ts';

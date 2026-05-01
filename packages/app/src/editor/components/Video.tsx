@@ -1,4 +1,3 @@
-
 interface VideoProps {
   src?: string;
   controls?: boolean;

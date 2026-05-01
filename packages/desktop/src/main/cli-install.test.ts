@@ -21,7 +21,6 @@ import {
   wrapperPathInBundle,
 } from './cli-install.ts';
 
-
 const INSTALLED_EXE = '/Applications/Open Knowledge.app/Contents/MacOS/Open Knowledge';
 const INSTALLED_TARGET = '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh';
 

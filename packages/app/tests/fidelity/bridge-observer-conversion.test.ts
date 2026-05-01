@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import {
   applyFastDiff,
@@ -16,7 +15,6 @@ import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-ti
 import * as fc from 'fast-check';
 import * as Y from 'yjs';
 
-
 import {
   blockquote,
   codeBlock,
@@ -27,10 +25,8 @@ import {
 } from './arbitraries';
 import { assertAcrossSeeds, NUM_RUNS, normalize, PBT_TIMEOUT_MS } from './helpers';
 
-
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
-
 
 const TEST_PAIRED_ORIGIN = {
   source: 'local' as const,
@@ -88,7 +84,6 @@ function presentInputTokens(md: string): string[] {
   return Array.from(new Set(tokens));
 }
 
-
 const mixedDocument = fc
   .array(fc.oneof(heading, paragraph, paragraphWithFidelityChars, codeBlock, blockquote), {
     minLength: 2,
@@ -123,7 +118,6 @@ const unicodeParagraph = fc
         .trim()}\n`,
   );
 
-
 const mdWithFrontmatterOrEmpty = fc
   .tuple(
     fc.oneof(
@@ -144,7 +138,6 @@ const mdWithFrontmatterOrEmpty = fc
     paragraphsOnly,
   )
   .map(([fm, body]) => `${fm}${body}`);
-
 
 describe('Chain A — parseMd → updateYFragment preserves content', () => {
   test(
@@ -228,7 +221,6 @@ describe('Chain A — parseMd → updateYFragment preserves content', () => {
   );
 });
 
-
 describe('Chain B — serializeFragment → applyFastDiff aligns Y.Text to target', () => {
   test(
     'fragment→text produces ytext === serialized fragment (empty ytext start)',
@@ -292,7 +284,6 @@ describe('Chain B — serializeFragment → applyFastDiff aligns Y.Text to targe
     PBT_TIMEOUT_MS,
   );
 
-
   test(
     'applyIncrementalDiff converges Y.Text to target (in-sync baseline path)',
     () => {
@@ -332,7 +323,6 @@ describe('Chain B — serializeFragment → applyFastDiff aligns Y.Text to targe
     },
     PBT_TIMEOUT_MS,
   );
-
 
   test(
     'mergeThreeWay is identity when user and agent both equal baseline',
@@ -412,7 +402,6 @@ describe('Chain B — serializeFragment → applyFastDiff aligns Y.Text to targe
     PBT_TIMEOUT_MS,
   );
 });
-
 
 describe('Chain C — paired external-change preserves bridge invariant', () => {
   test(
@@ -537,8 +526,6 @@ describe('Chain C — paired external-change preserves bridge invariant', () => 
     }
   });
 });
-
-
 
 const frontmatterBlock = fc
   .array(
@@ -704,7 +691,6 @@ describe('Handler-specific survivability (chains A+C)', () => {
     });
   }
 });
-
 
 const UNDO_WRITE_ORIGIN = {
   source: 'local' as const,

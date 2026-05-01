@@ -1,4 +1,3 @@
-
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -11,7 +10,6 @@ import {
   test,
   waitForActiveProviderSynced,
 } from './_helpers';
-
 
 async function openPropPanel(page: Page): Promise<ReturnType<Page['locator']>> {
   const wrapper = page.locator('[data-jsx-component]').first();
@@ -92,7 +90,6 @@ const cases: Record<'img' | 'video' | 'audio', UploadCase> = {
   },
 };
 
-
 for (const kind of ['img', 'video', 'audio'] as const) {
   const c = cases[kind];
 
@@ -137,7 +134,6 @@ for (const kind of ['img', 'video', 'audio'] as const) {
   });
 }
 
-
 test('UPLOAD-IMG-SUBDIR-01: subdir-doc upload renders <img> that fetches the asset (not SPA fallback)', async ({
   page,
   api,
@@ -177,7 +173,6 @@ test('UPLOAD-IMG-SUBDIR-01: subdir-doc upload renders <img> that fetches the ass
   const contentType = response.headers()['content-type'] ?? '';
   expect(contentType).toMatch(/^image\//);
 });
-
 
 test('UPLOAD-IMG-ERR: 0-byte upload → 400 No file received → toast.error → src unchanged', async ({
   page,

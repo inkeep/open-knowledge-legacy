@@ -1,4 +1,3 @@
-
 interface FetchRewriteConfig {
   apiOrigin: string;
 }
@@ -33,8 +32,7 @@ export function installDesktopFetchRewrite(config: FetchRewriteConfig): void {
         const rel = parsed.pathname + parsed.search + parsed.hash;
         return origFetch(new Request(apiOrigin + rel, input), init);
       }
-    } catch {
-    }
+    } catch {}
     return origFetch(input, init);
   }) as typeof window.fetch & { [marker]?: true };
 

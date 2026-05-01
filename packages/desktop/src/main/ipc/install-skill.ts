@@ -1,4 +1,3 @@
-
 import { join } from 'node:path';
 import { buildSkillZip } from '@inkeep/open-knowledge-server';
 import type { App, Shell } from 'electron';

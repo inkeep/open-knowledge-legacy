@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInstallSkill } from './install-skill.ts';
 
-
 function makeFakeSpawn(capture: {
   command?: string;
   args?: readonly string[];
@@ -20,6 +19,7 @@ function makeFakeSpawn(capture: {
 }
 
 function stripAnsi(s: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escapes
   return s.replace(/\[[0-9;]*m/g, '');
 }
 

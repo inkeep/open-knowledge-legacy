@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import { SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
 import {

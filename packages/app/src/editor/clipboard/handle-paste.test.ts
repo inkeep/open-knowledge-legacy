@@ -1,4 +1,3 @@
-
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import { createHandlePaste } from './handle-paste.ts';
@@ -31,6 +30,7 @@ function fakeMdManager() {
   };
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: narrow fake view for unit test
 function fakeView(opts: { inCodeBlock?: boolean } = {}): any {
   const dispatch = mock(() => {});
   const codeBlockType = {
@@ -48,6 +48,7 @@ function fakeView(opts: { inCodeBlock?: boolean } = {}): any {
       schema: {
         nodes: { codeBlock: codeBlockType },
         text: (s: string) => ({ textContent: s }),
+        // biome-ignore lint/suspicious/noExplicitAny: fake schema for unit test
         nodeFromJSON: (json: any) => ({
           slice: (_f: number, _t: number) => ({ json, size: 10, content: { size: 10 } }),
           content: { size: 10 },
@@ -81,6 +82,7 @@ afterEach(() => {
 describe('WYSIWYG paste dispatcher — branch routing', () => {
   test('empty clipboard returns false (PM default runs)', () => {
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: fakeMdManager() as any,
     });
     const view = fakeView();
@@ -92,6 +94,7 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
 
   test('FR-10: cursor-in-codeBlock short-circuits to plain-text insert', () => {
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: fakeMdManager() as any,
     });
     const view = fakeView({ inCodeBlock: true });
@@ -102,6 +105,7 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
 
   test('Branch A: vscode-editor-data produces a codeBlock with language', () => {
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: fakeMdManager() as any,
     });
     const view = fakeView();
@@ -118,6 +122,7 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
 
   test('Branch A: unsanitized language falls back to empty lang string', () => {
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: fakeMdManager() as any,
     });
     const view = fakeView();
@@ -134,6 +139,7 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
 
   test('Branch A: malformed vscode-editor-data JSON falls through to a later branch', () => {
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: fakeMdManager() as any,
     });
     const view = fakeView();
@@ -147,6 +153,7 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
 
   test('Branch C: data-pm-slice fingerprint returns false (PM handles)', () => {
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: fakeMdManager() as any,
     });
     const view = fakeView();
@@ -160,6 +167,7 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
   test('Branch B: text/x-gfm routes through MarkdownManager.parse', () => {
     const md = fakeMdManager();
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: md as any,
     });
     const view = fakeView();
@@ -171,6 +179,7 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
   test('Branch B (FR-13 ambiguous): plain+html with markdown-shaped plain → markdown path wins', () => {
     const md = fakeMdManager();
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: md as any,
     });
     const view = fakeView();
@@ -186,6 +195,7 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
   test('Branch D: generic HTML (no markdown signals in text/plain) goes through htmlToMdast', () => {
     const md = fakeMdManager();
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: md as any,
     });
     const view = fakeView();
@@ -200,6 +210,7 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
   test('Branch E: text/plain only with markdown signals parses as markdown', () => {
     const md = fakeMdManager();
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: md as any,
     });
     const view = fakeView();
@@ -213,6 +224,7 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
   test('Branch E: text/plain only prose inserts verbatim (no markdown parse)', () => {
     const md = fakeMdManager();
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: md as any,
     });
     const view = fakeView();
@@ -225,6 +237,7 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
   test('FR-17: Cmd+Shift+V (via injected shiftKey) → verbatim text/plain insert', () => {
     const md = fakeMdManager();
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: md as any,
     });
     const view = fakeView();
@@ -239,6 +252,7 @@ describe('WYSIWYG paste dispatcher — markdown-first tiebreak ordering (D5/D13)
   test('OK→OK <img/> JSX paste: markdown-first wins over Branch C data-pm-slice', () => {
     const md = fakeMdManager();
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: md as any,
     });
     const view = fakeView();
@@ -253,6 +267,7 @@ describe('WYSIWYG paste dispatcher — markdown-first tiebreak ordering (D5/D13)
   test('OK→OK <Callout> JSX paste: markdown-first wins over Branch C', () => {
     const md = fakeMdManager();
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: md as any,
     });
     const view = fakeView();
@@ -268,6 +283,7 @@ describe('WYSIWYG paste dispatcher — markdown-first tiebreak ordering (D5/D13)
   test('Cross-PM-editor: markdown-canonical text/plain routes through markdown path even with PM slice', () => {
     const md = fakeMdManager();
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: md as any,
     });
     const view = fakeView();
@@ -282,6 +298,7 @@ describe('WYSIWYG paste dispatcher — markdown-first tiebreak ordering (D5/D13)
   test('Branch C still fires when text/plain is non-markdown prose (no false-positive on heuristic)', () => {
     const md = fakeMdManager();
     const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
       mdManager: md as any,
     });
     const view = fakeView();

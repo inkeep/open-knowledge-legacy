@@ -1,4 +1,3 @@
-
 import { describe, expect, mock, test } from 'bun:test';
 import type { HandoffPayload, HandoffTarget } from '@inkeep/open-knowledge-core';
 import { dispatchHandoff } from './dispatch.ts';

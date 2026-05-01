@@ -103,18 +103,15 @@ function forwardRequest(
       try {
         res.writeHead(408, { 'Content-Type': 'text/plain' });
         res.end('Request Timeout');
-      } catch {
-      }
+      } catch {}
     } else {
       try {
         res.end();
-      } catch {
-      }
+      } catch {}
     }
     try {
       req.socket?.destroy();
-    } catch {
-    }
+    } catch {}
   });
 
   const upstreamReq = httpRequest(
@@ -135,8 +132,7 @@ function forwardRequest(
       upstreamRes.once('error', () => {
         try {
           res.end();
-        } catch {
-        }
+        } catch {}
       });
     },
   );
@@ -149,8 +145,7 @@ function forwardRequest(
       } else {
         try {
           res.end();
-        } catch {
-        }
+        } catch {}
       }
       upstreamReq.destroy();
     });
@@ -163,8 +158,7 @@ function forwardRequest(
     } else {
       try {
         res.end();
-      } catch {
-      }
+      } catch {}
     }
   });
 

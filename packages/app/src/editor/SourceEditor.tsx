@@ -90,8 +90,8 @@ export function SourceEditor({
   if (mountError) throw mountError;
   const { resolvedTheme } = useTheme();
 
-
   const cmEntryRef = useRef<CmCacheEntry | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;

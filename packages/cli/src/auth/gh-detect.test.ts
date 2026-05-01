@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 
-
 describe('detectGh', () => {
   test('returns available:false when gh is not on PATH (ENOENT)', async () => {
     const { detectGh } = await import('./gh-detect.ts');

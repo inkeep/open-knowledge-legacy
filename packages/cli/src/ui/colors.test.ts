@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code detection
 const ANSI_RE = /\x1b\[[0-9;]*m/;
 
 describe('color helpers', () => {

@@ -1,4 +1,3 @@
-
 import type { Comment, Element, ElementContent, Properties } from 'hast';
 import type { MdxJsxFlowElement, MdxJsxTextElement } from 'mdast-util-mdx';
 import type { Handler, Handlers } from 'mdast-util-to-hast';

@@ -1,4 +1,3 @@
-
 import { recordMark } from './collector';
 import type { DevToolsTrackEntry, PerfMarkDetail } from './types';
 
@@ -40,6 +39,7 @@ interface MarkOptions {
 
 export function mark(name: string, props?: Record<string, unknown>, opts?: MarkOptions): void {
   if (!import.meta.env?.PROD && !validatePerfMarkName(name)) {
+    // eslint-disable-next-line no-console -- dev-only lint
     console.warn(`[perf] mark name "${name}" does not match ok/<subsystem>/<event>`);
   }
 
@@ -65,8 +65,7 @@ export function mark(name: string, props?: Record<string, unknown>, opts?: MarkO
       duration,
       detail,
     });
-  } catch {
-  }
+  } catch {}
 
   recordMark({
     name,

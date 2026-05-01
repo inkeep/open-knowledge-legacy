@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderBanner } from './banner.ts';
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code detection
 const ANSI_RE = /\x1b\[[0-9;]*m/;
 const VERSION = '0.0.1';
 
@@ -98,7 +99,9 @@ describe('renderBanner', () => {
       networkUrl: 'http://0.0.0.0:3000',
     });
     const stripped = output
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI stripping
       .replace(/\x1b\[[0-9;]*m/g, '')
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional OSC 8 hyperlink stripping
       .replace(/\x1b\]8;;[^\x07]*\x07/g, '');
     const lines = stripped.split('\n').filter((l) => l.trim().length > 0);
     const widths = lines.map((l) => l.length);

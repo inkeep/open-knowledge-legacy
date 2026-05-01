@@ -6,7 +6,6 @@ import { Button } from './ui/button';
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 
-
 interface DeviceVerificationEvent {
   type: 'verification';
   user_code: string;
@@ -29,12 +28,10 @@ interface DeviceErrorEvent {
 
 type DeviceEvent = DeviceVerificationEvent | DeviceCompleteEvent | DeviceErrorEvent;
 
-
 async function copyToClipboard(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
-  } catch {
-  }
+  } catch {}
 }
 
 interface AuthSuccessResult {
@@ -52,7 +49,6 @@ interface AuthModalProps {
   reauth?: boolean;
   transport?: AuthTransport;
 }
-
 
 interface DeviceFlowPanelProps {
   onSuccess: (result: AuthSuccessResult) => void;
@@ -121,6 +117,7 @@ function DeviceFlowPanel({ onSuccess, onCancel, transport }: DeviceFlowPanelProp
     }
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: start device flow once on mount
   useEffect(() => {
     let cancelled = false;
     queueMicrotask(() => {
@@ -214,7 +211,6 @@ function DeviceFlowPanel({ onSuccess, onCancel, transport }: DeviceFlowPanelProp
   );
 }
 
-
 interface PATpanelProps {
   onSuccess: (result: AuthSuccessResult) => void;
   onCancel: () => void;
@@ -271,8 +267,7 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
             setLoading(false);
             return 'terminal';
           }
-        } catch {
-        }
+        } catch {}
         return 'continue';
       });
       if (!terminated) setError('No response — try again');
@@ -322,7 +317,6 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
   );
 }
 
-
 interface IdentityPromptProps {
   login: string;
   onSave: (name: string, email: string) => void;
@@ -367,7 +361,6 @@ function IdentityPrompt({ login, onSave, onSkip }: IdentityPromptProps) {
   );
 }
 
-
 type AuthTab = 'device' | 'pat';
 type AuthStep = 'auth' | 'identity' | 'done';
 
@@ -409,8 +402,7 @@ export function AuthModal({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ setIdentity: { name, email } }),
-    }).catch(() => {
-    });
+    }).catch(() => {});
 
     const result = { ...(authResult ?? { login: '' }), name, email };
     setStep('done');

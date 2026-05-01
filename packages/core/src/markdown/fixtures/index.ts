@@ -1,4 +1,3 @@
-
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +8,6 @@ function fixturePath(...segments: string[]): string {
   return resolve(FIXTURES_DIR, ...segments);
 }
 
-
 interface GfmExample {
   section: string;
   markdown: string;
@@ -18,7 +16,6 @@ interface GfmExample {
 export function loadGfmExamples(): GfmExample[] {
   return JSON.parse(readFileSync(fixturePath('gfm', 'examples.json'), 'utf8')) as GfmExample[];
 }
-
 
 interface MdxCrashEntry {
   id: string;
@@ -46,7 +43,6 @@ export function loadBuiltInFixtures(): BuiltInFixture[] {
   return JSON.parse(readFileSync(fixturePath('mdx', 'built-ins.json'), 'utf8')) as BuiltInFixture[];
 }
 
-
 export interface NgPinnedCase {
   id: string;
   name: string;
@@ -62,7 +58,6 @@ export function loadNgPinnedCases(): NgPinnedCase[] {
     readFileSync(fixturePath('ng-pinned', 'component-blocks-v2.json'), 'utf8'),
   ) as NgPinnedCase[];
 }
-
 
 export function loadLargeRealistic(): string {
   return readFileSync(fixturePath('perf', 'large-realistic.md'), 'utf8');

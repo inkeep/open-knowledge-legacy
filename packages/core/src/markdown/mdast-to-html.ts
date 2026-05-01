@@ -1,4 +1,3 @@
-
 import type { Element, Root as HastRoot } from 'hast';
 import type { Root as MdastRoot } from 'mdast';
 import rehypeStringify from 'rehype-stringify';

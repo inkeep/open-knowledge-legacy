@@ -1,4 +1,3 @@
-
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -69,8 +68,7 @@ async function atomicWrite(absPath: string, content: string): Promise<void> {
   } catch (e) {
     try {
       unlinkSync(tmpPath);
-    } catch {
-    }
+    } catch {}
     throw e;
   }
 }

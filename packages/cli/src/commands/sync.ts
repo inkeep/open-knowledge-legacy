@@ -1,18 +1,8 @@
-/**
- * `open-knowledge sync` — commit + pull + push.
- *
- * Server-first: discovers a running Hocuspocus server via server.lock and
- * delegates to POST /api/sync/trigger { op: 'sync' }. Falls back to a
- * one-shot simple-git workflow when no live server is found.
- */
-import {
-  type Config,
-  readServerLock,
-  resolveContentDir,
-  resolveLockDir,
-} from '@inkeep/open-knowledge-server';
+import { readServerLock } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import simpleGit from 'simple-git';
+import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
+import type { Config } from '../index.ts';
 
 function emit(json: boolean, obj: Record<string, unknown>): void {
   if (json) process.stdout.write(`${JSON.stringify(obj)}\n`);
@@ -23,9 +13,6 @@ interface SyncOptions {
   op?: 'sync' | 'push' | 'pull';
 }
 
-/**
- * Core sync logic — tries the live server first, falls back to simple-git.
- */
 export async function runSync(
   opts: SyncOptions,
   config: Config,
@@ -35,7 +22,6 @@ export async function runSync(
   const contentDir = resolveContentDir(config, cwd);
   const lockDir = resolveLockDir(contentDir);
 
-  // Server-first: delegate to running server if available.
   const lock = readServerLock(lockDir);
   if (lock && lock.port > 0) {
     const url = `http://127.0.0.1:${lock.port}/api/sync/trigger`;
@@ -58,7 +44,6 @@ export async function runSync(
       }
       return;
     } catch (err) {
-      // Fall through to simple-git on network error
       const msg = err instanceof Error ? err.message : String(err);
       if (!opts.json) {
         process.stderr.write(`Server trigger failed (${msg}), running directly…\n`);
@@ -66,7 +51,6 @@ export async function runSync(
     }
   }
 
-  // Fallback: one-shot simple-git
   if (!opts.json) {
     process.stderr.write(`Running ${op} directly (no live server)…\n`);
   }

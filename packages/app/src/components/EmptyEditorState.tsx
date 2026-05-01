@@ -88,8 +88,7 @@ export function EmptyEditorState() {
           setDocumentCount(data.documents.length);
         }
       })
-      .catch(() => {
-      });
+      .catch(() => {});
   }
 
   const showCta = seedStatus === 'has-work';

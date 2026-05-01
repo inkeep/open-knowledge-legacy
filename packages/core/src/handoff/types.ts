@@ -1,4 +1,3 @@
-
 export type HandoffTarget = 'claude-cowork' | 'claude-code' | 'codex' | 'cursor';
 
 export interface HandoffPayload {

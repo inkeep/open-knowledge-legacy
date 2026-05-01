@@ -1,4 +1,3 @@
-
 import { FolderOpenIcon, Loader2Icon, PlusIcon } from 'lucide-react';
 import { type ComponentType, useEffect, useState } from 'react';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';

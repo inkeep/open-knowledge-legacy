@@ -1,4 +1,3 @@
-
 import { Compartment } from '@codemirror/state';
 import { EditorView as CMEditorView, keymap } from '@codemirror/view';
 import type { NodeViewProps } from '@tiptap/core';
@@ -154,6 +153,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     updatingRef.current = false;
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: CM view mounts once imperatively; re-mount on deps change would destroy the editor state. Theme handled by separate compartment effect; content sync handled by PM→CM sync effect below.
   useEffect(() => {
     const container = cmContainerRef.current;
     if (!container) return;

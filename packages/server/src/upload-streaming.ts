@@ -58,8 +58,7 @@ export function linkTempToFinalWithCollisionRetry(
       tracedLinkSync(tempPath, destPath);
       try {
         tracedUnlinkSync(tempPath);
-      } catch {
-      }
+      } catch {}
       return name;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
@@ -67,8 +66,7 @@ export function linkTempToFinalWithCollisionRetry(
 
       try {
         tracedUnlinkSync(tempPath);
-      } catch {
-      }
+      } catch {}
 
       if (code === 'ENOSPC' || code === 'EDQUOT') {
         throw new UploadWriteError('storage-full', err);
@@ -82,8 +80,7 @@ export function linkTempToFinalWithCollisionRetry(
 
   try {
     tracedUnlinkSync(tempPath);
-  } catch {
-  }
+  } catch {}
   throw new UploadWriteError('collision-exhaustion');
 }
 

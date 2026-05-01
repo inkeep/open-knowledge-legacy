@@ -1,4 +1,3 @@
-
 import type { Config, FolderRule } from '@inkeep/open-knowledge-core';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import {
@@ -100,6 +99,7 @@ export function FoldersSection({ form, commitField, scope, flashedPath }: Folder
           No folder rules yet. Add one to apply default frontmatter to a directory.
         </p>
       ) : (
+        // biome-ignore lint/a11y/noRedundantRoles: Tailwind v4 preflight resets `list-style: none`, which strips the implicit list role in Safari VoiceOver. Tailwind docs explicitly recommend `role="list"` to restore positional announcements ("item 2 of 5").
         <ol className="space-y-3" role="list">
           {fields.map((entry, i) => (
             <FolderRow

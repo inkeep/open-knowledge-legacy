@@ -1,4 +1,3 @@
-
 import { defineScenario } from '../lib/scenario';
 
 const BIG_DOC = process.env.OK_PERF_BIG_DOC ?? 'PROJECT';
@@ -31,8 +30,7 @@ export default defineScenario({
           }
         });
         obs.observe({ type: 'longtask', buffered: true });
-      } catch {
-      }
+      } catch {}
     });
 
     const url = `${opts.target}/#/${encodeURIComponent(BIG_DOC)}`;

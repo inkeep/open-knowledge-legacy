@@ -1,4 +1,3 @@
-
 import { markerFor } from '../lib/doc-markers';
 import { defineScenario } from '../lib/scenario';
 
@@ -69,8 +68,7 @@ export default defineScenario({
           }
         });
         obs.observe({ type: 'longtask', buffered: true });
-      } catch {
-      }
+      } catch {}
     });
 
     await page.goto(`${opts.target}/#/${encodeURIComponent(WARM_DOC)}`, {

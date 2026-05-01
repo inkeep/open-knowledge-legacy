@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { installDesktopFetchRewrite } from './desktop-fetch';
 
-
 type GlobalLike = {
   window?: Window;
   fetch?: typeof fetch;
@@ -25,8 +24,7 @@ function stubWindowFetch() {
 }
 
 describe('installDesktopFetchRewrite', () => {
-  beforeAll(() => {
-  });
+  beforeAll(() => {});
 
   afterAll(() => {
     if (originalWindow === undefined) delete g.window;

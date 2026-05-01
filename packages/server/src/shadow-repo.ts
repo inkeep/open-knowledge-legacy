@@ -1,4 +1,3 @@
-
 import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -20,7 +19,6 @@ import { incrementShadowMigrationLegacyRefsDeleted } from './metrics.ts';
 import { acquireLock, releaseLock } from './shadow-lock.ts';
 import { withSpan } from './telemetry.ts';
 
-
 export interface ShadowHandle {
   gitDir: string;
   workTree: string;
@@ -35,7 +33,6 @@ export interface WriterIdentity {
   name: string;
   email: string;
 }
-
 
 const GIT_TIMEOUT_MS = (() => {
   const raw = process.env.OK_GIT_TIMEOUT_MS;
@@ -53,7 +50,6 @@ export function shadowGit(shadow: ShadowHandle) {
     GIT_WORK_TREE: shadow.workTree,
   });
 }
-
 
 export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle> {
   const shadowDir = resolveShadowDir(projectRoot);
@@ -150,7 +146,6 @@ export async function sweepLegacyShadowRefs(shadow: ShadowHandle): Promise<numbe
   return deleted;
 }
 
-
 export async function commitWip(
   shadow: ShadowHandle,
   writer: WriterIdentity,
@@ -237,11 +232,9 @@ async function commitWipInner(
   } finally {
     try {
       rmSync(tmpIndex);
-    } catch {
-    }
+    } catch {}
   }
 }
-
 
 function sweepOrphanedTmpIndexFiles(shadow: ShadowHandle): number {
   let deleted = 0;
@@ -251,11 +244,9 @@ function sweepOrphanedTmpIndexFiles(shadow: ShadowHandle): number {
       try {
         rmSync(resolve(shadow.gitDir, name));
         deleted++;
-      } catch {
-      }
+      } catch {}
     }
-  } catch {
-  }
+  } catch {}
   return deleted;
 }
 
@@ -278,8 +269,7 @@ export async function buildWipTree(shadow: ShadowHandle, contentRoot: string): P
   } finally {
     try {
       rmSync(tmpIndex);
-    } catch {
-    }
+    } catch {}
   }
 }
 
@@ -343,7 +333,6 @@ async function commitWipFromTreeInner(
   return commitSha;
 }
 
-
 export const FILE_SYSTEM_WRITER: WriterIdentity = {
   id: 'file-system',
   name: 'File System',
@@ -361,7 +350,6 @@ export const SERVICE_WRITER: WriterIdentity = {
   name: 'Open Knowledge (service)',
   email: 'service@openknowledge.local',
 };
-
 
 const UPSTREAM_WRITER: WriterIdentity = GIT_UPSTREAM_WRITER;
 
@@ -404,7 +392,6 @@ async function commitUpstreamImportInner(
   return commitWip(shadow, UPSTREAM_WRITER, contentRoot, message, branch);
 }
 
-
 export interface SafetyCheckpointParams {
   action: string;
   context: Record<string, unknown>;
@@ -435,7 +422,6 @@ export async function safetyCheckpoint(
   const message = `${subject}\n\n${formatOkActor(actorEntry)}`;
   return commitWip(shadow, SAFETY_WRITER, contentRoot, message, branch);
 }
-
 
 export type InMemoryCheckpointParams =
   | {
@@ -518,12 +504,10 @@ export async function saveInMemoryCheckpoint(
   } finally {
     try {
       rmSync(tmpIndex);
-    } catch {
-    }
+    } catch {}
     try {
       rmSync(tmpBlobFile);
-    } catch {
-    }
+    } catch {}
   }
 }
 
@@ -596,8 +580,7 @@ export async function listRescueCheckpoints(
               .split('/')
               .slice(-1)[0] ?? '';
         }
-      } catch {
-      }
+      } catch {}
     }
     if (!docName) continue;
     out.push({
@@ -611,7 +594,6 @@ export async function listRescueCheckpoints(
   }
   return out;
 }
-
 
 export interface CheckpointRetentionPolicy {
   maxBridgeMergeLoss: number;
@@ -760,7 +742,6 @@ export async function gcCheckpointRefs(
   return result;
 }
 
-
 export interface ParkableDoc {
   docName: string;
   markdown: string;
@@ -830,8 +811,7 @@ async function parkBranchInner(
     let parentSha: string | null = null;
     try {
       parentSha = (await sg.raw('rev-parse', ref)).trim();
-    } catch {
-    }
+    } catch {}
 
     const parkActorEntry: OkActorEntry = {
       v: 1,
@@ -867,12 +847,10 @@ async function parkBranchInner(
   } finally {
     try {
       rmSync(tmpIndex);
-    } catch {
-    }
+    } catch {}
     try {
       rmSync(tmpBlobFile);
-    } catch {
-    }
+    } catch {}
   }
 }
 
@@ -905,7 +883,6 @@ export async function readParkedState(
   }
 }
 
-
 export interface SaveVersionResult {
   checkpointRef: string;
 }
@@ -937,7 +914,6 @@ async function saveVersionInner(
   const sg = shadowGit(shadow);
   const gitPathspec = contentRoot || '.';
 
-
   const shadowTmpIndex = resolve(shadow.gitDir, 'index-checkpoint');
   try {
     await sg
@@ -956,8 +932,7 @@ async function saveVersionInner(
       try {
         const sha = (await sg.raw('rev-parse', `refs/wip/${branch}/${w.id}`)).trim();
         shadowParentShas.push(sha);
-      } catch {
-      }
+      } catch {}
     }
     const uniqueParents = [...new Set(shadowParentShas)];
 
@@ -975,8 +950,7 @@ async function saveVersionInner(
           .split('\n')
           .filter(Boolean);
         if (refs[0]) uniqueParents.push(refs[0]);
-      } catch {
-      }
+      } catch {}
     }
 
     const checkpointActorEntry: OkActorEntry = {
@@ -1016,19 +990,16 @@ async function saveVersionInner(
     for (const w of writers) {
       try {
         await sg.raw('update-ref', '-d', `refs/wip/${branch}/${w.id}`);
-      } catch {
-      }
+      } catch {}
     }
     try {
       await sg.raw('update-ref', '-d', `refs/wip/${branch}/${GIT_UPSTREAM_WRITER.id}`);
-    } catch {
-    }
+    } catch {}
 
     return { checkpointRef };
   } finally {
     try {
       rmSync(shadowTmpIndex);
-    } catch {
-    }
+    } catch {}
   }
 }

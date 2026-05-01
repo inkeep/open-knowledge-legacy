@@ -58,11 +58,7 @@ function TagPillInput({
       )}
     >
       {value.map((tag, i) => (
-        <Badge
-          key={tag}
-          variant="secondary"
-          className="gap-1 pl-2 pr-1"
-        >
+        <Badge key={tag} variant="secondary" className="gap-1 pl-2 pr-1">
           <span className="font-mono">{tag}</span>
           <button
             type="button"

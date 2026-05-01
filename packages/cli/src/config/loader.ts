@@ -9,11 +9,11 @@ import {
   locateIssue,
 } from '@inkeep/open-knowledge-core';
 import { readConfigSafely } from '@inkeep/open-knowledge-core/server';
-import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
 import { type Document, parseDocument } from 'yaml';
 import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 import { isObject } from '../utils/is-object.ts';
 import { normalizeCwd } from '../utils/normalize-cwd.ts';
+import { type Config, ConfigSchema } from './schema.ts';
 
 export interface LoadConfigResult {
   config: Config;

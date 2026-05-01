@@ -43,7 +43,12 @@ export {
   ORPHAN_MODES,
   type OrphanMode,
 } from './backlink-index.ts';
-export { type BootedServer, type BootServerOptions, bootServer } from './boot.ts';
+export {
+  type BootedServer,
+  type BootServerOptions,
+  bootServer,
+  parseKeepaliveConnectionId,
+} from './boot.ts';
 export {
   type BuildSkillZipOptions,
   type BuildSkillZipResult,
@@ -58,9 +63,6 @@ export {
   isSystemDoc,
   SYSTEM_DOC_NAME,
 } from './cc1-broadcast.ts';
-export { resolveContentDir, resolveLockDir } from './config/paths.ts';
-export { type Config, ConfigSchema } from './config/schema.ts';
-export { MCP_SERVER_NAME } from './constants.ts';
 export {
   type ContentFilter,
   type ContentFilterOptions,
@@ -148,21 +150,6 @@ export {
   rewriteMarkdownLinksForDocumentRename,
   rewriteWikiLinksForDocumentRename,
 } from './managed-rename-rewrite.ts';
-export type { AgentIdentity } from './mcp/agent-identity.ts';
-export { getCurrentMcpLogger, McpLogger, runWithMcpLogger } from './mcp/logger.ts';
-export { buildExecResult, type ExecStructuredResult } from './mcp/tools/exec.ts';
-export { buildReadResult } from './mcp/tools/read-document.ts';
-export {
-  createMcpHttpHandler,
-  type McpHttpHandler,
-  type McpHttpHandlerOptions,
-} from './mcp-http.ts';
-export {
-  type MountMcpAndApiHandle,
-  type MountMcpAndApiOptions,
-  mountMcpAndApi,
-  parseKeepaliveConnectionId,
-} from './mcp-mount.ts';
 export {
   getMetrics,
   handleCollabSocketError,
@@ -310,4 +297,4 @@ export {
   type UiLockMetadata,
   updateUiLockPort,
 } from './ui-lock.ts';
-export { RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';
+export { PROTOCOL_VERSION, RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';

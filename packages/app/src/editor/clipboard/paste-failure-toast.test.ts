@@ -1,10 +1,10 @@
-
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 type ToastFn = { error: ReturnType<typeof mock> };
 const toastMock: ToastFn = { error: mock(() => {}) };
 mock.module('sonner', () => ({ toast: toastMock }));
 
+// biome-ignore lint/suspicious/noExplicitAny: test-scoped dynamic import
 let mod: any;
 
 beforeEach(async () => {

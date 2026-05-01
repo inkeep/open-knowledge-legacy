@@ -22,7 +22,6 @@ import {
   shouldRethrowBridgeMergeLoss,
 } from './server-observers.ts';
 
-
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
@@ -65,7 +64,6 @@ function populateFragment(doc: Y.Doc, xmlFragment: Y.XmlFragment, md: string): v
   const meta = { mapping: new Map(), isOMark: new Map() };
   updateYFragment(doc, xmlFragment, pmNode, meta);
 }
-
 
 describe('Server Observer A — XmlFragment → Y.Text', () => {
   test('Observer A settles synchronously after each transact; multiple rapid edits each fire once', () => {
@@ -398,7 +396,6 @@ describe('Origin-guard truth table (§7d)', () => {
     cleanup();
   });
 
-
   function runPairedWriteShortCircuitTest(origin: LocalTransactionOrigin, marker: string): void {
     const { doc, xmlFragment, ytext, recorder } = createTestDoc();
     const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
@@ -559,7 +556,6 @@ describe('Initial sync', () => {
 });
 
 describe('Server Observer B — error recovery paths', () => {
-
   function createMdManagerStub() {
     let parseThrow: Error | null = null;
     let serializeThrow: Error | null = null;
@@ -574,6 +570,7 @@ describe('Server Observer B — error recovery paths', () => {
       },
       serialize(json: unknown) {
         if (serializeThrow) throw serializeThrow;
+        // biome-ignore lint/suspicious/noExplicitAny: delegate to real manager
         return mdManager.serialize(json as any);
       },
     } as unknown as SetupServerObserversOpts['mdManager'];
@@ -690,6 +687,7 @@ describe('Server Observer B — error recovery paths', () => {
       if (serializeCallCount === 1) {
         throw new Error('simulated serialize failure post-update');
       }
+      // biome-ignore lint/suspicious/noExplicitAny: delegate
       return mdManager.serialize(json as any);
     }) as typeof stub.mdManager.serialize;
 

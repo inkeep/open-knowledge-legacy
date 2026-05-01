@@ -1,4 +1,3 @@
-
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import {
@@ -22,7 +21,6 @@ import {
 } from './metrics.ts';
 import { type ShadowHandle, saveInMemoryCheckpoint } from './shadow-repo.ts';
 
-
 export const OBSERVER_SYNC_ORIGIN = {
   source: 'local',
   skipStoreHooks: true,
@@ -45,8 +43,6 @@ export const isPairedWriteOrigin = (origin: unknown): boolean => {
 export function shouldRethrowBridgeMergeLoss(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.NODE_ENV === 'test' || env.OK_RETHROW_BRIDGE_LOSS === '1';
 }
-
-
 
 type ShadowAccessor = () => ShadowHandle | undefined;
 
@@ -229,7 +225,6 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       lastSyncedXmlMd = '';
     }
   }
-
 
   let priorFmForTelemetry = readCurrentFm();
   const runObserverBSync = (): void => {

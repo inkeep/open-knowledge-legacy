@@ -1,4 +1,3 @@
-
 import type { FrontmatterType, FrontmatterValue } from '@inkeep/open-knowledge-core';
 import { format, parse, parseISO } from 'date-fns';
 import { Calendar as CalendarIcon, Hash, List, SquareCheck, Type, X } from 'lucide-react';
@@ -284,6 +283,7 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
     >
       {value.map((chip, i) => (
         <span
+          // biome-ignore lint/suspicious/noArrayIndexKey: chips are positional; user reorders via add/remove
           key={`${i}-${chip}`}
           data-testid="list-chip"
           data-index={i}

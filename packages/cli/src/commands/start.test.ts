@@ -6,7 +6,7 @@ import { request as httpRequest } from 'node:http';
 import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
+import { type Config, ConfigSchema } from '../config/schema.ts';
 import {
   awaitUiSiblingPort,
   type BootedStartServer,
@@ -196,6 +196,7 @@ describe('spawnOkUi', () => {
     spawnOkUi({
       lockDir,
       cwd: tmpDir,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal mock matches ChildProcess shape
       spawn: ((cmd: string, args: readonly string[], opts: any) => {
         calls.push({ cmd, args, opts });
         return { unref: () => {}, on: () => {}, kill: () => {} } as unknown as ReturnType<
@@ -300,7 +301,6 @@ describe('spawnOkUi', () => {
   });
 });
 
-
 function makeTestConfig(): Config {
   return {
     content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
@@ -354,8 +354,7 @@ describe('bootStartServer (integration)', () => {
     if (booted) {
       try {
         await booted.destroy();
-      } catch {
-      }
+      } catch {}
       booted = null;
     }
     await rm(tmpDir, { recursive: true, force: true });
@@ -588,8 +587,7 @@ describe('bootStartServer — ensureProjectGit wiring (US-004)', () => {
     if (booted) {
       try {
         await booted.destroy();
-      } catch {
-      }
+      } catch {}
       booted = null;
     }
     await rm(tmpDir, { recursive: true, force: true });
@@ -653,7 +651,6 @@ describe('bootStartServer — ensureProjectGit wiring (US-004)', () => {
     expect(existsSync(join(tmpDir, '.git'))).toBe(false);
   });
 });
-
 
 describe('awaitUiSiblingPort', () => {
   test('returns the bound port immediately when ui.lock has port > 0 on first read', async () => {
@@ -721,7 +718,6 @@ describe('awaitUiSiblingPort', () => {
   });
 });
 
-
 describe('bootStartServer — resolvedUiPort tracks the port ok ui actually binds', () => {
   let tmpDir: string;
   let booted: BootedStartServer | null = null;
@@ -737,8 +733,7 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
     if (booted) {
       try {
         await booted.destroy();
-      } catch {
-      }
+      } catch {}
       booted = null;
     }
     if (uiHandle) {

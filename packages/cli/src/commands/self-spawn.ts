@@ -1,4 +1,3 @@
-
 export function resolveSelfSpawn(): { command: string; prefixArgs: readonly string[] } {
   const command = process.execPath;
   const entry = process.argv[1];

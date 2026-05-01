@@ -1,8 +1,6 @@
-
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-
 
 const ALLOWED_URL_PATTERNS: RegExp[] = [
   /^https?:\/\//i,
@@ -25,7 +23,6 @@ export function isAllowedGitUrl(url: string): boolean {
   return ALLOWED_URL_PATTERNS.some((p) => p.test(url));
 }
 
-
 export function expandTilde(p: string): string {
   if (p === '~') return homedir();
   if (p.startsWith('~/')) return join(homedir(), p.slice(2));
@@ -39,7 +36,6 @@ export function isSafeLocalPath(dirPath: string): boolean {
   const resolved = resolve(expandTilde(dirPath));
   return resolved === home || resolved.startsWith(`${home}/`);
 }
-
 
 export function isLoopbackRequest(req: IncomingMessage): boolean {
   const addr = req.socket.remoteAddress;
@@ -80,7 +76,6 @@ export function checkLocalOpSecurity(
   }
   return true;
 }
-
 
 interface ConcurrencyGuard {
   tryAcquire(key: string): boolean;

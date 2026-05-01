@@ -1,4 +1,3 @@
-
 type OkDesktopMode = 'editor' | 'navigator';
 
 interface OkDesktopConfig {

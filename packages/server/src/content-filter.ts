@@ -1,4 +1,3 @@
-
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { ASSET_EXTENSIONS } from '@inkeep/open-knowledge-core';

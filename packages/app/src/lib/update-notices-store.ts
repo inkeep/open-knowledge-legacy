@@ -1,4 +1,3 @@
-
 import { attachUpdateSubscribers, type UpdateNotice } from '@/components/UpdateNotices.shared';
 
 let notices: UpdateNotice[] = [];

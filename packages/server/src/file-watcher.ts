@@ -1,4 +1,3 @@
-
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -26,7 +25,6 @@ export interface AsyncSubscription {
 
 type WatcherBackend = 'parcel' | 'chokidar';
 
-
 type MarkdownDiskEvent =
   | { kind: 'create'; path: string; docName: string; content: string }
   | { kind: 'update'; path: string; docName: string; content: string }
@@ -51,7 +49,6 @@ export function assertNeverDiskEvent(event: never): never {
   throw new Error(`[DiskEvent] unhandled variant: ${JSON.stringify(event)}`);
 }
 
-
 export interface FileIndexEntry {
   size: number;
   modified: string;
@@ -65,7 +62,6 @@ export interface WatcherHandle {
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
   getAliasMap: () => ReadonlyMap<string, string>;
 }
-
 
 export const writeTracker = new Map<string, Array<{ hash: string; timestamp: number }>>();
 const WRITE_TRACKER_TTL_MS = 10_000;
@@ -104,7 +100,6 @@ function extractDocExtension(path: string): DocExtension | null {
   return null;
 }
 
-
 export const lastKnownHash = new Map<string, string>();
 
 export function updateLastKnownHash(filePath: string, hash: string): void {
@@ -116,7 +111,6 @@ export function removeLastKnownHash(filePath: string): string | undefined {
   lastKnownHash.delete(filePath);
   return hash;
 }
-
 
 interface RawFileEvent {
   type: 'create' | 'update' | 'delete';
@@ -316,7 +310,6 @@ export async function classifyEvents(
   return results;
 }
 
-
 export function isSelfWrite(filePath: string, hash: string): boolean {
   const queue = writeTracker.get(filePath);
   if (!queue) return false;
@@ -326,7 +319,6 @@ export function isSelfWrite(filePath: string, hash: string): boolean {
   if (queue.length === 0) writeTracker.delete(filePath);
   return true;
 }
-
 
 function seedLastKnownHashes(
   dir: string,
@@ -545,7 +537,6 @@ export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileInd
   }
 }
 
-
 export async function handleRawEvents(
   rawEvents: Array<{ type: 'create' | 'update' | 'delete'; path: string }>,
   contentDir: string,
@@ -670,7 +661,6 @@ function _fileWatcherEventsCounter() {
   return _fwEventsCounterCache;
 }
 
-
 async function startParcelWatcher(
   contentDir: string,
   contentFilter: ContentFilter | undefined,
@@ -723,7 +713,6 @@ async function startParcelWatcher(
     return null;
   }
 }
-
 
 async function startChokidarWatcher(
   contentDir: string,
@@ -782,7 +771,6 @@ async function startChokidarWatcher(
     },
   };
 }
-
 
 export async function startWatcher(
   contentDirRaw: string,
