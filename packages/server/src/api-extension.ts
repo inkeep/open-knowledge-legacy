@@ -48,9 +48,11 @@ import {
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
+  type LocalOpAuthHostRequest,
   LocalOpAuthHostRequestSchema,
   LocalOpAuthPatRequestSchema,
   LocalOpAuthSetIdentityRequestSchema,
+  type LocalOpCloneRequest,
   LocalOpCloneRequestSchema,
   LocalOpOpenRequestSchema,
   type Principal,
@@ -361,8 +363,6 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
   const path = normalized ? `${normalized}/${docName}${ext}` : `${docName}${ext}`;
   return { path };
 }
-
-const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
@@ -1123,19 +1123,6 @@ export interface ApiExtensionOptions {
    * paths that intentionally retire a document must opt into unload here.
    */
   forceUnloadDocument?: (document: Document) => Promise<void>;
-}
-
-async function readBody(req: IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
-  for await (const chunk of req) {
-    totalBytes += (chunk as Buffer).length;
-    if (totalBytes > MAX_BODY_BYTES) {
-      throw new Error('Payload too large');
-    }
-    chunks.push(chunk as Buffer);
-  }
-  return Buffer.concat(chunks);
 }
 
 function json(
@@ -5455,44 +5442,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * typed envelope so every mid-stream error has a `problem` payload.
    */
   const HANDLE_LOCAL_OP_CLONE = 'local-op-clone';
-  async function handleLocalOpClone(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_CLONE })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: HANDLE_LOCAL_OP_CLONE,
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
-
-    // Manual body read + validateBody — the security check + method gate
-    // must run before we touch the body, so we don't wrap the entire
-    // handler with `withValidation()`.
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: HANDLE_LOCAL_OP_CLONE,
-        cause: err,
-      });
-      return;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw.toString('utf-8'));
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
-        handler: HANDLE_LOCAL_OP_CLONE,
-        cause: err,
-      });
-      return;
-    }
-    const validated = validateBody(LocalOpCloneRequestSchema, parsed, res, {
-      handler: HANDLE_LOCAL_OP_CLONE,
-    });
-    if (!validated.ok) return;
-    const { url, dir } = validated.value;
+  const handleLocalOpClone = withValidation(LocalOpCloneRequestSchema, handleLocalOpCloneInner, {
+    handler: HANDLE_LOCAL_OP_CLONE,
+    method: 'POST',
+    preBodyGate: (req, res) => checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_CLONE }),
+  });
+  async function handleLocalOpCloneInner(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    body: LocalOpCloneRequest,
+  ): Promise<void> {
+    const { url, dir } = body;
 
     // Semantic checks (post-shape): protocol allowlist + path safety.
     if (!isAllowedGitUrl(url)) {
@@ -5783,83 +5743,58 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Returns: { port: number }
    */
   const HANDLE_LOCAL_OP_OPEN = 'local-op-open';
-  async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_OPEN })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: HANDLE_LOCAL_OP_OPEN,
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
+  const handleLocalOpOpen = withValidation(
+    LocalOpOpenRequestSchema,
+    async (_req, res, body) => {
+      const { dir } = body;
 
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: HANDLE_LOCAL_OP_OPEN,
-        cause: err,
-      });
-      return;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw.toString('utf-8'));
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
-        handler: HANDLE_LOCAL_OP_OPEN,
-        cause: err,
-      });
-      return;
-    }
-    const validated = validateBody(LocalOpOpenRequestSchema, parsed, res, {
-      handler: HANDLE_LOCAL_OP_OPEN,
-    });
-    if (!validated.ok) return;
-    const { dir } = validated.value;
-
-    // Security: dir must be within user home dir
-    if (!isSafeLocalPath(dir)) {
-      errorResponse(
-        res,
-        400,
-        'urn:ok:error:dir-outside-home',
-        'dir must be within the user home directory.',
-        { handler: HANDLE_LOCAL_OP_OPEN, detail: `dir=${dir}` },
-      );
-      return;
-    }
-
-    // Concurrency guard
-    if (!localOpGuard.tryAcquire(LOCAL_OP_OPEN_KEY)) {
-      errorResponse(
-        res,
-        429,
-        'urn:ok:error:concurrent-operation',
-        'A server-open operation is already in progress.',
-        { handler: HANDLE_LOCAL_OP_OPEN },
-      );
-      return;
-    }
-
-    try {
-      const result = await startServerAtDirAndGetPort(dir);
-      if ('port' in result) {
-        json(res, 200, { port: result.port });
-      } else {
+      // Security: dir must be within user home dir
+      if (!isSafeLocalPath(dir)) {
         errorResponse(
           res,
-          504,
-          'urn:ok:error:server-open-failed',
-          'Failed to open project server.',
-          { handler: HANDLE_LOCAL_OP_OPEN, detail: result.error },
+          400,
+          'urn:ok:error:dir-outside-home',
+          'dir must be within the user home directory.',
+          { handler: HANDLE_LOCAL_OP_OPEN, detail: `dir=${dir}` },
         );
+        return;
       }
-    } finally {
-      localOpGuard.release(LOCAL_OP_OPEN_KEY);
-    }
-  }
+
+      // Concurrency guard
+      if (!localOpGuard.tryAcquire(LOCAL_OP_OPEN_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'A server-open operation is already in progress.',
+          { handler: HANDLE_LOCAL_OP_OPEN },
+        );
+        return;
+      }
+
+      try {
+        const result = await startServerAtDirAndGetPort(dir);
+        if ('port' in result) {
+          json(res, 200, { port: result.port });
+        } else {
+          errorResponse(
+            res,
+            504,
+            'urn:ok:error:server-open-failed',
+            'Failed to open project server.',
+            { handler: HANDLE_LOCAL_OP_OPEN, detail: result.error },
+          );
+        }
+      } finally {
+        localOpGuard.release(LOCAL_OP_OPEN_KEY);
+      }
+    },
+    {
+      handler: HANDLE_LOCAL_OP_OPEN,
+      method: 'POST',
+      preBodyGate: (req, res) => checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_OPEN }),
+    },
+  );
 
   // ─── Auth relay endpoints (/api/local-op/auth/*) ────────────────────────────
   // FR18: loopback + origin security enforced on all five endpoints.
@@ -5887,42 +5822,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * client always sees the canonical streaming envelope.
    */
   const HANDLE_LOCAL_OP_AUTH_LOGIN = 'local-op-auth-login';
-  async function handleLocalOpAuthLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_LOGIN })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: HANDLE_LOCAL_OP_AUTH_LOGIN,
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
-
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: HANDLE_LOCAL_OP_AUTH_LOGIN,
-        cause: err,
-      });
-      return;
-    }
-    let parsed: unknown;
-    try {
-      // Empty body is OK — host defaults to 'github.com'.
-      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString('utf-8'));
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
-        handler: HANDLE_LOCAL_OP_AUTH_LOGIN,
-        cause: err,
-      });
-      return;
-    }
-    const validated = validateBody(LocalOpAuthHostRequestSchema, parsed, res, {
+  const handleLocalOpAuthLogin = withValidation(
+    LocalOpAuthHostRequestSchema,
+    handleLocalOpAuthLoginInner,
+    {
       handler: HANDLE_LOCAL_OP_AUTH_LOGIN,
-    });
-    if (!validated.ok) return;
-    const host = validated.value.host ?? 'github.com';
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_LOGIN }),
+    },
+  );
+  async function handleLocalOpAuthLoginInner(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    body: LocalOpAuthHostRequest,
+  ): Promise<void> {
+    const host = body.host ?? 'github.com';
 
     if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_LOGIN_KEY)) {
       errorResponse(
@@ -6055,111 +5970,86 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Returns: the single NDJSON line as parsed JSON.
    */
   const HANDLE_LOCAL_OP_AUTH_STATUS = 'local-op-auth-status';
-  async function handleLocalOpAuthStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_STATUS })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: HANDLE_LOCAL_OP_AUTH_STATUS,
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
+  const handleLocalOpAuthStatus = withValidation(
+    LocalOpAuthHostRequestSchema,
+    async (_req, res, body) => {
+      const host = body.host ?? 'github.com';
 
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: HANDLE_LOCAL_OP_AUTH_STATUS,
-        cause: err,
-      });
-      return;
-    }
-    let body: unknown;
-    try {
-      // Empty body is OK — host defaults to 'github.com'.
-      body = raw.length === 0 ? {} : JSON.parse(raw.toString('utf-8'));
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
-        handler: HANDLE_LOCAL_OP_AUTH_STATUS,
-        cause: err,
-      });
-      return;
-    }
-    const validated = validateBody(LocalOpAuthHostRequestSchema, body, res, {
-      handler: HANDLE_LOCAL_OP_AUTH_STATUS,
-    });
-    if (!validated.ok) return;
-    const host = validated.value.host ?? 'github.com';
+      if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_STATUS_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'An auth status operation is already in progress.',
+          { handler: HANDLE_LOCAL_OP_AUTH_STATUS },
+        );
+        return;
+      }
 
-    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_STATUS_KEY)) {
-      errorResponse(
-        res,
-        429,
-        'urn:ok:error:concurrent-operation',
-        'An auth status operation is already in progress.',
-        { handler: HANDLE_LOCAL_OP_AUTH_STATUS },
-      );
-      return;
-    }
+      try {
+        const [cmd, ...baseArgs] = localOpCliArgs;
+        const spawnArgs = [...baseArgs, 'auth', 'status', '--json', '--host', host];
 
-    try {
-      const [cmd, ...baseArgs] = localOpCliArgs;
-      const spawnArgs = [...baseArgs, 'auth', 'status', '--json', '--host', host];
-
-      const output = await new Promise<string>((resolve, reject) => {
-        const child = spawn(cmd, spawnArgs, {
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env },
+        const output = await new Promise<string>((resolve, reject) => {
+          const child = spawn(cmd, spawnArgs, {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env },
+          });
+          const killTimer = setTimeout(() => {
+            child.kill('SIGTERM');
+          }, 30_000);
+          const chunks: Buffer[] = [];
+          child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+          child.on('close', () => {
+            clearTimeout(killTimer);
+            resolve(Buffer.concat(chunks).toString('utf-8'));
+          });
+          child.on('error', (err) => {
+            clearTimeout(killTimer);
+            reject(err);
+          });
         });
-        const killTimer = setTimeout(() => {
-          child.kill('SIGTERM');
-        }, 30_000);
-        const chunks: Buffer[] = [];
-        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-        child.on('close', () => {
-          clearTimeout(killTimer);
-          resolve(Buffer.concat(chunks).toString('utf-8'));
-        });
-        child.on('error', (err) => {
-          clearTimeout(killTimer);
-          reject(err);
-        });
-      });
 
-      // The CLI may emit non-JSON log lines on stdout before the terminal
-      // event (e.g. keychain probe messages on older builds). Find the last
-      // parseable JSON line and return that.
-      const lines = output
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean);
-      let parsed: unknown = null;
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-          parsed = JSON.parse(lines[i] as string);
-          break;
-        } catch {
-          /* skip non-JSON line */
+        // The CLI may emit non-JSON log lines on stdout before the terminal
+        // event (e.g. keychain probe messages on older builds). Find the last
+        // parseable JSON line and return that.
+        const lines = output
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean);
+        let parsed: unknown = null;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            parsed = JSON.parse(lines[i] as string);
+            break;
+          } catch {
+            /* skip non-JSON line */
+          }
         }
+        if (parsed !== null) {
+          json(res, 200, parsed);
+        } else {
+          json(res, 200, { authenticated: false });
+        }
+      } catch (err) {
+        // Fixed-vocabulary detail — raw err.message can carry filesystem paths,
+        // git stderr, or errno strings. Pino logs preserve full diagnostics via
+        // `cause` for server-side triage; the wire body stays bounded.
+        errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth status check failed.', {
+          handler: HANDLE_LOCAL_OP_AUTH_STATUS,
+          cause: err,
+        });
+      } finally {
+        localOpGuard.release(LOCAL_OP_AUTH_STATUS_KEY);
       }
-      if (parsed !== null) {
-        json(res, 200, parsed);
-      } else {
-        json(res, 200, { authenticated: false });
-      }
-    } catch (err) {
-      // Fixed-vocabulary detail — raw err.message can carry filesystem paths,
-      // git stderr, or errno strings. Pino logs preserve full diagnostics via
-      // `cause` for server-side triage; the wire body stays bounded.
-      errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth status check failed.', {
-        handler: HANDLE_LOCAL_OP_AUTH_STATUS,
-        cause: err,
-      });
-    } finally {
-      localOpGuard.release(LOCAL_OP_AUTH_STATUS_KEY);
-    }
-  }
+    },
+    {
+      handler: HANDLE_LOCAL_OP_AUTH_STATUS,
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_STATUS }),
+    },
+  );
 
   /**
    * POST /api/local-op/auth/repos
@@ -6174,42 +6064,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * intercepted and wrapped to keep the streaming envelope canonical.
    */
   const HANDLE_LOCAL_OP_AUTH_REPOS = 'local-op-auth-repos';
-  async function handleLocalOpAuthRepos(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_REPOS })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: HANDLE_LOCAL_OP_AUTH_REPOS,
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
-
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: HANDLE_LOCAL_OP_AUTH_REPOS,
-        cause: err,
-      });
-      return;
-    }
-    let body: unknown;
-    try {
-      // Empty body is OK — host defaults to 'github.com'.
-      body = raw.length === 0 ? {} : JSON.parse(raw.toString('utf-8'));
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
-        handler: HANDLE_LOCAL_OP_AUTH_REPOS,
-        cause: err,
-      });
-      return;
-    }
-    const validated = validateBody(LocalOpAuthHostRequestSchema, body, res, {
+  const handleLocalOpAuthRepos = withValidation(
+    LocalOpAuthHostRequestSchema,
+    handleLocalOpAuthReposInner,
+    {
       handler: HANDLE_LOCAL_OP_AUTH_REPOS,
-    });
-    if (!validated.ok) return;
-    const host = validated.value.host ?? 'github.com';
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_REPOS }),
+    },
+  );
+  async function handleLocalOpAuthReposInner(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    body: LocalOpAuthHostRequest,
+  ): Promise<void> {
+    const host = body.host ?? 'github.com';
 
     if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_REPOS_KEY)) {
       errorResponse(
@@ -6320,89 +6190,62 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Returns: {} (flat success per D22)
    */
   const HANDLE_LOCAL_OP_AUTH_SIGNOUT = 'local-op-auth-signout';
-  async function handleLocalOpAuthSignout(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
+  const handleLocalOpAuthSignout = withValidation(
+    LocalOpAuthHostRequestSchema,
+    async (_req, res, body) => {
+      const host = body.host ?? 'github.com';
 
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
-        cause: err,
-      });
-      return;
-    }
-    let body: unknown;
-    try {
-      body = raw.length === 0 ? {} : JSON.parse(raw.toString('utf-8'));
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
-        handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
-        cause: err,
-      });
-      return;
-    }
-    const validated = validateBody(LocalOpAuthHostRequestSchema, body, res, {
+      if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SIGNOUT_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'An auth signout operation is already in progress.',
+          { handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT },
+        );
+        return;
+      }
+
+      try {
+        const [cmd, ...baseArgs] = localOpCliArgs;
+        const spawnArgs = [...baseArgs, 'auth', 'signout', '--host', host];
+
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn(cmd, spawnArgs, {
+            stdio: 'ignore',
+            env: { ...process.env },
+          });
+          const killTimer = setTimeout(() => {
+            child.kill('SIGTERM');
+          }, 30_000);
+          child.on('close', () => {
+            clearTimeout(killTimer);
+            resolve();
+          });
+          child.on('error', (err) => {
+            clearTimeout(killTimer);
+            reject(err);
+          });
+        });
+
+        json(res, 200, {});
+      } catch (err) {
+        // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
+        errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth signout failed.', {
+          handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
+          cause: err,
+        });
+      } finally {
+        localOpGuard.release(LOCAL_OP_AUTH_SIGNOUT_KEY);
+      }
+    },
+    {
       handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
-    });
-    if (!validated.ok) return;
-    const host = validated.value.host ?? 'github.com';
-
-    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SIGNOUT_KEY)) {
-      errorResponse(
-        res,
-        429,
-        'urn:ok:error:concurrent-operation',
-        'An auth signout operation is already in progress.',
-        { handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT },
-      );
-      return;
-    }
-
-    try {
-      const [cmd, ...baseArgs] = localOpCliArgs;
-      const spawnArgs = [...baseArgs, 'auth', 'signout', '--host', host];
-
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn(cmd, spawnArgs, {
-          stdio: 'ignore',
-          env: { ...process.env },
-        });
-        const killTimer = setTimeout(() => {
-          child.kill('SIGTERM');
-        }, 30_000);
-        child.on('close', () => {
-          clearTimeout(killTimer);
-          resolve();
-        });
-        child.on('error', (err) => {
-          clearTimeout(killTimer);
-          reject(err);
-        });
-      });
-
-      json(res, 200, {});
-    } catch (err) {
-      // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
-      errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth signout failed.', {
-        handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
-        cause: err,
-      });
-    } finally {
-      localOpGuard.release(LOCAL_OP_AUTH_SIGNOUT_KEY);
-    }
-  }
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT }),
+    },
+  );
 
   /**
    * POST /api/local-op/auth/pat
@@ -6412,116 +6255,92 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Returns: the NDJSON complete-event as parsed JSON.
    */
   const HANDLE_LOCAL_OP_AUTH_PAT = 'local-op-auth-pat';
-  async function handleLocalOpAuthPat(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_PAT })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: HANDLE_LOCAL_OP_AUTH_PAT,
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
+  const handleLocalOpAuthPat = withValidation(
+    LocalOpAuthPatRequestSchema,
+    async (_req, res, body) => {
+      const { pat, host: hostInput } = body;
+      const host = hostInput ?? 'github.com';
 
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: HANDLE_LOCAL_OP_AUTH_PAT,
-        cause: err,
-      });
-      return;
-    }
-    let body: unknown;
-    try {
-      body = JSON.parse(raw.toString('utf-8'));
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
-        handler: HANDLE_LOCAL_OP_AUTH_PAT,
-        cause: err,
-      });
-      return;
-    }
-    const validated = validateBody(LocalOpAuthPatRequestSchema, body, res, {
-      handler: HANDLE_LOCAL_OP_AUTH_PAT,
-    });
-    if (!validated.ok) return;
-    const { pat, host: hostInput } = validated.value;
-    const host = hostInput ?? 'github.com';
+      if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_PAT_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'An auth pat operation is already in progress.',
+          { handler: HANDLE_LOCAL_OP_AUTH_PAT },
+        );
+        return;
+      }
 
-    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_PAT_KEY)) {
-      errorResponse(
-        res,
-        429,
-        'urn:ok:error:concurrent-operation',
-        'An auth pat operation is already in progress.',
-        { handler: HANDLE_LOCAL_OP_AUTH_PAT },
-      );
-      return;
-    }
+      try {
+        const [cmd, ...baseArgs] = localOpCliArgs;
+        const spawnArgs = [...baseArgs, 'auth', 'pat', '--json', '--host', host];
 
-    try {
-      const [cmd, ...baseArgs] = localOpCliArgs;
-      const spawnArgs = [...baseArgs, 'auth', 'pat', '--json', '--host', host];
+        const output = await new Promise<string>((resolve, reject) => {
+          const child = spawn(cmd, spawnArgs, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env },
+          });
+          const killTimer = setTimeout(() => {
+            child.kill('SIGTERM');
+          }, 30_000);
+          // Write the PAT to stdin and close it so the CLI readline resolves
+          child.stdin.write(`${pat}\n`);
+          child.stdin.end();
 
-      const output = await new Promise<string>((resolve, reject) => {
-        const child = spawn(cmd, spawnArgs, {
-          stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env },
+          const chunks: Buffer[] = [];
+          child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+          child.on('close', (code) => {
+            clearTimeout(killTimer);
+            if (code !== 0) {
+              reject(new Error(`auth pat exited with code ${code}`));
+            } else {
+              resolve(Buffer.concat(chunks).toString('utf-8'));
+            }
+          });
+          child.on('error', (err) => {
+            clearTimeout(killTimer);
+            reject(err);
+          });
         });
-        const killTimer = setTimeout(() => {
-          child.kill('SIGTERM');
-        }, 30_000);
-        // Write the PAT to stdin and close it so the CLI readline resolves
-        child.stdin.write(`${pat}\n`);
-        child.stdin.end();
 
-        const chunks: Buffer[] = [];
-        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-        child.on('close', (code) => {
-          clearTimeout(killTimer);
-          if (code !== 0) {
-            reject(new Error(`auth pat exited with code ${code}`));
-          } else {
-            resolve(Buffer.concat(chunks).toString('utf-8'));
+        // Same robustness as status: pick the last JSON line, ignore any
+        // non-JSON output the CLI may have emitted.
+        const lines = output
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean);
+        let parsed: unknown = null;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            parsed = JSON.parse(lines[i] as string);
+            break;
+          } catch {
+            /* skip non-JSON line */
           }
-        });
-        child.on('error', (err) => {
-          clearTimeout(killTimer);
-          reject(err);
-        });
-      });
-
-      // Same robustness as status: pick the last JSON line, ignore any
-      // non-JSON output the CLI may have emitted.
-      const lines = output
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean);
-      let parsed: unknown = null;
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-          parsed = JSON.parse(lines[i] as string);
-          break;
-        } catch {
-          /* skip non-JSON line */
         }
+        if (parsed !== null) {
+          json(res, 200, parsed);
+        } else {
+          json(res, 200, {});
+        }
+      } catch (err) {
+        // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
+        errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth pat failed.', {
+          handler: HANDLE_LOCAL_OP_AUTH_PAT,
+          cause: err,
+        });
+      } finally {
+        localOpGuard.release(LOCAL_OP_AUTH_PAT_KEY);
       }
-      if (parsed !== null) {
-        json(res, 200, parsed);
-      } else {
-        json(res, 200, {});
-      }
-    } catch (err) {
-      // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
-      errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth pat failed.', {
-        handler: HANDLE_LOCAL_OP_AUTH_PAT,
-        cause: err,
-      });
-    } finally {
-      localOpGuard.release(LOCAL_OP_AUTH_PAT_KEY);
-    }
-  }
+    },
+    {
+      handler: HANDLE_LOCAL_OP_AUTH_PAT,
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_PAT }),
+    },
+  );
 
   // ─── GET /api/local-op/auth/identity ───────────────────────────────────────
   // Reads the resolved git identity via the identity resolution chain.
@@ -6571,84 +6390,57 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   const LOCAL_OP_AUTH_SET_IDENTITY_KEY = '/api/local-op/auth/set-identity';
 
   const HANDLE_LOCAL_OP_AUTH_SET_IDENTITY = 'local-op-auth-set-identity';
-  async function handleLocalOpAuthSetIdentity(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
+  const handleLocalOpAuthSetIdentity = withValidation(
+    LocalOpAuthSetIdentityRequestSchema,
+    async (_req, res, body) => {
+      const name = body.name.trim();
+      const email = body.email.trim();
 
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
-        cause: err,
-      });
-      return;
-    }
-    let body: unknown;
-    try {
-      body = JSON.parse(raw.toString('utf-8'));
-    } catch (err) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
-        handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
-        cause: err,
-      });
-      return;
-    }
-    const validated = validateBody(LocalOpAuthSetIdentityRequestSchema, body, res, {
-      handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
-    });
-    if (!validated.ok) return;
-    const name = validated.value.name.trim();
-    const email = validated.value.email.trim();
-
-    if (!projectDir) {
-      errorResponse(res, 400, 'urn:ok:error:no-project-dir', 'No project directory configured.', {
-        handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
-      });
-      return;
-    }
-
-    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SET_IDENTITY_KEY)) {
-      errorResponse(
-        res,
-        429,
-        'urn:ok:error:concurrent-operation',
-        'A set-identity operation is already in progress.',
-        { handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY },
-      );
-      return;
-    }
-
-    try {
-      writeGitIdentity(projectDir, name, email);
-      // Fire-and-forget: the sync engine re-probes + signals CC1 'sync-status'
-      // so the unresolved nudge clears in the UI without waiting on the push timer.
-      void getSyncEngine?.()
-        ?.refreshIdentity()
-        .catch(() => {
-          /* best-effort — status will catch up on next push cycle */
+      if (!projectDir) {
+        errorResponse(res, 400, 'urn:ok:error:no-project-dir', 'No project directory configured.', {
+          handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
         });
-      json(res, 200, {});
-    } catch (err) {
-      // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
-      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Set-identity failed.', {
-        handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
-        cause: err,
-      });
-    } finally {
-      localOpGuard.release(LOCAL_OP_AUTH_SET_IDENTITY_KEY);
-    }
-  }
+        return;
+      }
+
+      if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SET_IDENTITY_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'A set-identity operation is already in progress.',
+          { handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY },
+        );
+        return;
+      }
+
+      try {
+        writeGitIdentity(projectDir, name, email);
+        // Fire-and-forget: the sync engine re-probes + signals CC1 'sync-status'
+        // so the unresolved nudge clears in the UI without waiting on the push timer.
+        void getSyncEngine?.()
+          ?.refreshIdentity()
+          .catch(() => {
+            /* best-effort — status will catch up on next push cycle */
+          });
+        json(res, 200, {});
+      } catch (err) {
+        // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Set-identity failed.', {
+          handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
+          cause: err,
+        });
+      } finally {
+        localOpGuard.release(LOCAL_OP_AUTH_SET_IDENTITY_KEY);
+      }
+    },
+    {
+      handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY }),
+    },
+  );
 
   // ─── Security helpers for sync endpoints ────────────────────────────────────
   // Sync endpoints reuse the shared loopback + origin check from local-op-security.ts
@@ -6695,110 +6487,78 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleSyncTrigger(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'sync-trigger' })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: 'sync-trigger',
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
-    const engine = getSyncEngine?.();
-    if (!engine) {
-      errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
-        handler: 'sync-trigger',
-      });
-      return;
-    }
-    // Body is optional — empty or absent = default 'sync'. Schema-validate
-    // when the body is non-empty so unknown `op` values fail loud rather
-    // than silently fall through to 'sync' (the legacy behavior).
-    let op: 'sync' | 'push' | 'pull' = 'sync';
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (e) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: 'sync-trigger',
-        cause: e,
-      });
-      return;
-    }
-    if (raw.length > 0) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw.toString());
-      } catch (e) {
-        errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
+  const handleSyncTrigger = withValidation(
+    SyncTriggerRequestSchema,
+    async (_req, res, body) => {
+      const engine = getSyncEngine?.();
+      if (!engine) {
+        // Race-window guard: the preBodyGate confirmed the engine was active,
+        // but it could have been torn down between gate and inner-handler
+        // invocation. Treat as 503 — same as the gate would have.
+        errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
           handler: 'sync-trigger',
-          cause: e,
         });
         return;
       }
-      const validation = validateBody(SyncTriggerRequestSchema, parsed, res, {
-        handler: 'sync-trigger',
-      });
-      if (!validation.ok) return;
-      if (validation.value.op !== undefined) {
-        op = validation.value.op;
-      }
-    }
-    // Fire-and-return: 202 Accepted immediately, trigger runs in background.
-    json(res, 202, { op });
-    void engine.trigger(op);
-  }
+      const op = body.op ?? 'sync';
+      // Fire-and-return: 202 Accepted immediately, trigger runs in background.
+      json(res, 202, { op });
+      void engine.trigger(op);
+    },
+    {
+      handler: 'sync-trigger',
+      method: 'POST',
+      preBodyGate: (req, res) => {
+        if (!checkLocalOpSecurity(req, res, { handler: 'sync-trigger' })) return false;
+        const engine = getSyncEngine?.();
+        if (!engine) {
+          errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+            handler: 'sync-trigger',
+          });
+          return false;
+        }
+        return true;
+      },
+    },
+  );
 
-  async function handleSyncSetEnabled(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'sync-set-enabled' })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: 'sync-set-enabled',
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
-    const engine = getSyncEngine?.();
-    if (!engine) {
-      errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
-        handler: 'sync-set-enabled',
-      });
-      return;
-    }
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (e) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: 'sync-set-enabled',
-        cause: e,
-      });
-      return;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw.toString());
-    } catch (e) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
-        handler: 'sync-set-enabled',
-        cause: e,
-      });
-      return;
-    }
-    const validation = validateBody(SyncSetEnabledRequestSchema, parsed, res, {
+  const handleSyncSetEnabled = withValidation(
+    SyncSetEnabledRequestSchema,
+    async (_req, res, body) => {
+      const engine = getSyncEngine?.();
+      if (!engine) {
+        // Race-window guard — see HANDLE_SYNC_TRIGGER comment.
+        errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+          handler: 'sync-set-enabled',
+        });
+        return;
+      }
+      try {
+        await engine.setEnabled(body.enabled);
+        json(res, 200, { status: engine.getStatus() });
+      } catch (e) {
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to toggle sync.', {
+          handler: 'sync-set-enabled',
+          cause: e,
+        });
+      }
+    },
+    {
       handler: 'sync-set-enabled',
-    });
-    if (!validation.ok) return;
-    try {
-      await engine.setEnabled(validation.value.enabled);
-      json(res, 200, { status: engine.getStatus() });
-    } catch (e) {
-      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to toggle sync.', {
-        handler: 'sync-set-enabled',
-        cause: e,
-      });
-    }
-  }
+      method: 'POST',
+      preBodyGate: (req, res) => {
+        if (!checkLocalOpSecurity(req, res, { handler: 'sync-set-enabled' })) return false;
+        const engine = getSyncEngine?.();
+        if (!engine) {
+          errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+            handler: 'sync-set-enabled',
+          });
+          return false;
+        }
+        return true;
+      },
+    },
+  );
 
   async function handleSyncConflicts(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'sync-conflicts' })) return;
@@ -6821,60 +6581,50 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleSyncResolveConflict(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'sync-resolve-conflict' })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: 'sync-resolve-conflict',
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
-    const engine = getSyncEngine?.();
-    if (!engine) {
-      errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
-        handler: 'sync-resolve-conflict',
-      });
-      return;
-    }
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (e) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: 'sync-resolve-conflict',
-        cause: e,
-      });
-      return;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw.toString());
-    } catch (e) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
-        handler: 'sync-resolve-conflict',
-        cause: e,
-      });
-      return;
-    }
-    const validation = validateBody(SyncResolveConflictRequestSchema, parsed, res, {
+  const handleSyncResolveConflict = withValidation(
+    SyncResolveConflictRequestSchema,
+    async (_req, res, body) => {
+      const engine = getSyncEngine?.();
+      if (!engine) {
+        // Race-window guard — see HANDLE_SYNC_TRIGGER comment.
+        errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+          handler: 'sync-resolve-conflict',
+        });
+        return;
+      }
+      const { file, strategy, content } = body;
+      try {
+        await engine.resolveConflict(file, strategy as ResolveStrategy, content);
+        json(res, 200, {});
+      } catch (e) {
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to resolve conflict.',
+          {
+            handler: 'sync-resolve-conflict',
+            cause: e,
+          },
+        );
+      }
+    },
+    {
       handler: 'sync-resolve-conflict',
-    });
-    if (!validation.ok) return;
-    const { file, strategy, content } = validation.value;
-    try {
-      await engine.resolveConflict(file, strategy as ResolveStrategy, content);
-      json(res, 200, {});
-    } catch (e) {
-      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to resolve conflict.', {
-        handler: 'sync-resolve-conflict',
-        cause: e,
-      });
-    }
-  }
+      method: 'POST',
+      preBodyGate: (req, res) => {
+        if (!checkLocalOpSecurity(req, res, { handler: 'sync-resolve-conflict' })) return false;
+        const engine = getSyncEngine?.();
+        if (!engine) {
+          errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+            handler: 'sync-resolve-conflict',
+          });
+          return false;
+        }
+        return true;
+      },
+    },
+  );
 
   async function handleSyncConflictContent(
     req: IncomingMessage,
@@ -7007,59 +6757,43 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleSeedApply(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'seed-apply' })) return;
-    if (req.method !== 'POST') {
-      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
-        handler: 'seed-apply',
-        extraHeaders: { Allow: 'POST' },
-      });
-      return;
-    }
-    let raw: Buffer;
-    try {
-      raw = await readBody(req);
-    } catch (e) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
-        handler: 'seed-apply',
-        cause: e,
-      });
-      return;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw.toString());
-    } catch (e) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
-        handler: 'seed-apply',
-        cause: e,
-      });
-      return;
-    }
-    const validation = validateBody(SeedApplyRequestSchema, parsed, res, { handler: 'seed-apply' });
-    if (!validation.ok) return;
-    // SeedApplyRequestSchema accepts `plan: unknown` (forward-compat); reject
-    // non-object payloads here so applySeed sees a structured value.
-    const planValue = validation.value.plan;
-    if (!planValue || typeof planValue !== 'object') {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid plan payload.', {
-        handler: 'seed-apply',
-      });
-      return;
-    }
-    const plan = planValue as ScaffoldPlan;
-    try {
-      // The plan already has rootDir baked into its entries — apply only
-      // needs projectDir.
-      const result = await applySeed(plan, { projectDir: contentDir });
-      json(res, 200, { result });
-    } catch (err) {
-      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to apply seed plan.', {
-        handler: 'seed-apply',
-        cause: err,
-      });
-    }
-  }
+  const handleSeedApply = withValidation(
+    SeedApplyRequestSchema,
+    async (_req, res, body) => {
+      // SeedApplyRequestSchema accepts `plan: unknown` (forward-compat); reject
+      // non-object payloads here so applySeed sees a structured value.
+      const planValue = body.plan;
+      if (!planValue || typeof planValue !== 'object') {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid plan payload.', {
+          handler: 'seed-apply',
+        });
+        return;
+      }
+      const plan = planValue as ScaffoldPlan;
+      try {
+        // The plan already has rootDir baked into its entries — apply only
+        // needs projectDir.
+        const result = await applySeed(plan, { projectDir: contentDir });
+        json(res, 200, { result });
+      } catch (err) {
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to apply seed plan.',
+          {
+            handler: 'seed-apply',
+            cause: err,
+          },
+        );
+      }
+    },
+    {
+      handler: 'seed-apply',
+      method: 'POST',
+      preBodyGate: (req, res) => checkLocalOpSecurity(req, res, { handler: 'seed-apply' }),
+    },
+  );
 
   /**
    * `POST /api/install-skill` — build `openknowledge.skill` and open it via

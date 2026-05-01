@@ -27,15 +27,23 @@ const API_EXT_PATH = join(import.meta.dirname, '../../../server/src/api-extensio
 const source = readFileSync(API_EXT_PATH, 'utf8');
 
 function listAllHandlers(): string[] {
-  // Handlers in `api-extension.ts` come in two shapes: legacy
-  // `async function handleX(...)` and `const handleX = withValidation(Schema,
-  // ...)`. The structural meta-test treats both as valid handler shapes.
-  return Array.from(
-    new Set([
-      ...[...source.matchAll(/async function (handle\w+)\(/g)].map((m) => m[1]),
-      ...[...source.matchAll(/const (handle\w+) = withValidation\(/g)].map((m) => m[1]),
-    ]),
+  // Handlers in `api-extension.ts` come in two shapes:
+  //   (1) Legacy `async function handleX(...)` (read-only routes).
+  //   (2) `const handleX = withValidation(Schema, handler, options)` (D34) —
+  //       where `handler` may be an inline arrow function OR a named
+  //       `handleXInner` function declared adjacent to the wrapper for
+  //       streaming endpoints whose bodies are too long for inline form.
+  // Inner functions co-located with a wrapper are excluded from the public
+  // handler list — they are scanned as part of the parent's body slice via
+  // `extractHandlerBody`.
+  const fnNames = [...source.matchAll(/async function (handle\w+)\(/g)].map((m) => m[1]);
+  const wrapperNames = [...source.matchAll(/const (handle\w+) = withValidation\(/g)].map(
+    (m) => m[1],
   );
+  const innerNames = new Set(
+    wrapperNames.map((wrapper) => `${wrapper}Inner`).filter((inner) => fnNames.includes(inner)),
+  );
+  return Array.from(new Set([...fnNames, ...wrapperNames])).filter((n) => !innerNames.has(n));
 }
 
 function extractHandlerBody(name: string): string | null {
@@ -47,13 +55,23 @@ function extractHandlerBody(name: string): string | null {
   if (fnIdx !== -1) start = fnIdx;
   else if (constIdx !== -1) start = constIdx;
   if (start === -1) return null;
-  const nextFn = source.indexOf('\n  async function handle', start + 1);
-  const nextConst = source.indexOf('\n  const handle', start + 1);
+
+  // For wrappers that delegate to a named inner function (`const handleX =
+  // withValidation(Schema, handleXInner, ...)`), the inner function lives
+  // immediately after the wrapper and carries the actual handler body.
+  // Skip past the inner declaration when searching for the next handler so
+  // the inner body is included in the slice for `handleX`.
+  const innerName = `${name}Inner`;
+  const innerDecl = `\n  async function ${innerName}(`;
+  const innerIdx = source.indexOf(innerDecl, start + 1);
+  const searchFrom = innerIdx === -1 ? start + 1 : innerIdx + 1;
+  const nextFn = source.indexOf('\n  async function handle', searchFrom);
+  const nextConst = source.indexOf('\n  const handle', searchFrom);
   // The last handler in the file has no successor — bound at the route table
   // declaration `\n  const routes:` so we don't accidentally fold the
   // onRequest extension (which itself uses `errorResponse(...)` for the
   // /api/* Origin gate, post-US-011) into the prior handler's slice.
-  const nextRoutes = source.indexOf('\n  const routes:', start + 1);
+  const nextRoutes = source.indexOf('\n  const routes:', searchFrom);
   const candidates = [nextFn, nextConst, nextRoutes].filter((i) => i !== -1);
   const next = candidates.length === 0 ? -1 : Math.min(...candidates);
   return source.slice(start, next === -1 ? source.length : next);

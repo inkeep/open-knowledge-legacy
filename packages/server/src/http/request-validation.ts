@@ -69,6 +69,33 @@ export interface WithValidationOptions {
    * Omitting accepts any method.
    */
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  /**
+   * Runs after method check, BEFORE body read. Return `false` to short-
+   * circuit (caller must already have emitted via `errorResponse`); return
+   * `true` to proceed.
+   *
+   * Use cases:
+   *   - **Security gate** (`checkLocalOpSecurity`): reject 403 loopback /
+   *     Origin violations BEFORE consuming bytes from untrusted sources.
+   *   - **Service-availability gate** (`getSyncEngine?.()`): emit 503
+   *     `urn:ok:error:sync-not-active` early when the subsystem isn't
+   *     initialized; saves the body read.
+   *   - **Fail-fast preconditions** that depend only on headers/path.
+   *
+   * Compose multiple gates inline by returning early:
+   *   ```ts
+   *   preBodyGate: (req, res) => {
+   *     if (!checkLocalOpSecurity(req, res, { handler })) return false;
+   *     const engine = getSyncEngine?.();
+   *     if (!engine) {
+   *       errorResponse(res, 503, 'urn:ok:error:sync-not-active', '…', { handler });
+   *       return false;
+   *     }
+   *     return true;
+   *   }
+   *   ```
+   */
+  preBodyGate?: (req: IncomingMessage, res: ServerResponse) => boolean;
 }
 
 /**
@@ -126,6 +153,11 @@ export function withValidation<T>(
         extraHeaders: { Allow: options.method },
       });
       return;
+    }
+
+    if (options.preBodyGate !== undefined) {
+      const gateOk = options.preBodyGate(req, res);
+      if (!gateOk) return;
     }
 
     if (options.skipBodyParse) {
