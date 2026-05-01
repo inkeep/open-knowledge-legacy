@@ -489,7 +489,11 @@ export async function buildExecResult(
   const capped = applySoftCap(stdout);
 
   // 6. Extract referenced wiki paths + enrich
-  const paths = extractReferencedPaths(stdout, stages);
+  // FR13 (spec 2026-05-01-folder-level-metadata-and-templates): drop any
+  // path that traverses a `.ok/` directory at any depth. Their CONTENTS
+  // (folder metadata + templates) surface as structured fields on the
+  // parent folder's enriched record, not as directory entries.
+  const paths = extractReferencedPaths(stdout, stages).filter((p) => !p.split('/').includes('.ok'));
   const { files, dirs } = await classifyPaths(cwd, paths);
   // Single-path cat enrichment gets rich fields; all others get slim.
   const isSinglePathCat = stages.length === 1 && stages[0].command === 'cat' && files.length === 1;

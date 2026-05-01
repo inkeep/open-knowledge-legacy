@@ -755,4 +755,29 @@ describe('exec — per-row previewUrl + top-level ui block (FR-2.2 / FR-2.6)', (
   // folder-rule work made `config` required on ExecDeps (it's threaded through
   // to `enrichPath` for folder-frontmatter resolution), so the optional-config
   // path no longer exists. Callers always pass config via tools/index.ts.
+
+  test('FR13: nested .ok/ paths are filtered from enrichedPaths (not surfaced as listings)', async () => {
+    // Per spec 2026-05-01-folder-level-metadata-and-templates §3 / D16 / FR13:
+    // .ok/ directories are plumbing, not content. Their CONTENTS surface as
+    // structured fields on the parent folder's record, not as path entries.
+    const project = await bootstrap();
+    const meetings = resolve(project, 'meetings');
+    const meetingsOkTpls = resolve(meetings, '.ok', 'templates');
+    mkdirSync(meetingsOkTpls, { recursive: true });
+    writeFileSync(resolve(meetingsOkTpls, 'prep-notes.md'), '---\ntitle: Prep\n---\nbody\n');
+    writeFileSync(resolve(meetings, '2026-05-01.md'), '---\ntitle: Meeting\n---\nbody\n');
+
+    // ls meetings/ — must not surface `.ok/templates/prep-notes.md` despite
+    // it being a real .md file on disk.
+    const result = (await buildExecResult(
+      { command: 'find meetings -name "*.md"' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+    const s = structured(result);
+    const paths = s.enrichedPaths.map((e) => e.path);
+    expect(paths).toContain('meetings/2026-05-01.md');
+    // The template file lives at meetings/.ok/templates/prep-notes.md and
+    // must NOT appear in enrichedPaths.
+    expect(paths.some((p) => p.includes('.ok/'))).toBe(false);
+  });
 });
