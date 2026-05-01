@@ -15,7 +15,7 @@ import { acquireProcessLock } from '@inkeep/open-knowledge-server';
 
 const handle = acquireProcessLock({
   lockName: 'server',                 // or 'ui'
-  lockDir: '<contentDir>/.open-knowledge',
+  lockDir: '<contentDir>/.ok',
   metadata: { worktreeRoot },         // merged into the JSON payload
 });
 
@@ -277,8 +277,8 @@ Reserved-name policy: `ContentFilter` rejects `__system__.md` at admit time; `PO
 
 Two well-known synthetic docs back the in-app Settings pane and live-refresh of external edits:
 
-- `__config__/project` ↔ `<contentDir>/.open-knowledge/config.yml`
-- `__user__/config.yml` ↔ `~/.open-knowledge/config.yml`
+- `__config__/project` ↔ `<contentDir>/.ok/config.yml`
+- `__user__/config.yml` ↔ `~/.ok/config.yml`
 
 Both are admitted at boot via `hocuspocus.openDirectConnection()` and are **Y.Text-only** — there is no Y.XmlFragment, no markdown bridge, no TipTap binding. The Settings pane wires its `HocuspocusProvider` directly at the Y.Text and renders a Zod-walker form on top.
 
@@ -470,7 +470,7 @@ A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs
 
 - **reconciledBase** (the three-way merge base) is unchanged — it tracks markdown, not the CRDT cache.
 - **parkBranch / restoreBranchWIP** are unchanged — WIP preservation lives in the shadow repo, not the client's IDB.
-- **server-info / branch-switched / disk-ack / derived-view** share the `__system__` carrier doc; every CC1 channel emits via `Document.broadcastStateless` from the server's own DirectConnection. Server-lock is the on-disk file at `<contentDir>/.open-knowledge/server.lock`, not a CC1 channel.
+- **server-info / branch-switched / disk-ack / derived-view** share the `__system__` carrier doc; every CC1 channel emits via `Document.broadcastStateless` from the server's own DirectConnection. Server-lock is the on-disk file at `<contentDir>/.ok/server.lock`, not a CC1 channel.
 
 ### Test coverage
 
@@ -522,7 +522,7 @@ A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs
 
 - **reconciledBase** (the three-way merge base) is unchanged — it tracks markdown, not the CRDT cache.
 - **parkBranch / restoreBranchWIP** are unchanged — WIP preservation lives in the shadow repo, not the client's IDB.
-- **server-info / branch-switched / disk-ack / derived-view** share the `__system__` carrier doc; every CC1 channel emits via `Document.broadcastStateless` from the server's own DirectConnection. Server-lock is the on-disk file at `<contentDir>/.open-knowledge/server.lock`, not a CC1 channel.
+- **server-info / branch-switched / disk-ack / derived-view** share the `__system__` carrier doc; every CC1 channel emits via `Document.broadcastStateless` from the server's own DirectConnection. Server-lock is the on-disk file at `<contentDir>/.ok/server.lock`, not a CC1 channel.
 
 ### Test coverage
 

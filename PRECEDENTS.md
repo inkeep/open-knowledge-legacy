@@ -132,7 +132,7 @@ See `AGENTS.md` → "Architectural precedents" for the jump-index summary.
 
     **Reference.** `packages/server/src/agent-sessions.ts:createSessionOrigin` (per-session frozen origin), `packages/server/src/api-extension.ts:extractAgentIdentity` (canonical agent-write identity boundary), `packages/server/src/extract-actor-identity.ts` (rename + rollback identity boundary), `packages/server/src/apply-managed-rename.ts` (managed-rename spine), `packages/app/tests/integration/attribution-sweep-coverage.test.ts` (meta-test enforcement covering both helpers).
 
-25. **Classified writer IDs + subject-prefix action encoding in the shadow repo.** Every commit to the shadow bare-git-repo (`<projectRoot>/.git/open-knowledge/`) has a writer ID and a subject-prefix that together make `git log refs/wip/<branch>/` legible per actor and per action without parsing commit bodies.
+25. **Classified writer IDs + subject-prefix action encoding in the shadow repo.** Every commit to the shadow bare-git-repo (`<projectRoot>/.git/ok/`) has a writer ID and a subject-prefix that together make `git log refs/wip/<branch>/` legible per actor and per action without parsing commit bodies.
 
     (a) **Writer-ID taxonomy** (`parseWriterId` + `WRITER_ID_RE` in `packages/core/src/shadow-repo-layout.ts`):
 

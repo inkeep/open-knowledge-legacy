@@ -1,88 +1,78 @@
 ---
 title: Content filtering
-description: How Open Knowledge uses .gitignore and config patterns to control which files enter the document system.
+description: How Open Knowledge uses .gitignore and .okignore patterns to control which files enter the document system.
 ---
-Open Knowledge respects your `.gitignore` files and combines them with config-based patterns to determine which files belong in the document system. Exclusion always supersedes inclusion.
+
+Open Knowledge indexes Markdown files (`.md` and `.mdx`) and respects `.gitignore` rules. To exclude additional files without putting OK-specific patterns in `.gitignore`, drop a `.okignore` at the project root using the same syntax.
 
 ## How it works
 
 Symlinks inside the content directory are followed transparently -- they participate in the document system like regular files. Cyclic symlinks are detected and skipped; symlinks that resolve outside the content directory are excluded.
 
-Two sources of exclusion are combined:
+A file is indexed when:
 
-- **`.gitignore` files** -- root and nested, auto-discovered via a two-pass bootstrap
-- **`content.exclude` patterns** from config
+1. Its extension is supported (`.md` or `.mdx`).
+2. Its directory is not in the walker's built-in skip list (`.git/`, `.ok/`, `node_modules/`, `.venv/`, build outputs, etc.).
+3. No `.gitignore` or `.okignore` rule excludes it.
 
-These are gated by `content.include` patterns (default: `["**/*.md"]`) -- only files matching the include globs are considered, then exclusion rules remove files from that set.
+`.gitignore` and `.okignore` patterns load into a single ignore-lib instance, so cross-source negation works: a leading `!` in `.okignore` re-includes a file `.gitignore` excluded.
 
-## Include patterns
+## .okignore
 
-Set `content.include` in `.open-knowledge/config.yml` to control which files enter the document system. The default is `["**/*.md"]` -- only markdown files.
+Drop a `.okignore` next to your `.gitignore` at the project root. It uses gitignore syntax (parsed by the [`ignore`](https://www.npmjs.com/package/ignore) npm library — the same engine `.gitignore` uses).
 
-```yaml
-content:
-  include:
-    - "**/*.md"
-    - "**/*.mdx"
+```text title=".okignore"
+# Exclude drafts from the document index
+drafts/
+
+# Exclude any file matching a pattern
+*.draft.md
+
+# Re-include a file .gitignore excluded
+!keep.md
 ```
 
-A file must match at least one include pattern to be considered.
+Nested `.okignore` files at any folder depth are honored — same mechanic as nested `.gitignore` files.
 
-## Exclude patterns
-
-Exclusion rules come from two sources, and both are applied together.
-
-### .gitignore rules
-
-Open Knowledge loads the root `.gitignore` at the project directory, then walks subdirectories to discover nested `.gitignore` files. The walk skips directories already excluded by the root `.gitignore`, so it never traverses `node_modules/` or similar trees.
-
-### Config excludes
-
-`content.exclude` in `.open-knowledge/config.yml` adds patterns on top of gitignore rules. These patterns are relative to the content directory.
-
-```yaml
-content:
-  exclude:
-    - "drafts/**"
-    - "archive/**"
-```
+`ok init` scaffolds a starter `.okignore` at the project root with a commented header explaining the syntax. Edit it freely; it's checked into version control alongside `.gitignore`.
 
 ## Resolution rules
 
-1. A file must match at least one `content.include` pattern
-2. Gitignore rules (root + nested) and `content.exclude` patterns are checked
-3. If any exclusion rule matches, the file is excluded -- exclusion always wins
-4. Directories are checked against exclusion rules only (not include patterns) for traversal decisions
+1. The file extension must be `.md` or `.mdx`.
+2. The walker skips built-in system directories regardless of `.gitignore` / `.okignore`.
+3. Patterns from `.gitignore` and `.okignore` (root + nested) are unioned in one ignore-lib instance.
+4. The last matching rule wins, including across files — a `!pattern` in `.okignore` overrides an earlier `pattern` from `.gitignore`.
 
 ## Example
 
 Given a project with:
 
-```
-.gitignore contains: node_modules/, dist/, *.log
+```text title=".gitignore"
+node_modules/
+dist/
+*.log
+secret.md
 ```
 
-```yaml
-content:
-  include:
-    - "**/*.md"
-  exclude:
-    - "drafts/**"
+```text title=".okignore"
+drafts/
+!secret.md
 ```
 
 The results:
 
-| File                         | Result   | Reason                          |
-| ---------------------------- | -------- | ------------------------------- |
-| `docs/setup.md`              | Included | Matches `**/*.md`, not excluded |
-| `node_modules/pkg/README.md` | Excluded | Gitignored                      |
-| `drafts/wip.md`              | Excluded | Config exclude                  |
-| `src/index.ts`               | Excluded | Does not match `**/*.md`        |
-| `dist/README.md`             | Excluded | Gitignored                      |
+| File | Result | Reason |
+|------|--------|--------|
+| `docs/setup.md` | Included | `.md` extension, no rule excludes it |
+| `node_modules/pkg/README.md` | Excluded | Built-in skip dir |
+| `drafts/wip.md` | Excluded | Excluded by `.okignore` |
+| `src/index.ts` | Excluded | Not a Markdown extension |
+| `dist/README.md` | Excluded | Excluded by `.gitignore` |
+| `secret.md` | Included | `.gitignore` excluded it; `.okignore` `!secret.md` re-included it |
 
 ## Previewing content scope
 
-To see exactly which files match your current include/exclude rules:
+To see exactly which files Open Knowledge will index:
 
 ```bash
 npx @inkeep/open-knowledge preview
@@ -96,14 +86,25 @@ Works before `init` (uses schema defaults) and after config edits.
 
 The same `ContentFilter` that gates the file watcher also gates rename-time admission, so a file or folder cannot be moved INTO a path the filter would otherwise reject:
 
-- `POST /api/rename-path { kind: 'file' }` — rejects with 400 if the destination doc would be excluded by `content.include` / `content.exclude`.
+- `POST /api/rename-path { kind: 'file' }` — rejects with 400 if the destination doc would be excluded by `.gitignore` / `.okignore`.
 - `POST /api/rename-path { kind: 'folder' }` — rejects with 400 if the destination folder is excluded as a directory.
 - MCP `rename_document` / `rename_folder` — surface the 400 to the agent before any file moves on disk.
 
-Reordering exclude rules to filter out a tree that already contains documents does not retroactively delete those documents — they remain readable through the editor and MCP tools — but they cannot be moved INTO the excluded tree.
+Adding a `.okignore` rule that excludes a tree that already contains documents does not retroactively delete those documents — they remain readable through the editor and MCP tools — but they cannot be moved INTO the excluded tree.
+
+## content.dir
+
+`content.dir` in `.ok/config.yml` selects the root of content. Default is `.` (the project root). Most projects don't need to change this.
+
+```yaml title=".ok/config.yml"
+content:
+  dir: .
+```
+
+`content.include` and `content.exclude` are no longer config keys. If they appear in your `config.yml`, OK rejects the file with a source-located error directing you to move the patterns to `.okignore`.
 
 ## Performance
 
 <Callout type="info">
-The two-pass gitignore bootstrap avoids walking excluded directories. Best-effort ignore globs are also passed to the native file watcher for kernel-level filtering, so excluded paths never trigger filesystem events.
+The walker skips built-in system directories before reading any ignore file, and best-effort ignore globs are also passed to the native file watcher for kernel-level filtering, so excluded paths never trigger filesystem events.
 </Callout>

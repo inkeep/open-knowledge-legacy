@@ -25,7 +25,7 @@ npx @inkeep/open-knowledge clone https://github.com/company/docs
 npx @inkeep/open-knowledge clone company/docs ./local-path
 ```
 
-The `clone` command clones the repository, scaffolds `.open-knowledge/` via `init`, and starts the editor. Pass `--json` for machine-readable JSONL progress output (used by the editor's subprocess relay).
+The `clone` command clones the repository, scaffolds `.ok/` via `init`, and starts the editor. Pass `--json` for machine-readable JSONL progress output (used by the editor's subprocess relay).
 
 <Callout type="info">
 The target directory must be empty or non-existent. The CLI rejects non-empty directories to prevent accidental overwrites.
@@ -64,7 +64,7 @@ For read-only access, create a fine-grained PAT with the `Contents: Read` permis
 
 ### Token storage
 
-Tokens are stored in your OS keychain via `@napi-rs/keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). If the keychain is unavailable, tokens fall back to `~/.open-knowledge/auth.yml` with `0600` permissions.
+Tokens are stored in your OS keychain via `@napi-rs/keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). If the keychain is unavailable, tokens fall back to `~/.ok/auth.yml` with `0600` permissions.
 
 ### Managing authentication
 
@@ -138,9 +138,9 @@ Raw merge conflict markers (`<<<<<<<`) never appear in the editor. The conflict 
 
 ## Configuration
 
-Sync behavior is controlled via `.open-knowledge/config.yml`. See the [Configuration](/guides/configuration) guide for the full schema.
+Sync behavior is controlled via `.ok/config.yml`. See the [Configuration](/guides/configuration) guide for the full schema.
 
-```yaml title=".open-knowledge/config.yml"
+```yaml title=".ok/config.yml"
 sync:
   enabled: true              # auto-detected from remote; set false to disable
   pullIntervalSeconds: 30    # seconds between fetch/pull cycles

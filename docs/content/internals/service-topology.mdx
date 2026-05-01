@@ -2,7 +2,7 @@
 title: Service topology
 description: How the Hocuspocus server, file watcher, persistence pipeline, and shadow repo work together per project.
 ---
-Each Open Knowledge project runs its own pair of sibling processes. There is no global daemon or project registry. Running multiple projects means multiple process pairs on different ports — each fully independent with its own persistence pipeline, file watcher, shadow repo, and lockfile pair (`.open-knowledge/{server,ui}.lock`).
+Each Open Knowledge project runs its own pair of sibling processes. There is no global daemon or project registry. Running multiple projects means multiple process pairs on different ports — each fully independent with its own persistence pipeline, file watcher, shadow repo, and lockfile pair (`.ok/{server,ui}.lock`).
 
 ## Dual-process lifecycle
 
@@ -83,7 +83,7 @@ On graceful shutdown, `destroy()` drains both layers in order -- L1 first, then 
 
 ## Shadow repo
 
-Located at `<projectRoot>/.git/open-knowledge/`. If the project has no `.git/` when the server starts, `ensureProjectGit` auto-runs `git init --initial-branch=main` before the shadow is created (fail-fast on git missing). The shadow repo provides auto-save history and attribution without touching the project's own git state.
+Located at `<projectRoot>/.git/ok/`. If the project has no `.git/` when the server starts, `ensureProjectGit` auto-runs `git init --initial-branch=main` before the shadow is created (fail-fast on git missing). The shadow repo provides auto-save history and attribution without touching the project's own git state.
 
 It contains:
 
@@ -109,7 +109,7 @@ The engine runs two independent timer loops:
 
 Both timers use chained `setTimeout` -- the next timer starts only after the current operation completes, preventing overlap.
 
-State persists to `<contentDir>/.open-knowledge/sync-state.json` so restart recovery computes the remaining wait from the last operation timestamp rather than restarting from zero. Conflict state persists to `<contentDir>/.open-knowledge/conflicts.json`.
+State persists to `<contentDir>/.ok/sync-state.json` so restart recovery computes the remaining wait from the last operation timestamp rather than restarting from zero. Conflict state persists to `<contentDir>/.ok/conflicts.json`.
 
 Error classification uses a 5-class taxonomy (network, auth, semantic, structural, local). Network errors trigger counted exponential backoff (5 min after 3 failures, 15 min after 5, 60 min after 8). Auth errors pause sync and surface a re-authentication prompt. Protected-branch rejection disables sync for the project.
 
