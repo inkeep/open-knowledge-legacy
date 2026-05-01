@@ -63,48 +63,67 @@ function captureHandler(cwd: string): ToolHandler {
   return captured;
 }
 
-function readConfigFile(cwd: string): string | null {
-  const p = join(cwd, '.ok', 'config.yml');
+function readNestedFm(cwd: string, folder: string): string | null {
+  const p = folder
+    ? join(cwd, folder, '.ok', 'frontmatter.yml')
+    : join(cwd, '.ok', 'frontmatter.yml');
   return existsSync(p) ? readFileSync(p, 'utf-8') : null;
 }
 
-describe('set_folder_rule tool', () => {
-  test('appends a new rule to empty folders[] (lazy first-write creates file)', async () => {
+interface SuccessPayload {
+  result: {
+    ok: true;
+    applied: Array<{ match: string; path: string; action: 'written' | 'deleted' }>;
+  };
+}
+interface ErrorPayload {
+  result: { ok: false; error: { code: string; message: string; rule?: string } };
+}
+
+describe('set_folder_rule tool — nested .ok/frontmatter.yml writes (FR6)', () => {
+  test('writes nested <folder>/.ok/frontmatter.yml for `specs/**`', async () => {
     const cwd = newProject();
     const handler = captureHandler(cwd);
     const result = await handler({
-      rules: [{ match: 'specs/**', frontmatter: { description: 'Specs' } }],
+      rules: [{ match: 'specs/**', frontmatter: { description: 'Specs', tags: ['spec'] } }],
     });
     expect(result.isError).toBeUndefined();
-    const yaml = readConfigFile(cwd);
-    expect(yaml).toContain('match: specs/**');
+    const yaml = readNestedFm(cwd, 'specs');
+    expect(yaml).not.toBeNull();
     expect(yaml).toContain('description: Specs');
+    expect(yaml).toContain('- spec');
+
+    const payload = result.structuredContent as unknown as SuccessPayload;
+    expect(payload.result.ok).toBe(true);
+    expect(payload.result.applied).toHaveLength(1);
+    expect(payload.result.applied[0]?.match).toBe('specs/**');
+    expect(payload.result.applied[0]?.action).toBe('written');
+    expect(payload.result.applied[0]?.path).toBe('specs/.ok/frontmatter.yml');
   });
 
-  test('upserts in place (preserves array order) for existing match', async () => {
+  test('upserts existing nested file in place (per-key replace)', async () => {
     const cwd = newProject();
     const handler = captureHandler(cwd);
     await handler({
-      rules: [
-        { match: 'specs/**', frontmatter: { description: 'Specs' } },
-        { match: 'reports/**', frontmatter: { description: 'Reports' } },
-      ],
+      rules: [{ match: 'specs/**', frontmatter: { description: 'Specs', tags: ['spec'] } }],
     });
     await handler({
       rules: [{ match: 'specs/**', frontmatter: { description: 'Specs (updated)' } }],
     });
-    const yaml = readConfigFile(cwd);
+    const yaml = readNestedFm(cwd, 'specs');
     expect(yaml).toContain('Specs (updated)');
-    // reports rule must still be there
-    expect(yaml).toContain('match: reports/**');
+    // tags preserved (not in patch); per-key replace only touches what's in the patch
+    expect(yaml).toContain('- spec');
   });
 
-  test('rename via new_match', async () => {
+  test('rename via new_match deletes old folder file and writes new', async () => {
     const cwd = newProject();
     const handler = captureHandler(cwd);
     await handler({
       rules: [{ match: 'specs/**', frontmatter: { description: 'Specs' } }],
     });
+    expect(readNestedFm(cwd, 'specs')).not.toBeNull();
+
     const result = await handler({
       rules: [
         {
@@ -115,28 +134,58 @@ describe('set_folder_rule tool', () => {
       ],
     });
     expect(result.isError).toBeUndefined();
-    const yaml = readConfigFile(cwd);
-    expect(yaml).toContain('match: design-specs/**');
-    expect(yaml).toContain('Design Specs');
-    expect(yaml).not.toContain('match: specs/**');
+    expect(readNestedFm(cwd, 'specs')).toBeNull(); // old removed
+    const newYaml = readNestedFm(cwd, 'design-specs');
+    expect(newYaml).toContain('Design Specs');
   });
 
-  test('transactional all-or-nothing: invalid rule blocks the entire batch', async () => {
+  test('multi-folder glob is rejected with MULTI_FOLDER_GLOB', async () => {
     const cwd = newProject();
     const handler = captureHandler(cwd);
-    // First rule is valid; second has empty match (Zod validation: min(1)).
+    const result = await handler({
+      rules: [{ match: 'specs/*/evidence/**', frontmatter: { description: 'Evidence' } }],
+    });
+    expect(result.isError).toBe(true);
+    const payload = result.structuredContent as unknown as ErrorPayload;
+    expect(payload.result.ok).toBe(false);
+    expect(payload.result.error.code).toBe('MULTI_FOLDER_GLOB');
+    expect(payload.result.error.message).toContain('multiple folders');
+  });
+
+  test('transactional: any rule failure blocks ALL writes', async () => {
+    const cwd = newProject();
+    const handler = captureHandler(cwd);
     const result = await handler({
       rules: [
         { match: 'specs/**', frontmatter: { description: 'Specs' } },
-        { match: '', frontmatter: {} },
+        // Multi-folder — must fail validation
+        { match: 'reports/*/draft/**', frontmatter: { description: 'Draft Reports' } },
       ],
     });
     expect(result.isError).toBe(true);
-    const payload = result.structuredContent?.result as { ok: boolean; error?: { code: string } };
-    expect(payload.ok).toBe(false);
-    expect(payload.error?.code).toBe('SCHEMA_INVALID');
-    // No file written: lazy first-write was rolled back by atomic semantics.
-    expect(readConfigFile(cwd)).toBeNull();
+    // Neither file was written — Phase 1 validation rejected the batch.
+    expect(readNestedFm(cwd, 'specs')).toBeNull();
+    expect(readNestedFm(cwd, 'reports')).toBeNull();
+  });
+
+  test('empty frontmatter on existing rule deletes the nested file + auto-cleans .ok/', async () => {
+    const cwd = newProject();
+    const handler = captureHandler(cwd);
+    await handler({
+      rules: [{ match: 'meetings/**', frontmatter: { description: 'Meetings' } }],
+    });
+    expect(readNestedFm(cwd, 'meetings')).not.toBeNull();
+
+    const result = await handler({
+      rules: [{ match: 'meetings/**', frontmatter: {} }],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(readNestedFm(cwd, 'meetings')).toBeNull();
+    // Auto-clean: the meetings/.ok/ directory should be gone (no other tenant)
+    expect(existsSync(join(cwd, 'meetings', '.ok'))).toBe(false);
+
+    const payload = result.structuredContent as unknown as SuccessPayload;
+    expect(payload.result.applied[0]?.action).toBe('deleted');
   });
 
   test('always-array shape works for N=1', async () => {
@@ -146,24 +195,10 @@ describe('set_folder_rule tool', () => {
       rules: [{ match: 'docs/**', frontmatter: { description: 'Docs' } }],
     });
     expect(result.isError).toBeUndefined();
-    const success = result.structuredContent?.result as {
-      ok: boolean;
-      applied: string[];
-      scope: string;
-    };
-    expect(success.ok).toBe(true);
-    expect(success.scope).toBe('project');
-    expect(success.applied).toEqual(['folders']);
-  });
-
-  test('error path emits humanFormat + retry-framing in content[].text', async () => {
-    const cwd = newProject();
-    const handler = captureHandler(cwd);
-    const result = await handler({
-      rules: [{ match: '', frontmatter: {} }],
-    });
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('Please fix and try again.');
+    const payload = result.structuredContent as unknown as SuccessPayload;
+    expect(payload.result.ok).toBe(true);
+    expect(payload.result.applied).toHaveLength(1);
+    expect(payload.result.applied[0]?.path).toBe('docs/.ok/frontmatter.yml');
   });
 
   test('rejects when resolveCwd throws', async () => {
