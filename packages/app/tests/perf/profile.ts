@@ -11,7 +11,7 @@
  * focus mid-run hit Chromium setTimeout/rAF throttling that turns into
  * false-positive cold-load timeouts. Single-scenario runs that need
  * paint/GPU diagnosis can opt in with `--headed` or `OK_PERF_HEADED=1`;
- * cross-ref `reports/perf-profiling-landscape-2026/evidence/cdp-tracing.md`
+ * cross-ref `reports/perf-profiling-landscape-2026/evidence/browser-main-thread-tracing.md`
  * for paint-event coverage.
  *
  * Standalone Bun entry point — NO `@playwright/test` runner (D2 LOCKED —
