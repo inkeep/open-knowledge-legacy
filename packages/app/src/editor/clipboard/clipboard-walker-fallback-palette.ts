@@ -1,4 +1,3 @@
-
 import type { Node as PmNode } from '@tiptap/pm/model';
 import { isSafeWalkerUrl } from './clipboard-sanitize.ts';
 

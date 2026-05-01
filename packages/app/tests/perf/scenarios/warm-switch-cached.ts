@@ -1,4 +1,3 @@
-
 import { markerFor } from '../lib/doc-markers';
 import { defineScenario } from '../lib/scenario';
 

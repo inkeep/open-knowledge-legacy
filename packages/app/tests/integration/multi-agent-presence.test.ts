@@ -1,4 +1,3 @@
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { toBroadcasterKey } from '@inkeep/open-knowledge-server';
 import { agentWriteMd, createTestServer, type TestServer } from './test-harness';

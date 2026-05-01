@@ -1,10 +1,8 @@
-
 import type { IpcMain, IpcMainInvokeEvent } from 'electron';
 import type { EventChannels } from '../shared/ipc-events.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { type SendableWebContents, sendToRenderer } from '../shared/ipc-send.ts';
 import type { AppState } from './state-store.ts';
-
 
 export interface UpdaterLike {
   autoDownload: boolean;
@@ -106,7 +104,6 @@ export function isClassifiedUpdaterError(err: unknown): err is Error & { code: s
   return code.startsWith('ERR_UPDATER_') || code.startsWith('HTTP_ERROR_');
 }
 
-
 export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHandle {
   const {
     updater,
@@ -138,7 +135,6 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       feedUrl,
     });
   }
-
 
   const broadcast = <K extends keyof EventChannels>(
     channel: K,
@@ -203,7 +199,6 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       return;
     onDispatch?.('check-success');
   };
-
 
   const onCheckingForUpdate = (): void => {
     logger.info('checking-for-update');
@@ -275,7 +270,6 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   updater.on('update-downloaded', onUpdateDownloaded);
   updater.on('error', onError);
 
-
   const register = createHandler(ipcMain as IpcMain);
   register('ok:update:relaunch-now', (_event: IpcMainInvokeEvent): undefined => {
     const snapshot = readState();
@@ -291,7 +285,6 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     updater.quitAndInstall();
     return undefined;
   });
-
 
   const currentVersion = getAppVersion();
   const state = readState();
@@ -320,7 +313,6 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       else fireToastB();
     }
   }
-
 
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -353,7 +345,6 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     );
     onDispatch?.('skipped-dev-mode');
   }
-
 
   return {
     destroy(): void {

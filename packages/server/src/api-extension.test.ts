@@ -177,6 +177,7 @@ describe('handleUploadImage', () => {
 
     const { createServer } = await import('node:http');
     server = createServer((req, res) => {
+      // biome-ignore lint/suspicious/noExplicitAny: test harness
       hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
         if (!res.writableEnded) {
           res.writeHead(500);
@@ -406,6 +407,7 @@ describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
 
     const { createServer } = await import('node:http');
     server = createServer((req, res) => {
+      // biome-ignore lint/suspicious/noExplicitAny: test harness
       hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
         if (!res.writableEnded) {
           res.writeHead(500);

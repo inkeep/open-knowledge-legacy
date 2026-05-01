@@ -1,4 +1,3 @@
-
 import { realpathSync } from 'node:fs';
 import type { Locator, Page } from '@playwright/test';
 import { expect, test, waitForActiveProviderSynced } from './_helpers';
@@ -53,6 +52,7 @@ async function waitForProbeSettled(page: Page, host: 'electron' | 'web'): Promis
     .poll(
       async () => {
         return await page.evaluate(() => {
+          // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.
           const mocks = (window as any).__handoffMocks__;
           return Boolean(mocks?.installedAgentsFetchResolved);
         });

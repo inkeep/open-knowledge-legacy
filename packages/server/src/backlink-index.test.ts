@@ -475,7 +475,6 @@ describe('BacklinkIndex', () => {
   });
 });
 
-
 describe('resolveMarkdownHref', () => {
   test('resolves same-directory relative link', () => {
     expect(resolveMarkdownHref('./other', 'notes')).toBe('other');
@@ -527,7 +526,6 @@ describe('resolveMarkdownHref', () => {
     expect(resolveMarkdownHref('../../../way-out.md', 'deep/a/b')).toBeNull();
   });
 });
-
 
 describe('extractMarkdownLinksFromMarkdown', () => {
   test('extracts relative inline markdown links', () => {
@@ -605,7 +603,6 @@ describe('extractMarkdownLinksFromMarkdown', () => {
     expect(extractMarkdownLinksFromMarkdown('[ext](https://example.com)', 'notes')).toEqual([]);
   });
 });
-
 
 describe('BacklinkIndex with markdown links', () => {
   test('updateDocumentFromMarkdown indexes markdown links alongside wiki links', () => {

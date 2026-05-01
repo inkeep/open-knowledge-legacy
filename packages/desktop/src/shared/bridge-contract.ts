@@ -1,4 +1,3 @@
-
 import type { ApplyResult, ScaffoldPlan } from '@inkeep/open-knowledge-server';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 

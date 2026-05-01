@@ -1,11 +1,9 @@
-
 import { describe, expect, test } from 'bun:test';
 import {
   type GitConfigReader,
   type GitIdentityTokenStore,
   resolveGitIdentity,
 } from './git-identity.ts';
-
 
 function mockReader(
   values: Partial<Record<string, Partial<Record<'local' | 'global', string | null>>>>,
@@ -19,7 +17,6 @@ function makeTokenStore(entry: { login: string; name?: string; email?: string } 
   };
   return store;
 }
-
 
 describe('resolveGitIdentity chain order', () => {
   test('Step 1: returns repo-local identity when both name + email are set locally', async () => {

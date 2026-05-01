@@ -60,8 +60,7 @@ function makeFixture(): Fixture {
     cleanup: () => {
       try {
         rmSync(root, { recursive: true, force: true });
-      } catch {
-      }
+      } catch {}
     },
   };
 }
@@ -384,6 +383,7 @@ describe('persistence extension dispatch — config-doc integration', () => {
     await handle.extension.onLoadDocument?.({
       document,
       documentName: CONFIG_DOC_NAME_PROJECT,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal Hocuspocus shim
     } as any);
 
     expect(document.getText('source').toString()).toBe(yaml);
@@ -405,6 +405,7 @@ describe('persistence extension dispatch — config-doc integration', () => {
       document,
       documentName: CONFIG_DOC_NAME_PROJECT,
       lastTransactionOrigin: undefined,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal Hocuspocus shim
     } as any);
 
     const path = configDocAbsPath(CONFIG_DOC_NAME_PROJECT, fx.ctx);
@@ -428,6 +429,7 @@ describe('persistence extension dispatch — config-doc integration', () => {
     await handle.extension.onLoadDocument?.({
       document,
       documentName: CONFIG_DOC_NAME_PROJECT,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal Hocuspocus shim
     } as any);
 
     document.getText('source').insert(0, 'foo: [bar: [baz\n');
@@ -436,6 +438,7 @@ describe('persistence extension dispatch — config-doc integration', () => {
       document,
       documentName: CONFIG_DOC_NAME_PROJECT,
       lastTransactionOrigin: undefined,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal Hocuspocus shim
     } as any);
 
     expect(rejections).toHaveLength(1);
@@ -462,9 +465,9 @@ describe('persistence extension dispatch — config-doc integration', () => {
         document,
         documentName: 'notes/intro',
         lastTransactionOrigin: undefined,
+        // biome-ignore lint/suspicious/noExplicitAny: minimal Hocuspocus shim
       } as any);
-    } catch {
-    }
+    } catch {}
 
     expect(rejections).toHaveLength(0);
   });

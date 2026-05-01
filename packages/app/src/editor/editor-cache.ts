@@ -1,4 +1,3 @@
-
 import type { EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import type { Editor } from '@tiptap/core';
@@ -92,7 +91,6 @@ interface MountCmParams {
   sizeStats?: SizeStats;
 }
 
-
 const tiptapCache = new Map<string, TiptapCacheEntry>();
 const cmCache = new Map<string, CmCacheEntry>();
 
@@ -116,7 +114,6 @@ function tryGetParkingNode(): HTMLElement | null {
   _parkingNode = el;
   return el;
 }
-
 
 export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
   const { docName, container, factory, sizeStats } = params;
@@ -151,8 +148,7 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
     if (existing.hadFocus) {
       try {
         existing.editor.commands.focus();
-      } catch {
-      }
+      } catch {}
     }
     mark('ok/cache/hit', { docName, kind: 'tiptap' });
     if (sizeStats) {
@@ -209,8 +205,7 @@ export function parkTiptapEditor(entry: TiptapCacheEntry): void {
     const undoManager = readEditorUndoManager(entry.editor);
     try {
       entry.editor.destroy();
-    } catch {
-    }
+    } catch {}
     if (undoManager) {
       undoManager.restore = undefined;
     }
@@ -282,7 +277,6 @@ export function evictTiptapEditor(docName: string): boolean {
   return true;
 }
 
-
 export function mountCmEditor(params: MountCmParams): CmCacheEntry {
   const { docName, container, factory, sizeStats } = params;
 
@@ -317,8 +311,7 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
     if (existing.hadFocus) {
       try {
         existing.view.focus();
-      } catch {
-      }
+      } catch {}
     }
     mark('ok/cache/hit', { docName, kind: 'cm' });
     if (sizeStats) {
@@ -374,8 +367,7 @@ export function parkCmEditor(entry: CmCacheEntry): void {
   if (!CACHE_ENABLED || entry.__uncached) {
     try {
       entry.view.destroy();
-    } catch {
-    }
+    } catch {}
     entry.activeMountKey = null;
     return;
   }
@@ -436,7 +428,6 @@ export function evictCmEditor(docName: string): boolean {
   mark('ok/cache/evict', { docName, kind: 'cm' });
   return true;
 }
-
 
 function getTiptapEditorView(editor: Editor): { dom: HTMLElement; scrollDOM?: HTMLElement } | null {
   const view = (editor as unknown as { editorView?: { dom: HTMLElement; scrollDOM?: HTMLElement } })
@@ -499,7 +490,6 @@ function findEvictable(lru: string[], mountingDocName: string): string | null {
   }
   return null;
 }
-
 
 export function setActivityMountList(docNames: readonly string[]): void {
   const prev = activityMountList;
@@ -580,7 +570,6 @@ export function subscribePoolEviction(pool: {
     }
   };
 }
-
 
 export function __getCacheSize(kind: 'tiptap' | 'cm'): number {
   return kind === 'tiptap' ? tiptapCache.size : cmCache.size;

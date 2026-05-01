@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import * as fc from 'fast-check';

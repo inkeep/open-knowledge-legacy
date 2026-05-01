@@ -49,6 +49,7 @@ function MermaidContent({ chart }: { chart: string }) {
       ref={(container) => {
         if (container) bindFunctions?.(container);
       }}
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid renders trusted SVG
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );

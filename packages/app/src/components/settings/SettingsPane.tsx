@@ -1,4 +1,3 @@
-
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   bindConfigDoc,
@@ -227,7 +226,6 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
   const { collabUrl } = useDocumentContext();
   const connection = useConfigDocConnection(collabUrl, scope);
 
-
   return (
     <div
       className="flex h-full min-h-0 flex-col overflow-hidden"
@@ -294,6 +292,7 @@ function SettingsSkeleton() {
   return (
     <div className="space-y-6 p-6">
       {Array.from({ length: 3 }).map((_, sectionIdx) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: skeleton placeholder; index is stable across renders
         <div key={sectionIdx} className="space-y-3">
           <Skeleton className="h-5 w-32" />
           <Skeleton className="h-4 w-64" />

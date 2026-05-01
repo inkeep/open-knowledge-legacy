@@ -1,4 +1,3 @@
-
 import { defaultSkillInstaller, type SkillInstaller } from '@/lib/handoff/skill-installer';
 
 export interface SkillInstallStorage {

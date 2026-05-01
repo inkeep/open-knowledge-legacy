@@ -315,7 +315,6 @@ export class AgentSessionManager {
       sessionContext,
     )) as AgentDirectConnection;
 
-
     const um = new Y.UndoManager(
       [dc.document.getText('source'), dc.document.getMap('agent-flash')],
       {

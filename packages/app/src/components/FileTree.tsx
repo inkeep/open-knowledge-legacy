@@ -110,16 +110,14 @@ const AGENT_DECORATION_ICON_ID = 'ok-file-tree-agent-decoration';
 type IconNode = [string, Record<string, string>][];
 
 function iconNodeToSvg(iconNode: IconNode): string {
-  return (
-    iconNode
-      .map(([tag, { key, ...attrs }]) => {
-        const attrString = Object.entries(attrs)
-          .map(([k, v]) => `${k}="${v}"`)
-          .join(' ');
-        return `<${tag} ${attrString} />`;
-      })
-      .join('')
-  );
+  return iconNode
+    .map(([tag, { key, ...attrs }]) => {
+      const attrString = Object.entries(attrs)
+        .map(([k, v]) => `${k}="${v}"`)
+        .join(' ');
+      return `<${tag} ${attrString} />`;
+    })
+    .join('');
 }
 
 function createLucideSpriteSymbol(id: string, iconNode: IconNode): string {

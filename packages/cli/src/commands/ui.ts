@@ -6,8 +6,8 @@ import {
   INLINE_RENDERABLE_EXTENSIONS,
   type Scheduler,
 } from '@inkeep/open-knowledge-core';
-import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
+import type { Config } from '../config/schema.ts';
 import { type ProxyServerHandle, proxyRequest, startProxyServer } from './ui-proxy.ts';
 
 export const DEFAULT_UI_SAFETY_NET_MS = 12 * 60 * 60 * 1000;
@@ -54,7 +54,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     updateUiLockPort,
   } = await import('@inkeep/open-knowledge-server');
   const { default: sirv } = await import('sirv');
-  const { resolveContentDir, resolveLockDir } = await import('@inkeep/open-knowledge-server');
+  const { resolveContentDir, resolveLockDir } = await import('../config/paths.ts');
 
   const contentDir = resolveContentDir(opts.config, opts.cwd);
   const lockDir = resolveLockDir(contentDir);
@@ -191,8 +191,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     );
     try {
       releaseUiLock(lockDir);
-    } catch {
-    }
+    } catch {}
     throw err;
   }
 
@@ -221,8 +220,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     lockReleased = true;
     try {
       releaseUiLock(lockDir);
-    } catch {
-    }
+    } catch {}
   };
 
   const armSafetyNet = (): void => {
@@ -236,13 +234,11 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
       console.warn(`[ui] safety-net (${safetyNetMs}ms) reached — shutting down (D-025 backstop)`);
       try {
         opts.onSafetyNet?.();
-      } catch {
-      }
+      } catch {}
       for (const server of httpServers) {
         try {
           server.close();
-        } catch {
-        }
+        } catch {}
       }
       release();
     }, safetyNetMs);
@@ -368,7 +364,7 @@ export function uiCommand(getConfig: () => Config): Command {
     .action(async (opts: { port?: string; host?: string }) => {
       const { dim } = await import('../ui/colors.ts');
       const { UiLockCollisionError } = await import('@inkeep/open-knowledge-server');
-      const { resolveContentDir, resolveLockDir } = await import('@inkeep/open-knowledge-server');
+      const { resolveContentDir, resolveLockDir } = await import('../config/paths.ts');
       const config = getConfig();
       const host = opts.host;
 

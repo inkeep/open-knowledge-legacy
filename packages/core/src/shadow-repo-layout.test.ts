@@ -374,7 +374,6 @@ describe('parseCheckpoint / formatCheckpointBodyLine (bridge-correctness SPEC §
   });
 });
 
-
 describe('formatWipSubject', () => {
   test('empty docs → wip: auto-save', () => {
     expect(formatWipSubject([])).toBe('wip: auto-save');
@@ -495,7 +494,6 @@ describe('parseOkActor / formatOkActor (US-015, FR-8, D13)', () => {
     expect(parsed?.color_seed).toBe('unknown');
   });
 });
-
 
 describe('OkActorEntry writer_id field + derivation back-compat', () => {
   test('formatOkActor emits writer_id inline', () => {
@@ -742,7 +740,6 @@ describe('readContributors (dispatcher: prefers ok-actor, falls back to ok-contr
     expect(readContributors('wip: test\n\njust a plain body')).toEqual([]);
   });
 });
-
 
 describe('Subject-prefix format helpers (D53, FR-13)', () => {
   test('formatReconcileSubject', () => {

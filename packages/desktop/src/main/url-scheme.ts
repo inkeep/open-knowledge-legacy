@@ -1,4 +1,3 @@
-
 import { isAbsolute, resolve } from 'node:path';
 
 interface ParsedOpenKnowledgeUrl {
@@ -76,6 +75,7 @@ interface ProtocolHandlerDeps {
   };
 }
 
+// biome-ignore lint/suspicious/noEmptyInterface: intentional — opaque handle.
 interface BrowserWindowHandle {}
 
 const QUEUE_FLUSH_MAX_ATTEMPTS = 10;

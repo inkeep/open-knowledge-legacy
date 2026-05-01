@@ -1,4 +1,3 @@
-
 import {
   classifyWikiLinkTarget,
   getWikiLinkText,
@@ -32,7 +31,6 @@ import { openInternalHashHrefInNewTab } from '../internal-link-helpers';
 import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { useHeadings } from './use-headings';
 import { getWikiLinkResolutionCandidates, isResolvedWikiLinkTarget } from './wiki-link-helpers';
-
 
 interface EditWikiLinkDialogProps {
   open: boolean;
@@ -193,7 +191,6 @@ function EditWikiLinkDialog({
   );
 }
 
-
 interface WikiLinkPropPanelProps {
   editor: Editor;
   getPos: () => number | undefined;
@@ -253,6 +250,7 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
       if (isSafeNavigationUrl(externalTarget.url)) {
         window.open(externalTarget.url, '_blank', 'noopener,noreferrer');
       } else {
+        // eslint-disable-next-line no-console
         console.warn('[safe-nav] blocked non-safe scheme:', externalTarget.url);
       }
       return;

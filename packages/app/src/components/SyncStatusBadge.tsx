@@ -8,7 +8,6 @@ import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Switch } from './ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
-
 function formatRelative(iso: string | null): string {
   if (!iso) return 'never';
   const diff = Date.now() - new Date(iso).getTime();
@@ -36,7 +35,6 @@ async function setSyncEnabled(enabled: boolean): Promise<void> {
     throw new Error(`set-enabled failed: HTTP ${res.status}`);
   }
 }
-
 
 interface BadgeIconProps {
   status: GitSyncStatus;
@@ -91,7 +89,6 @@ function badgeLabel(status: GitSyncStatus): string {
       return '';
   }
 }
-
 
 function stateLabel(state: GitSyncStatus['state']): string {
   switch (state) {
@@ -270,7 +267,6 @@ function PopoverBody({
     </div>
   );
 }
-
 
 interface SyncStatusBadgeProps {
   onSignIn?: () => void;

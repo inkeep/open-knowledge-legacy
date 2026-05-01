@@ -1,4 +1,3 @@
-
 import { isRelativeUrl, SAFE_URL_SCHEME_RE } from '@inkeep/open-knowledge-core';
 
 export const URL_SCHEME_ATTRS: ReadonlySet<string> = new Set([
@@ -76,7 +75,6 @@ export function sanitizeStyleAttrValue(value: string): string {
   if (DANGEROUS_STYLE_EXPRESSION_RE.test(value)) return '';
   return value;
 }
-
 
 function parseColorBody(body: string): [number, number, number, number | null] | null {
   const slashIdx = body.indexOf('/');

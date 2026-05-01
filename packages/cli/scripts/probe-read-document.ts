@@ -3,13 +3,13 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import {
-  buildReadResult,
   commitUpstreamImport,
   commitWip,
   initShadowRepo,
   type WriterIdentity,
 } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
+import { buildReadResult } from '../src/mcp/tools/read-document.ts';
 
 const root = resolve(tmpdir(), `ok-probe-${Date.now()}`);
 mkdirSync(root, { recursive: true });
@@ -76,8 +76,11 @@ OAuth is a protocol that...
         mcp: {
           tools: {
             read_document: { historyDepth: 5 },
+            // biome-ignore lint/suspicious/noExplicitAny: probe-only cast; full config not needed
           } as any,
+          // biome-ignore lint/suspicious/noExplicitAny: probe-only cast
         } as any,
+        // biome-ignore lint/suspicious/noExplicitAny: probe-only cast
       } as any,
     },
   );

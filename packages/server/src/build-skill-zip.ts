@@ -1,4 +1,3 @@
-
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, existsSync, statSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
@@ -130,7 +129,6 @@ export async function validateSkillZip(
   if (size > MAX_ZIP_BYTES) {
     throw new Error(`Built ${outputPath} is ${size} bytes, exceeds ${MAX_ZIP_BYTES}-byte ceiling`);
   }
-
 
   const sha256 = await sha256OfFile(outputPath);
 

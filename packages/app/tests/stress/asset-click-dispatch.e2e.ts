@@ -1,4 +1,3 @@
-
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { expect, test, waitForActiveProviderSynced as waitForProvider } from './_helpers';
@@ -217,7 +216,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     const openedPage = await context.waitForEvent('page', { timeout: 1_000 }).catch(() => null);
     expect(openedPage).toBeNull();
   });
-
 
   test('P9.17: subdirectory PNG drop — rendered <img> actually loads (naturalWidth > 0)', async ({
     page,

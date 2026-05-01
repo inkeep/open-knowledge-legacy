@@ -1,4 +1,3 @@
-
 import { describe, expect, mock, test } from 'bun:test';
 import type { HandoffPayload } from '@inkeep/open-knowledge-core';
 import { CURSOR_SETTLE_MS_COLD, CURSOR_SETTLE_MS_WARM, dispatchCursor } from './cursor-two-step.ts';

@@ -1,4 +1,3 @@
-
 export { OPT_OUT_ATTR } from './clipboard-sanitize.ts';
 export { createHandlePaste } from './handle-paste.ts';
 export {

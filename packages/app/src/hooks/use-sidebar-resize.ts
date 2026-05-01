@@ -106,6 +106,7 @@ export function useSidebarResize({
   useEffect(() => {
     function persistWidth(width: string) {
       if (widthCookieName) {
+        // biome-ignore lint/suspicious/noDocumentCookie: shadcn sidebar pattern
         document.cookie = `${widthCookieName}=${width}; path=/; max-age=${widthCookieMaxAge}`;
       }
     }

@@ -99,7 +99,6 @@ describe('parseWithFallback (R6)', () => {
     expect(result.type).toBe('doc');
   });
 
-
   test('(m2) recovery-failure path: split succeeds but recursive parse throws → whole-doc fallback', () => {
     let callCount = 0;
     const result = parseWithFallbackFn('a\n\nb\n\nc', {
@@ -138,7 +137,6 @@ describe('parseWithFallback (R6)', () => {
     const headings = (result.content as { type: string }[]).filter((n) => n.type === 'heading');
     expect(headings.length).toBe(2);
   });
-
 
   test('(r23 boundary) depth=MAX_SPLIT_DEPTH permits parse; depth=MAX_SPLIT_DEPTH+1 short-circuits to whole-doc', () => {
     expect(MAX_SPLIT_DEPTH).toBe(20);
@@ -211,7 +209,6 @@ describe('parseWithFallback (R6)', () => {
   });
 });
 
-
 describeBench('parseWithFallback perf bound vs happy path (R23)', () => {
   const MEASURED_RUNS = 3;
   const WARM_UPS = 2;
@@ -278,7 +275,6 @@ describeBench('parseWithFallback perf bound vs happy path (R23)', () => {
     TEST_TIMEOUT_MS,
   );
 });
-
 
 describe('scanTagEvents (SC series)', () => {
   function scan(src: string): TagEvent[] {
@@ -360,7 +356,6 @@ describe('scanTagEvents (SC series)', () => {
     expect(events[0].start).toBe(0);
   });
 });
-
 
 describe('enumerateFallbackRegions + findFallbackRegion (NB series)', () => {
   afterEach(() => resetParseHealth());

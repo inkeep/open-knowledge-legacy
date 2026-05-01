@@ -1,4 +1,3 @@
-
 export type UploadWriteReason =
   | 'collision-exhaustion'
   | 'storage-full'

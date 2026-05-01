@@ -1,4 +1,3 @@
-
 export interface DocEntry {
   docName: string;
   docExt?: string;

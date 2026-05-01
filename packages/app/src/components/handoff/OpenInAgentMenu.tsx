@@ -1,4 +1,3 @@
-
 import { composePrompt, type TargetData } from '@inkeep/open-knowledge-core';
 import { Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';

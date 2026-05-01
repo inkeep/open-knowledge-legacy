@@ -263,8 +263,7 @@ export class ProviderPool {
       if (stored !== null && stored.length > 0) {
         this.lastObservedBranch = stored;
       }
-    } catch {
-    }
+    } catch {}
     return this.lastObservedBranch;
   }
 
@@ -277,8 +276,7 @@ export class ProviderPool {
       } else {
         this.storage?.setItem(LAST_OBSERVED_BRANCH_KEY, branch);
       }
-    } catch {
-    }
+    } catch {}
   }
 
   private withClearDataTimeout(docName: string, promise: Promise<void>): Promise<void> {

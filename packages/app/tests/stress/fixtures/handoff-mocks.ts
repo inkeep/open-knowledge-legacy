@@ -1,4 +1,3 @@
-
 import type { OkDesktopBridge } from '@inkeep/open-knowledge-core';
 import type { Page } from '@playwright/test';
 
@@ -73,6 +72,7 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
       fakeTimeOffset: 0,
       installedAgentsFetchResolved: false,
     };
+    // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.
     (window as any).__handoffMocks__ = mocks;
 
     const originalFetch = window.fetch.bind(window);
@@ -88,8 +88,7 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         if (url.includes('/api/installed-agents')) {
           mocks.installedAgentsFetchResolved = true;
         }
-      } catch {
-      }
+      } catch {}
       return res;
     };
 
@@ -103,8 +102,7 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
           mocks.anchorClicks.push(this.href);
           return;
         }
-      } catch {
-      }
+      } catch {}
       return originalAnchorClick.call(this);
     };
 
@@ -195,19 +193,21 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         appVersion: 'test-0.0.0',
       } satisfies OkDesktopBridge;
 
+      // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.
       (window as any).okDesktop = bridge;
     }
 
     try {
+      // biome-ignore lint/suspicious/noExplicitAny: matches production resolution in cowork-skill-install.ts.
       const ver = (window as any).okDesktop?.appVersion ?? 'unknown';
       window.localStorage.setItem(`ok:skill:cowork:installed:v${ver}`, '1');
-    } catch {
-    }
+    } catch {}
   }, cfg);
 }
 
 export async function readCapturedHandoff(page: Page): Promise<CapturedHandoff> {
   return await page.evaluate(() => {
+    // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.
     const mocks = (window as any).__handoffMocks__ as {
       anchorClicks: string[];
       openExternalCalls: string[];
@@ -227,6 +227,7 @@ export async function readCapturedHandoff(page: Page): Promise<CapturedHandoff> 
 
 export async function updateElectronInstallMap(page: Page, install: InstallMap): Promise<void> {
   await page.evaluate((next) => {
+    // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.
     const mocks = (window as any).__handoffMocks__;
     mocks.install = { ...next };
   }, install);
@@ -245,6 +246,7 @@ export async function updateWebInstallMap(page: Page, install: InstallMap): Prom
 
 export async function advanceHandoffFakeTime(page: Page, ms: number): Promise<void> {
   await page.evaluate((delta) => {
+    // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.
     const mocks = (window as any).__handoffMocks__;
     mocks.fakeTimeOffset += delta;
   }, ms);
@@ -255,6 +257,7 @@ export async function updateSpawnCursorResult(
   result: SpawnCursorResult,
 ): Promise<void> {
   await page.evaluate((next) => {
+    // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.
     const mocks = (window as any).__handoffMocks__;
     mocks.spawnCursorResult = next;
   }, result);

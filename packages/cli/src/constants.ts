@@ -7,3 +7,5 @@ export const CONFIG_FILENAME = 'config.yml';
 export const CACHE_DIR = 'cache';
 
 export const PACKAGE_VERSION = pkgJson.version;
+
+export const MCP_SERVER_NAME = 'open-knowledge';

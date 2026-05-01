@@ -1,4 +1,3 @@
-
 import { defineScenario } from '../lib/scenario';
 
 const DOC = 'README';

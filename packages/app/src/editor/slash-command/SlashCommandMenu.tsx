@@ -92,6 +92,7 @@ export function SlashCommandMenu({
             : ''}
         </span>
         {categories.map((cat) => (
+          // biome-ignore lint/a11y/useSemanticElements: WAI-ARIA listbox pattern requires role="group" for option groups — <fieldset> is non-standard inside role="listbox"
           <div key={cat.key} role="group" aria-labelledby={`${listboxId}-group-${cat.key}`}>
             <div
               id={`${listboxId}-group-${cat.key}`}

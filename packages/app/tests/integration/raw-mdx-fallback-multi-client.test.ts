@@ -1,4 +1,3 @@
-
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,7 +12,6 @@ import {
   type TestServer,
   testReset,
 } from './test-harness';
-
 
 function findRawMdxFallback(fragment: Y.XmlFragment): Y.XmlElement | null {
   for (let i = 0; i < fragment.length; i++) {
@@ -46,7 +44,6 @@ function getFirstXmlText(el: Y.XmlElement): Y.XmlText | null {
   }
   return null;
 }
-
 
 describe('rawMdxFallback multi-client Y.Item identity (US-011, M8, Q5)', () => {
   let server: TestServer;
@@ -89,6 +86,7 @@ describe('rawMdxFallback multi-client Y.Item identity (US-011, M8, Q5)', () => {
     expect(fallbackA).not.toBeNull();
     expect(fallbackB).not.toBeNull();
 
+    // biome-ignore lint/style/noNonNullAssertion: checked above
     const itemBefore = (fallbackB! as unknown as { _item: unknown })._item;
     expect(itemBefore).toBeTruthy();
 
@@ -96,9 +94,11 @@ describe('rawMdxFallback multi-client Y.Item identity (US-011, M8, Q5)', () => {
 
     const bottomParagraph = findNthParagraph(clientB.fragment, 1);
     expect(bottomParagraph).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: checked above
     const bottomText = getFirstXmlText(bottomParagraph!);
     expect(bottomText).not.toBeNull();
     const cursorRelPos = Y.createRelativePositionFromTypeIndex(
+      // biome-ignore lint/style/noNonNullAssertion: checked above
       bottomText!,
       3, // cursor at character offset 3 within the text
     );
@@ -136,11 +136,13 @@ describe('rawMdxFallback multi-client Y.Item identity (US-011, M8, Q5)', () => {
 
     const fallbackBAfter = findRawMdxFallback(clientB.fragment);
     expect(fallbackBAfter).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: checked above
     const itemAfter = (fallbackBAfter! as unknown as { _item: unknown })._item;
     expect(itemAfter).toBe(itemBefore);
 
     const cursorAbsPos = Y.createAbsolutePositionFromRelativePosition(cursorRelPos, clientB.doc);
     expect(cursorAbsPos).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: checked above
     expect(cursorAbsPos!.index).toBe(3);
 
     const fragmentSerializedAfter = serializeFragment(clientB.fragment);
@@ -187,7 +189,9 @@ describe('rawMdxFallback multi-client Y.Item identity (US-011, M8, Q5)', () => {
     expect(fallbackA).not.toBeNull();
     expect(fallbackB).not.toBeNull();
 
+    // biome-ignore lint/style/noNonNullAssertion: checked above
     const itemA = (fallbackA! as unknown as { _item: unknown })._item;
+    // biome-ignore lint/style/noNonNullAssertion: checked above
     const itemB = (fallbackB! as unknown as { _item: unknown })._item;
 
     const posA = clientA.ytext.toString().indexOf('First paragraph.');
@@ -219,7 +223,9 @@ describe('rawMdxFallback multi-client Y.Item identity (US-011, M8, Q5)', () => {
     expect(fallbackAAfter).not.toBeNull();
     expect(fallbackBAfter).not.toBeNull();
 
+    // biome-ignore lint/style/noNonNullAssertion: checked above
     expect((fallbackAAfter! as unknown as { _item: unknown })._item).toBe(itemA);
+    // biome-ignore lint/style/noNonNullAssertion: checked above
     expect((fallbackBAfter! as unknown as { _item: unknown })._item).toBe(itemB);
   });
 });

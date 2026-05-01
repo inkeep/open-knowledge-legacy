@@ -1,4 +1,3 @@
-
 import type { BrowserWindowLike, WindowManagerDeps } from './window-manager.ts';
 
 interface NavigatorDeps {

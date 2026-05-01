@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import { markdownToHtml, mdastToHtml } from './mdast-to-html.ts';
 
@@ -107,7 +106,6 @@ describe('mdastToHtml — mdast Root → HTML', () => {
 });
 
 describe('custom-node regression gate — every promoted mdast type emits semantic HTML', () => {
-
   describe('(a) markdownToHtml string-entry — remark-plugin-produced types', () => {
     test('wikiLink bare target emits <a class="wiki-link">', () => {
       const html = markdownToHtml('[[Target]]');
@@ -136,6 +134,7 @@ describe('custom-node regression gate — every promoted mdast type emits semant
             attributes: [],
             children: [],
             data: { sourceRaw: '<Callout type="warning">Heads up</Callout>' },
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast mirroring PM→mdast output
           } as any,
         ],
       });
@@ -159,6 +158,7 @@ describe('custom-node regression gate — every promoted mdast type emits semant
                 attributes: [],
                 children: [],
                 data: { sourceRaw: '<Tag prop="x"/>' },
+                // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast mirroring PM→mdast output
               } as any,
               { type: 'text', value: ' after' },
             ],
@@ -179,6 +179,7 @@ describe('custom-node regression gate — every promoted mdast type emits semant
             type: 'rawMdxFallback',
             data: { reason: 'Unclosed JSX', originalSpan: [0, 20] },
             value: '<Broken prop="xyz"',
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast for handler-direct test
           } as any,
         ],
       });

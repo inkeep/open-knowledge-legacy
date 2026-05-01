@@ -1,4 +1,3 @@
-
 import type { Slice } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import {
@@ -67,7 +66,6 @@ export const ATTR_BLOCKLIST: ReadonlySet<string> = new Set([
   'contenteditable',
   'data-pm-slice',
 ]);
-
 
 export interface ComputedStyleLike {
   getPropertyValue(prop: string): string;

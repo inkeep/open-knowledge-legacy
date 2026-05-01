@@ -1,4 +1,3 @@
-
 import type {
   OkDesktopBridge,
   OkLocalOpAuthReposResponse,
@@ -26,8 +25,7 @@ function lastJsonLine(text: string): Record<string, unknown> | null {
     try {
       const v = JSON.parse(line);
       if (v && typeof v === 'object') return v as Record<string, unknown>;
-    } catch {
-    }
+    } catch {}
   }
   return null;
 }

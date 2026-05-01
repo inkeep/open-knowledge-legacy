@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { containsConflictMarkers, reconcile, splitMarkdownBlocks } from './reconciliation';
 
-
 describe('splitMarkdownBlocks', () => {
   test('splits on blank lines', () => {
     const blocks = splitMarkdownBlocks('# Heading\n\nParagraph one.\n\nParagraph two.\n');
@@ -22,7 +21,6 @@ describe('splitMarkdownBlocks', () => {
     expect(splitMarkdownBlocks('# Just a heading\n')).toEqual(['# Just a heading']);
   });
 });
-
 
 describe('containsConflictMarkers', () => {
   test('detects merge-style markers (<<<<<<< HEAD)', () => {
@@ -57,7 +55,6 @@ describe('containsConflictMarkers', () => {
     expect(containsConflictMarkers(content)).toBe(false);
   });
 });
-
 
 describe('reconcile', () => {
   const docName = 'test-doc';

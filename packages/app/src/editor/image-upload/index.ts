@@ -237,8 +237,7 @@ export async function uploadAndInsert(
   let body: UploadResponseBody = {};
   try {
     body = (await res.json()) as UploadResponseBody;
-  } catch {
-  }
+  } catch {}
 
   if (!res.ok) {
     const message = body.message ?? body.error ?? `Upload failed (${res.status})`;

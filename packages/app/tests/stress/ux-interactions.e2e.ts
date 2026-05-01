@@ -1,4 +1,3 @@
-
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import {
@@ -31,7 +30,6 @@ async function openFreshDoc(api: ApiHelpers, page: Page, label: string): Promise
 
 const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown source' });
 const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual editor' });
-
 
 test('source mode: real pointer click + keystrokes land in CodeMirror', async ({ page, api }) => {
   await openFreshDoc(api, page, 'source-hit-test');

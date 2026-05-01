@@ -1,6 +1,4 @@
-
 import { type FC, useEffect, useState } from 'react';
-
 
 interface InteractionLayerEditor {
   editorView?: { dom: HTMLElement };
@@ -46,7 +44,6 @@ export interface InteractionLayerHandle {
 interface CreateInteractionLayerParams {
   editor: InteractionLayerEditor;
 }
-
 
 interface LayerSnapshot {
   activeNodeId: string | null;
@@ -121,7 +118,6 @@ export class InteractionLayerStore {
   }
 }
 
-
 interface ResolverNode {
   getAttribute?: (key: string) => string | null;
   parentElement?: ResolverNode | null;
@@ -144,7 +140,6 @@ export function resolveClickTargetNodeId(
   }
   return null;
 }
-
 
 interface InteractionLayerRootProps {
   store: InteractionLayerStore;
@@ -177,7 +172,6 @@ const InteractionLayerRoot: FC<InteractionLayerRootProps> = ({ store }) => {
     </>
   );
 };
-
 
 function getEditorDom(editor: InteractionLayerEditor): HTMLElement | null {
   return editor.editorView?.dom ?? editor.view?.dom ?? null;
@@ -222,16 +216,14 @@ export function createInteractionLayer(
     if (target && document.contains(target) && typeof target.focus === 'function') {
       try {
         target.focus({ preventScroll: true });
-      } catch {
-      }
+      } catch {}
       return;
     }
     const dom = editorDom ?? getEditorDom(editor);
     if (dom && typeof (dom as HTMLElement).focus === 'function') {
       try {
         (dom as HTMLElement).focus({ preventScroll: true });
-      } catch {
-      }
+      } catch {}
     }
   });
 
@@ -329,7 +321,6 @@ export function createInteractionLayer(
     }
     clickListenerAttached = false;
   };
-
 
   attachListeners();
 

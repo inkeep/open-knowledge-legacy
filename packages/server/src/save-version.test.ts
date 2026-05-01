@@ -1,10 +1,4 @@
-
-import { describe as _bunDescribe, afterEach, beforeEach, expect, test } from 'bun:test';
-
-// Skip-on-CI gate (oven-sh/bun#11892): subprocess or git child spawns; Bun fails to reap children on ubuntu-latest GHA runners (oven-sh/bun#11892).
-// Tests run normally locally; follow-up will narrow the leak surface.
-const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
-
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -42,8 +36,7 @@ function makeRes(): { res: ServerResponse; captured: CapturedResponse } {
       captured.body = body ?? '';
       try {
         captured.parsed = JSON.parse(body ?? '{}') as Record<string, unknown>;
-      } catch {
-      }
+      } catch {}
     },
   } as unknown as ServerResponse;
   return { res, captured };

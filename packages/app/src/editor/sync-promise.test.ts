@@ -41,8 +41,7 @@ afterEach(() => {
   for (const p of providers) {
     try {
       p.destroy();
-    } catch {
-    }
+    } catch {}
   }
   providers = [];
 });
@@ -183,6 +182,7 @@ describe('syncPromise timeout', () => {
     const p = track(makeProvider('slow-doc'));
     const origSetTimeout = globalThis.setTimeout;
     let capturedTimer: (() => void) | null = null;
+    // @ts-expect-error — intentional override for test
     globalThis.setTimeout = ((fn: () => void, ms: number) => {
       if (ms === SYNC_TIMEOUT_MS) {
         capturedTimer = fn;
@@ -206,6 +206,7 @@ describe('syncPromise timeout', () => {
     const p = track(makeProvider('slow-doc'));
     const origSetTimeout = globalThis.setTimeout;
     let capturedTimer: (() => void) | null = null;
+    // @ts-expect-error — intentional override for test
     globalThis.setTimeout = ((fn: () => void, ms: number) => {
       if (ms === SYNC_TIMEOUT_MS) {
         capturedTimer = fn;

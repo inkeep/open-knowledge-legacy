@@ -1,4 +1,3 @@
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -71,7 +70,6 @@ describe('C8: triple concurrent write surfaces', () => {
     try {
       await pollUntil(() => client.ytext.toString().includes('Seed content'), 5000);
       await wait(500);
-
 
       appendParagraph(client, 'C8-HUMAN-WYSIWYG-CONTENT');
 

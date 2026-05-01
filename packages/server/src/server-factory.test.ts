@@ -14,7 +14,6 @@ import { ensureProjectGit } from './project-git.ts';
 import { createServer, type ServerInstance } from './server-factory.ts';
 import { initShadowRepo, shadowGit } from './shadow-repo.ts';
 
-
 interface LogEntry {
   level: 'info' | 'warn' | 'error' | 'debug';
   msg: string;
@@ -93,7 +92,6 @@ function captureAllLoggers(): {
     },
   };
 }
-
 
 describe('createServer().destroy() — graceful shutdown flush', () => {
   let tmpDir: string;
@@ -405,7 +403,6 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
   });
 });
 
-
 describe('createServer() degraded signal', () => {
   let testProjectDir: string;
 
@@ -471,15 +468,16 @@ describe('createServer() degraded signal', () => {
       quiet: true,
     });
 
+    // @ts-expect-error — readonly array: push is not allowed
     srv.degraded.push('test');
 
+    // @ts-expect-error — readonly field: reassignment is not allowed
     srv.degraded = [];
 
     await srv.ready;
     await srv.destroy();
   });
 });
-
 
 describe('createServer() — config-doc admission (US-005)', () => {
   let testProjectDir: string;
@@ -563,7 +561,6 @@ describe('createServer() — config-doc admission (US-005)', () => {
     await srv.destroy();
   });
 });
-
 
 async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<boolean> {
   const start = Date.now();
@@ -761,7 +758,6 @@ describe('createServer() managed rename recovery', () => {
     await server.destroy();
   });
 });
-
 
 describe('createServer() server-lock integration (V0-1)', () => {
   let tmpDir: string;

@@ -1,4 +1,3 @@
-
 import { consumeAuthEventStream } from '@/components/auth-event-stream';
 import type { OkDesktopBridge, OkLocalOpAuthEvent } from '@/lib/desktop-bridge-types';
 import { createBufferedAsyncStream } from './buffered-async-stream';
@@ -37,8 +36,7 @@ export function httpAuthTransport(): AuthTransport {
                   const event = JSON.parse(line) as AuthEvent;
                   push(event);
                   if (event.type === 'complete' || event.type === 'error') return 'terminal';
-                } catch {
-                }
+                } catch {}
                 return 'continue';
               },
             );

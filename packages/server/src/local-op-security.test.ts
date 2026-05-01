@@ -12,7 +12,6 @@ import {
   isSafeLocalPath,
 } from './local-op-security.ts';
 
-
 function makeReq(remoteAddress: string, origin?: string): IncomingMessage {
   const req = new EventEmitter() as unknown as IncomingMessage;
   req.socket = { remoteAddress } as IncomingMessage['socket'];
@@ -35,7 +34,6 @@ function makeSendJson(calls: Array<{ status: number; data: unknown }>) {
   };
 }
 
-
 describe('isLoopbackRequest', () => {
   test('allows 127.0.0.1', () => {
     expect(isLoopbackRequest(makeReq('127.0.0.1'))).toBe(true);
@@ -53,7 +51,6 @@ describe('isLoopbackRequest', () => {
     expect(isLoopbackRequest(makeReq('2001:db8::1'))).toBe(false);
   });
 });
-
 
 describe('hasValidLocalOpOrigin', () => {
   test('allows absent origin', () => {
@@ -75,7 +72,6 @@ describe('hasValidLocalOpOrigin', () => {
     expect(hasValidLocalOpOrigin(makeReq('127.0.0.1', 'http://192.168.1.1:3000'))).toBe(false);
   });
 });
-
 
 describe('isAllowedGitUrl', () => {
   test('allows https URL', () => {
@@ -116,7 +112,6 @@ describe('isAllowedGitUrl', () => {
   });
 });
 
-
 describe('isSafeLocalPath', () => {
   const home = homedir();
 
@@ -142,7 +137,6 @@ describe('isSafeLocalPath', () => {
     expect(isSafeLocalPath(`${home}/../etc`)).toBe(false);
   });
 });
-
 
 describe('checkLocalOpSecurity', () => {
   test('allows loopback request with no origin', () => {
@@ -183,7 +177,6 @@ describe('checkLocalOpSecurity', () => {
     expect(calls[0].status).toBe(403);
   });
 });
-
 
 describe('createConcurrencyGuard', () => {
   test('tryAcquire succeeds first time', () => {

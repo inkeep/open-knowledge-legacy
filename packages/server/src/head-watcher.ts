@@ -1,7 +1,5 @@
-
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-
 
 type BatchKind = 'within-branch' | 'cross-branch' | 'detached-head';
 
@@ -27,12 +25,10 @@ export interface HeadWatcherHandle {
   getLastKnownBranch: () => string | null;
 }
 
-
 const QUIET_WINDOW_MS = 100;
 const BATCH_TIMEOUT_MS = 30_000;
 
 const WATCHED_FILES = new Set(['HEAD', 'MERGE_HEAD', 'ORIG_HEAD', 'index.lock']);
-
 
 export function resolveGitDir(projectRoot: string): string | null {
   const gitPath = resolve(projectRoot, '.git');
@@ -47,8 +43,7 @@ export function resolveGitDir(projectRoot: string): string | null {
         return resolved;
       }
     }
-  } catch {
-  }
+  } catch {}
   return null;
 }
 
@@ -65,8 +60,7 @@ function readHeadSha(gitDir: string): string | null {
           const refName = headContent.slice(5);
           const line = packed.split('\n').find((l) => l.endsWith(` ${refName}`));
           if (line) return line.split(' ')[0];
-        } catch {
-        }
+        } catch {}
         return null;
       }
     }
@@ -90,7 +84,6 @@ export function readBranchFromHead(gitDir: string): string | null {
     return null;
   }
 }
-
 
 export async function startHeadWatcher(
   projectRoot: string,

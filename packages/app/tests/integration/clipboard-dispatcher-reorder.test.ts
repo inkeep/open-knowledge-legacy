@@ -1,4 +1,3 @@
-
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import { mdManager, schema } from './test-harness.ts';
@@ -64,6 +63,7 @@ function fakeView() {
         },
       },
       dispatch: () => {},
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake view
     } as any,
   };
 }

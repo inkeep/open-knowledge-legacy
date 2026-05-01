@@ -1,4 +1,3 @@
-
 import type { Editor } from '@tiptap/core';
 import { ChevronRight } from 'lucide-react';
 import { bridgeIdPluginKey } from '../../editor/extensions/bridge-id-plugin.ts';

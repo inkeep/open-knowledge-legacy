@@ -1,4 +1,3 @@
-
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { htmlToMdast, mdastToMarkdown } from '@inkeep/open-knowledge-core';
 import type { JSONContent } from '@tiptap/core';
@@ -241,6 +240,7 @@ function applyJsonSlice(
   htmlBytes?: number,
 ): boolean {
   try {
+    // biome-ignore lint/suspicious/noExplicitAny: schema.nodeFromJSON accepts loose JSONContent at runtime; the public type is narrower than what's actually valid
     const node = view.state.schema.nodeFromJSON(json as any);
     view.dispatch(
       view.state.tr.replaceSelection(node.slice(0, node.content.size)).scrollIntoView(),

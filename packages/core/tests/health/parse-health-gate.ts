@@ -1,4 +1,3 @@
-
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { sharedExtensions } from '../../src/extensions/shared.ts';
@@ -9,7 +8,6 @@ import {
   type ParseHealthMetrics,
   resetParseHealth,
 } from '../../src/metrics/parse-health.ts';
-
 
 export interface ParseHealthBaseline {
   schemaVersion: 1;
@@ -49,7 +47,6 @@ export interface ParseHealthReport {
   thresholds: ParseHealthBaseline['thresholds'];
 }
 
-
 export function compareParseHealth(
   baseline: ParseHealthBaseline,
   observed: ParseHealthSample,
@@ -83,7 +80,6 @@ export function compareParseHealth(
   };
 }
 
-
 export interface HarvestOptions {
   manager?: MarkdownManager;
   corpus: readonly string[];
@@ -96,8 +92,7 @@ export function harvestParseHealth(options: HarvestOptions): ParseHealthSample {
   for (const source of options.corpus) {
     try {
       mm.parseWithFallback(source);
-    } catch {
-    }
+    } catch {}
   }
   const health: ParseHealthMetrics = getParseHealth();
   return {
@@ -108,8 +103,8 @@ export function harvestParseHealth(options: HarvestOptions): ParseHealthSample {
   };
 }
 
-
 export async function loadFidelityCorpus(): Promise<readonly string[]> {
+  // @ts-expect-error — commonmark.json ships without types; it's a raw JSON module.
   const mod = (await import('commonmark.json')) as {
     commonmark: Array<{ section: string; markdown: string }>;
   };
@@ -117,7 +112,6 @@ export async function loadFidelityCorpus(): Promise<readonly string[]> {
   const gfm = loadGfmExamples().map((e) => e.markdown);
   return [...commonmark, ...gfm];
 }
-
 
 export function loadBaseline(path: string): ParseHealthBaseline {
   const raw = JSON.parse(readFileSync(path, 'utf8'));
@@ -128,7 +122,6 @@ export function loadBaseline(path: string): ParseHealthBaseline {
   }
   return raw as ParseHealthBaseline;
 }
-
 
 export function formatReport(report: ParseHealthReport): string {
   const lines: string[] = [];
@@ -146,7 +139,6 @@ export function formatReport(report: ParseHealthReport): string {
   }
   return lines.join('\n');
 }
-
 
 async function main(): Promise<void> {
   const [, , baselineArg] = process.argv;

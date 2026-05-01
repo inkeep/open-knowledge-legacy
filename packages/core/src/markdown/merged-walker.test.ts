@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import type { Root as MdastRoot } from 'mdast';
 import { VFile } from 'vfile';
@@ -26,6 +25,7 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
     };
     mergedPostParseWalkerPlugin()(tree, new VFile(src));
 
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     const para = tree.children[0] as any;
     expect(para.type).toBe('paragraph');
     expect(para.children).toHaveLength(1);
@@ -39,6 +39,7 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
     const tree: MdastRoot = {
       type: 'root',
       children: [
+        // biome-ignore lint/suspicious/noExplicitAny: synthetic yaml node
         { type: 'yaml', value: '', position: makePos(0, 8) } as any,
       ],
     };
@@ -73,6 +74,7 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
     };
     mergedPostParseWalkerPlugin()(tree, new VFile(src));
 
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     const em = (tree.children[0] as any).children[1];
     expect(em.type).toBe('emphasis');
     expect(em.data?.sourceDelimiter).toBe('*');
@@ -92,6 +94,7 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
     } as unknown as MdastRoot;
     mergedPostParseWalkerPlugin()(tree, new VFile(src));
 
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     const child = tree.children[0] as any;
     expect(child.type).toBe('rawMdxFallbackMdast');
     expect(child.originalType).toBe('someFutureType');
@@ -117,6 +120,7 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
     } as unknown as MdastRoot;
     mergedPostParseWalkerPlugin()(tree, new VFile(src));
 
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     const para = tree.children[0] as any;
     expect(para.type).toBe('paragraph');
     expect(para.children[0].type).toBe('text');
@@ -140,7 +144,9 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
     } as unknown as MdastRoot;
     mergedPostParseWalkerPlugin()(tree, new VFile('x^2 y'));
 
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     expect((tree.children[0] as any).type).toBe('math');
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     expect((tree.children[1] as any).children[0].type).toBe('inlineMath');
   });
 
@@ -162,6 +168,7 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
     } as unknown as MdastRoot;
     mergedPostParseWalkerPlugin()(tree, new VFile(src));
 
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     const para = tree.children[0] as any;
     const types = para.children.map((c: { type: string }) => c.type);
     expect(types).toContain('link');
@@ -185,6 +192,7 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
           position: makePos(0, 5),
           children: [{ type: 'text', value: 'hello' }],
         },
+        // biome-ignore lint/suspicious/noExplicitAny: synthetic yaml node
         { type: 'yaml', value: '', position: makePos(6, 14) } as any,
       ],
     } as MdastRoot;

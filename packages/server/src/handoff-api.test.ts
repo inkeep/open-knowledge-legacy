@@ -328,6 +328,7 @@ describe('GET /api/installed-agents (integration — real HTTP + real createApiE
 
     const { createServer } = await import('node:http');
     server = createServer((req, res) => {
+      // biome-ignore lint/suspicious/noExplicitAny: test harness
       hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
         if (!res.writableEnded) {
           res.writeHead(500);

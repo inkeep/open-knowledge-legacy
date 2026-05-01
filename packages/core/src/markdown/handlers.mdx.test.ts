@@ -43,9 +43,7 @@ describe('MDX: flow element (block-level JSX)', () => {
     const md = '<Docs.Link />\n';
     expect(roundTrip(md)).toBe(md);
   });
-
 });
-
 
 describe('MDX: PM node storage', () => {
   test('self-closing component parsed to jsxComponent with sourceRaw', () => {

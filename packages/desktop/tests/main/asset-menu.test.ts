@@ -1,4 +1,3 @@
-
 import { describe, expect, mock, test } from 'bun:test';
 import type { BrowserWindow, Menu, MenuItemConstructorOptions } from 'electron';
 import {
@@ -49,6 +48,7 @@ describe('buildAssetMenuTemplate', () => {
       platform: 'darwin',
       actions,
     });
+    // biome-ignore lint/suspicious/noExplicitAny: test invokes the click callback
     (template[0] as any).click();
     expect(actions.reveal).toHaveBeenCalledTimes(1);
     expect(actions.openInDefault).not.toHaveBeenCalled();
@@ -62,6 +62,7 @@ describe('buildAssetMenuTemplate', () => {
       platform: 'darwin',
       actions,
     });
+    // biome-ignore lint/suspicious/noExplicitAny: test invokes the click callback
     (template[1] as any).click();
     expect(actions.openInDefault).toHaveBeenCalledTimes(1);
   });
@@ -73,6 +74,7 @@ describe('buildAssetMenuTemplate', () => {
       platform: 'darwin',
       actions,
     });
+    // biome-ignore lint/suspicious/noExplicitAny: test invokes the click callback
     (template[3] as any).click();
     expect(actions.copyLink).toHaveBeenCalledTimes(1);
   });

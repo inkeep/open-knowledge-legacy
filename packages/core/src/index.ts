@@ -1,12 +1,51 @@
+export { VFileMessage } from 'vfile-message';
+export {
+  applyFastDiff,
+  applyIncrementalDiff,
+  applyPatchToFm,
+  applyRenameToFm,
+  applyReorderToFm,
+  assertContentPreservation,
+  BridgeMergeContentLossError,
+  type BridgeMergeContentLossInfo,
+  type BridgeMergeContentLossLogPayload,
+  type BridgeMergeContentLossSide,
+  type BridgeMergeContentLossWhich,
+  bindFrontmatterDoc,
+  type DiffChange,
+  defaultScheduler,
+  detectFmRegion,
+  diffLinesFast,
+  type FmEditError,
+  type FmEditResult,
+  FORM_WRITE_ORIGIN,
+  type FrontmatterBinding,
+  type FrontmatterBindingPatchResult,
+  type FrontmatterBindingPatchSuccess,
+  type FrontmatterBindingRenameResult,
+  type FrontmatterBindingRenameSuccess,
+  type FrontmatterBindingReorderResult,
+  type FrontmatterBindingReorderSuccess,
+  type FrontmatterBindingUnsubscribe,
+  type FrontmatterDocProvider,
+  type FrontmatterSnapshot,
+  MAX_FM_REGION_BYTES,
+  mergeThreeWay,
+  normalizeBridge,
+  type ParsedFmRegion,
+  parseFencedFmRegion,
+  parseFmRegion,
+  readFmKeys,
+  readFmMap,
+  readFmRegionWithError,
+  type Scheduler,
+} from './bridge/index.ts';
 export {
   type Burst,
   bucketIntoBursts,
   type HumanEdit,
   type SessionTransaction,
 } from './burst-grouping.ts';
-
-
-export { VFileMessage } from 'vfile-message';
 export {
   bindConfigDoc,
   type ConfigBinding,
@@ -98,7 +137,6 @@ export {
   VIDEO_EXTENSIONS,
   WIKI_EMBED_EXTENSIONS,
 } from './constants/upload.ts';
-
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';
 export { EscapeMark } from './extensions/escape-mark.ts';
@@ -131,6 +169,35 @@ export {
   WikiLinkEmbed,
   type WikiLinkEmbedAttrs,
 } from './extensions/wiki-link-embed.ts';
+export {
+  type FrontmatterIssue,
+  FrontmatterIssueSchema,
+  type FrontmatterValidationError,
+  FrontmatterValidationErrorSchema,
+  fieldErrorsFromError,
+  toFrontmatterIssue,
+} from './frontmatter/errors.ts';
+export {
+  FRONTMATTER_TYPES,
+  type FrontmatterMap,
+  FrontmatterMapSchema,
+  type FrontmatterPatch,
+  FrontmatterPatchSchema,
+  type FrontmatterType,
+  FrontmatterTypeSchema,
+  type FrontmatterValue,
+  FrontmatterValueSchema,
+  inferType,
+  isIsoDateString,
+} from './frontmatter/schema.ts';
+export {
+  applyPatchToDocument,
+  getDocumentKeys,
+  type ParsedFrontmatter,
+  parseFrontmatterYaml,
+  serializeFrontmatterMap,
+  withFences,
+} from './frontmatter/yaml-codec.ts';
 export {
   buildClaudeAiWebUrl,
   buildClaudeUrl,
@@ -216,80 +283,6 @@ export {
   type DerivedViewChannel,
   DerivedViewChannelSchema,
 } from './schemas/cc1.ts';
-export { extensionOf } from './utils/extension.ts';
-
-
-
-export {
-  applyFastDiff,
-  applyIncrementalDiff,
-  applyPatchToFm,
-  applyRenameToFm,
-  applyReorderToFm,
-  assertContentPreservation,
-  BridgeMergeContentLossError,
-  type BridgeMergeContentLossInfo,
-  type BridgeMergeContentLossLogPayload,
-  type BridgeMergeContentLossSide,
-  type BridgeMergeContentLossWhich,
-  bindFrontmatterDoc,
-  type DiffChange,
-  defaultScheduler,
-  detectFmRegion,
-  diffLinesFast,
-  type FmEditError,
-  type FmEditResult,
-  FORM_WRITE_ORIGIN,
-  type FrontmatterBinding,
-  type FrontmatterBindingPatchResult,
-  type FrontmatterBindingPatchSuccess,
-  type FrontmatterBindingRenameResult,
-  type FrontmatterBindingRenameSuccess,
-  type FrontmatterBindingReorderResult,
-  type FrontmatterBindingReorderSuccess,
-  type FrontmatterBindingUnsubscribe,
-  type FrontmatterDocProvider,
-  type FrontmatterSnapshot,
-  MAX_FM_REGION_BYTES,
-  mergeThreeWay,
-  normalizeBridge,
-  type ParsedFmRegion,
-  parseFencedFmRegion,
-  parseFmRegion,
-  readFmKeys,
-  readFmMap,
-  readFmRegionWithError,
-  type Scheduler,
-} from './bridge/index.ts';
-export {
-  type FrontmatterIssue,
-  FrontmatterIssueSchema,
-  type FrontmatterValidationError,
-  FrontmatterValidationErrorSchema,
-  fieldErrorsFromError,
-  toFrontmatterIssue,
-} from './frontmatter/errors.ts';
-export {
-  FRONTMATTER_TYPES,
-  type FrontmatterMap,
-  FrontmatterMapSchema,
-  type FrontmatterPatch,
-  FrontmatterPatchSchema,
-  type FrontmatterType,
-  FrontmatterTypeSchema,
-  type FrontmatterValue,
-  FrontmatterValueSchema,
-  inferType,
-  isIsoDateString,
-} from './frontmatter/schema.ts';
-export {
-  applyPatchToDocument,
-  getDocumentKeys,
-  type ParsedFrontmatter,
-  parseFrontmatterYaml,
-  serializeFrontmatterMap,
-  withFences,
-} from './frontmatter/yaml-codec.ts';
 export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {
   AgentFlashEntry,
@@ -307,10 +300,10 @@ export type {
   ShadowContributor,
   TimelineEntry,
 } from './types/timeline.ts';
-
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export { ChunkedInsertError, chunkedYTextInsert } from './utils/chunked-insert.ts';
 export { createCodeFenceTracker } from './utils/code-fence-tracker.ts';
+export { extensionOf } from './utils/extension.ts';
 export {
   AGENT_COLORS,
   AGENT_ICON_COLORS,

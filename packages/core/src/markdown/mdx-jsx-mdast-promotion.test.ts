@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import { fromProseMirror } from '@handlewithcare/remark-prosemirror';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
@@ -16,6 +15,7 @@ type Managerish = {
 
 function pmToMdast(json: unknown): Root {
   const schema = getSchema(sharedExtensions);
+  // biome-ignore lint/suspicious/noExplicitAny: parse returns JSONContent with loose typing
   const pmNode = schema.nodeFromJSON(json as any);
   const internal = mdManager as unknown as Managerish;
   return fromProseMirror(pmNode, {

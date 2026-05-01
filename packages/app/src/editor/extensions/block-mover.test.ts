@@ -25,9 +25,11 @@ function makeState(paraTexts: string[], cursorPara = 0): EditorState {
 
 function run(
   state: EditorState,
+  // biome-ignore lint/suspicious/noExplicitAny: ProseMirror Transaction
   cmd: (s: EditorState, d?: (tr: any) => void) => boolean,
 ): EditorState {
   let next: EditorState | null = null;
+  // biome-ignore lint/suspicious/noExplicitAny: ProseMirror Transaction
   cmd(state, (tr: any) => {
     next = state.apply(tr);
   });
@@ -42,7 +44,6 @@ function docTexts(state: EditorState): string[] {
   });
   return result;
 }
-
 
 describe('currentTopLevelBlock', () => {
   test('returns block boundaries for cursor in first paragraph', () => {
@@ -62,7 +63,6 @@ describe('currentTopLevelBlock', () => {
     expect(currentTopLevelBlock(fakeState)).toBeNull();
   });
 });
-
 
 describe('moveBlockUp', () => {
   test('returns false when cursor is in the first block (no-op)', () => {
@@ -92,7 +92,6 @@ describe('moveBlockUp', () => {
     expect((sel.$cursor as NonNullable<typeof sel.$cursor>).before(1)).toBe(0);
   });
 });
-
 
 describe('moveBlockDown', () => {
   test('returns false when cursor is in the last block (no-op)', () => {

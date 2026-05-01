@@ -7,11 +7,11 @@ import { resolve } from 'node:path';
 import type { Scheduler } from '@inkeep/open-knowledge-core';
 import {
   acquireServerLock,
-  ConfigSchema,
   readUiLock,
   type UiLockMetadata,
   updateServerLockPort,
 } from '@inkeep/open-knowledge-server';
+import { ConfigSchema } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
 import {
   closeHttpServers,

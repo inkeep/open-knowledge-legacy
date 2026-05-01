@@ -1,4 +1,3 @@
-
 import type { Dialog, MenuItemConstructorOptions } from 'electron';
 import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '../shared/labels.ts';
 import type { CliInstallStatus } from './cli-install.ts';

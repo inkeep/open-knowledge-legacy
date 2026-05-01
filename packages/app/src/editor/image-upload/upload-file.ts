@@ -13,6 +13,7 @@ interface UploadFileDeps {
 
 export async function uploadFile(
   file: File,
+  // biome-ignore lint/correctness/noUnusedFunctionParameters: kept on the public signature so PropPanel + PropUploadButton compile unchanged after the per-MIME → unified endpoint flip; the picker's <input accept> already filters at the OS dialog
   accept: readonly string[],
   deps: UploadFileDeps = {},
 ): Promise<UploadFileResult> {
@@ -40,8 +41,7 @@ export async function uploadFile(
     try {
       const body = (await res.json()) as { error?: string };
       if (body.error) errorMessage = body.error;
-    } catch {
-    }
+    } catch {}
     throw new Error(errorMessage);
   }
 

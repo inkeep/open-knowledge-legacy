@@ -18,6 +18,7 @@ describe('unknownMdastGuardPlugin (R8 wildcard)', () => {
     const file = new VFile('hello');
     unknownMdastGuardPlugin()(tree, file);
     expect(tree.children[0]?.type).toBe('paragraph');
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     expect((tree.children[0] as any).children[0].type).toBe('text');
   });
 
@@ -33,6 +34,7 @@ describe('unknownMdastGuardPlugin (R8 wildcard)', () => {
       ],
     } as unknown as MdastRoot;
     unknownMdastGuardPlugin()(tree, new VFile(src));
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     const child = tree.children[0] as any;
     expect(child.type).toBe('rawMdxFallbackMdast');
     expect(child.originalType).toBe('someFutureType');
@@ -58,6 +60,7 @@ describe('unknownMdastGuardPlugin (R8 wildcard)', () => {
       ],
     } as unknown as MdastRoot;
     unknownMdastGuardPlugin()(tree, new VFile(src));
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     const para = tree.children[0] as any;
     expect(para.type).toBe('paragraph');
     expect(para.children[0].type).toBe('text');
@@ -73,6 +76,7 @@ describe('unknownMdastGuardPlugin (R8 wildcard)', () => {
       children: [{ type: 'typeWithoutPosition' }],
     } as unknown as MdastRoot;
     unknownMdastGuardPlugin()(tree, new VFile(''));
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     const child = tree.children[0] as any;
     expect(child.type).toBe('rawMdxFallbackMdast');
     expect(child.value).toBe('typeWithoutPosition');
@@ -91,6 +95,7 @@ describe('unknownMdastGuardPlugin (R8 wildcard)', () => {
       ],
     } as unknown as MdastRoot;
     unknownMdastGuardPlugin()(tree, new VFile(src));
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     const outer = tree.children[0] as any;
     expect(outer.type).toBe('rawMdxFallbackMdast');
     expect(outer.originalType).toBe('unknownOuter');
@@ -110,7 +115,9 @@ describe('unknownMdastGuardPlugin (R8 wildcard)', () => {
       ],
     } as unknown as MdastRoot;
     unknownMdastGuardPlugin()(tree, new VFile('x^2 y'));
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     expect((tree.children[0] as any).type).toBe('math');
+    // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     expect((tree.children[1] as any).children[0].type).toBe('inlineMath');
   });
 

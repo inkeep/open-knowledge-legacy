@@ -1,4 +1,3 @@
-
 import type { Dirent } from 'node:fs';
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';

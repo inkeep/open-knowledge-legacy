@@ -18,6 +18,7 @@ export function DescriptorPlaceholder({
   ...rest
 }: DescriptorPlaceholderProps) {
   return (
+    // biome-ignore lint/a11y/useSemanticElements: native <button> intercepts mousedown and breaks the wrapper's HTML5 drag-to-reorder. The wrapper's handleKeyDown also covers Enter/Space activation when selected; the local onKeyDown below provides a self-contained a11y story.
     <div
       {...rest}
       role="button"

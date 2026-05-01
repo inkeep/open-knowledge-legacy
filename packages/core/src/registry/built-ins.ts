@@ -7,7 +7,6 @@ import {
 import { emitMdxJsx } from '../markdown/serialize-helpers.ts';
 import type { JsxComponentMeta, PropDef } from './types.ts';
 
-
 const calloutProps: PropDef[] = [
   {
     name: 'type',
@@ -60,7 +59,6 @@ const calloutProps: PropDef[] = [
     description: 'Callout content',
   },
 ];
-
 
 const htmlImgProps: PropDef[] = [
   {
@@ -303,7 +301,6 @@ const htmlAudioProps: PropDef[] = [
   },
 ];
 
-
 const accordionProps: PropDef[] = [
   {
     name: 'title',
@@ -347,7 +344,6 @@ const accordionProps: PropDef[] = [
     description: 'HTML5 <details name=> group — siblings with the same name are mutually exclusive',
   },
 ];
-
 
 const gfmCalloutProps: PropDef[] = [
   calloutProps[0],
@@ -400,7 +396,6 @@ const wikiEmbedAudioProps: PropDef[] = [
   },
 ];
 
-
 function escapeHtmlAttr(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -428,7 +423,6 @@ function serializeWikiEmbed(node: { attrs: { props?: unknown } }): MdastNodes {
     children: [{ type: 'text' as const, value: label }],
   } as unknown as MdastNodes;
 }
-
 
 export const builtInComponents: JsxComponentMeta[] = [
   {
@@ -501,7 +495,6 @@ export const builtInComponents: JsxComponentMeta[] = [
     searchTerms: ['toggle', 'accordion', 'expandable', 'details', 'disclosure', 'collapse', 'fold'],
     serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx, accordionProps),
   },
-
 
   {
     name: 'GFMCallout',

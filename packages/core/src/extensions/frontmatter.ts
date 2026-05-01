@@ -1,4 +1,3 @@
-
 export const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)?---(\r?\n|$)/;
 
 export function stripFrontmatter(markdown: string): { frontmatter: string; body: string } {

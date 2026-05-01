@@ -1,4 +1,3 @@
-
 import type { Hocuspocus } from '@hocuspocus/server';
 import { applyFastDiff, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-layout';

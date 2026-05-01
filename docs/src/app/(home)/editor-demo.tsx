@@ -254,7 +254,6 @@ export function EditorDemo() {
   );
 }
 
-
 function SourceTextarea({
   ref,
   value,
@@ -299,7 +298,6 @@ function SourceTextarea({
   );
 }
 
-
 function TextboxIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
@@ -315,7 +313,6 @@ function MarkdownIcon({ className }: { className?: string }) {
     </svg>
   );
 }
-
 
 function ModeToggle({
   mode,
@@ -365,7 +362,6 @@ function ToggleItem({
     </button>
   );
 }
-
 
 const HANDLE_HEIGHT = 20;
 const MAX_SINGLE_LINE_HEIGHT = 44;
@@ -451,7 +447,6 @@ const DemoBlockDragHandle = Extension.create({
     ];
   },
 });
-
 
 function MockPresenceBar() {
   return (

@@ -1,4 +1,3 @@
-
 import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { type AddressInfo, createServer as createNetServer } from 'node:net';
@@ -91,6 +90,7 @@ async function killGracefully(proc: ChildProcess, timeoutMs = 5000): Promise<voi
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   workerServer: [
+    // biome-ignore lint/correctness/noEmptyPattern: Playwright requires an object-destructuring pattern for the fixtures arg; this fixture has no dependencies so the destructure is empty by design.
     async ({}, use, workerInfo) => {
       const port = await getFreePort();
       const contentDir = mkdtempSync(join(tmpdir(), `ok-w${workerInfo.workerIndex}-`));

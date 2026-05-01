@@ -1,9 +1,4 @@
-import { describe as _bunDescribe, afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
-
-// Skip-on-CI gate (oven-sh/bun#11892): subprocess or git child spawns; Bun fails to reap children on ubuntu-latest GHA runners (oven-sh/bun#11892).
-// Tests run normally locally; follow-up will narrow the leak surface.
-const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
-
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -74,7 +69,6 @@ describe('initShadowRepo', () => {
     await git.raw('config', 'user.email', 'test@test.com');
 
     await initShadowRepo(projectRoot);
-
   });
 
   test('is idempotent — second call does not error', async () => {

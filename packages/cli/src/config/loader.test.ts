@@ -44,7 +44,6 @@ function writeWorkspaceConfigAt(dir: string, yaml: string) {
 }
 
 describe('loadConfig', () => {
-
   test('no config files → all defaults resolve', () => {
     const { config, sources } = loadConfig(testDir);
 
@@ -98,7 +97,6 @@ describe('loadConfig', () => {
     const { config } = loadConfig(testDir);
     expect(config.mcp.autoStart).toBe(false);
   });
-
 
   test('project config overrides a single field, other defaults preserved', () => {
     writeWorkspaceConfig('server:\n  host: 0.0.0.0\n');
@@ -199,7 +197,6 @@ mcp:
     expect(config.mcp.tools.read_document.historyDepth).toBe(5); // sibling preserved
   });
 
-
   test('invalid host type throws descriptive error', () => {
     writeWorkspaceConfig('server:\n  host: 12345\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
@@ -214,7 +211,6 @@ mcp:
     writeWorkspaceConfig('mcp:\n  tools:\n    search:\n      maxResults: -1\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
-
 
   test('unknown top-level keys are silently ignored (forward-compat)', () => {
     writeWorkspaceConfig('future_feature:\n  enabled: true\n');
@@ -235,7 +231,6 @@ mcp:
     const { config } = loadConfig(testDir);
     expect(config.server.host).toBe('localhost');
   });
-
 
   test('schema-invalid project config emits file:line:col in error message', () => {
     const yaml = `mcp:

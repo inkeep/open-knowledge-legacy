@@ -1,4 +1,3 @@
-
 import { expect, test } from './_helpers';
 
 function agentId(label: string): string {

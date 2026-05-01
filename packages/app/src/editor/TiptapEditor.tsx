@@ -100,6 +100,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
   if (mountError) throw mountError;
   const cacheEntryRef = useRef<TiptapCacheEntry | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: placeholder intentionally excluded — see comment above
   useEffect(() => {
     let entry: TiptapCacheEntry | null = null;
     try {
@@ -139,6 +140,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
               clipboardTextParser: (text, _context, _plain, view) => {
                 const json = clipboard.mdManager.parse(text);
                 const node = view.state.schema.nodeFromJSON(json);
+                // biome-ignore lint/suspicious/noExplicitAny: TipTap's clipboardTextParser expects a Slice-like return but ProseMirror Fragment works at runtime; no public type expresses the union
                 return node.content as any;
               },
               clipboardTextSerializer: (slice, view) => clipboard.text(slice, view),
@@ -260,7 +262,6 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
       detach();
     };
   }, [editor]);
-
 
   useEffect(() => {
     if (!editor) return;

@@ -1,4 +1,3 @@
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,7 +19,6 @@ import {
   testReset,
 } from '../integration/test-harness';
 
-
 function mdRoundTrip(md: string): string {
   const json = mdManager.parse(md);
   return mdManager.serialize(json);
@@ -38,7 +36,6 @@ function treeRoundTrip(md: string): string {
   doc.destroy();
   return result;
 }
-
 
 const CONSTRUCTS: Array<{ name: string; input: string; stable?: boolean; note?: string }> = [
   {
@@ -156,7 +153,6 @@ const CONSTRUCTS: Array<{ name: string; input: string; stable?: boolean; note?: 
   },
 ];
 
-
 describe('markdown round-trip: serialize(parse(md))', () => {
   for (const { name, input, stable } of CONSTRUCTS) {
     test.concurrent(name, () => {
@@ -175,7 +171,6 @@ describe('markdown round-trip: serialize(parse(md))', () => {
   }
 });
 
-
 describe('tree round-trip: pmJSON → updateYFragment → yXmlFragmentToProsemirrorJSON → serialize', () => {
   for (const { name, input } of CONSTRUCTS) {
     test.concurrent(name, () => {
@@ -189,8 +184,6 @@ describe('tree round-trip: pmJSON → updateYFragment → yXmlFragmentToProsemir
     });
   }
 });
-
-
 
 describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocument → XmlFragment', () => {
   let server: TestServer;
@@ -254,7 +247,6 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
     });
   }
 });
-
 
 describe('agent-as-file-editor fidelity', () => {
   let server: TestServer;

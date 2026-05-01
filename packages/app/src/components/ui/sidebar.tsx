@@ -97,6 +97,7 @@ function SidebarProvider({
       _setOpen(openState);
     }
 
+    // biome-ignore lint/suspicious/noDocumentCookie: shadcn sidebar pattern
     document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
   };
 
@@ -121,6 +122,7 @@ function SidebarProvider({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
+    // biome-ignore lint/correctness/useExhaustiveDependencies: toggleSidebar is a locally-defined closure with no captured render-dependent values; re-subscribing every render would be wasteful but correct
     toggleSidebar,
   ]);
 
@@ -415,6 +417,7 @@ function SidebarInset({
   };
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard dismiss is handled by SidebarProvider's window-level Escape keydown listener (the useEffect gated on `isMobile && openMobile`); a noop onKeyDown here would create a false affordance on a non-focusable landmark
     <main
       data-slot="sidebar-inset"
       data-push-pulse={showPushPulse ? '' : undefined}

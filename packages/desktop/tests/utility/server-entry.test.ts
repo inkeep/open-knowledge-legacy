@@ -3,7 +3,6 @@ import { setTimeout as wait } from 'node:timers/promises';
 import type { KeyringSmokeResult } from '../../src/utility/keyring-smoke.ts';
 import { setupUtility } from '../../src/utility/server-entry.ts';
 
-
 interface MockParentPort {
   on: ReturnType<typeof mock>;
   postMessage: ReturnType<typeof mock>;

@@ -1,9 +1,7 @@
-
 import type { HocuspocusProvider, onCloseParameters } from '@hocuspocus/provider';
 import { mark } from '@/lib/perf';
 
 export const SYNC_TIMEOUT_MS = 30_000;
-
 
 export class SyncTimeoutError extends Error {
   readonly docName: string;

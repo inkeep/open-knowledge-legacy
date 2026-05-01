@@ -1,4 +1,3 @@
-
 import {
   composePrompt,
   type DocContext,

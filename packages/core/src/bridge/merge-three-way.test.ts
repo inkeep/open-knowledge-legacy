@@ -250,7 +250,6 @@ describeBench('T-perf: Performance gate', () => {
   });
 });
 
-
 describe('Post-condition: assertContentPreservation', () => {
   test('happy path: result containing both sides passes', () => {
     expect(() =>

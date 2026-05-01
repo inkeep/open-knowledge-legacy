@@ -153,6 +153,7 @@ function OutlinePanelInner({
               const isActive = heading.slug === activeSlug;
               return (
                 <button
+                  // biome-ignore lint/suspicious/noArrayIndexKey: headings are positionally stable per load
                   key={index}
                   type="button"
                   aria-current={isActive ? 'location' : undefined}

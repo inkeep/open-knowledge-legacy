@@ -1,4 +1,3 @@
-
 import {
   buildCursorUrl,
   type HandoffOutcome,

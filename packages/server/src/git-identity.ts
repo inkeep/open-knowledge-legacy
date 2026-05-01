@@ -1,6 +1,4 @@
-
 import { spawnSync } from 'node:child_process';
-
 
 interface GitIdentity {
   name: string;
@@ -17,7 +15,6 @@ export type GitConfigReader = (
   scope: 'local' | 'global',
 ) => string | null;
 
-
 const defaultGitConfigReader: GitConfigReader = (projectDir, key, scope) => {
   const scopeFlag = scope === 'local' ? '--local' : '--global';
   const result = spawnSync('git', ['config', scopeFlag, key], {
@@ -28,7 +25,6 @@ const defaultGitConfigReader: GitConfigReader = (projectDir, key, scope) => {
   if (result.status !== 0 || !result.stdout) return null;
   return result.stdout.trim() || null;
 };
-
 
 export async function resolveGitIdentity(
   projectDir: string,

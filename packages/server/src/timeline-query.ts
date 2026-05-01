@@ -1,4 +1,3 @@
-
 import { existsSync } from 'node:fs';
 import type { EntryType, TimelineEntry } from '@inkeep/open-knowledge-core';
 import { parseCheckpoint, readContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
@@ -21,7 +20,6 @@ interface HistoryResult {
   total: number;
   hasMore: boolean;
 }
-
 
 const GIT_LOG_FORMAT = '%H%x00%aI%x00%an%x00%ae%x00%s%x00%B%x1e';
 
@@ -78,7 +76,6 @@ function matchesAuthor(entry: TimelineEntry, authors: string[]): boolean {
   );
 }
 
-
 export async function getDocumentHistory(
   shadow: ShadowHandle,
   query: HistoryQuery,
@@ -133,8 +130,7 @@ export async function getDocumentHistory(
             .trim()
             .split('\n')
             .filter((s) => s.length === 40);
-        } catch {
-        }
+        } catch {}
       }
 
       const allShas = [...branchCpShas, ...mainCpShas];
@@ -189,7 +185,6 @@ export async function getDocumentHistory(
       return { entries: page, total, hasMore: offset + limit < total };
     }
 
-
     const checkpointShas: string[] = [];
     const startRefs: string[] = [];
     const isFeatureBranch = branch !== 'main';
@@ -202,8 +197,7 @@ export async function getDocumentHistory(
         .split('\n')
         .filter((s) => s.length === 40);
       checkpointShas.push(...cpRefs);
-    } catch {
-    }
+    } catch {}
 
     let mainCheckpointShas: string[] = [];
     if (isFeatureBranch) {
@@ -214,8 +208,7 @@ export async function getDocumentHistory(
           .trim()
           .split('\n')
           .filter((s) => s.length === 40);
-      } catch {
-      }
+      } catch {}
     }
 
     try {
@@ -224,8 +217,7 @@ export async function getDocumentHistory(
         .split('\n')
         .filter(Boolean);
       startRefs.push(...wipRefs);
-    } catch {
-    }
+    } catch {}
 
     if (isFeatureBranch && startRefs.length === 0) {
       try {
@@ -234,8 +226,7 @@ export async function getDocumentHistory(
           .split('\n')
           .filter(Boolean);
         startRefs.push(...mainWipRefs);
-      } catch {
-      }
+      } catch {}
     }
 
     if (startRefs.length === 0 && checkpointShas.length === 0 && mainCheckpointShas.length === 0) {

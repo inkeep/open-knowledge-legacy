@@ -1,4 +1,3 @@
-
 import { Extension } from '@tiptap/core';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 

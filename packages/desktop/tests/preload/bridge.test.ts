@@ -3,12 +3,12 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInvoker } from '../../src/shared/ipc-invoke.ts';
 
-
 describe('createInvoker (typed IPC factory)', () => {
   test('forwards channel + args to ipcRenderer.invoke verbatim', async () => {
     const invoke = mock((channel: string, ...args: unknown[]) =>
       Promise.resolve({ channel, args }),
     );
+    // biome-ignore lint/suspicious/noExplicitAny: minimal IpcRenderer-compatible mock
     const fakeIpc = { invoke } as any;
     const typedInvoker = createInvoker(fakeIpc);
     const result = await typedInvoker('ok:dialog:open-folder');
@@ -20,6 +20,7 @@ describe('createInvoker (typed IPC factory)', () => {
     const invoke = mock((channel: string, ...args: unknown[]) =>
       Promise.resolve({ channel, args }),
     );
+    // biome-ignore lint/suspicious/noExplicitAny: minimal IpcRenderer-compatible mock
     const fakeIpc = { invoke } as any;
     const typedInvoker = createInvoker(fakeIpc);
     await typedInvoker('ok:shell:open-external', 'https://example.com');
@@ -28,6 +29,7 @@ describe('createInvoker (typed IPC factory)', () => {
 
   test('return type is awaited from invoke', async () => {
     const invoke = mock(() => Promise.resolve('/Users/test/picked-folder'));
+    // biome-ignore lint/suspicious/noExplicitAny: minimal IpcRenderer-compatible mock
     const fakeIpc = { invoke } as any;
     const typedInvoker = createInvoker(fakeIpc);
     const result = await typedInvoker('ok:dialog:open-folder');

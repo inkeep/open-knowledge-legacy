@@ -55,13 +55,11 @@ const LazyActivityPanelDiffView = lazy(async () => {
   return { default: mod.ActivityPanelDiffView };
 });
 
-
 interface TimelineContentProps {
   docName: string;
   diffLayout: DiffLayout;
   onDiffLayoutChange: (layout: DiffLayout) => void;
 }
-
 
 function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString);
@@ -158,7 +156,6 @@ function ContributorIcon({ entry, isDark }: { entry: TimelineEntry; isDark: bool
   return <User className={iconClass} />;
 }
 
-
 interface WipGroupProps {
   entries: TimelineEntry[];
   defaultExpanded: boolean;
@@ -217,7 +214,6 @@ function WipGroup({
   );
 }
 
-
 type CheckpointVariant = 'save' | 'bridge-merge-loss' | 'external-change-rescue';
 
 export function checkpointVariant(entry: TimelineEntry): CheckpointVariant {
@@ -269,7 +265,6 @@ function restoreDialogTitle(entry: TimelineEntry): string {
   return RESTORE_DIALOG_TITLE[restoreSemantic(entry)];
 }
 
-
 export function allSummariesFor(entry: TimelineEntry): string[] {
   const out: string[] = [];
   for (const c of entry.contributors) {
@@ -297,6 +292,7 @@ function SummaryBullets({ summaries }: SummaryBulletsProps) {
         </li>
         {expanded &&
           rest.map((s, idx) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: bullet list is append-only within a debounce window — no reorder, no insertion, no deletion. Index in the composite key is needed because contributor-tracker.ts:87-91 explicitly permits duplicate summaries (text-only key collides on dupes and breaks React reconciliation).
             <li key={`${idx}-${s}`} className="text-xs text-foreground/90">
               <span aria-hidden="true">• </span>
               {s}
@@ -321,7 +317,6 @@ function SummaryBullets({ summaries }: SummaryBulletsProps) {
     </div>
   );
 }
-
 
 interface EntryDiffPanelProps {
   sha: string;
@@ -360,7 +355,6 @@ function EntryDiffPanel({ sha, docName, cache, diffLayout, panelId }: EntryDiffP
     </div>
   );
 }
-
 
 interface EntryRowProps {
   entry: TimelineEntry;
@@ -449,8 +443,7 @@ function EntryRow({
       try {
         const body = (await res.json()) as { error?: string };
         if (body.error) detail = body.error;
-      } catch {
-      }
+      } catch {}
       console.error('[timeline] rollback failed', {
         docName,
         sha: entry.sha,
@@ -629,7 +622,6 @@ function EntryRow({
   );
 }
 
-
 export function TimelineContent({ docName, diffLayout, onDiffLayoutChange }: TimelineContentProps) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
@@ -640,6 +632,7 @@ export function TimelineContent({ docName, diffLayout, onDiffLayoutChange }: Tim
   const [cache] = useState(() => new LruStringCache(HISTORICAL_CONTENT_CACHE_LIMIT));
   const [expandedShas, setExpandedShas] = useState<Set<string>>(() => new Set());
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: cache is a stable useState-initialized instance — including it in deps would not change behavior but reads as a noisier signal of "this effect depends on the cache" when in fact it depends only on the active doc.
   useEffect(() => {
     setExpandedShas(new Set());
     cache.clear();
@@ -697,7 +690,6 @@ export function TimelineContent({ docName, diffLayout, onDiffLayoutChange }: Tim
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [docName]);
-
 
   const groups: Array<
     | { kind: 'checkpoint'; entry: TimelineEntry }

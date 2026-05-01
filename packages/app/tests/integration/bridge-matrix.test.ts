@@ -1,4 +1,3 @@
-
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -81,7 +80,6 @@ afterAll(async () => {
   await server.cleanup();
 });
 
-
 describe('smoke', () => {
   test('server starts, client connects, basic round-trip works', async () => {
     const client = await createTestClient(server.port);
@@ -95,7 +93,6 @@ describe('smoke', () => {
     }
   });
 });
-
 
 describe('W1: WYSIWYG writes', () => {
   test.concurrent('W1→Y.Text: local XmlFragment edit propagates to Y.Text via Observer A', async () => {
@@ -128,7 +125,6 @@ describe('W1: WYSIWYG writes', () => {
     }
   });
 });
-
 
 describe('W2: source mode writes', () => {
   test.concurrent('W2→XmlFragment: local Y.Text edit propagates to XmlFragment via Observer B', async () => {
@@ -165,7 +161,6 @@ describe('W2: source mode writes', () => {
     }
   });
 });
-
 
 describe('W3: agent writes', () => {
   test.concurrent('W3→Y.Text: agent-write-md propagates to client Y.Text', async () => {
@@ -286,7 +281,6 @@ describe('W3: agent writes', () => {
   });
 });
 
-
 describe('W4: disk writes', () => {
   test('W4→Y.Text: disk file change propagates to client Y.Text', async () => {
     await testReset(server.port);
@@ -327,8 +321,6 @@ describe('W4: disk writes', () => {
     }
   });
 });
-
-
 
 describe('initial sync and test isolation', () => {
   test('initial sync: server with existing .md file populates client', async () => {
@@ -410,7 +402,6 @@ describe('initial sync and test isolation', () => {
     }
   });
 });
-
 
 describe('multi-client sync', () => {
   let clientA: TestClient;
@@ -586,7 +577,6 @@ describe('multi-client sync', () => {
   });
 });
 
-
 describe('V2: external-write convergence window', () => {
   test('agent write via API → content arrives during debounce window (R11)', async () => {
     const client = await createTestClient(server.port);
@@ -607,7 +597,6 @@ describe('V2: external-write convergence window', () => {
     }
   });
 });
-
 
 describe('multi-client FR-4: agent-origin Items preserved through Observer A', () => {
   test('server agent write + client user edit — both preserved, bridge holds', async () => {
@@ -644,7 +633,6 @@ describe('multi-client FR-4: agent-origin Items preserved through Observer A', (
     }
   });
 });
-
 
 describe('FR-4: server-side per-agent UM under bridge-convergence fixes', () => {
   test('agent write + user concurrent XmlFragment typing → both preserved, UM captures agent Items', async () => {

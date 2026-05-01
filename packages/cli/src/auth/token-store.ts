@@ -25,7 +25,6 @@ export interface TokenStore {
 
 const KEYRING_SERVICE = 'open-knowledge';
 
-
 class KeyringBackend implements TokenStore {
   readonly backend = 'keyring' as const;
 
@@ -58,11 +57,9 @@ class KeyringBackend implements TokenStore {
     try {
       const entry = new Entry(KEYRING_SERVICE, host);
       entry.deletePassword();
-    } catch {
-    }
+    } catch {}
   }
 }
-
 
 export class FileBackend implements TokenStore {
   readonly backend = 'file' as const;
@@ -113,7 +110,6 @@ export class FileBackend implements TokenStore {
     this.write(data);
   }
 }
-
 
 export async function createTokenStore(authFile?: string): Promise<TokenStore> {
   try {

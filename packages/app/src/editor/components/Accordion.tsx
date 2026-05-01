@@ -1,4 +1,3 @@
-
 import { ChevronRight, type LucideIcon } from 'lucide-react';
 
 interface AccordionProps {

@@ -250,7 +250,6 @@ describe('wiki-embed: mid-line context + edge cases', () => {
 });
 
 describe('wiki-embed: invariants I1 and I4 (mdast-util level)', () => {
-
   const extensionPool = ['png', 'jpg', 'pdf', 'mp4', 'mp3', 'wav', 'ogg', 'webm', 'm4a'];
 
   test('I1 — parse then serialize is byte-identical for canonical embed shapes', () => {

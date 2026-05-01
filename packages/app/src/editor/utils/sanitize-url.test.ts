@@ -178,8 +178,7 @@ describe('sanitizeComponentProps — dangerous prop denylist', () => {
   test('drops onClick / onError / onMouseDown', () => {
     const input = {
       onClick: 'alert(1)',
-      onError: () => {
-      },
+      onError: () => {},
       onMouseDown: 'alert(2)',
       title: 'safe',
     };
@@ -269,6 +268,7 @@ describe('sanitizeComponentProps — nested URL traversal', () => {
       items: [
         {
           label: 'safe',
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately exercising the dangerous-name path
           onClick: 'alert(1)' as any,
           dangerouslySetInnerHTML: { __html: '<script>x</script>' },
         },

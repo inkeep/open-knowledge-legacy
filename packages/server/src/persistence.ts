@@ -229,12 +229,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const applyDiskContent = options?.applyDiskContentToDoc ?? applyDiskContentToDoc;
   let pendingDeferredStoreFlushMode: 'within-branch' | 'discard-stale' | null = null;
 
-
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 15_000;
   const wipRef = options?.wipRef ?? 'refs/wip/main';
   const getCurrentBranch = options?.getCurrentBranch;
-
 
   let gitCommitTimer: ReturnType<typeof setTimeout> | null = null;
   let consecutiveGitFailures = 0;
@@ -443,8 +441,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     } finally {
       try {
         tracedUnlinkSync(tmpIndex);
-      } catch {
-      }
+      } catch {}
     }
   }
 
@@ -667,8 +664,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         } catch (e) {
           try {
             tracedUnlinkSync(tmpPath);
-          } catch {
-          }
+          } catch {}
           log.error({ err: e, documentName }, `[persistence] Failed to save ${documentName}`);
           throw e;
         }

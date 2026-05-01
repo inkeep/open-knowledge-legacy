@@ -1,4 +1,3 @@
-
 import type { PropDef } from '@inkeep/open-knowledge-core';
 import { ChevronDown, Loader2, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
@@ -29,8 +28,7 @@ export function persistAdvancedOpenState(descriptorName: string, open: boolean):
   try {
     if (typeof localStorage === 'undefined') return;
     localStorage.setItem(advancedOpenStateKey(descriptorName), open ? 'true' : 'false');
-  } catch {
-  }
+  } catch {}
 }
 
 export function countAdvancedSet(
@@ -280,8 +278,7 @@ function PropUploadButton({
           setUploading(true);
           try {
             await runUpload(file, accept, onUploaded);
-          } catch {
-          }
+          } catch {}
           setUploading(false);
           if (inputRef.current) inputRef.current.value = '';
         }}

@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import type { JSONContent } from '@tiptap/core';

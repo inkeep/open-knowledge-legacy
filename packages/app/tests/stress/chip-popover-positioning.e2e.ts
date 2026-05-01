@@ -1,7 +1,5 @@
-
 import type { Page } from '@playwright/test';
 import { expect, test, waitForActiveProviderSynced } from './_helpers';
-
 
 const FILLER = Array.from({ length: 30 }, (_, i) => `Filler line ${i + 1}.`).join('\n\n');
 
@@ -28,7 +26,6 @@ async function rectOf(_page: Page, locator: ReturnType<Page['locator']>) {
   if (!box) throw new Error('locator has no bounding box');
   return box;
 }
-
 
 test('CHIP-POS-WIKI: wiki-link PropPanel anchors to chip rect when scrolled past first viewport', async ({
   page,

@@ -1,4 +1,3 @@
-
 import {
   incrementJsxAutoConvertFailed,
   incrementJsxAutoConvertSucceeded,
@@ -40,7 +39,6 @@ import { formatContainerAriaLabel } from '../utils/editor-strings.ts';
 import { reconstructSource } from '../utils/reconstruct-source.ts';
 import { sanitizeComponentProps } from '../utils/sanitize-url.ts';
 
-
 interface ComponentErrorBoundaryProps {
   children: ReactNode;
   resetKey: string;
@@ -81,7 +79,6 @@ function ComponentErrorBoundary(props: ComponentErrorBoundaryProps) {
   );
 }
 
-
 export function stableHash(value: unknown): string {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
@@ -106,7 +103,6 @@ export function extractPrimitiveProps(
   }
   return sanitizeComponentProps(result);
 }
-
 
 const MAX_AUTO_CONVERT_RETRIES = 3;
 

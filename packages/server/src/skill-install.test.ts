@@ -1,16 +1,4 @@
-/**
- * Unit tests for installUserSkill (SPEC 2026-04-22 §6 FR6 / FR7 / FR9).
- *
- * Subprocess invocation is mocked via the injectable `spawn` option (SPEC FR6).
- * Each test uses a fresh `mkdtempSync`-backed HOME so the sidecar write path
- * touches only the tmpdir — never the real `~/` (SPEC D15).
- */
-import { describe as _bunDescribe, beforeEach, expect, test } from 'bun:test';
-
-// Skip-on-CI gate (oven-sh/bun#11892): subprocess or git child spawns; Bun fails to reap children on ubuntu-latest GHA runners (oven-sh/bun#11892).
-// Tests run normally locally; follow-up will narrow the leak surface.
-const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
-
+import { beforeEach, describe, expect, test } from 'bun:test';
 import type { SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -32,15 +20,8 @@ async function readServerVersion(): Promise<string> {
   return (JSON.parse(raw) as { version: string }).version;
 }
 
-/**
- * Build a fake ChildProcess that scripts one emit() lifecycle — enough to
- * exercise `installUserSkill`'s listener contract without spawning a real
- * subprocess.
- */
 interface FakeChildScript {
-  /** Bytes to push to the stderr stream before exit. */
   stderr?: string;
-  /** How the process terminates. */
   outcome: { kind: 'exit'; code: number } | { kind: 'error'; error: Error } | { kind: 'hang' };
 }
 
@@ -52,7 +33,6 @@ function makeFakeChild(script: FakeChildScript): ReturnType<SpawnLike> {
     stdout: new PassThrough(),
     stdin: null,
     kill: (_sig?: NodeJS.Signals | number) => {
-      // Mirror real ChildProcess: kill triggers an exit/error event unless we've already settled.
       return true;
     },
   });
@@ -64,7 +44,6 @@ function makeFakeChild(script: FakeChildScript): ReturnType<SpawnLike> {
     } else if (script.outcome.kind === 'error') {
       (child as unknown as EventEmitter).emit('error', script.outcome.error);
     }
-    // 'hang' — emit nothing. installUserSkill should hit its timeout.
   });
 
   return child;
@@ -126,11 +105,6 @@ function centralSkillDirFor(home: string): string {
   return join(home, ...CENTRAL_SKILL_REL);
 }
 
-/**
- * Pretend the `skills` CLI already wrote the central source. Pairs with
- * writeSidecar to simulate a real prior install — without both, the
- * skip-current gate now correctly rejects the sidecar as stale.
- */
 function writeCentralSkill(home: string): void {
   const dir = centralSkillDirFor(home);
   mkdirSync(dir, { recursive: true });
@@ -214,8 +188,6 @@ describe('installUserSkill — idempotency (skip-current)', () => {
   test('sidecar matches but central skill dir is missing → reinstall fires, sidecar rewritten', async () => {
     const home = freshHome();
     writeSidecar(home, `${currentVersion}\n`);
-    // Deliberately do NOT call writeCentralSkill — simulates `npx skills remove -g`
-    // having nuked the skill while leaving the sidecar intact.
     const { spawn, calls } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
     const { logger, records } = makeRecordingLogger();
 
@@ -355,13 +327,6 @@ describe('installUserSkill — HOME propagates to subprocess env', () => {
   });
 });
 
-// ─── buildAndOpenSkill ─────────────────────────────────────────────────────
-//
-// Shared primitive that produces `openknowledge.skill` and hands it to the OS
-// file association. Consumed by the `ok install-skill` CLI, the
-// `POST /api/install-skill` endpoint, and (in principle) the Electron skill
-// bridge — every test here protects all three call sites at once.
-
 describe('buildAndOpenSkill', () => {
   function makeFakeSpawn(capture: {
     command?: string;
@@ -465,7 +430,6 @@ describe('buildAndOpenSkill', () => {
       spawnFn: makeFakeSpawn({ threw: new Error('EACCES: permission denied') }),
     });
 
-    // Build succeeded; handoff failed soft.
     expect(result.status).toBe('built');
     expect(result.handoffError?.reason).toBe('spawn-error');
     expect(result.handoffError?.message).toContain('EACCES');

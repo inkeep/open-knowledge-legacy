@@ -9,7 +9,6 @@ import {
   HUMAN_COLORS,
 } from './identity';
 
-
 const storage = new Map<string, string>();
 const localStorageStub = {
   getItem: (key: string) => storage.get(key) ?? null,

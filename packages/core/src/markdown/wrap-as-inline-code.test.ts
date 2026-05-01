@@ -6,7 +6,6 @@ import { wrapAsInlineCode } from './index.ts';
 const PBT_TIMEOUT_MS = process.env.STRESS_FIDELITY === '1' ? 90_000 : 30_000;
 const PBT_NUM_RUNS = process.env.STRESS_FIDELITY === '1' ? 1_000 : 100;
 
-
 const text = (value: string) => ({ type: 'text' as const, value });
 const link = (url: string, children: MdastNodes[]) => ({
   type: 'link' as const,

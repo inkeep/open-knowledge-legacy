@@ -1,4 +1,3 @@
-
 import { describe, expect, mock, test } from 'bun:test';
 import { attachAssetSafetyNet, matchAssetUrl } from '../../src/main/asset-safety-net.ts';
 

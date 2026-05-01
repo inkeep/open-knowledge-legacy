@@ -61,10 +61,12 @@ export function useGitSyncStatusDetailed(): {
     });
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is intentionally stable (defined in component scope)
   useEffect(() => {
     refresh();
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is intentionally stable (defined in component scope)
   useEffect(() => {
     return subscribeToDocumentsChanged((channels) => {
       if (channels.includes('sync-status')) {

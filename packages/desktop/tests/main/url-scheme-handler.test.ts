@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { registerProtocolHandler } from '../../src/main/url-scheme.ts';
 
-
 type AppEvent = 'open-url' | 'second-instance' | 'before-quit';
 type OpenUrlListener = (event: { preventDefault: () => void }, url: string) => void;
 type SecondInstanceListener = (event: unknown, argv: readonly string[]) => void;

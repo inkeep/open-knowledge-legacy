@@ -1,4 +1,3 @@
-
 import { describe, expect, test } from 'bun:test';
 import type { Editor } from '@tiptap/core';
 import { Schema } from '@tiptap/pm/model';
@@ -75,7 +74,6 @@ describe('computeVisibleEntries', () => {
     }
   });
 });
-
 
 const schema = new Schema({
   nodes: {

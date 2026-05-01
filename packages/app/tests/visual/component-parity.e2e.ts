@@ -1,4 +1,3 @@
-
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { expect, test } from '../stress/_helpers';
@@ -70,7 +69,6 @@ async function seedAndNavigate(
   return docName;
 }
 
-
 const calloutTypes = ['note', 'tip', 'important', 'warning', 'caution'] as const;
 
 for (const calloutType of calloutTypes) {
@@ -127,7 +125,6 @@ for (const defaultOpen of [true, false] as const) {
   }
 }
 
-
 for (const theme of ['light', 'dark'] as const) {
   test(`VR-IMAGE-${theme}: <img> with always-on zoom in ${theme} mode`, async ({ page, api }) => {
     await seedAndNavigate(
@@ -145,7 +142,6 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-
 for (const theme of ['light', 'dark'] as const) {
   test(`VR-VIDEO-${theme}: Video with poster in ${theme} mode`, async ({ page, api }) => {
     await seedAndNavigate(page, api, '<video src="/sample.mp4" poster="/placeholder.png" />');
@@ -159,7 +155,6 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-
 for (const theme of ['light', 'dark'] as const) {
   test(`VR-AUDIO-${theme}: Audio native chrome in ${theme} mode`, async ({ page, api }) => {
     await seedAndNavigate(page, api, '<audio src="/sample.mp3" />');
@@ -172,7 +167,6 @@ for (const theme of ['light', 'dark'] as const) {
     });
   });
 }
-
 
 for (const theme of ['light', 'dark'] as const) {
   test(`VR-ACCORDION-${theme}: Accordion expanded (defaultOpen) in ${theme} mode`, async ({
@@ -242,7 +236,6 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-
 for (const theme of ['light', 'dark'] as const) {
   test(`VR17-${theme}: Mixed 5-pack document in ${theme} mode`, async ({ page, api }) => {
     await seedAndNavigate(
@@ -282,7 +275,6 @@ for (const theme of ['light', 'dark'] as const) {
     });
   });
 }
-
 
 for (const theme of ['light', 'dark'] as const) {
   test(`VR18-${theme}: Wildcard unregistered component in ${theme} mode`, async ({ page, api }) => {
