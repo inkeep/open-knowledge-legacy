@@ -189,9 +189,11 @@ export function humanFormat(error: ConfigValidationError): string {
     case 'NOT_AGENT_SETTABLE':
       return [
         `Field ${error.path.join('.')} is not agent-settable.`,
-        'Agent-settable paths: folders[], mcp.tools.search.maxResults,',
+        'Agent-settable paths: mcp.tools.search.maxResults,',
         'mcp.tools.read_document.historyDepth.',
-        'Other fields can be edited via the Settings pane or by hand-editing config.yml.',
+        'Folder defaults live in nested `<folder>/.ok/frontmatter.yml` files —',
+        'use the `set_folder_rule` MCP tool. Other fields can be edited via the',
+        'Settings pane or by hand-editing config.yml.',
       ].join(' ');
     case 'MIXED_SCOPE': {
       const summary = error.paths

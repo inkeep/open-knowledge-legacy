@@ -2,10 +2,13 @@
  * `set_config` MCP tool — fs-direct upsert against the agent-settable
  * allowlist.
  *
- * **Allowlist** (3 paths in `ConfigSchema` tagged `agentSettable: true`):
- *   - `folders[]` (whole-array replace; use `set_folder_rule` for per-rule upsert)
+ * **Allowlist** (2 paths in `ConfigSchema` tagged `agentSettable: true`):
  *   - `mcp.tools.read_document.historyDepth`
  *   - `mcp.tools.search.maxResults`
+ *
+ * Folder defaults moved out of `ConfigSchema` per FR8 of spec
+ * 2026-05-01-folder-level-metadata-and-templates — they live in nested
+ * `<folder>/.ok/frontmatter.yml` files and are edited via `set_folder_rule`.
  *
  * **No `scope` parameter.** The server picks the write target via the ladder:
  *   `inspectConfig(path).project
@@ -49,9 +52,10 @@ export const DESCRIPTION = [
   'Pass a deep-partial patch over the agent-settable allowlist. The server picks the write target (project vs user) automatically based on where the path is already set + per-field default scope.',
   '',
   '**Allowlist** (only these paths are agent-settable):',
-  '- `folders[]` — folder-rule defaults (whole-array replace; for per-rule upsert use `set_folder_rule`)',
   '- `mcp.tools.search.maxResults` — search result cap',
   '- `mcp.tools.read_document.historyDepth` — number of history entries returned',
+  '',
+  'Folder-level defaults are NOT in this allowlist — they live in nested `<folder>/.ok/frontmatter.yml` files. Use the `set_folder_rule` MCP tool instead.',
   '',
   'Other paths are rejected with `NOT_AGENT_SETTABLE`. To inspect what is currently set, call `get_config`.',
   '',

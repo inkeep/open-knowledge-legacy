@@ -23,10 +23,10 @@ describe('resolveLeafSchema', () => {
     expect(leaf).toBeUndefined();
   });
 
-  test('handles array-typed leaf (folders)', () => {
-    const leaf = resolveLeafSchema(ConfigSchema, ['folders']);
-    expect(leaf).toBeDefined();
-  });
+  // `folders` array leaf was removed in spec
+  // 2026-05-01-folder-level-metadata-and-templates (FR8). The
+  // resolveLeafSchema implementation still needs to handle missing keys
+  // (covered by 'returns undefined for a missing top-level key' above).
 });
 
 describe('getLeafFieldMeta', () => {
@@ -39,14 +39,7 @@ describe('getLeafFieldMeta', () => {
     });
   });
 
-  test('returns metadata for the folders array leaf', () => {
-    const meta = getLeafFieldMeta(ConfigSchema, ['folders']);
-    expect(meta).toEqual({
-      scope: 'either',
-      agentSettable: true,
-      defaultScope: 'project',
-    });
-  });
+  // `folders` removed in FR8 of spec 2026-05-01-folder-level-metadata-and-templates.
 
   test('returns metadata for the project-strict preview.baseUrl leaf', () => {
     const meta = getLeafFieldMeta(ConfigSchema, ['preview', 'baseUrl']);
