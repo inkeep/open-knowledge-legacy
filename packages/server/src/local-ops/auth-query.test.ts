@@ -66,7 +66,7 @@ describe('runAuthStatusSubprocess', () => {
     }
   });
 
-  test('returns unauthenticated when no status line is emitted', async () => {
+  test('returns unauthenticated when no status line is emitted on clean exit', async () => {
     const result = await runAuthStatusSubprocess({
       cliArgs: fixtureCli(`process.exit(0)`),
     });
@@ -75,6 +75,29 @@ describe('runAuthStatusSubprocess', () => {
       host: 'github.com',
       error: undefined,
     });
+  });
+
+  test('surfaces stderr in error when CLI exits non-zero without a status line', async () => {
+    const result = await runAuthStatusSubprocess({
+      cliArgs: fixtureCli(`
+        process.stderr.write('bun: command not found: open-knowledge\\n');
+        process.exit(127);
+      `),
+    });
+    expect(result.authenticated).toBe(false);
+    if (!result.authenticated) {
+      expect(result.error).toContain('command not found');
+    }
+  });
+
+  test('falls back to exit-code message when CLI exits non-zero without stderr', async () => {
+    const result = await runAuthStatusSubprocess({
+      cliArgs: fixtureCli(`process.exit(2)`),
+    });
+    expect(result.authenticated).toBe(false);
+    if (!result.authenticated) {
+      expect(result.error).toContain('exited with code 2');
+    }
   });
 
   test('reports a timeout-marker error when the subprocess hangs past timeoutMs', async () => {

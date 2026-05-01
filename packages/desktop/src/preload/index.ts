@@ -92,15 +92,24 @@ function createIpcEventStream<E extends { type: string }>(
   ipcRenderer.on(eventChannel, listener);
   listenerAttached = true;
 
-  void startResultPromise.then((result) => {
-    if (!result.ok) {
-      // Synthesize an error event so the iterator terminates with a clear
-      // signal. The shape mirrors the auth/clone error variants.
-      push({ type: 'error', message: result.error } as unknown as E);
-      return;
-    }
-    myStreamId = result.streamId;
-  });
+  startResultPromise
+    .then((result) => {
+      if (!result.ok) {
+        // Synthesize an error event so the iterator terminates with a clear
+        // signal. The shape mirrors the auth/clone error variants.
+        push({ type: 'error', message: result.error } as unknown as E);
+        return;
+      }
+      myStreamId = result.streamId;
+    })
+    .catch((err: unknown) => {
+      // IPC invoke itself rejected (e.g. handler threw before returning,
+      // channel not registered). Without this catch the consumer's
+      // `await iter.next()` hangs permanently — `myStreamId` never gets
+      // set, no terminal event is ever pushed.
+      const message = err instanceof Error ? err.message : String(err);
+      push({ type: 'error', message: `IPC error: ${message}` } as unknown as E);
+    });
 
   const events: AsyncIterable<E> = {
     [Symbol.asyncIterator]() {

@@ -47,11 +47,7 @@ export interface RunCloneController {
   cancel(): void;
 }
 
-interface CloneInputValidation {
-  ok: boolean;
-  /** Populated when `ok === false`; describes which input was invalid. */
-  reason?: 'invalid-url' | 'invalid-dir';
-}
+type CloneInputValidation = { ok: true } | { ok: false; reason: 'invalid-url' | 'invalid-dir' };
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -127,9 +123,14 @@ export function runCloneSubprocess(opts: RunCloneOptions): RunCloneController {
         type: 'error',
         message: `Clone process exited with code ${result.code ?? -1}${detail}`,
       });
+      return;
     }
+    // CLI exited cleanly without emitting a terminal event — synthesize a
+    // `complete` so the caller's stream resolves. Without this, the IPC
+    // path's async iterator hangs forever waiting for a terminal event
+    // that won't come. Mirrors `runDeviceFlowSubprocess`'s synthesis.
+    opts.onEvent({ type: 'complete', dir: targetDir });
   });
 
   return { done, cancel: proc.cancel };
 }
-/** Re-export the type so callers in IPC main and tests don't need a deep import. */

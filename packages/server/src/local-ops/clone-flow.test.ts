@@ -106,21 +106,23 @@ describe('runCloneSubprocess', () => {
     expect(events.map((e) => e.type)).toEqual(['complete']);
   });
 
-  test('complete events with missing dir are dropped', async () => {
+  test('synthesizes a complete event when CLI exits 0 without emitting one', async () => {
     const events: RawCloneEvent[] = [];
     const ctrl = runCloneSubprocess({
       cliArgs: fixtureCli(`
+        // Emit only an invalid (missing dir) line, then clean exit. The runner
+        // ignores the malformed line and synthesizes a complete from opts.dir
+        // so the IPC stream consumer's iterator can resolve.
         console.log(JSON.stringify({type:'complete'}));
         process.exit(0);
       `),
       url: 'https://github.com/x/y.git',
-      dir: '/tmp/x',
+      dir: HOME_PATH,
       onEvent: (e) => events.push(e),
     });
     await ctrl.done;
-    // CLI never emitted a valid terminal event; runner doesn't synthesize
-    // for clone (unlike auth-flow). Exit 0 means no terminal event emitted.
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({ type: 'complete', dir: HOME_PATH });
   });
 
   test('unknown JSON event types are dropped, terminal still detected', async () => {

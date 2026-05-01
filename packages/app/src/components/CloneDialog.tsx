@@ -86,8 +86,11 @@ interface CloneDialogProps {
    * does NOT redirect via `window.location.href` — the caller takes over
    * navigation. Used by the Electron Navigator to spawn a new editor window
    * at `dir` instead of navigating the launcher itself to the new dev port.
-   * `port` is present only on the HTTP transport (the IPC path skips the
-   * relay's port chain).
+   *
+   * Shape is the flattened union of the two transport `complete` variants:
+   * HTTP relay emits `{port, dir}`; IPC main emits `{dir}` only. `dir` is
+   * always present (server-side guarantee, type-pinned by the drift catcher
+   * `local-op-types-drift.test.ts`); `port` is HTTP-only.
    */
   onCloneComplete?: (info: { port?: number; dir: string }) => void;
   /**
@@ -239,7 +242,10 @@ export function CloneDialog({
         setCloning(false);
         cancelRef.current = null;
       }
-    } catch {
+    } catch (err) {
+      // Log so non-transport exceptions (e.g. an `onCloneComplete` callback
+      // throwing) aren't lost behind the generic toast message.
+      console.error('[CloneDialog] clone iteration failed:', err);
       toast.error('Clone failed — connection error', { id: toastId });
       setCloning(false);
       cancelRef.current = null;

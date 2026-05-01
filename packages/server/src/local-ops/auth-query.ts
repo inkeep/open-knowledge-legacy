@@ -70,7 +70,11 @@ export async function runAuthStatusSubprocess(
   return {
     authenticated: false,
     host,
-    error: result.timedOut ? 'auth status timed out' : undefined,
+    error: result.timedOut
+      ? 'auth status timed out'
+      : result.code !== 0
+        ? result.stderr || `auth status exited with code ${result.code ?? -1}`
+        : undefined,
   };
 }
 

@@ -48,6 +48,12 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
+  // Mirror EditorPane's auth-modal state shape so the two surfaces stay
+  // structurally identical. Today Navigator only ever opens with step
+  // 'auth' (no identity-prompt entry point), but keeping the state +
+  // prop wired prevents silent divergence if Navigator gains an identity
+  // surface later (e.g. profile menu).
+  const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
 
   useEffect(() => {
     let cancelled = false;
@@ -193,21 +199,6 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           `ok:mcp-wiring:show`. Mounted identically in App.tsx (D-M6-R10). */}
       <McpConsentDialog />
 
-      <CloneDialog
-        open={cloneDialogOpen}
-        onOpenChange={setCloneDialogOpen}
-        transport={ipcCloneTransport(bridge)}
-        authQueryTransport={ipcAuthQueryTransport(bridge)}
-        onSignIn={() => {
-          setCloneDialogOpen(false);
-          setReturnToCloneAfterAuth(true);
-          setAuthModalOpen(true);
-        }}
-        onCloneComplete={({ dir }) => {
-          // Navigator stays open; spawn the cloned project in a new editor window.
-          void runWithErrorState(() => openProject(bridge, dir), 'Failed to open cloned project.');
-        }}
-      />
       <AuthModal
         open={authModalOpen}
         onOpenChange={(next) => {
@@ -215,12 +206,29 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           if (!next) setReturnToCloneAfterAuth(false);
         }}
         transport={ipcAuthTransport(bridge)}
+        identityPrompt={authInitialStep === 'identity'}
         onSuccess={() => {
           setAuthModalOpen(false);
           if (returnToCloneAfterAuth) {
             setReturnToCloneAfterAuth(false);
             setCloneDialogOpen(true);
           }
+        }}
+      />
+      <CloneDialog
+        open={cloneDialogOpen}
+        onOpenChange={setCloneDialogOpen}
+        transport={ipcCloneTransport(bridge)}
+        authQueryTransport={ipcAuthQueryTransport(bridge)}
+        onSignIn={() => {
+          setCloneDialogOpen(false);
+          setAuthInitialStep('auth');
+          setReturnToCloneAfterAuth(true);
+          setAuthModalOpen(true);
+        }}
+        onCloneComplete={({ dir }) => {
+          // Navigator stays open; spawn the cloned project in a new editor window.
+          void runWithErrorState(() => openProject(bridge, dir), 'Failed to open cloned project.');
         }}
       />
     </div>

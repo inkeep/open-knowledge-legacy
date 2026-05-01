@@ -86,7 +86,7 @@ export function handleAuthStart(
     onEvent: (event) => {
       // The wrapper guards against sending to a destroyed webContents —
       // window-close mid-flow would otherwise crash the main process.
-      if (!('isDestroyed' in sender) || !(sender as { isDestroyed: () => boolean }).isDestroyed()) {
+      if (!sender.isDestroyed?.()) {
         sendToRenderer(sender, 'ok:local-op:auth:event', { streamId, event });
       }
     },
@@ -137,7 +137,7 @@ export function handleCloneStart(
     url: request.url,
     dir: request.dir,
     onEvent: (event) => {
-      if (!('isDestroyed' in sender) || !(sender as { isDestroyed: () => boolean }).isDestroyed()) {
+      if (!sender.isDestroyed?.()) {
         sendToRenderer(sender, 'ok:local-op:clone:event', { streamId, event });
       }
     },
