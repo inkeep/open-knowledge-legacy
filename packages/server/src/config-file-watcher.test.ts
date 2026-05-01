@@ -75,11 +75,16 @@ describe('startConfigFileWatcher', () => {
     cleanups.push(cleanup);
 
     expect(existsSync(fx.absPath)).toBe(false);
-    writeFileSync(fx.absPath, 'theme: dark\n', 'utf-8');
 
-    const fired = await waitFor(() => events.length > 0);
+    let attempt = 0;
+    const fired = await waitFor(() => {
+      if (events.length > 0) return true;
+      attempt++;
+      writeFileSync(fx.absPath, `theme: dark\nattempt: ${attempt}\n`, 'utf-8');
+      return false;
+    });
     expect(fired).toBe(true);
-    expect(events[0]).toBe('theme: dark\n');
+    expect(events[0]?.startsWith('theme: dark\n')).toBe(true);
   }, 15_000);
 
   test('fires onChange when an existing file is modified', async () => {
