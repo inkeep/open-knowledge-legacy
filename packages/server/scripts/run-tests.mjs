@@ -53,6 +53,33 @@ let postSummaryTimer;
 let hardTimer;
 let exited = false;
 
+// Recursively walk `pgrep -P` to enumerate every transitive descendant of
+// `rootPid`. We need this because tests can spawn grandchildren (e.g. via
+// `child_process.spawn(..., { detached: true })`); plain `pkill -P <pid>`
+// only walks one level. Without recursion the leaked grandchildren stay in
+// the GitHub Actions cgroup, which keeps the runner step open until the
+// 15-minute timeout fires (the post-summary CI hang fixed by this script).
+const collectDescendantPids = (rootPid) => {
+  const seen = new Set();
+  const queue = [rootPid];
+  while (queue.length > 0) {
+    const pid = queue.shift();
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    const result = spawnSync('pgrep', ['-P', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    if (result.status !== 0 || typeof result.stdout !== 'string') continue;
+    for (const line of result.stdout.split('\n')) {
+      const next = Number.parseInt(line.trim(), 10);
+      if (Number.isFinite(next) && next > 1 && !seen.has(next)) queue.push(next);
+    }
+  }
+  seen.delete(rootPid);
+  return [...seen];
+};
+
 const killTree = (signal) => {
   if (child.pid === undefined) return;
   // Belt: kill the bun process group we created via detached:true.
@@ -61,15 +88,21 @@ const killTree = (signal) => {
   } catch {
     // PG may already be empty; fall through.
   }
-  // Suspenders: pkill any descendants that escaped the PG (some tests use
-  // `child_process.spawn(..., { detached: true })` themselves and become PG
-  // leaders of their own). `pkill -P <pid>` walks the parent chain. Run with
-  // `-9` because some bun child processes ignore SIGTERM under load.
-  try {
-    spawnSync('pkill', ['-9', '-P', String(child.pid)], { stdio: 'ignore' });
-    spawnSync('pkill', ['-9', '-P', String(process.pid)], { stdio: 'ignore' });
-  } catch {
-    // pkill missing is non-fatal.
+  // Suspenders: kill EVERY descendant of the wrapper (and the bun child)
+  // recursively. `process.kill(-pid)` only catches the bun process group;
+  // grandchildren that called `setsid` / spawned with `detached: true`
+  // become PG leaders themselves and survive otherwise. Walking pgrep is
+  // POSIX-portable on ubuntu-latest and avoids needing CAP_SYS_ADMIN.
+  const descendants = new Set([
+    ...collectDescendantPids(process.pid),
+    ...collectDescendantPids(child.pid),
+  ]);
+  for (const pid of descendants) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Already dead or reparented out of our reach.
+    }
   }
   // Fallback to direct child.kill if the group send did nothing.
   if (child.exitCode === null && !child.killed) {
@@ -81,12 +114,45 @@ const killTree = (signal) => {
   }
 };
 
+// One-shot snapshot of every descendant of `rootPid` for post-mortem
+// debugging. The previous CI failure (job 73887506551) showed two
+// `bun`-labelled processes surviving wrapper exit; without a snapshot
+// we can't tell which test leaked them. Walks `pgrep` recursively (same
+// as killTree) so behaviour is portable across BSD/procps ps quirks.
+const dumpDescendantTree = (label, rootPid) => {
+  try {
+    const descendants = collectDescendantPids(rootPid);
+    log(`[run-tests] ${label} descendants of pid ${rootPid}: ${descendants.length} found`);
+    if (descendants.length === 0) return;
+    const psByPid = spawnSync(
+      'ps',
+      ['-o', 'pid=,ppid=,pgid=,stat=,etime=,args=', '-p', descendants.join(',')],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    if (psByPid.status === 0 && typeof psByPid.stdout === 'string') {
+      const trimmed = psByPid.stdout.trim();
+      if (trimmed.length > 0) {
+        for (const line of trimmed.split('\n')) log(`[run-tests]   ${line}`);
+      }
+    }
+  } catch {
+    // Diagnostic-only; never fail the wrapper because ps wasn't available.
+  }
+};
+
 const finalize = (code) => {
   if (exited) return;
   exited = true;
   if (postSummaryTimer !== undefined) clearTimeout(postSummaryTimer);
   if (hardTimer !== undefined) clearTimeout(hardTimer);
+  // Snapshot the tree BEFORE we kill it so leaked processes are visible
+  // in the CI log even when the kill succeeds.
+  dumpDescendantTree('pre-kill', process.pid);
   killTree('SIGKILL');
+  // And snapshot AFTER, so any survivor (process.kill silently failing per
+  // oven-sh/bun#11892, or a grandchild that escaped the recursion window)
+  // is named with its `args` for the test owner to see.
+  dumpDescendantTree('post-kill', process.pid);
   log(`[run-tests] FINALIZE exit=${code} pid=${process.pid} childPid=${child.pid ?? 'none'}`);
   process.exit(code);
 };

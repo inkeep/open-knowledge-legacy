@@ -51,6 +51,31 @@ let postSummaryTimer;
 let hardTimer;
 let exited = false;
 
+// See `packages/server/scripts/run-tests.mjs` for the rationale: turbo's
+// step stays open until the cgroup drains, and tests can spawn detached
+// grandchildren that escape `process.kill(-pid)`. Recursive walk catches
+// every PID in the tree.
+const collectDescendantPids = (rootPid) => {
+  const seen = new Set();
+  const queue = [rootPid];
+  while (queue.length > 0) {
+    const pid = queue.shift();
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    const result = spawnSync('pgrep', ['-P', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    if (result.status !== 0 || typeof result.stdout !== 'string') continue;
+    for (const line of result.stdout.split('\n')) {
+      const next = Number.parseInt(line.trim(), 10);
+      if (Number.isFinite(next) && next > 1 && !seen.has(next)) queue.push(next);
+    }
+  }
+  seen.delete(rootPid);
+  return [...seen];
+};
+
 const killTree = (signal) => {
   if (child.pid === undefined) return;
   try {
@@ -58,11 +83,16 @@ const killTree = (signal) => {
   } catch {
     // PG may already be empty.
   }
-  try {
-    spawnSync('pkill', ['-9', '-P', String(child.pid)], { stdio: 'ignore' });
-    spawnSync('pkill', ['-9', '-P', String(process.pid)], { stdio: 'ignore' });
-  } catch {
-    // pkill missing is non-fatal.
+  const descendants = new Set([
+    ...collectDescendantPids(process.pid),
+    ...collectDescendantPids(child.pid),
+  ]);
+  for (const pid of descendants) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Already dead or reparented out of our reach.
+    }
   }
   if (child.exitCode === null && !child.killed) {
     try {
@@ -73,12 +103,35 @@ const killTree = (signal) => {
   }
 };
 
+const dumpDescendantTree = (label, rootPid) => {
+  try {
+    const descendants = collectDescendantPids(rootPid);
+    log(`[run-tests] ${label} descendants of pid ${rootPid}: ${descendants.length} found`);
+    if (descendants.length === 0) return;
+    const psByPid = spawnSync(
+      'ps',
+      ['-o', 'pid=,ppid=,pgid=,stat=,etime=,args=', '-p', descendants.join(',')],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    if (psByPid.status === 0 && typeof psByPid.stdout === 'string') {
+      const trimmed = psByPid.stdout.trim();
+      if (trimmed.length > 0) {
+        for (const line of trimmed.split('\n')) log(`[run-tests]   ${line}`);
+      }
+    }
+  } catch {
+    // Diagnostic-only.
+  }
+};
+
 const finalize = (code) => {
   if (exited) return;
   exited = true;
   if (postSummaryTimer !== undefined) clearTimeout(postSummaryTimer);
   if (hardTimer !== undefined) clearTimeout(hardTimer);
+  dumpDescendantTree('pre-kill', process.pid);
   killTree('SIGKILL');
+  dumpDescendantTree('post-kill', process.pid);
   log(`[run-tests] FINALIZE exit=${code} pid=${process.pid} childPid=${child.pid ?? 'none'}`);
   process.exit(code);
 };
