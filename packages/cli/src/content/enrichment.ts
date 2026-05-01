@@ -25,8 +25,10 @@ import { resolveFolderFrontmatter } from './folder-rules.ts';
 import { parentFolderOf, resolveNestedFrontmatter } from './nested-folder-rules.ts';
 import { type GitCommit, type ProjectHistorySource, readProjectGitLog } from './project-log.ts';
 import { type HistorySource, readShadowLog, type ShadowCommit } from './shadow-log.ts';
+import { resolveTemplatesAvailable, type TemplateEntry } from './templates-resolver.ts';
 
 export type { GitCommit } from './project-log.ts';
+export type { TemplateEntry, TemplateScope } from './templates-resolver.ts';
 
 /** Bound on recursive directory scan when computing `DirectoryMeta`. */
 const DIRECTORY_SCAN_CAP = 1000;
@@ -120,6 +122,16 @@ export interface DirectoryMeta {
   };
   /** `true` when the recursive scan hit `DIRECTORY_SCAN_CAP`. */
   truncated: boolean;
+  /**
+   * Templates available when creating a new doc inside this folder. Aggregated
+   * leaf → root walk-up (closest-wins on filename collision per D7). Empty array
+   * when no nested `.ok/templates/` exists at this level or any ancestor.
+   *
+   * Each entry carries `name` + optional `title`/`description` (D16 soft contract)
+   * + `scope` (`local` | `inherited` | `descendant`) so the agent can pick
+   * intelligently. Spec: 2026-05-01-folder-level-metadata-and-templates §5.2.
+   */
+  templates_available?: TemplateEntry[];
 }
 
 /**
@@ -589,6 +601,12 @@ export async function enrichDirectory(
   if (title !== undefined) result.title = title;
   if (description !== undefined) result.description = description;
   if (tags.length > 0) result.tags = tags;
+
+  // Templates available for creating a new doc in this folder (FR3, FR4).
+  // Default depth=1 — local + walk-up ancestors only. Callers wanting
+  // descendant visibility pass depth via the dedicated list_documents API.
+  const templates = resolveTemplatesAvailable(deps.projectDir, relPath);
+  if (templates.length > 0) result.templates_available = templates;
 
   return result;
 }
