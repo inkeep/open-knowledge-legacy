@@ -10,7 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import simpleGit from 'simple-git';
@@ -104,6 +104,13 @@ describe('SyncEngine state persistence round-trip', () => {
     expect(existsSync(statePath())).toBe(true);
   });
 
+  test('sync-state.json does not persist the config-owned enabled preference', async () => {
+    const engine = makeEngine({ syncEnabled: true });
+    await engine.destroy();
+    const persisted = JSON.parse(readFileSync(statePath(), 'utf-8')) as Record<string, unknown>;
+    expect(persisted.syncEnabled).toBeUndefined();
+  });
+
   test('restores consecutiveFailures from disk on start()', async () => {
     // Pre-write a state file with consecutiveFailures=4
     const persisted = {
@@ -121,6 +128,23 @@ describe('SyncEngine state persistence round-trip', () => {
     await engine.start();
     // The persisted consecutive failures should be loaded
     expect(engine.getStatus().consecutiveFailures).toBe(4);
+  });
+
+  test('ignores legacy syncEnabled from sync-state.json', async () => {
+    const persisted = {
+      version: 1,
+      lastSyncUtc: null,
+      lastFetchUtc: null,
+      lastPushedSha: null,
+      consecutiveFailures: 0,
+      inflightConflicts: [],
+      syncEnabled: true,
+    };
+    writeFileSync(statePath(), JSON.stringify(persisted), 'utf-8');
+
+    const engine = makeEngine({ syncEnabled: false });
+    await engine.start();
+    expect(engine.getStatus().syncEnabled).toBe(false);
   });
 
   test('restores inflightConflicts into conflictCount', async () => {
