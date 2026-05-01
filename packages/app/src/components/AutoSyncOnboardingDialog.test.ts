@@ -21,11 +21,11 @@ describe('AutoSyncOnboardingDialog module', () => {
 });
 
 describe('AutoSyncOnboardingDialog source-level guards', () => {
-  test('writes onboardingResolvedAt via projectBinding patch', () => {
-    expect(SRC).toContain('onboardingResolvedAt');
-    expect(SRC).toContain('projectBinding');
-    expect(SRC).toContain('.patch(');
-    expect(SRC).toContain('toISOString()');
+  test('both choices persist through the sync enabled API', () => {
+    expect(SRC).toContain('/api/sync/set-enabled');
+    expect(SRC).toContain('setSyncEnabled(true)');
+    expect(SRC).toContain('setSyncEnabled(false)');
+    expect(SRC).not.toContain('onboardingResolvedAt');
   });
 
   test('primary action POSTs /api/sync/set-enabled with enabled:true', () => {

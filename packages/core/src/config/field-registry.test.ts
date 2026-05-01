@@ -134,21 +134,18 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     );
   });
 
-  test('project-strict fields cover content.dir + preview.baseUrl + autoSync.onboardingResolvedAt', () => {
+  test('project-strict fields cover content.dir + preview.baseUrl + autoSync.enabled', () => {
     // `content.dir` is project-only — it names the root of this project's
     // knowledge graph; a user-global override doesn't make sense. content.include
     // / content.exclude were removed (path rules now live in `.okignore`).
     // `preview.baseUrl` is project-only because each project has its own
-    // deployed wiki URL. `autoSync.onboardingResolvedAt` is per-project
-    // onboarding state.
+    // deployed wiki URL. `autoSync.enabled` is a per-project sync toggle.
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
     const projectStrict = leaves
       .filter((l) => getFieldMeta(l.schema)?.scope === 'project')
       .map((l) => l.path.join('.'))
       .sort();
-    expect(projectStrict).toEqual(
-      ['autoSync.onboardingResolvedAt', 'content.dir', 'preview.baseUrl'].sort(),
-    );
+    expect(projectStrict).toEqual(['autoSync.enabled', 'content.dir', 'preview.baseUrl'].sort());
   });
 });

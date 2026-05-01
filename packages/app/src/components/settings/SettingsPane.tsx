@@ -494,9 +494,8 @@ function SettingsForm({ scope, form, commitField, flashedPath }: SettingsFormPro
  * a deliberate path to re-enable when the header badge is hidden (state ===
  * 'disabled' hides the badge).
  *
- * The toggle isn't config-backed: `syncEnabled` is runtime state on the
- * SyncEngine (`/api/sync/set-enabled` + `/api/sync/status`). This section
- * intentionally bypasses `binding.patch` and POSTs directly.
+ * The toggle writes through `/api/sync/set-enabled` so the server can update
+ * both project config (`autoSync.enabled`) and the live SyncEngine.
  */
 function SyncSection() {
   const status = useGitSyncStatus();

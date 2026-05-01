@@ -92,8 +92,6 @@ interface PersistedSyncState {
   pausedReason?: string;
   pausedSinceUtc?: string;
   inflightConflicts: string[];
-  /** User's sync toggle. Absent/false = disabled (default); true = sync active. */
-  syncEnabled?: boolean;
 }
 
 interface SyncEngineOptions {
@@ -105,7 +103,7 @@ interface SyncEngineOptions {
   pullIntervalSeconds?: number;
   /** Seconds between push cycles. Default 60. */
   pushIntervalSeconds?: number;
-  /** Whether sync is enabled. Undefined = auto-detect from remote. */
+  /** Whether sync is enabled according to project config. Undefined is treated as disabled. */
   syncEnabled?: boolean;
   /** Credential args for simple-git (e.g. ['-c', 'credential.helper=…']). */
   credentialArgs?: string[];
@@ -232,7 +230,8 @@ export class SyncEngine {
   async start(): Promise<void> {
     if (this.state !== 'dormant') return;
 
-    // Restore persisted state (may populate this.syncEnabled)
+    // Restore runtime status. The enabled/disabled preference comes from
+    // project config and is passed via constructor options.
     this.loadState();
 
     // Detect remote + branch regardless of enabled state so status is accurate.
@@ -384,7 +383,8 @@ export class SyncEngine {
   /**
    * Toggle sync on/off. Soft disable — cancels scheduled cycles but lets an
    * in-flight pull/push finish cleanly to avoid leaving a partial merge.
-   * Persisted to sync-state.json so it survives restart.
+   * The caller persists the preference to project config; sync-state.json only
+   * records runtime status/history.
    */
   async setEnabled(enabled: boolean): Promise<void> {
     if (this.syncEnabled === enabled) return;
@@ -1406,7 +1406,7 @@ export class SyncEngine {
       this.transitionTo('auth-error');
       this.pausedReason = 'auth-error';
     } else if (classified.class === 'semantic' && classified.subclass === 'protected-branch') {
-      this.syncEnabled = false; // Disable permanently — user must change branch or permissions
+      this.syncEnabled = false;
       this.transitionTo('disabled');
       this.pausedReason = 'protected-branch';
     } else if (classified.class === 'local' && classified.subclass === 'dirty-tree') {
@@ -1459,7 +1459,6 @@ export class SyncEngine {
         pausedSinceUtc: this.pausedReason ? new Date().toISOString() : undefined,
         // Persist file paths of any in-flight conflicts so they survive restart
         inflightConflicts: this.conflictStore.list().map((c) => c.file),
-        syncEnabled: this.syncEnabled,
       };
       writeFileSync(this.statePath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (e) {
@@ -1478,7 +1477,6 @@ export class SyncEngine {
       this.lastPushedSha = data.lastPushedSha ?? null;
       this.consecutiveFailures = data.consecutiveFailures ?? 0;
       this.pausedReason = data.pausedReason;
-      if (data.syncEnabled !== undefined) this.syncEnabled = data.syncEnabled;
 
       // Restore in-flight conflicts into the ConflictStore
       const inflightFiles = data.inflightConflicts ?? [];

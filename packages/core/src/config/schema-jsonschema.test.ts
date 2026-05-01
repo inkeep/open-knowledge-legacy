@@ -67,6 +67,16 @@ const FIXTURES: Fixture[] = [
     shouldAccept: false,
   },
   {
+    name: 'autoSync.enabled accepted',
+    input: { autoSync: { enabled: true } },
+    shouldAccept: true,
+  },
+  {
+    name: 'autoSync empty object accepted for stale/partial YAML',
+    input: { autoSync: {} },
+    shouldAccept: true,
+  },
+  {
     name: 'mcp.tools.search.maxResults=25 accepted',
     input: { mcp: { tools: { search: { maxResults: 25 } } } },
     shouldAccept: true,

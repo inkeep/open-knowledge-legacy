@@ -176,23 +176,20 @@ export const ConfigSchema = z.looseObject({
         .optional(),
     })
     .default({}),
-  // `autoSync.*` is internal onboarding state (NOT a user preference). The
-  // SettingsPane intentionally omits these paths from `SECTIONS`, so they
-  // never render — the modal in `EditorPane` is the only writer.
-  // Project scope: each project tracks its own onboarding resolution.
+  // `autoSync.enabled` is the project-level source of truth for the git sync
+  // toggle. Absence means the project has not answered the onboarding prompt.
   autoSync: z
     .looseObject({
-      onboardingResolvedAt: z.iso
-        .datetime()
+      enabled: z
+        .boolean()
         .register(fieldRegistry, {
           scope: 'project',
           agentSettable: false,
           defaultScope: 'project',
         })
-        .nullable()
-        .default(null),
+        .optional(),
     })
-    .default({ onboardingResolvedAt: null }),
+    .optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

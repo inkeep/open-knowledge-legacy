@@ -36,14 +36,13 @@ export function EditorPane() {
   const { activeDocName } = useDocumentContext();
 
   // Onboarding modal: open once per project when a remote exists and the user
-  // has not yet been asked. The local `autoSyncOnboardingDismissed` flag closes
-  // the modal in the same render that the patch lands in, since the workspace
-  // config doesn't refresh synchronously after `binding.patch()`.
+  // has not yet chosen an autoSync.enabled value. The local flag closes the
+  // modal immediately while the config file watcher propagates the API write.
   const showAutoSyncOnboarding =
     !autoSyncOnboardingDismissed &&
     syncStatus?.hasRemote === true &&
     projectConfig !== null &&
-    projectConfig.autoSync?.onboardingResolvedAt == null;
+    projectConfig.autoSync?.enabled === undefined;
 
   // R7: rawMdxFallback click → switch to source mode so user can fix the broken MDX.
   // The pending navigation store preserves the target offset until the source

@@ -7,15 +7,17 @@
  * local). On → off is safe and skips this dialog.
  */
 import { Loader2 } from 'lucide-react';
+import {
+  AutoSyncEnableDialogIntro,
+  AutoSyncEnableWarning,
+} from '@/components/AutoSyncEnableWarning';
 import { Button } from '@/components/ui/button';
 import {
   DialogBody,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   Dialog as DialogRoot,
-  DialogTitle,
 } from '@/components/ui/dialog';
 
 interface EnableSyncConfirmDialogProps {
@@ -42,16 +44,9 @@ export function EnableSyncConfirmDialog({
       }}
     >
       <DialogContent>
-        <DialogTitle>Enable git auto-sync?</DialogTitle>
-        <DialogDescription>
-          This will push your local commits to the configured git remote and pull remote changes on
-          intervals.
-        </DialogDescription>
+        <AutoSyncEnableDialogIntro />
         <DialogBody>
-          <p className="text-sm text-muted-foreground">
-            Pull operations may overwrite uncommitted local file changes. Auto-sync is intended for
-            developer workflows. Make sure your work is committed before enabling.
-          </p>
+          <AutoSyncEnableWarning />
         </DialogBody>
         <DialogFooter>
           <DialogClose asChild>

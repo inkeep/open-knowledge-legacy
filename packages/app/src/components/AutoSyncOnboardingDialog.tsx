@@ -2,26 +2,26 @@
  * AutoSyncOnboardingDialog — first-run prompt explaining git auto-sync.
  *
  * Replaces the dismissable dormant-state toast that previously fired in
- * `EditorPane`. Shown once per project when the sync engine reports
- * `state === 'dormant' && hasRemote === true` AND the project config field
- * `autoSync.onboardingResolvedAt` is null. Both buttons stamp the field with
- * an ISO timestamp so the modal never reopens for that project; only the
- * primary additionally calls `POST /api/sync/set-enabled`.
+ * `EditorPane`. Shown once per project when the sync engine reports a remote
+ * exists AND the project config field `autoSync.enabled` has not been set.
+ * Both buttons call `POST /api/sync/set-enabled`, which persists the choice to
+ * config.yml.
  */
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import {
+  AutoSyncEnableDialogIntro,
+  AutoSyncEnableWarning,
+} from '@/components/AutoSyncEnableWarning';
 import { Button } from '@/components/ui/button';
 import {
   DialogBody,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   Dialog as DialogRoot,
-  DialogTitle,
 } from '@/components/ui/dialog';
-import { useConfigContext } from '@/lib/config-provider';
 
 interface AutoSyncOnboardingDialogProps {
   open: boolean;
@@ -40,23 +40,7 @@ async function setSyncEnabled(enabled: boolean): Promise<void> {
 }
 
 export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardingDialogProps) {
-  const { projectBinding } = useConfigContext();
   const [busy, setBusy] = useState<'enable' | 'dismiss' | null>(null);
-
-  function stampResolved(): boolean {
-    if (!projectBinding) {
-      toast.error('Settings not ready — please try again in a moment.');
-      return false;
-    }
-    const result = projectBinding.patch({
-      autoSync: { onboardingResolvedAt: new Date().toISOString() },
-    });
-    if (!result.ok) {
-      toast.error(`Could not save your choice: ${result.error.code}`);
-      return false;
-    }
-    return true;
-  }
 
   async function handleEnable() {
     setBusy('enable');
@@ -68,17 +52,17 @@ export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardin
       setBusy(null);
       return;
     }
-    if (!stampResolved()) {
-      setBusy(null);
-      return;
-    }
     setBusy(null);
     onResolved();
   }
 
-  function handleDismiss() {
+  async function handleDismiss() {
     setBusy('dismiss');
-    if (!stampResolved()) {
+    try {
+      await setSyncEnabled(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Could not save sync preference: ${message}`);
       setBusy(null);
       return;
     }
@@ -96,22 +80,11 @@ export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardin
     >
       <DialogContent className="sm:max-w-lg" showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>Enable git auto-sync?</DialogTitle>
-          <DialogDescription>
-            Auto-sync periodically fetches, pulls, and pushes commits to your remote git repository
-            so your edits stay in sync across machines.
-          </DialogDescription>
+          <AutoSyncEnableDialogIntro />
         </DialogHeader>
 
         <DialogBody>
-          <p className="mb-2 text-sm font-medium">Before you enable it:</p>
-          <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
-            <li>Pulls may overwrite uncommitted local file changes.</li>
-            <li>
-              If you do not want automatic commits in your git history, you should not enable
-              auto-sync.
-            </li>
-          </ul>
+          <AutoSyncEnableWarning />
         </DialogBody>
 
         <DialogFooter>
