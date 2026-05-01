@@ -30,6 +30,10 @@ import {
   register as registerConsolidate,
 } from './consolidate.ts';
 import {
+  DESCRIPTION as DELETE_DOCUMENT_DESCRIPTION,
+  register as registerDeleteDocument,
+} from './delete-document.ts';
+import {
   DESCRIPTION as EDIT_DOCUMENT_DESCRIPTION,
   register as registerEditDocument,
 } from './edit-document.ts';
@@ -132,6 +136,7 @@ const _TOOL_DESCRIPTIONS = {
   suggest_links: SUGGEST_LINKS_DESCRIPTION,
   write_document: WRITE_DOCUMENT_DESCRIPTION,
   edit_document: EDIT_DOCUMENT_DESCRIPTION,
+  delete_document: DELETE_DOCUMENT_DESCRIPTION,
   // frontmatter_patch parked — see import block above.
   get_history: GET_HISTORY_DESCRIPTION,
   save_version: SAVE_VERSION_DESCRIPTION,
@@ -239,6 +244,12 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     serverUrl: opts.serverUrl,
     config: opts.config,
     resolveCwd: named('edit_document'),
+    identityRef: opts.identityRef,
+  });
+  registerDeleteDocument(registrationServer, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: named('delete_document'),
     identityRef: opts.identityRef,
   });
   // frontmatter_patch is parked — see import block at top of file.
