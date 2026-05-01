@@ -82,7 +82,7 @@ type ClipboardEventName =
   // paste fidelity (the SVG stays as inline `<svg>` which every major
   // destination strips). Cardinality bounded by the lucide-icons set
   // (~1500 names total) and dedup'd per process.
-  | 'clipboard-walker-unmapped-lucide-icon';
+  | 'clipboard-walker-unmapped-lucide-detected';
 
 /** View identifier — one per clipboard-bearing editor surface. */
 type ClipboardView = 'wysiwyg' | 'source';
@@ -300,17 +300,27 @@ export function logWalkerUrlBlocked(info: {
  * entry. Without this signal, a new icon shipped without a mapping would
  * silently disappear at every major paste destination (Gmail, Notion,
  * Slack, Outlook, Google Docs all strip inline SVG).
+ *
+ * Test-only reset hook: `resetUnmappedLucideSeenForTest` exists so unit
+ * tests can clear the dedup set between assertions without paying the
+ * cost of unique-class-per-test bookkeeping.
  */
 const unmappedLucideSeen = new Set<string>();
-export function logUnmappedLucideIcon(lucideClass: string): void {
-  if (unmappedLucideSeen.has(lucideClass)) return;
-  unmappedLucideSeen.add(lucideClass);
+export function logUnmappedLucideIcon(info: { lucideClass: string; view: ClipboardView }): void {
+  if (unmappedLucideSeen.has(info.lucideClass)) return;
+  unmappedLucideSeen.add(info.lucideClass);
   console.warn(
     JSON.stringify({
-      event: 'clipboard-walker-unmapped-lucide-icon' satisfies ClipboardEventName,
-      lucideClass,
+      event: 'clipboard-walker-unmapped-lucide-detected' satisfies ClipboardEventName,
+      view: info.view,
+      lucideClass: info.lucideClass,
     }),
   );
+}
+
+/** Test-only: reset the dedup state. Not exported via barrel. */
+export function resetUnmappedLucideSeenForTest(): void {
+  unmappedLucideSeen.clear();
 }
 
 /**

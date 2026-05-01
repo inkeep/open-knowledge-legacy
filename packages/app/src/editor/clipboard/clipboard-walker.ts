@@ -292,7 +292,7 @@ function replaceLucideIconsWithGlyphs(root: Element): void {
     const lucideClass = lucideMatch[1];
     const glyph = LUCIDE_GLYPH_MAP[lucideClass];
     if (!glyph) {
-      logUnmappedLucideIcon(lucideClass);
+      logUnmappedLucideIcon({ lucideClass, view: 'wysiwyg' });
       continue;
     }
     const span = svg.ownerDocument.createElement('span');
