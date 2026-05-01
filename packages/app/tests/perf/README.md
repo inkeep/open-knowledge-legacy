@@ -126,7 +126,7 @@ Rules of the road:
     "commitSha": "e86a0505",
     "capturedAt": "2026-04-19T04:04:45.123Z",
     "targetUrl": "http://localhost:5173",
-    "headed": true,
+    "headed": false,
     "viewport": { "width": 1440, "height": 900 }
   },
   "wallClockMs": 20214.32,
