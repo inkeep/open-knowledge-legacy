@@ -219,8 +219,12 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
 
     isDirExcluded(relativePath: string): boolean {
       // Fast-path: built-in skips are always excluded regardless of ignore-file config.
-      const topSegment = relativePath.split('/')[0];
-      if (BUILTIN_SKIP_DIRS.has(topSegment)) return true;
+      // Check ALL path segments, not just the top — handles nested `.ok/` (per-folder
+      // metadata directories), nested `node_modules/`, nested `dist/`, etc.
+      // (FR-CF1, spec 2026-05-01-folder-level-metadata-and-templates)
+      for (const segment of relativePath.split('/')) {
+        if (BUILTIN_SKIP_DIRS.has(segment)) return true;
+      }
       if (contentOutsideProject) return false;
       const projectRelPath = contentRelPrefix
         ? `${contentRelPrefix}/${relativePath}`
