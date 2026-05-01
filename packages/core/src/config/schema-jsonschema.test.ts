@@ -76,17 +76,9 @@ const FIXTURES: Fixture[] = [
     input: { mcp: { tools: { search: { maxResults: 0 } } } },
     shouldAccept: false,
   },
-  { name: 'folders array empty', input: { folders: [] }, shouldAccept: true },
-  {
-    name: 'folders rule with all frontmatter',
-    input: { folders: [{ match: 'specs/**', frontmatter: { title: 'Specs' } }] },
-    shouldAccept: true,
-  },
-  {
-    name: 'folders rule empty match rejected',
-    input: { folders: [{ match: '', frontmatter: { title: 'X' } }] },
-    shouldAccept: false,
-  },
+  // `folders` removed from ConfigSchema in spec
+  // 2026-05-01-folder-level-metadata-and-templates (FR8). Folder defaults
+  // live in nested `<folder>/.ok/frontmatter.yml` files now.
   {
     name: 'unknown top-level key passes (looseObject)',
     input: { future_feature: { enabled: true } },

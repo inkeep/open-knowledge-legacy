@@ -27,7 +27,8 @@ interface RegisteredTool {
   name: string;
   handler: (args: {
     docName: string;
-    markdown: string;
+    markdown?: string;
+    template?: string;
     position: 'append' | 'prepend' | 'replace';
   }) => Promise<ToolResult>;
 }
@@ -57,6 +58,10 @@ let testServer: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
 let mockSubscriberCount: number | undefined = 1;
 let mockSystemSubscriberCount: number | undefined = 1;
+// Captured request body of the most recent /api/agent-write-md call.
+// Tests can read it after calling the handler to verify the payload sent
+// downstream — particularly useful for FR5 template instantiation.
+let lastWriteRequest: Record<string, unknown> | undefined;
 
 beforeAll(() => {
   testServer = Bun.serve({
@@ -64,7 +69,7 @@ beforeAll(() => {
     async fetch(req) {
       const url = new URL(req.url);
       if (url.pathname === '/api/agent-write-md') {
-        await req.json();
+        lastWriteRequest = (await req.json()) as Record<string, unknown>;
         return Response.json({
           ok: true,
           timestamp: '2026-04-15T00:00:00.000Z',
@@ -93,6 +98,7 @@ beforeEach(async () => {
   delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
   mockSubscriberCount = 1;
   mockSystemSubscriberCount = 1;
+  lastWriteRequest = undefined;
 });
 
 afterEach(async () => {
@@ -242,5 +248,112 @@ describe('write_document — previewUrl emission', () => {
       previewUrl: 'https://x.example/#/docs/test',
       previewUrlSource: 'env',
     });
+  });
+});
+
+describe('write_document — template instantiation (FR5)', () => {
+  test('instantiates from a local template — markdown payload is template body', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(resolve(tmpDir, 'meetings', '.ok', 'templates'), { recursive: true });
+    const templateContent =
+      '---\ntitle: Meeting Prep\ndescription: Use before a meeting.\ntags: [meeting, prep]\n---\n# {Meeting Title}\n\n**Attendees:** \n';
+    await writeFile(
+      resolve(tmpDir, 'meetings', '.ok', 'templates', 'prep-notes.md'),
+      templateContent,
+    );
+
+    const fakeServer = createFakeServer();
+    register(fakeServer.server, makeDeps());
+
+    const result = await fakeServer.getTool().handler({
+      docName: 'meetings/2026-05-01-foo',
+      template: 'prep-notes',
+      position: 'replace',
+    } as Parameters<RegisteredTool['handler']>[0]);
+
+    expect(result.isError).toBeUndefined();
+    expect(lastWriteRequest).toBeDefined();
+    expect(lastWriteRequest?.markdown).toBe(templateContent);
+    expect(lastWriteRequest?.position).toBe('replace');
+    expect(lastWriteRequest?.docName).toBe('meetings/2026-05-01-foo');
+  });
+
+  test('inherits template from ancestor folder (walk-up)', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(resolve(tmpDir, 'meetings', '.ok', 'templates'), { recursive: true });
+    const templateContent = '---\ntitle: Inherited\n---\nbody\n';
+    await writeFile(resolve(tmpDir, 'meetings', '.ok', 'templates', 'shared.md'), templateContent);
+
+    const fakeServer = createFakeServer();
+    register(fakeServer.server, makeDeps());
+
+    const result = await fakeServer.getTool().handler({
+      docName: 'meetings/prep-notes/foo',
+      template: 'shared',
+      position: 'replace',
+    } as Parameters<RegisteredTool['handler']>[0]);
+
+    expect(result.isError).toBeUndefined();
+    expect(lastWriteRequest?.markdown).toBe(templateContent);
+  });
+
+  test('rejects unknown template name with helpful menu', async () => {
+    const fakeServer = createFakeServer();
+    register(fakeServer.server, makeDeps());
+
+    const result = await fakeServer.getTool().handler({
+      docName: 'meetings/foo',
+      template: 'nonexistent',
+      position: 'replace',
+    } as Parameters<RegisteredTool['handler']>[0]);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('not found');
+    expect(lastWriteRequest).toBeUndefined();
+  });
+
+  test('rejects descendant-scoped template at parent folder', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    // Template lives in meetings/prep-notes/.ok/templates/. Creating a doc
+    // at meetings/foo (parent) must reject — agent should pick a
+    // local/inherited template instead.
+    await mkdir(resolve(tmpDir, 'meetings', 'prep-notes', '.ok', 'templates'), {
+      recursive: true,
+    });
+    await writeFile(
+      resolve(tmpDir, 'meetings', 'prep-notes', '.ok', 'templates', 'agenda.md'),
+      '---\ntitle: Agenda\n---\nb\n',
+    );
+
+    const fakeServer = createFakeServer();
+    register(fakeServer.server, makeDeps());
+
+    // depth=1 from meetings/ wouldn't even surface this template, so this
+    // test confirms the not-found path. To explicitly test descendant
+    // rejection we'd need depth>1 enrichment surfaced; the not-found
+    // outcome is the expected behavior at parent-folder targets.
+    const result = await fakeServer.getTool().handler({
+      docName: 'meetings/foo',
+      template: 'agenda',
+      position: 'replace',
+    } as Parameters<RegisteredTool['handler']>[0]);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('not found');
+  });
+
+  test('without template arg, behavior unchanged (markdown passes through)', async () => {
+    const fakeServer = createFakeServer();
+    register(fakeServer.server, makeDeps());
+
+    const result = await fakeServer.getTool().handler({
+      docName: 'foo',
+      markdown: 'plain content',
+      position: 'append',
+    } as Parameters<RegisteredTool['handler']>[0]);
+
+    expect(result.isError).toBeUndefined();
+    expect(lastWriteRequest?.markdown).toBe('plain content');
+    expect(lastWriteRequest?.position).toBe('append');
   });
 });

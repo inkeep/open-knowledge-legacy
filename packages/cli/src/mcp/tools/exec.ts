@@ -489,16 +489,22 @@ export async function buildExecResult(
   const capped = applySoftCap(stdout);
 
   // 6. Extract referenced wiki paths + enrich
-  const paths = extractReferencedPaths(stdout, stages);
+  // FR13 (spec 2026-05-01-folder-level-metadata-and-templates): drop any
+  // path that traverses a `.ok/` directory at any depth. Their CONTENTS
+  // (folder metadata + templates) surface as structured fields on the
+  // parent folder's enriched record, not as directory entries.
+  const paths = extractReferencedPaths(stdout, stages).filter((p) => !p.split('/').includes('.ok'));
   const { files, dirs } = await classifyPaths(cwd, paths);
   // Single-path cat enrichment gets rich fields; all others get slim.
   const isSinglePathCat = stages.length === 1 && stages[0].command === 'cat' && files.length === 1;
-  const folderRules = config.folders;
+  // Folder defaults moved to nested `<folder>/.ok/frontmatter.yml` files
+  // (FR8 / D1 in spec 2026-05-01-folder-level-metadata-and-templates).
+  // The cascade is resolved inside enrichPath via `resolveNestedFrontmatter`.
   const fileEnriched: EnrichedMeta[] = await Promise.all(
     files.map((p) =>
       enrichPath(
         p,
-        { projectDir: cwd, serverUrl: resolvedServerUrl, folderRules },
+        { projectDir: cwd, serverUrl: resolvedServerUrl },
         {
           includeRichFields: isSinglePathCat,
         },
@@ -520,7 +526,7 @@ export async function buildExecResult(
   );
   const dirEnriched: DirectoryMeta[] = await Promise.all(
     dirs.map((p) =>
-      enrichDirectory(p, { projectDir: cwd, folderRules }).catch(
+      enrichDirectory(p, { projectDir: cwd }).catch(
         (): DirectoryMeta => ({
           path: p,
           type: 'directory',

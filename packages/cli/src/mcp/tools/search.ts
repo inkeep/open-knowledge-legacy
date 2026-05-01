@@ -161,15 +161,15 @@ export async function buildSearchResult(
   // Per-file enrichment via shared helper (D4/D13). Slim shape per FR14 —
   // no history, no backlinkCount, to avoid N-amplification on multi-file
   // search output.
+  // FR8: folders[] removed from schema; folder cascade lives in nested
+  // <folder>/.ok/frontmatter.yml resolved inside enrichPath.
   const metaByPath = new Map<string, EnrichedMeta>();
-  const folderRules = config.folders;
   await Promise.all(
     groups.map(async (g) => {
       try {
         const meta = await enrichPath(g.path, {
           projectDir: cwd,
           serverUrl: resolvedServerUrl,
-          folderRules,
         });
         metaByPath.set(g.path, meta);
       } catch {

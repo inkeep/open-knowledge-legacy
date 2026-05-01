@@ -141,7 +141,8 @@ export async function buildReadResult(
         projectDir: cwd,
         serverUrl: resolvedServerUrl,
         historyDepth,
-        folderRules: config.folders,
+        // FR8: folders[] removed; folder cascade lives in nested
+        // <folder>/.ok/frontmatter.yml resolved inside enrichPath.
       },
       { includeRichFields: true },
     ),

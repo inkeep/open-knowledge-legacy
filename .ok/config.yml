@@ -29,62 +29,7 @@
 
 # --- Folders: per-folder frontmatter defaults -------------------------------
 #
-# TL;DR glob gotcha: `**` is ONLY a multi-segment wildcard when it is a
-# standalone path segment. `foo-**` behaves like `foo-*` (single segment, NOT
-# descendants). Use `foo/**` or `foo-*/**` to match descendants.
-#
-# Rules apply in declaration order (general first, specific last).
-# Scalars: last-match wins. Tags: concat across all matching rules + file
-# tags last, first-occurrence preserved on dedup. File frontmatter wins
-# per-scalar.
-folders:
-  - match: "specs/**"
-    frontmatter:
-      title: Specifications
-      description: Product + technical specs — scoping, decisions, and implementation plans.
-      tags: [ spec ]
-
-  - match: "reports/**"
-    frontmatter:
-      title: Research Reports
-      description: Prior-art research on tech stack, architecture, competitive
-        landscape, and related topics.
-      tags: [ report ]
-
-  - match: "stories/**"
-    frontmatter:
-      title: User Stories
-      description: Story-level breakdowns of in-flight work — SCR framing and
-        acceptance criteria.
-      tags: [ story ]
-
-  - match: "projects/**"
-    frontmatter:
-      title: Projects
-      description: Strategic bets — shaped product directions decomposed into
-        spec-able work.
-      tags: [ project ]
-
-  - match: "tech-probes/**"
-    frontmatter:
-      title: Tech Probes
-      description: Small technical experiments that ground architectural decisions
-        with real data.
-      tags: [ probe ]
-
-  # Per-subtree overrides — showcase the last-match semantics.
-  - match: "specs/*/evidence/**"
-    frontmatter:
-      description: Spec-local evidence — code traces, dependency checks, captured prior art.
-      tags: [ evidence ]
-
-  - match: "specs/*/meta/**"
-    frontmatter:
-      description: Spec metadata — session changelog, audit findings, design-challenge
-        trail.
-      tags: [ meta ]
-
-  - match: "reports/*/evidence/**"
-    frontmatter:
-      description: Report evidence — primary-source snippets and citations.
-      tags: [ evidence ]
+# Folder defaults now live in nested `<folder>/.ok/frontmatter.yml` files —
+# sparse, opt-in, lazy-create, auto-clean. Edit via the `set_folder_rule`
+# MCP tool or by hand. Spec:
+# specs/2026-05-01-folder-level-metadata-and-templates/SPEC.md (D1, FR8)

@@ -220,6 +220,32 @@ describe('ContentFilter', () => {
       expect(filter.isDirExcluded('src')).toBe(false);
     });
 
+    test('excludes BUILTIN_SKIP_DIRS at any path depth, not just top segment (FR-CF1)', () => {
+      // Per spec 2026-05-01-folder-level-metadata-and-templates §10: nested `.ok/`
+      // directories carry per-folder metadata + templates. Without this fix, a
+      // path like `meetings/.ok/templates/foo.md` slipped past `isDirExcluded`
+      // (topSegment was `meetings`, not in BUILTIN_SKIP_DIRS) and got indexed as
+      // ordinary content. Collateral fix for nested node_modules/, dist/, etc.
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      // Nested .ok/ — the case the spec explicitly motivates
+      expect(filter.isDirExcluded('meetings/.ok')).toBe(true);
+      expect(filter.isDirExcluded('meetings/.ok/templates')).toBe(true);
+      expect(filter.isDirExcluded('a/b/c/.ok/d')).toBe(true);
+
+      // Nested node_modules/ — latent bug fixed as collateral
+      expect(filter.isDirExcluded('packages/foo/node_modules')).toBe(true);
+      expect(filter.isDirExcluded('packages/foo/node_modules/bar')).toBe(true);
+
+      // Nested build outputs
+      expect(filter.isDirExcluded('apps/web/dist')).toBe(true);
+      expect(filter.isDirExcluded('apps/web/.next/cache')).toBe(true);
+
+      // Sanity: paths with NO skip segment are still allowed
+      expect(filter.isDirExcluded('meetings/prep-notes')).toBe(false);
+      expect(filter.isDirExcluded('a/b/c')).toBe(false);
+    });
+
     test('does not descend into node_modules during populateDirCount even with a symlink inside', () => {
       // Create a node_modules dir with a broken symlink (simulates pnpm layout)
       const nmDir = join(projectDir, 'node_modules');

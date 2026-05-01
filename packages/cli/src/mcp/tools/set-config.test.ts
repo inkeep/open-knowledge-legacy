@@ -148,36 +148,6 @@ describe('set_config — happy paths', () => {
     expect(userYaml).toContain('maxResults: 100');
   });
 
-  test('writes folders[] (project defaultScope)', async () => {
-    const project = newProjectWithHome();
-    const handler = captureHandler(project);
-    const result = await handler({
-      patch: {
-        folders: [{ match: 'specs/**', frontmatter: { description: 'Specs' } }],
-      },
-    });
-    expect(result.isError).toBeUndefined();
-    const success = result.structuredContent?.result as {
-      ok: boolean;
-      scope: string;
-    };
-    expect(success.scope).toBe('project');
-    expect(readWorkspaceYaml(project.cwd)).toContain('match: specs/**');
-  });
-
-  test('writes folders[] (project defaultScope, alternative path)', async () => {
-    const project = newProjectWithHome();
-    const handler = captureHandler(project);
-    const result = await handler({
-      patch: {
-        folders: [{ match: 'docs/**', frontmatter: { description: 'Docs' } }],
-      },
-    });
-    expect(result.isError).toBeUndefined();
-    const success = result.structuredContent?.result as { scope: string };
-    expect(success.scope).toBe('project');
-  });
-
   test('routes to project when path is already set in project YAML (scope-inference ladder)', async () => {
     const project = newProjectWithHome();
     // Pre-seed mcp.tools.search.maxResults in project YAML so the inspect
@@ -221,42 +191,6 @@ describe('set_config — error paths', () => {
     };
     expect(payload.error.code).toBe('NOT_AGENT_SETTABLE');
     expect(payload.error.path).toEqual(['github', 'oauthAppClientId']);
-  });
-
-  test('rejects MIXED_SCOPE when leaves resolve to different scopes', async () => {
-    // Pre-seed mcp.tools.search.maxResults in user YAML and folders[] in
-    // project YAML so the inspect ladder reports
-    // `mcp.tools.search.maxResults` → user, `folders` → project.
-    const project = newProjectWithHome();
-    writeFileSync(
-      join(project.home, '.ok', 'config.yml'),
-      'mcp:\n  tools:\n    search:\n      maxResults: 75\n',
-    );
-    writeFileSync(
-      join(project.cwd, '.ok', 'config.yml'),
-      'folders:\n  - match: specs/**\n    frontmatter:\n      description: Specs\n',
-    );
-    const handler = captureHandler(project);
-    const result = await handler({
-      patch: {
-        mcp: { tools: { search: { maxResults: 200 } } },
-        folders: [{ match: 'docs/**', frontmatter: { description: 'Docs' } }],
-      },
-    });
-    expect(result.isError).toBe(true);
-    const payload = result.structuredContent?.result as {
-      ok: boolean;
-      error: { code: string; paths: Array<{ path: string[]; scope: string }> };
-    };
-    expect(payload.error.code).toBe('MIXED_SCOPE');
-    expect(payload.error.paths).toContainEqual({
-      path: ['mcp', 'tools', 'search', 'maxResults'],
-      scope: 'user',
-    });
-    expect(payload.error.paths).toContainEqual({
-      path: ['folders'],
-      scope: 'project',
-    });
   });
 
   test('rejects schema-invalid leaf value with SCHEMA_INVALID + structured issues', async () => {

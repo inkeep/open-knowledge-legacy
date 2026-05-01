@@ -83,14 +83,13 @@ export const ConfigSchema = z.looseObject({
         .optional(),
     })
     .default({}),
-  folders: z
-    .array(FolderRuleSchema)
-    .register(fieldRegistry, {
-      scope: 'either',
-      agentSettable: true,
-      defaultScope: 'project',
-    })
-    .default([]),
+  // `folders` was removed in spec 2026-05-01-folder-level-metadata-and-templates
+  // (FR8 / D1). Folder defaults now live in nested `<folder>/.ok/frontmatter.yml`
+  // files — sparse, opt-in, lazy-create. Edit via the `set_folder_rule` MCP
+  // tool or by hand. The `FolderRuleSchema` + `FolderFrontmatterSchema` exports
+  // above stay in place for the helpers in `set_folder_rule` and any external
+  // tooling that constructs folder-rule shapes; they no longer correspond to
+  // a top-level config field.
   mcp: z
     .looseObject({
       autoStart: z

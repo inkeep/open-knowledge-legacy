@@ -46,11 +46,12 @@ describe('bindConfigDoc — current()', () => {
   test('empty Y.Text returns schema defaults', () => {
     const binding = bindConfigDoc(provider, 'project');
     const config = binding.current();
-    // Defaults always include content/server/mcp/folders sections.
+    // Defaults always include content/server/mcp sections. `folders` was
+    // removed in FR8 of spec 2026-05-01-folder-level-metadata-and-templates;
+    // folder defaults live in nested <folder>/.ok/frontmatter.yml files.
     expect(config.content).toBeDefined();
     expect(config.server).toBeDefined();
     expect(config.mcp).toBeDefined();
-    expect(config.folders).toEqual([]);
     binding.dispose();
   });
 

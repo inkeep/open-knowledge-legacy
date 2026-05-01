@@ -124,89 +124,12 @@ describe('ConfigSchema', () => {
     expect(config.preview?.baseUrl).toBeUndefined();
   });
 
-  test('folders omitted parses to empty array default', () => {
-    const config = ConfigSchema.parse({});
-    expect(config.folders).toEqual([]);
-  });
-
-  test('valid folders rule with all frontmatter fields parses', () => {
-    const config = ConfigSchema.parse({
-      folders: [
-        {
-          match: 'specs/**',
-          frontmatter: {
-            title: 'Specs',
-            description: 'Specification docs',
-            tags: ['spec', 'doc'],
-          },
-        },
-      ],
-    });
-    expect(config.folders).toHaveLength(1);
-    expect(config.folders[0]).toEqual({
-      match: 'specs/**',
-      frontmatter: {
-        title: 'Specs',
-        description: 'Specification docs',
-        tags: ['spec', 'doc'],
-      },
-    });
-  });
-
-  test('folders rule with only some frontmatter fields parses', () => {
-    const config = ConfigSchema.parse({
-      folders: [{ match: 'specs/**', frontmatter: { title: 'Specs' } }],
-    });
-    expect(config.folders[0].frontmatter.title).toBe('Specs');
-    expect(config.folders[0].frontmatter.description).toBeUndefined();
-    expect(config.folders[0].frontmatter.tags).toBeUndefined();
-  });
-
-  test('folders rule with unknown frontmatter field passes (loose-mode per D34)', () => {
-    // Per D34 every z.object → z.looseObject. Unknown keys pass through and
-    // (when round-tripped via yaml@2 Document layer) are preserved on disk.
-    // Round-trip preservation is verified in `applyFolderRulesUpsert` tests.
-    const result = ConfigSchema.safeParse({
-      folders: [
-        {
-          match: 'specs/**',
-          frontmatter: { title: 'Specs', icon: 'book' },
-        },
-      ],
-    });
-    expect(result.success).toBe(true);
-  });
-
-  test('folders rule with unknown top-level field passes (loose-mode per D34)', () => {
-    const result = ConfigSchema.safeParse({
-      folders: [
-        {
-          match: 'specs/**',
-          frontmatter: { title: 'Specs' },
-          extra: 'nope',
-        },
-      ],
-    });
-    expect(result.success).toBe(true);
-  });
-
-  test('folders rule with empty match string fails', () => {
-    const result = ConfigSchema.safeParse({
-      folders: [{ match: '', frontmatter: { title: 'Specs' } }],
-    });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const paths = result.error.issues.map((i) => i.path.join('.'));
-      expect(paths.some((p) => p.includes('match'))).toBe(true);
-    }
-  });
-
-  test('folders rule missing frontmatter field fails', () => {
-    const result = ConfigSchema.safeParse({
-      folders: [{ match: 'specs/**' }],
-    });
-    expect(result.success).toBe(false);
-  });
+  // `folders` was removed from ConfigSchema in spec
+  // 2026-05-01-folder-level-metadata-and-templates (FR8). Folder defaults
+  // live in nested `<folder>/.ok/frontmatter.yml` files; FolderRuleSchema
+  // + FolderFrontmatterSchema exports remain for set_folder_rule's helper
+  // shapes, but they no longer correspond to a top-level config field.
+  // Loose-mode behavior on unknown top-level keys is covered separately.
 });
 
 describe('ConfigSchema (upload surface removed per 2026-04-24 amendment)', () => {

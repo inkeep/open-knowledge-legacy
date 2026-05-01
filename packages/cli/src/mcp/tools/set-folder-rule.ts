@@ -1,30 +1,34 @@
 /**
- * `set_folder_rule` MCP tool — fs-direct upsert into `folders[]`.
+ * `set_folder_rule` MCP tool — fs-direct upsert into nested
+ * `<folder>/.ok/frontmatter.yml` files.
  *
- * Thin wrapper around `applyFolderRulesUpsert` from
- * `@inkeep/open-knowledge-core`. Always-array shape (even N=1): agents pass
- * `{rules: [{...}]}` for one rule and `{rules: [{...}, {...}]}` for multiple.
- * The same primitive backs the future right-click-folder UX for batch +
- * single-rule edits.
+ * Always-array shape (even N=1): agents pass `{rules: [{...}]}` for one
+ * rule and `{rules: [{...}, {...}]}` for multiple. The same primitive
+ * backs the future right-click-folder UX for batch + single-rule edits.
  *
- * Transactional all-or-nothing: validation runs against the merged config;
- * if any rule fails, NO writes happen — `writeConfigPatch`'s atomic
- * tmp+rename + Zod safeParse give transactional semantics for free.
+ * Resolution: each rule's `match` glob is reduced to a single target
+ * folder by walking leading literal segments. Globs (`*`, `**`) are
+ * accepted at the trailing position; literal segments after a glob (e.g.
+ * `specs/[STAR]/evidence/**`) resolve to multiple folders and are
+ * rejected with `MULTI_FOLDER_GLOB`. Agents split such cases into
+ * one rule per folder.
  *
- * Removal goes through `set_config({patch: {folders: [<filtered>]}})` —
- * read-modify-write is fine for the rare removal case.
+ * Transactional all-or-nothing: every rule is validated first; only
+ * commits to disk once all resolve cleanly.
+ *
+ * Removal: pass an empty `frontmatter: {}` (or omit fields entirely) —
+ * the merge collapses, the file is deleted, and `<folder>/.ok/` is
+ * auto-cleaned per D3 if empty (templates/ may keep it alive).
  *
  * Works without a running OK server (resolves cwd via
  * `resolveProjectConfigContext`, NOT `resolveProjectServerContext`).
+ *
+ * Spec: 2026-05-01-folder-level-metadata-and-templates §6.1, FR6, D11.
  */
 
-import {
-  ConfigValidationErrorSchema,
-  FolderFrontmatterSchema,
-  humanFormat,
-} from '@inkeep/open-knowledge-core';
-import { applyFolderRulesUpsert } from '@inkeep/open-knowledge-core/server';
+import { FolderFrontmatterSchema } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
+import { applyNestedFolderRulesUpsert } from '../../content/folder-rule-write.ts';
 import type { ConfigOrResolver, ServerInstance } from './shared.ts';
 import {
   ROUTED_CWD_DESCRIPTION,
@@ -33,47 +37,46 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  '[Operates on disk; no running OK server required] Upsert one or more folder rules in the project `folders[]` array.',
+  '[Operates on disk; no running OK server required] Upsert one or more folder rules — writes nested `<folder>/.ok/frontmatter.yml` files.',
   '',
-  'Folder rules apply default frontmatter (title / description / tags) to every doc whose path matches `match` (a glob like `specs/**` or `reports/*/**`). Use this tool to add a new rule, replace an existing one keyed by `match`, or rename via `new_match`.',
+  'Folder rules apply default frontmatter (title / description / tags) to every doc inside `<folder>/` (and its descendants via cascade). Use this tool to add a new rule, replace an existing one keyed by `match`, or rename via `new_match`.',
   '',
-  'Always pass an array — even for a single rule. The tool runs all rules transactionally: if any rule produces an invalid merged config, NO rules are applied to disk.',
+  'Each `match` glob must resolve to a SINGLE target folder by walking leading literal segments — `"specs/**"` writes `specs/.ok/frontmatter.yml`. Multi-folder globs (e.g. `"specs/*/evidence/**"`, where the literal `evidence` follows `*`) are rejected with `MULTI_FOLDER_GLOB`; split into per-folder rules instead.',
   '',
-  '**To remove a rule**, use `set_config({patch: {folders: [<filtered-array>]}})` — read folders via `get_config({path: ["folders"]})`, drop the entry, then write back.',
+  'Always pass an array — even for a single rule. Validation runs against every rule first; if any fails, NO rules are applied to disk.',
+  '',
+  '**To remove a rule**, pass an empty `frontmatter: {}` (or with only undefined values) — the merge collapses, the file is deleted, and `<folder>/.ok/` is auto-cleaned if no other tenant remains.',
   '',
   '**Parameters:**',
   '- `rules` — Array of `{match, frontmatter, new_match?}`.',
-  '  - `match` — Glob pattern that identifies the rule (e.g. `"specs/**"`). Required.',
-  '  - `frontmatter` — `{title?, description?, tags?: string[]}` to apply. Required (use `{}` for "match the rule but apply no frontmatter").',
-  '  - `new_match` — If set, rename the rule keyed by `match` to this glob. If both already exist, the rename target is overwritten.',
+  '  - `match` — Glob pattern that identifies the target folder (e.g. `"specs/**"`, `"meetings/prep-notes/**"`). Required.',
+  '  - `frontmatter` — `{title?, description?, tags?: string[]}` to apply.',
+  "  - `new_match` — If set, move the rule from `match` to this new glob (deletes the old folder's frontmatter.yml + auto-cleans).",
   '- `cwd` (optional) — Project root.',
 ].join('\n');
 
 interface SetFolderRuleDeps {
   resolveCwd: (explicit?: string) => Promise<string>;
   config: ConfigOrResolver;
-  /**
-   * Test-only: overrides `os.homedir()` for any user-scope write target.
-   * Production callers omit this. (set_folder_rule writes project by
-   * default, but the deps surface stays consistent across the three
-   * config tools.)
-   */
-  homedirOverride?: string;
 }
 
 const FolderRuleUpsertInputSchema = z.object({
   match: z
     .string()
     .min(1)
-    .describe('Glob pattern (e.g. "specs/**", "reports/*/**") that identifies the rule.'),
+    .describe(
+      'Glob pattern (e.g. "specs/**", "meetings/prep-notes/**") that identifies the target folder.',
+    ),
   frontmatter: FolderFrontmatterSchema.describe(
-    'Default frontmatter to apply to matched docs: `{title?, description?, tags?: string[]}`.',
+    'Default frontmatter to apply to matched docs: `{title?, description?, tags?: string[]}`. Empty object removes the folder rule (auto-cleans `.ok/` if empty).',
   ),
   new_match: z
     .string()
     .min(1)
     .optional()
-    .describe('If set, rename the existing rule keyed by `match` to this new glob.'),
+    .describe(
+      "If set, move the rule from `match` to this new folder (deletes the old folder's frontmatter.yml + auto-cleans).",
+    ),
 });
 
 const InputSchema = {
@@ -86,17 +89,24 @@ const InputSchema = {
   cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
 } as const;
 
+const AppliedEntrySchema = z.object({
+  match: z.string(),
+  path: z.string(),
+  action: z.enum(['written', 'deleted']),
+});
+
 const SuccessOutputSchema = z.object({
   ok: z.literal(true),
-  applied: z.array(z.string()),
-  scope: z.literal('project'),
-  path: z.string(),
-  current: z.record(z.string(), z.unknown()),
+  applied: z.array(AppliedEntrySchema),
 });
 
 const ErrorOutputSchema = z.object({
   ok: z.literal(false),
-  error: ConfigValidationErrorSchema,
+  error: z.object({
+    code: z.enum(['MULTI_FOLDER_GLOB', 'PATH_ESCAPE', 'BAD_PROJECT_DIR', 'WRITE_ERROR']),
+    message: z.string(),
+    rule: z.string().optional(),
+  }),
 });
 
 const OutputSchema = {
@@ -117,7 +127,11 @@ export function register(server: ServerInstance, deps: SetFolderRuleDeps): void 
       },
     },
     async (args: {
-      rules: Array<{ match: string; frontmatter: Record<string, unknown>; new_match?: string }>;
+      rules: Array<{
+        match: string;
+        frontmatter: Record<string, unknown>;
+        new_match?: string;
+      }>;
       cwd?: string;
     }) => {
       const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
@@ -129,44 +143,44 @@ export function register(server: ServerInstance, deps: SetFolderRuleDeps): void 
       }
       const { cwd } = context;
 
-      const result = await applyFolderRulesUpsert({
-        cwd,
-        rules: args.rules.map((r) => ({
-          match: r.match,
-          frontmatter: r.frontmatter,
-          ...(r.new_match !== undefined ? { new_match: r.new_match } : {}),
-        })),
-        scope: 'project',
-        ...(deps.homedirOverride !== undefined ? { homedirOverride: deps.homedirOverride } : {}),
+      const result = applyNestedFolderRulesUpsert({
+        projectDir: cwd,
+        rules: args.rules.map((r) => {
+          const fm = r.frontmatter ?? {};
+          const out: {
+            match: string;
+            frontmatter: { title?: string; description?: string; tags?: string[] };
+            new_match?: string;
+          } = {
+            match: r.match,
+            frontmatter: {
+              ...(typeof fm.title === 'string' ? { title: fm.title } : {}),
+              ...(typeof fm.description === 'string' ? { description: fm.description } : {}),
+              ...(Array.isArray(fm.tags)
+                ? { tags: fm.tags.filter((t): t is string => typeof t === 'string') }
+                : {}),
+            },
+          };
+          if (r.new_match !== undefined) out.new_match = r.new_match;
+          return out;
+        }),
       });
 
       if (!result.ok) {
-        const payload = { result: { ok: false as const, error: result.error } };
+        const payload = { result };
         return {
           isError: true,
           structuredContent: payload,
           content: [
             {
               type: 'text' as const,
-              text: `${humanFormat(result.error)}\n\nPlease fix and try again.`,
+              text: `${result.error.code}: ${result.error.message}`,
             },
           ],
         };
       }
 
-      const success = {
-        result: {
-          ok: true as const,
-          applied: result.appliedPaths,
-          scope: 'project' as const,
-          path: result.path,
-          // Mirror set_config's shape: agents inspect the merged effective
-          // config (here, the post-upsert `folders[]` array among other
-          // fields) without a follow-up get_config roundtrip.
-          current: result.effective as unknown as Record<string, unknown>,
-        },
-      };
-      return textPlusStructured(JSON.stringify(success.result, null, 2), success);
+      return textPlusStructured(JSON.stringify(result, null, 2), { result });
     },
   );
 }
