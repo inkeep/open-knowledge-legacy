@@ -15,6 +15,7 @@ import {
   Loader2,
   Pencil,
   Trash2,
+  Unlink2,
 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
@@ -460,8 +461,12 @@ export function InternalLinkPropPanel({
             Edit
           </Button>
           <Button size="sm" variant="destructive" onClick={handleRemove}>
-            <Trash2 className="size-3.5" aria-hidden="true" />
-            Remove
+            {isUnresolved ? (
+              <Unlink2 className="size-3.5" aria-hidden="true" />
+            ) : (
+              <Trash2 className="size-3.5" aria-hidden="true" />
+            )}
+            {isUnresolved ? 'Unlink' : 'Remove'}
           </Button>
         </div>
       </InteractionPropPanel>
