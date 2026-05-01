@@ -109,7 +109,8 @@ export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardin
             <li>Pulls may overwrite uncommitted local file changes.</li>
             <li>Requires GitHub authentication.</li>
             <li>
-              Intended for developer workflows — content-only users may prefer leaving this off.
+              If you do not want automatic commits in your git history, you should not enable
+              auto-sync.
             </li>
           </ul>
         </DialogBody>
