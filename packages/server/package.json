@@ -52,7 +52,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "bun --conditions=development test"
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",

@@ -182,6 +182,12 @@ export {
 export { MarkdownManager } from './markdown/index.ts';
 export { markdownToHtml, mdastToHtml } from './markdown/mdast-to-html.ts';
 export {
+  isRelativeUrl,
+  isSafeUrl,
+  SAFE_URL_SCHEME_RE,
+  SAFE_URL_SCHEMES,
+} from './markdown/safe-url.ts';
+export {
   getParseHealth,
   incrementBlockFallback,
   incrementJsxAutoConvertFailed,
@@ -205,6 +211,7 @@ export {
   wildcardMeta,
 } from './registry/index.ts';
 export type {
+  ClipboardHastContext,
   JsxComponentMeta,
   PropDef,
   PropDefBase,

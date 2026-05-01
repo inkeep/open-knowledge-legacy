@@ -32,16 +32,21 @@ export const RawMdxFallback = Node.create({
   },
 
   parseHTML() {
+    // Two parseDOM matchers (additive per precedent #9):
+    //   1. `div[data-raw-mdx-fallback]` — the in-app NodeView shape.
+    //   2. `pre[data-raw-mdx-fallback]` — the outbound clipboard hast shape
+    //      emitted by `rawMdxFallbackHandler`. Without this, OK→OK Branch C
+    //      paste round-trip cannot reconstruct the rawMdxFallback node and
+    //      the bytes degrade to a generic `<pre>` (codeBlock).
+    const getAttrs = (node: HTMLElement | string) => {
+      if (typeof node === 'string') return false;
+      return {
+        reason: node.getAttribute('data-reason') || '',
+      };
+    };
     return [
-      {
-        tag: 'div[data-raw-mdx-fallback]',
-        getAttrs: (node) => {
-          if (typeof node === 'string') return false;
-          return {
-            reason: node.getAttribute('data-reason') || '',
-          };
-        },
-      },
+      { tag: 'div[data-raw-mdx-fallback]', getAttrs },
+      { tag: 'pre[data-raw-mdx-fallback]', getAttrs },
     ];
   },
 
