@@ -91,15 +91,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-turbo-${{ matrix.task }}-
       - run: bun install --frozen-lockfile
-      # `--no-daemon` because turbo's daemon has historically held the foreground
-      # process open after all tasks finish on ubuntu-latest (vercel/turbo#5908,
-      # #7382). Combined with bun's own `child_process.spawn(...).kill()`
-      # unreliability (oven-sh/bun#11892), the CI test job has hung for the full
-      # 15-minute budget after `Ran N tests across M files. 0 fail` printed. The
-      # per-package wrappers in `packages/{server,cli}/scripts/run-tests.mjs`
-      # take care of bun's post-summary event-loop hangs; --no-daemon takes
-      # turbo's daemon path out of the loop on top of that.
-      - run: bunx turbo run ${{ matrix.task }} --no-daemon
+      # We invoke turbo via `node` (not `bunx`) on purpose. The `test (test)`
+      # job has hung the full 15-minute budget after the server package's
+      # `Ran N tests across M files. 0 fail` line printed. Forensics (job
+      # 73885833714) showed orphans `bunx`, `MainThread`, `turbo`, and two
+      # `bun`s — turbo's task summary never reached the log. With turbo's
+      # `--no-daemon` already eliminating the daemon path, the remaining
+      # candidate is `bunx`'s process tracking against bun's known
+      # `child_process.kill()` unreliability on ubuntu-latest
+      # (oven-sh/bun#11892). Running turbo from Node takes bunx out of the
+      # outer chain entirely; the per-package wrappers in
+      # `packages/{server,cli}/scripts/run-tests.mjs` already absorb bun's
+      # post-summary event-loop hangs at the inner edge.
+      - run: node ./node_modules/.bin/turbo run ${{ matrix.task }} --no-daemon
 
   playwright:
     # Shared large runner (16+ vCPU / 64 GB RAM) — the 2-vCPU `ubuntu-latest`

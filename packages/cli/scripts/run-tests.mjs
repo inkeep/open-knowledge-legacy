@@ -79,6 +79,7 @@ const finalize = (code) => {
   if (postSummaryTimer !== undefined) clearTimeout(postSummaryTimer);
   if (hardTimer !== undefined) clearTimeout(hardTimer);
   killTree('SIGKILL');
+  log(`[run-tests] FINALIZE exit=${code} pid=${process.pid} childPid=${child.pid ?? 'none'}`);
   process.exit(code);
 };
 
@@ -122,11 +123,13 @@ child.stderr.on('data', (chunk) => pipeAndInspect(chunk, process.stderr));
 
 child.on('exit', (code, signal) => {
   if (lineBuffer.length > 0) inspectLine(lineBuffer);
+  log(
+    `[run-tests] bun child exited code=${code} signal=${signal ?? 'none'} sawRan=${sawRanLine} sawZeroFail=${sawZeroFailures} sawNonzeroFail=${sawNonzeroFailures}`,
+  );
   if (code !== null) {
     finalize(code);
     return;
   }
-  log(`[run-tests] bun child exited via signal ${signal ?? 'unknown'}`);
   finalize(sawRanLine && sawZeroFailures && !sawNonzeroFailures ? 0 : 1);
 });
 
