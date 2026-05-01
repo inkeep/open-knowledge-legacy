@@ -5348,7 +5348,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     dir: string,
   ): Promise<{ port: number } | { error: string }> {
     const absDir = resolve(expandTilde(dir));
-    const lockDir = resolve(absDir, '.open-knowledge');
+    const lockDir = resolve(absDir, '.ok');
 
     // Case 1: UI already live — reuse.
     const existingUi = readUiLock(lockDir);
@@ -5417,7 +5417,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    *
    * Body: { dir: string }
    * Spawns: open-knowledge start --content-dir <dir> (detached, unref'd)
-   * Polls <dir>/.open-knowledge/server.lock until port > 0 appears.
+   * Polls <dir>/.ok/server.lock until port > 0 appears.
    * Returns: { port: number }
    */
   async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {

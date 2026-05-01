@@ -122,7 +122,7 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     }
   });
 
-  test('agentSettable allowlist is exactly the 5 expected paths', () => {
+  test('agentSettable allowlist is exactly the 3 expected paths', () => {
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
     const allowlisted = leaves
@@ -130,20 +130,14 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
       .map((l) => l.path.join('.'))
       .sort();
     expect(allowlisted).toEqual(
-      [
-        'content.exclude',
-        'content.include',
-        'folders',
-        'mcp.tools.read_document.historyDepth',
-        'mcp.tools.search.maxResults',
-      ].sort(),
+      ['folders', 'mcp.tools.read_document.historyDepth', 'mcp.tools.search.maxResults'].sort(),
     );
   });
 
-  test('project-strict fields cover content.* + preview.baseUrl', () => {
-    // `content.dir` / `content.include` / `content.exclude` are project-only
-    // per user direction 2026-04-29 — they define which files are part of *this*
-    // project's knowledge graph; a user-global override doesn't make sense.
+  test('project-strict fields cover content.dir + preview.baseUrl', () => {
+    // `content.dir` is project-only — it names the root of *this* project's
+    // knowledge graph; a user-global override doesn't make sense. content.include
+    // / content.exclude were removed (path rules now live in `.okignore`).
     // `preview.baseUrl` is project-only per spec §9.5.4 ❌ marker.
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
@@ -151,8 +145,6 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
       .filter((l) => getFieldMeta(l.schema)?.scope === 'project')
       .map((l) => l.path.join('.'))
       .sort();
-    expect(projectStrict).toEqual(
-      ['content.dir', 'content.exclude', 'content.include', 'preview.baseUrl'].sort(),
-    );
+    expect(projectStrict).toEqual(['content.dir', 'preview.baseUrl'].sort());
   });
 });

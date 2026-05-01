@@ -825,11 +825,11 @@ describe('server-discovery', () => {
       expect(calls).toEqual([
         {
           contentDir: '/workspace/a/content',
-          lockDir: '/workspace/a/content/.open-knowledge',
+          lockDir: '/workspace/a/content/.ok',
         },
         {
           contentDir: '/workspace/b/knowledge-b',
-          lockDir: '/workspace/b/knowledge-b/.open-knowledge',
+          lockDir: '/workspace/b/knowledge-b/.ok',
         },
       ]);
     });

@@ -261,11 +261,11 @@ describe('getShadowRepoPath', () => {
     expect(getShadowRepoPath(tmp)).toBe(null);
   });
 
-  test('always resolves to <projectRoot>/.git/open-knowledge/', () => {
+  test('always resolves to <projectRoot>/.git/ok/', () => {
     const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/open-knowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.git/open-knowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/open-knowledge'));
+    mkdirSync(resolve(project, '.git/ok'), { recursive: true });
+    writeFileSync(resolve(project, '.git/ok/HEAD'), 'ref: refs/heads/main\n');
+    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/ok'));
   });
 
   test('never returns legacy .git/openknowledge/ path (single-mode layout)', () => {

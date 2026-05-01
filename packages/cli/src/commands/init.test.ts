@@ -1125,8 +1125,8 @@ describe('runInit', () => {
       const preview = previewContent({
         projectDir: testDir,
         contentDir,
-        include: config.content.include,
-        exclude: config.content.exclude,
+        include: ['**/*.md', '**/*.mdx'],
+        exclude: [],
       });
       result.preview = preview;
 

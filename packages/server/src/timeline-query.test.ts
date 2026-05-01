@@ -246,7 +246,7 @@ describe('getDocumentHistory', () => {
   test('returns empty result gracefully when shadow repo is corrupt/missing', async () => {
     // Create a shadow handle pointing to a non-existent git dir
     const fakeShadow = {
-      gitDir: resolve(tmpDir, 'nonexistent/.git/open-knowledge'),
+      gitDir: resolve(tmpDir, 'nonexistent/.git/ok'),
       workTree: resolve(tmpDir, 'nonexistent'),
     };
 

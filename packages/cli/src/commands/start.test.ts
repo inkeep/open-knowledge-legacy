@@ -187,7 +187,7 @@ describe('spawnOkUi', () => {
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-spawnui-'));
-    lockDir = resolve(tmpDir, '.open-knowledge');
+    lockDir = resolve(tmpDir, '.ok');
   });
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
@@ -506,7 +506,7 @@ describe('bootStartServer (integration)', () => {
     // Pre-populate ui.lock with the test process' own pid (which is alive).
     // process-lock treats same-pid as idempotent, so this simulates a
     // pre-existing live UI sibling without actually spawning one.
-    const lockDir = join(tmpDir, '.open-knowledge');
+    const lockDir = join(tmpDir, '.ok');
     mkdirSync(lockDir, { recursive: true });
     writeFileSync(
       join(lockDir, 'ui.lock'),
@@ -822,7 +822,7 @@ describe('awaitUiSiblingPort', () => {
 //      `resolveRequestedPort` → undefined flag + undefined env → 0 (D-033
 //      default, kernel-allocated).
 //   2. Kernel assigns a free port to ok ui (e.g. 54281) and writes it to
-//      `<contentDir>/.open-knowledge/ui.lock`.
+//      `<contentDir>/.ok/ui.lock`.
 //   3. Meanwhile ok start's banner had hardcoded port 3000 on the spawn
 //      branch — leftover from before D-033 changed ok ui's default to 0.
 //   4. Banner prints http://localhost:3000; user follows it; ECONNREFUSED.
@@ -932,7 +932,7 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
     // Pre-populate ui.lock with a live pid (this process) + a non-zero port.
     // decideUiSpawn returns {action: 'skip', ...} and bootStartServer
     // short-circuits the poll, using the lock's port directly.
-    const lockDir = join(tmpDir, '.open-knowledge');
+    const lockDir = join(tmpDir, '.ok');
     mkdirSync(lockDir, { recursive: true });
     writeFileSync(
       join(lockDir, 'ui.lock'),

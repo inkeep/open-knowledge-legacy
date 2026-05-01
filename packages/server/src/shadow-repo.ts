@@ -1,12 +1,12 @@
 /**
- * Shadow repo — attribution journal at `<projectRoot>/.git/open-knowledge/`.
+ * Shadow repo — attribution journal at `<projectRoot>/.git/ok/`.
  *
  * A bare repo (core.bare unset, core.worktree → project root) that stores
  * per-writer WIP refs and upstream-import commits. Isolated from the project
  * repo so user staging area and history are never touched.
  *
  * Single-mode layout (SPEC 2026-04-21-shadow-repo-single-mode):
- *   - Shadow always lives inside `<projectRoot>/.git/open-knowledge/`.
+ *   - Shadow always lives inside `<projectRoot>/.git/ok/`.
  *   - Projects without `.git/` get auto-init'd by `ensureProjectGit` before
  *     `initShadowRepo` runs (R2 / D12 fail-fast).
  *   - Pre-spec integrated shadows at `.git/openknowledge/` (legacy path) are
@@ -81,14 +81,14 @@ export function shadowGit(shadow: ShadowHandle) {
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 /**
- * Initialize the shadow bare repo at `<projectRoot>/.git/open-knowledge/`.
+ * Initialize the shadow bare repo at `<projectRoot>/.git/ok/`.
  *
  * Assumes the project already has a `.git/` — `ensureProjectGit` is responsible
  * for that guarantee upstream (SPEC R2 / D12).
  *
  * Legacy migration (R9): if `<projectRoot>/.git/openknowledge/` exists from a
  * pre-spec integrated-mode install, silently `renameSync` it to the canonical
- * `.git/open-knowledge/` path. One-shot, lossless — preserves all refs and
+ * `.git/ok/` path. One-shot, lossless — preserves all refs and
  * commits. Defensive: if BOTH directories are present (shouldn't happen), log
  * and no-op.
  */

@@ -104,8 +104,11 @@ export async function buildSearchResult(
   }
   const { cwd, config, url: resolvedServerUrl } = context;
   const maxResults = config.mcp.tools.search.maxResults;
-  const include = config.content.include;
-  const exclude = config.content.exclude;
+  // `content.{include,exclude}` were removed from the schema (path rules
+  // moved to .okignore). Pass historical defaults until the search tool
+  // delegates to ContentFilter for path rules.
+  const include = ['**/*.md', '**/*.mdx'];
+  const exclude: string[] = [];
 
   // Request one extra match so we can tell whether the result set was truncated.
   const matches = await grep(args.query, cwd, {

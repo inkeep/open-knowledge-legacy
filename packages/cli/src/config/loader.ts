@@ -23,6 +23,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import {
   type ConfigIssue,
+  type ConfigIssueSource,
   type ConfigValidationError,
   humanFormat,
   locateIssue,
@@ -115,6 +116,49 @@ function loadYamlFile(filePath: string): LoadedYamlFile {
   return { value: null, path: filePath, source: raw, doc };
 }
 
+/** Removed `content.*` keys; their patterns now live in `.okignore`. */
+const REMOVED_CONTENT_KEYS = ['include', 'exclude'] as const;
+const OKIGNORE_REDIRECT =
+  'Move these patterns to .okignore at the project root (gitignore syntax).';
+
+/**
+ * Detect `content.include` / `content.exclude` in a parsed YAML file. These
+ * keys were removed from `ConfigSchema`; path rules now live in `.okignore`
+ * files at the project root. Returns the first removed-key error found, or
+ * `undefined` when neither key is present.
+ *
+ * The schema's `content` block is a `looseObject`, so unknown nested keys
+ * pass through validation silently — explicit detection is required to
+ * surface the migration directive.
+ */
+function detectRemovedContentKey(file: LoadedYamlFile): ConfigValidationError | undefined {
+  const value = file.value;
+  if (!isObject(value)) return undefined;
+  const content = value.content;
+  if (!isObject(content)) return undefined;
+  for (const key of REMOVED_CONTENT_KEYS) {
+    if (key in content) {
+      const path = ['content', key];
+      let source: ConfigIssueSource | undefined;
+      if (file.doc !== null && file.source !== null) {
+        source = locateIssue({
+          file: file.path,
+          source: file.source,
+          doc: file.doc,
+          path,
+        });
+      }
+      return {
+        code: 'REMOVED_KEY',
+        path,
+        redirect: OKIGNORE_REDIRECT,
+        ...(source !== undefined ? { source } : {}),
+      };
+    }
+  }
+  return undefined;
+}
+
 /**
  * Map Zod issues to source-located `ConfigIssue`s using the project
  * Document AST when the path resolves there. User-global paths don't get
@@ -172,6 +216,10 @@ export function loadConfig(cwd?: string): LoadConfigResult {
   const projectConfigPath = resolve(workingDir, OK_DIR, CONFIG_FILENAME);
   const projectFile = loadYamlFile(projectConfigPath);
   if (projectFile.value !== null) {
+    const removedKeyError = detectRemovedContentKey(projectFile);
+    if (removedKeyError !== undefined) {
+      throw new Error(humanFormat(removedKeyError));
+    }
     merged = deepMerge(merged, projectFile.value);
     sources.push(projectConfigPath);
   }

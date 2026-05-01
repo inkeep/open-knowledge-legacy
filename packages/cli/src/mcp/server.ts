@@ -185,9 +185,7 @@ let logger: McpLogger | undefined;
  * them here (SPEC D13).
  */
 export function buildInstructions(config: Config, _opts?: { dynamicConfig?: boolean }): string {
-  const { dir, include, exclude } = config.content;
-  const excludeLine = exclude.length > 0 ? exclude.map((p) => `\`${p}\``).join(', ') : '(none)';
-  const includeLine = include.map((p) => `\`${p}\``).join(', ');
+  const { dir } = config.content;
 
   return `# Open Knowledge (OK) — collaborative markdown via MCP
 
@@ -195,7 +193,7 @@ export function buildInstructions(config: Config, _opts?: { dynamicConfig?: bool
 
 **Preview:** open the browser at session start if not already open. On \`attach-preview-once\` in a write response, open \`previewUrl\` one-shot.
 
-Content dir: ${dir}. Include: ${includeLine}. Exclude: ${excludeLine}.
+Content dir: ${dir}. Path rules: see \`.okignore\` at the project root (gitignore syntax).
 
 ## Reads
 

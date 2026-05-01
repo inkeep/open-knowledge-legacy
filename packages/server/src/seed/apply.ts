@@ -75,7 +75,7 @@ export async function applySeed(plan: ScaffoldPlan, opts: SeedOptions = {}): Pro
   }
 
   // 3. config.yml edits via applyFolderRulesUpsert. Plan emits configEdits
-  //    pointing at the project `<projectDir>/.open-knowledge/config.yml`;
+  //    pointing at the project `<projectDir>/.ok/config.yml`;
   //    the upsert helper writes there via the same scope='project'
   //    contract used by MCP/CLI (D63).
   if (plan.configEdits.length > 0) {

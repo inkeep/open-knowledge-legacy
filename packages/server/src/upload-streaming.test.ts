@@ -134,8 +134,8 @@ describe('tmpUploadDir / mintTempUploadPath', () => {
     rmSync(tmpBase, { recursive: true, force: true });
   });
 
-  test('tmpUploadDir resolves to <contentDir>/.open-knowledge/tmp', () => {
-    expect(tmpUploadDir(tmpBase)).toBe(resolve(tmpBase, '.open-knowledge', 'tmp'));
+  test('tmpUploadDir resolves to <contentDir>/.ok/tmp', () => {
+    expect(tmpUploadDir(tmpBase)).toBe(resolve(tmpBase, '.ok', 'tmp'));
   });
 
   test('mintTempUploadPath lazily creates the tmp dir', () => {

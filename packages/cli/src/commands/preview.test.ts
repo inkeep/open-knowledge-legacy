@@ -6,15 +6,24 @@ import type { Config } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
 import { formatPreviewBlock, previewContent } from '../content/preview.ts';
 
-function makeConfig(overrides: Partial<Config['content']> = {}): Config {
+interface ContentArgs {
+  dir?: string;
+  include?: string[];
+  exclude?: string[];
+}
+
+function makeConfig(overrides: ContentArgs = {}): Config & {
+  __testInclude: string[];
+  __testExclude: string[];
+} {
   return {
     content: {
       dir: overrides.dir ?? '.',
-      include: overrides.include ?? ['**/*.md'],
-      exclude: overrides.exclude ?? [],
     },
     server: { host: 'localhost', openOnAgentEdit: false },
-  } as Config;
+    __testInclude: overrides.include ?? ['**/*.md'],
+    __testExclude: overrides.exclude ?? [],
+  } as Config & { __testInclude: string[]; __testExclude: string[] };
 }
 
 describe('preview command', () => {
@@ -44,8 +53,8 @@ describe('preview command', () => {
     const result = previewContent({
       projectDir: testDir,
       contentDir,
-      include: config.content.include,
-      exclude: config.content.exclude,
+      include: config.__testInclude,
+      exclude: config.__testExclude,
     });
 
     expect(result.totalCount).toBe(3);
@@ -70,8 +79,8 @@ describe('preview command', () => {
     const result1 = previewContent({
       projectDir: testDir,
       contentDir: resolve(testDir, config1.content.dir),
-      include: config1.content.include,
-      exclude: config1.content.exclude,
+      include: config1.__testInclude,
+      exclude: config1.__testExclude,
     });
     expect(result1.totalCount).toBe(8);
 
@@ -79,8 +88,8 @@ describe('preview command', () => {
     const result2 = previewContent({
       projectDir: testDir,
       contentDir: resolve(testDir, config2.content.dir),
-      include: config2.content.include,
-      exclude: config2.content.exclude,
+      include: config2.__testInclude,
+      exclude: config2.__testExclude,
     });
     expect(result2.totalCount).toBe(3);
   });
@@ -91,8 +100,8 @@ describe('preview command', () => {
     const result = previewContent({
       projectDir: testDir,
       contentDir,
-      include: config.content.include,
-      exclude: config.content.exclude,
+      include: config.__testInclude,
+      exclude: config.__testExclude,
     });
 
     expect(result.totalCount).toBe(0);
@@ -110,8 +119,8 @@ describe('preview command', () => {
     previewContent({
       projectDir: testDir,
       contentDir: resolve(testDir, config.content.dir),
-      include: config.content.include,
-      exclude: config.content.exclude,
+      include: config.__testInclude,
+      exclude: config.__testExclude,
     });
 
     expect(existsSync(join(testDir, OK_DIR))).toBe(okExistsBefore);
@@ -126,8 +135,8 @@ describe('preview command', () => {
     const result = previewContent({
       projectDir: testDir,
       contentDir,
-      include: config.content.include,
-      exclude: config.content.exclude,
+      include: config.__testInclude,
+      exclude: config.__testExclude,
     });
 
     expect(result.totalCount).toBe(0);

@@ -98,7 +98,7 @@ describe('config-edit OTel spans', () => {
   beforeEach(() => {
     setupExporter();
     testDir = mkdtempSync(join(tmpdir(), 'config-otel-'));
-    mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
   });
 
   afterEach(async () => {

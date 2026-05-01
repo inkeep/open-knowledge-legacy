@@ -34,7 +34,7 @@ import { withSpan, withSpanSync } from './telemetry.ts';
  * Normalize an absolute path to its last two segments plus a leading ellipsis,
  * so traces don't explode attribute cardinality with full user-home paths.
  *
- * Example: `/Users/alice/Documents/project/.git/open-knowledge/HEAD` →
+ * Example: `/Users/alice/Documents/project/.git/ok/HEAD` →
  *          `.../open-knowledge/HEAD`
  */
 export function normalizeFsPath(p: string): string {
@@ -48,15 +48,15 @@ export function normalizeFsPath(p: string): string {
  * cardinality blow-up while keeping meaningful filtering in Grafana Tempo.
  */
 export function classifyFsPath(p: string): string {
-  if (p.includes(`${sep}.git${sep}open-knowledge${sep}`) || p.includes('shadow-repo')) {
+  if (p.includes(`${sep}.git${sep}ok${sep}`) || p.includes('shadow-repo')) {
     return 'shadow-repo';
   }
   if (p.includes(`${sep}.git${sep}`)) return 'git';
   if (basename(p).endsWith('.lock') || basename(p) === 'lock') return 'lock';
   if (basename(p) === 'principal.json') return 'principal';
-  if (p.includes(`${sep}.open-knowledge${sep}conflict`)) return 'conflict';
+  if (p.includes(`${sep}.ok${sep}conflict`)) return 'conflict';
   if (p.endsWith('.md') || p.endsWith('.mdx')) return 'content-md';
-  if (p.includes(`${sep}.open-knowledge${sep}`)) return 'ok-internal';
+  if (p.includes(`${sep}.ok${sep}`)) return 'ok-internal';
   return 'other';
 }
 

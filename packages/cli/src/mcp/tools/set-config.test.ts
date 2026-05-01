@@ -7,7 +7,7 @@ import { collectPatchLeaves, register } from './set-config.ts';
 import type { ServerInstance } from './shared.ts';
 
 const BASE_CONFIG: Config = {
-  content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
+  content: { dir: '.' },
   github: { oauthAppClientId: 'Ov23liqlSd0V1MwR6rhI' },
   server: { host: 'localhost', openOnAgentEdit: false },
   preview: {},
@@ -43,8 +43,8 @@ interface MockHomeProject {
 function newProjectWithHome(): MockHomeProject {
   const cwd = mkdtempSync(join(tmpdir(), 'ok-set-config-'));
   const home = mkdtempSync(join(tmpdir(), 'ok-set-config-home-'));
-  mkdirSync(join(cwd, '.open-knowledge'), { recursive: true });
-  mkdirSync(join(home, '.open-knowledge'), { recursive: true });
+  mkdirSync(join(cwd, '.ok'), { recursive: true });
+  mkdirSync(join(home, '.ok'), { recursive: true });
   return { cwd, home };
 }
 
@@ -73,12 +73,12 @@ function captureHandler(
 }
 
 function readWorkspaceYaml(cwd: string): string | null {
-  const p = join(cwd, '.open-knowledge', 'config.yml');
+  const p = join(cwd, '.ok', 'config.yml');
   return existsSync(p) ? readFileSync(p, 'utf-8') : null;
 }
 
 function readUserYaml(home: string): string | null {
-  const p = join(home, '.open-knowledge', 'config.yml');
+  const p = join(home, '.ok', 'config.yml');
   return existsSync(p) ? readFileSync(p, 'utf-8') : null;
 }
 
@@ -106,11 +106,15 @@ describe('collectPatchLeaves', () => {
 
   test('multiple leaves across branches', () => {
     const leaves = collectPatchLeaves({
-      mcp: { tools: { search: { maxResults: 100 } } },
-      content: { include: ['**/*.md'] },
+      mcp: {
+        tools: {
+          search: { maxResults: 100 },
+          read_document: { historyDepth: 7 },
+        },
+      },
     });
     expect(leaves).toContainEqual(['mcp', 'tools', 'search', 'maxResults']);
-    expect(leaves).toContainEqual(['content', 'include']);
+    expect(leaves).toContainEqual(['mcp', 'tools', 'read_document', 'historyDepth']);
     expect(leaves).toHaveLength(2);
   });
 
@@ -161,11 +165,13 @@ describe('set_config — happy paths', () => {
     expect(readWorkspaceYaml(project.cwd)).toContain('match: specs/**');
   });
 
-  test('writes content.include to project (defaultScope=project)', async () => {
+  test('writes folders[] (project defaultScope, alternative path)', async () => {
     const project = newProjectWithHome();
     const handler = captureHandler(project);
     const result = await handler({
-      patch: { content: { include: ['*.md'] } },
+      patch: {
+        folders: [{ match: 'docs/**', frontmatter: { description: 'Docs' } }],
+      },
     });
     expect(result.isError).toBeUndefined();
     const success = result.structuredContent?.result as { scope: string };
@@ -177,7 +183,7 @@ describe('set_config — happy paths', () => {
     // Pre-seed mcp.tools.search.maxResults in project YAML so the inspect
     // ladder sees `project: true` even though the field's defaultScope=user.
     writeFileSync(
-      join(project.cwd, '.open-knowledge', 'config.yml'),
+      join(project.cwd, '.ok', 'config.yml'),
       'mcp:\n  tools:\n    search:\n      maxResults: 75\n',
     );
     const handler = captureHandler(project);
@@ -218,23 +224,23 @@ describe('set_config — error paths', () => {
   });
 
   test('rejects MIXED_SCOPE when leaves resolve to different scopes', async () => {
-    // Pre-seed mcp.tools.search.maxResults in user YAML and content.include
-    // in project YAML so the inspect ladder reports
-    // `mcp.tools.search.maxResults` → user, `content.include` → project.
+    // Pre-seed mcp.tools.search.maxResults in user YAML and folders[] in
+    // project YAML so the inspect ladder reports
+    // `mcp.tools.search.maxResults` → user, `folders` → project.
     const project = newProjectWithHome();
     writeFileSync(
-      join(project.home, '.open-knowledge', 'config.yml'),
+      join(project.home, '.ok', 'config.yml'),
       'mcp:\n  tools:\n    search:\n      maxResults: 75\n',
     );
     writeFileSync(
-      join(project.cwd, '.open-knowledge', 'config.yml'),
-      'content:\n  include:\n    - "*.md"\n',
+      join(project.cwd, '.ok', 'config.yml'),
+      'folders:\n  - match: specs/**\n    frontmatter:\n      description: Specs\n',
     );
     const handler = captureHandler(project);
     const result = await handler({
       patch: {
         mcp: { tools: { search: { maxResults: 200 } } },
-        content: { include: ['**/*.md'] },
+        folders: [{ match: 'docs/**', frontmatter: { description: 'Docs' } }],
       },
     });
     expect(result.isError).toBe(true);
@@ -248,7 +254,7 @@ describe('set_config — error paths', () => {
       scope: 'user',
     });
     expect(payload.error.paths).toContainEqual({
-      path: ['content', 'include'],
+      path: ['folders'],
       scope: 'project',
     });
   });
@@ -279,18 +285,28 @@ describe('set_config — error paths', () => {
 });
 
 describe('set_config — agent-settable allowlist alignment', () => {
-  test('content.include is allowed', async () => {
+  test('content.include is rejected (removed from schema; path rules live in .okignore)', async () => {
     const project = newProjectWithHome();
     const handler = captureHandler(project);
     const result = await handler({ patch: { content: { include: ['*.md'] } } });
-    expect(result.isError).toBeUndefined();
+    expect(result.isError).toBe(true);
+    const payload = result.structuredContent?.result as {
+      error: { code: string; path: string[] };
+    };
+    expect(payload.error.code).toBe('NOT_AGENT_SETTABLE');
+    expect(payload.error.path).toEqual(['content', 'include']);
   });
 
-  test('content.exclude is allowed', async () => {
+  test('content.exclude is rejected (removed from schema)', async () => {
     const project = newProjectWithHome();
     const handler = captureHandler(project);
     const result = await handler({ patch: { content: { exclude: ['drafts/**'] } } });
-    expect(result.isError).toBeUndefined();
+    expect(result.isError).toBe(true);
+    const payload = result.structuredContent?.result as {
+      error: { code: string; path: string[] };
+    };
+    expect(payload.error.code).toBe('NOT_AGENT_SETTABLE');
+    expect(payload.error.path).toEqual(['content', 'exclude']);
   });
 
   test('content.dir is NOT allowed (defaultScope=project, agentSettable=false)', async () => {

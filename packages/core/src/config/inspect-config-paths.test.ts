@@ -7,8 +7,8 @@ import { inspectConfigPaths } from './inspect-config-paths.ts';
 function makeTempProject(): { cwd: string; home: string } {
   const cwd = mkdtempSync(join(tmpdir(), 'ok-inspect-cwd-'));
   const home = mkdtempSync(join(tmpdir(), 'ok-inspect-home-'));
-  mkdirSync(join(cwd, '.open-knowledge'), { recursive: true });
-  mkdirSync(join(home, '.open-knowledge'), { recursive: true });
+  mkdirSync(join(cwd, '.ok'), { recursive: true });
+  mkdirSync(join(home, '.ok'), { recursive: true });
   return { cwd, home };
 }
 
@@ -28,7 +28,7 @@ describe('inspectConfigPaths', () => {
   test('reports `project: true` when the path is set in project YAML', () => {
     const { cwd, home } = makeTempProject();
     writeFileSync(
-      join(cwd, '.open-knowledge', 'config.yml'),
+      join(cwd, '.ok', 'config.yml'),
       'mcp:\n  tools:\n    search:\n      maxResults: 100\n',
     );
     const result = inspectConfigPaths([['mcp', 'tools', 'search', 'maxResults']], {
@@ -43,7 +43,7 @@ describe('inspectConfigPaths', () => {
 
   test('reports `user: true` when the path is set in user YAML', () => {
     const { cwd, home } = makeTempProject();
-    writeFileSync(join(home, '.open-knowledge', 'config.yml'), 'appearance:\n  theme: dark\n');
+    writeFileSync(join(home, '.ok', 'config.yml'), 'appearance:\n  theme: dark\n');
     const result = inspectConfigPaths([['appearance', 'theme']], {
       cwd,
       homedirOverride: home,
@@ -57,11 +57,11 @@ describe('inspectConfigPaths', () => {
   test('reports both true when set in both files', () => {
     const { cwd, home } = makeTempProject();
     writeFileSync(
-      join(cwd, '.open-knowledge', 'config.yml'),
+      join(cwd, '.ok', 'config.yml'),
       'mcp:\n  tools:\n    search:\n      maxResults: 100\n',
     );
     writeFileSync(
-      join(home, '.open-knowledge', 'config.yml'),
+      join(home, '.ok', 'config.yml'),
       'mcp:\n  tools:\n    search:\n      maxResults: 50\n',
     );
     const result = inspectConfigPaths([['mcp', 'tools', 'search', 'maxResults']], {
@@ -77,10 +77,10 @@ describe('inspectConfigPaths', () => {
   test('handles multiple paths in one call', () => {
     const { cwd, home } = makeTempProject();
     writeFileSync(
-      join(cwd, '.open-knowledge', 'config.yml'),
+      join(cwd, '.ok', 'config.yml'),
       'mcp:\n  tools:\n    search:\n      maxResults: 100\n',
     );
-    writeFileSync(join(home, '.open-knowledge', 'config.yml'), 'appearance:\n  theme: dark\n');
+    writeFileSync(join(home, '.ok', 'config.yml'), 'appearance:\n  theme: dark\n');
     const result = inspectConfigPaths(
       [
         ['mcp', 'tools', 'search', 'maxResults'],
@@ -105,7 +105,7 @@ describe('inspectConfigPaths', () => {
 
   test('reports false when YAML parses but path traverses through a scalar', () => {
     const { cwd, home } = makeTempProject();
-    writeFileSync(join(cwd, '.open-knowledge', 'config.yml'), 'mcp:\n  tools: hello\n');
+    writeFileSync(join(cwd, '.ok', 'config.yml'), 'mcp:\n  tools: hello\n');
     const result = inspectConfigPaths([['mcp', 'tools', 'search', 'maxResults']], {
       cwd,
       homedirOverride: home,
@@ -118,7 +118,7 @@ describe('inspectConfigPaths', () => {
 
   test('reports false when YAML is malformed (parse error → null tree)', () => {
     const { cwd, home } = makeTempProject();
-    writeFileSync(join(cwd, '.open-knowledge', 'config.yml'), 'mcp: {[[ broken');
+    writeFileSync(join(cwd, '.ok', 'config.yml'), 'mcp: {[[ broken');
     const result = inspectConfigPaths([['mcp', 'tools', 'search', 'maxResults']], {
       cwd,
       homedirOverride: home,
@@ -131,7 +131,7 @@ describe('inspectConfigPaths', () => {
 
   test('reports true even when leaf value is null (RFC 7396 clear convention)', () => {
     const { cwd, home } = makeTempProject();
-    writeFileSync(join(cwd, '.open-knowledge', 'config.yml'), 'appearance:\n  theme: null\n');
+    writeFileSync(join(cwd, '.ok', 'config.yml'), 'appearance:\n  theme: null\n');
     const result = inspectConfigPaths([['appearance', 'theme']], {
       cwd,
       homedirOverride: home,
@@ -142,7 +142,7 @@ describe('inspectConfigPaths', () => {
   test('handles array-leaf folders[]', () => {
     const { cwd, home } = makeTempProject();
     writeFileSync(
-      join(cwd, '.open-knowledge', 'config.yml'),
+      join(cwd, '.ok', 'config.yml'),
       'folders:\n  - match: specs/**\n    frontmatter:\n      description: Specs\n',
     );
     const result = inspectConfigPaths([['folders']], { cwd, homedirOverride: home });

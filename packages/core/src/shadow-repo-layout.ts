@@ -88,12 +88,12 @@ const WRITER_ID_RE =
  * checking whether it exists yet. Used by init (`packages/server/src/shadow-repo.ts`)
  * to pick where to create the repo, and internally by `getShadowRepoPath`.
  *
- * Single-mode layout: the shadow always lives at `<projectRoot>/.git/open-knowledge/`.
+ * Single-mode layout: the shadow always lives at `<projectRoot>/.git/ok/`.
  * Projects without `.git/` get auto-init'd via `ensureProjectGit` before this
  * function is consulted (SPEC 2026-04-21-shadow-repo-single-mode D12/R2).
  */
 export function resolveShadowDir(projectRoot: string): string {
-  return resolve(projectRoot, '.git/open-knowledge');
+  return resolve(projectRoot, '.git/ok');
 }
 
 /**

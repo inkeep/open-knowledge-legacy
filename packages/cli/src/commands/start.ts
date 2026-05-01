@@ -424,8 +424,11 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     // `persistence.{debounceMs, maxDebounceMs}` dropped from ConfigSchema
     // per D29 — engine has well-considered defaults (2s / 10s) and 99%+
     // users never tune them. `bootServer`/`createServer` defaults take over.
-    includePatterns: config.content.include,
-    excludePatterns: config.content.exclude,
+    // `content.{include,exclude}` were removed from the schema (path rules
+    // moved to .okignore). Pass historical defaults until ContentFilter
+    // drops the picomatch include matcher.
+    includePatterns: ['**/*.md', '**/*.mdx'],
+    excludePatterns: [],
     onAgentWrite,
     // Pass the exact runtime that started this server so /api/local-op/* can
     // spawn additional CLI processes without needing open-knowledge on PATH.
@@ -648,8 +651,8 @@ export function startCommand(getConfig: () => Config): Command {
                 const preview = previewContent({
                   projectDir: cwd,
                   contentDir: booted.contentDir,
-                  include: config.content.include,
-                  exclude: config.content.exclude,
+                  include: ['**/*.md', '**/*.mdx'],
+                  exclude: [],
                 });
                 console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
               } catch (e) {

@@ -73,7 +73,7 @@ function emitSchemaInvalidIssueEvents(error: ConfigValidationError): void {
 }
 
 export interface ConfigPersistenceCtx {
-  /** Project root — project config resolves to `<projectDir>/.open-knowledge/config.yml`. */
+  /** Project root — project config resolves to `<projectDir>/.ok/config.yml`. */
   projectDir: string;
   /**
    * Per-server-instance LKG cache. Maps each well-known config doc name
@@ -83,7 +83,7 @@ export interface ConfigPersistenceCtx {
   lkgCache: Map<string, string>;
   /**
    * Override `os.homedir()` for tests. User-global config resolves to
-   * `<homedir>/.open-knowledge/config.yml`; tests use a tempdir override
+   * `<homedir>/.ok/config.yml`; tests use a tempdir override
    * so they don't touch the developer's real `~/`.
    */
   homedirOverride?: string;

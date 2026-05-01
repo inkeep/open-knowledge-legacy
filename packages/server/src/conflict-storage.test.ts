@@ -21,10 +21,10 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'conflict-store-test-'));
   projectDir = join(tmpDir, 'project');
   contentDir = join(tmpDir, 'content');
-  storePath = join(contentDir, '.open-knowledge', 'conflicts.json');
+  storePath = join(contentDir, '.ok', 'conflicts.json');
   mkdirSync(projectDir, { recursive: true });
   mkdirSync(contentDir, { recursive: true });
-  mkdirSync(join(contentDir, '.open-knowledge'), { recursive: true });
+  mkdirSync(join(contentDir, '.ok'), { recursive: true });
 });
 
 afterEach(() => {

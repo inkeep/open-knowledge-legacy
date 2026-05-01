@@ -24,16 +24,16 @@ afterEach(() => {
 });
 
 function projectConfigPath(): string {
-  return join(testDir, '.open-knowledge', 'config.yml');
+  return join(testDir, '.ok', 'config.yml');
 }
 
 function userConfigPath(homeOverride: string): string {
-  return join(homeOverride, '.open-knowledge', 'config.yml');
+  return join(homeOverride, '.ok', 'config.yml');
 }
 
 describe('writeConfigPatch — project scope', () => {
   test('writes a fresh project config when none exists (lazy first-write)', async () => {
-    mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
 
     const result = await writeConfigPatch({
       cwd: testDir,
@@ -58,7 +58,7 @@ describe('writeConfigPatch — project scope', () => {
   });
 
   test('mode 0o644 on lazy first-write (config is not secret)', async () => {
-    mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
     await writeConfigPatch({
       cwd: testDir,
       scope: 'project',
@@ -71,7 +71,7 @@ describe('writeConfigPatch — project scope', () => {
   });
 
   test('updates an existing project config and preserves comments', async () => {
-    mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
     const original = `# user-written comment at top
 content:
   # inline comment about dir
@@ -100,7 +100,7 @@ mcp:
   });
 
   test('null in patch deletes the field (RFC 7396 spirit)', async () => {
-    mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
     writeFileSync(
       projectConfigPath(),
       `mcp:\n  autoStart: false\n  tools:\n    search:\n      maxResults: 100\n`,
@@ -123,11 +123,11 @@ mcp:
 });
 
 describe('writeConfigPatch — user scope', () => {
-  test('lazy first-write of ~/.open-knowledge/config.yml creates parent dir', async () => {
+  test('lazy first-write of ~/.ok/config.yml creates parent dir', async () => {
     const home = mkdtempSync(join(tmpdir(), 'ok-write-config-patch-home-'));
     try {
-      // Pre-condition: ~/.open-knowledge does NOT exist
-      expect(existsSync(join(home, '.open-knowledge'))).toBe(false);
+      // Pre-condition: ~/.ok does NOT exist
+      expect(existsSync(join(home, '.ok'))).toBe(false);
 
       const result = await writeConfigPatch({
         cwd: testDir,
@@ -158,7 +158,7 @@ describe('writeConfigPatch — user scope', () => {
 
 describe('writeConfigPatch — validation failures', () => {
   test('invalid scalar type → SCHEMA_INVALID with structured issues; no fs write', async () => {
-    mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
     const result = await writeConfigPatch({
       cwd: testDir,
       scope: 'project',
@@ -177,7 +177,7 @@ describe('writeConfigPatch — validation failures', () => {
   });
 
   test('invalid enum value → SCHEMA_INVALID; no fs write', async () => {
-    mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
     const result = await writeConfigPatch({
       cwd: testDir,
       scope: 'project',
@@ -192,7 +192,7 @@ describe('writeConfigPatch — validation failures', () => {
   });
 
   test('YAML with malformed syntax → YAML_PARSE; no fs write', async () => {
-    mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
     // Tab character at start of a key value triggers a YAML parse error
     writeFileSync(
       projectConfigPath(),
@@ -217,7 +217,7 @@ describe('writeConfigPatch — defaults preserved on round-trip with stale field
     // With z.looseObject + the schema cleanup, stale fields like
     // sync.pushIntervalSeconds round-trip cleanly even though they're no
     // longer in the schema.
-    mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
     const original = `sync:
   pushIntervalSeconds: 30
   enabled: true
@@ -243,7 +243,7 @@ mcp:
 
 describe('writeConfigPatch — Result type narrowing', () => {
   test('result.appliedPaths only typechecks inside the result.ok=true branch', async () => {
-    mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
     const result = await writeConfigPatch({
       cwd: testDir,
       scope: 'project',
@@ -261,13 +261,13 @@ describe('writeConfigPatch — Result type narrowing', () => {
 });
 
 describe('resolveConfigPath', () => {
-  test('project scope resolves to <cwd>/.open-knowledge/config.yml', () => {
-    expect(resolveConfigPath('project', '/abs/proj')).toBe('/abs/proj/.open-knowledge/config.yml');
+  test('project scope resolves to <cwd>/.ok/config.yml', () => {
+    expect(resolveConfigPath('project', '/abs/proj')).toBe('/abs/proj/.ok/config.yml');
   });
 
   test('user scope ignores cwd, uses homedirOverride', () => {
     expect(resolveConfigPath('user', '/abs/proj', '/home/alice')).toBe(
-      '/home/alice/.open-knowledge/config.yml',
+      '/home/alice/.ok/config.yml',
     );
   });
 });

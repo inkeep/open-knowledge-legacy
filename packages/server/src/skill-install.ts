@@ -31,7 +31,7 @@ export type SpawnLike = (
 
 export interface InstallUserSkillOptions {
   /**
-   * Override `$HOME`. Sidecar path becomes `${home}/.open-knowledge/skill-installed-version`
+   * Override `$HOME`. Sidecar path becomes `${home}/.ok/skill-installed-version`
    * and `HOME` env var is overridden for the `npx skills` subprocess so it writes
    * per-host skill copies under the overridden home. Tests pass a tmpdir here.
    */
@@ -87,7 +87,7 @@ async function readServerPackageVersion(): Promise<string> {
 }
 
 function sidecarPath(home: string): string {
-  return join(home, '.open-knowledge', SIDECAR_FILENAME);
+  return join(home, '.ok', SIDECAR_FILENAME);
 }
 
 async function readSidecarVersion(home: string): Promise<string | null> {
@@ -187,7 +187,7 @@ function runSpawn(
  * via `npx skills@~1.5.0 add <bundled-path> --agent '*' -g -y --copy`.
  *
  * Idempotency: a plain version-string sidecar at
- * `${home}/.open-knowledge/skill-installed-version` gates re-install. The
+ * `${home}/.ok/skill-installed-version` gates re-install. The
  * subprocess is NOT invoked (and `'skip-current'` is returned) only when BOTH
  * the sidecar matches the current `@inkeep/open-knowledge-server` package
  * version AND the central skill source directory at
