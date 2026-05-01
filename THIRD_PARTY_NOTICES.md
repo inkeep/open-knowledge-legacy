@@ -1115,6 +1115,26 @@ Homepage: https://github.com/date-fns/tz#readme
 
 _(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
+### `@dnd-kit/accessibility@3.1.1`
+Homepage: https://github.com/clauderic/dnd-kit
+
+Copyright (c) 2021, Claudéric Demers
+
+### `@dnd-kit/core@6.3.1`
+Homepage: https://github.com/clauderic/dnd-kit
+
+Copyright (c) 2021, Claudéric Demers
+
+### `@dnd-kit/sortable@10.0.0`
+Homepage: https://github.com/clauderic/dnd-kit
+
+Copyright (c) 2021, Claudéric Demers
+
+### `@dnd-kit/utilities@3.2.2`
+Homepage: https://github.com/clauderic/dnd-kit
+
+Copyright (c) 2021, Claudéric Demers
+
 ### `@ecies/ciphers@0.2.6`
 Homepage: https://github.com/ecies/js-ciphers
 

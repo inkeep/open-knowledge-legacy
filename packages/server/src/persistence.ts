@@ -1093,7 +1093,14 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             //
             // Threads the optional `resolveEmbed` so post-load PM image/link
             // nodes carry resolved src/href for `![[file.ext]]` (US-013).
-            applyDiskContent(document, raw, options?.resolveEmbed, documentName);
+            //
+            // Calls the imported `applyDiskContentToDoc` directly (not the
+            // `applyDiskContent` option-aware variable). The option override
+            // exists for the tripwire reset path so tests can inject a
+            // throwing stub that exercises the breaker — onLoadDocument is
+            // a different concern and shouldn't be intercepted by that
+            // testability seam.
+            applyDiskContentToDoc(document, raw, options?.resolveEmbed, documentName);
             log.info(
               { filePath, children: xmlFragment.length },
               `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
