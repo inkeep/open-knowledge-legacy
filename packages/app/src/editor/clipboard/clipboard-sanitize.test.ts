@@ -331,6 +331,50 @@ describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fa
     }
   });
 
+  test('pins endpoint oklch(0 0 0) → rgb(0, 0, 0) (sRGB transfer-function anchor at L=0)', () => {
+    // Mechanical pin against any future change to `linearToSrgbChannel`'s
+    // small-value branch (the linear `12.92x` segment for x ≤ 0.0031308).
+    expect(convertCssColors('oklch(0 0 0)')).toBe('rgb(0, 0, 0)');
+  });
+
+  test('pins endpoint oklch(1 0 0) → rgb(255, 255, 255) (sRGB transfer-function anchor at L=1)', () => {
+    // Anchors the gamma branch (`1.055·x^(1/2.4) − 0.055`) and the byte
+    // clamp at the upper extreme. A coefficient drift that pushes the
+    // result to 254 / 256 surfaces here.
+    expect(convertCssColors('oklch(1 0 0)')).toBe('rgb(255, 255, 255)');
+  });
+
+  test('pins in-gamut oklch(0.5 0.1 240) ≈ rgb(31, 106, 150) ± 3 (Ottosson-matrix coefficient anchor)', () => {
+    // Pinned reference triple for `oklch(0.5 0.1 240)` — chosen because it
+    // is *in-gamut* (no channel hits 0 or 255), so a coefficient regression
+    // in `oklabToLinearSrgb` (sign error, dropped term, transposed entry)
+    // changes the triple in a way clip-clamping cannot mask. Tolerance ±3
+    // per channel accommodates floating-point path differences across
+    // engine versions; tighter than the reviewer's ±6 because no gamut
+    // mapping is in play here.
+    //
+    // Reference values were computed by *this implementation* against the
+    // Ottosson matrix on 2026-04-30. They diverge from Chrome's
+    // `getComputedStyle()` triple for the same input — Chrome implements
+    // CSS Color Module Level 4 gamut-mapping (binary-search chroma
+    // reduction in oklch), whereas this walker does naive clip-after-
+    // conversion since it is converting at *copy time* for cross-app
+    // fidelity, not for in-app rendering. The naive clip is documented in
+    // `clipboard-sanitize.ts:301-305` (`toByte`).
+    const out = convertCssColors('oklch(0.5 0.1 240)');
+    const triple = rgbTriple(out);
+    expect(triple).not.toBeNull();
+    if (triple) {
+      const [r, g, b] = triple;
+      expect(r).toBeGreaterThanOrEqual(28);
+      expect(r).toBeLessThanOrEqual(34);
+      expect(g).toBeGreaterThanOrEqual(103);
+      expect(g).toBeLessThanOrEqual(109);
+      expect(b).toBeGreaterThanOrEqual(147);
+      expect(b).toBeLessThanOrEqual(153);
+    }
+  });
+
   test('preserves alpha as rgba()', () => {
     const out = convertCssColors('oklch(0.5 0.1 240 / 0.5)');
     expect(out).toMatch(/^rgba\(\d+,\s*\d+,\s*\d+,\s*0\.5\)$/);
@@ -352,6 +396,48 @@ describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fa
     expect(convertCssColors('oklab(0.5 0.1 0.05)')).toMatch(/^rgb\(/);
     expect(convertCssColors('lab(50 10 -20)')).toMatch(/^rgb\(/);
     expect(convertCssColors('lch(50 30 240)')).toMatch(/^rgb\(/);
+  });
+
+  test('handles CSS Color 4 `none` keyword (achromatic oklch produces a gray)', () => {
+    // Tailwind's neutral palette uses `oklch(L none H)` for fully
+    // achromatic (zero-chroma) values. `parseColorComponent` maps `none`
+    // to 0 per CSS Color 4 spec, so the math collapses to L-only and the
+    // result must be a gray (r ≈ g ≈ b).
+    const out = convertCssColors('oklch(0.5 none 0)');
+    expect(out).toMatch(/^rgb\(/);
+    const triple = rgbTriple(out);
+    expect(triple).not.toBeNull();
+    if (triple) {
+      const [r, g, b] = triple;
+      // Achromatic — all three channels equal within rounding tolerance.
+      expect(Math.abs(r - g)).toBeLessThanOrEqual(1);
+      expect(Math.abs(g - b)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test('handles `none` for oklab a/b components and oklch hue', () => {
+    // All four positions accept `none`. None-only oklab is structurally
+    // equivalent to (L, 0, 0) and produces a gray.
+    expect(convertCssColors('oklab(0.5 none none)')).toMatch(/^rgb\(/);
+    expect(convertCssColors('oklch(0.5 0.1 none)')).toMatch(/^rgb\(/);
+  });
+
+  test('handles negative a/b components in oklab (covers full sRGB color wheel)', () => {
+    // The Ottosson matrix is a real-valued linear transform — negative
+    // `a` (greener) and negative `b` (bluer) are valid oklab inputs that
+    // appear in Chrome's `getComputedStyle()` output for any color in the
+    // green / blue / cyan / purple quadrants. A regression that mishandles
+    // sign on these terms would silently break half the color wheel.
+    const out = convertCssColors('oklab(0.5 -0.1 0.05)');
+    expect(out).toMatch(/^rgb\(/);
+    const triple = rgbTriple(out);
+    expect(triple).not.toBeNull();
+    if (triple) {
+      // Negative `a` is greener than red; the green channel should
+      // dominate the red channel.
+      const [r, g] = triple;
+      expect(g).toBeGreaterThan(r);
+    }
   });
 
   test('passes legacy color forms through unchanged (no-op invariants)', () => {
