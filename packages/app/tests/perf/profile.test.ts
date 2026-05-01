@@ -48,10 +48,9 @@ describe('parseArgs — launch-mode defaults', () => {
   });
 
   test('OK_PERF_HEADED with non-"1" value does NOT enable headed', () => {
-    // Conservative env-var contract: only literal "1" enables headed,
-    // following the OTEL_SDK_DISABLED-style sentinel pattern from elsewhere
-    // in this codebase. Empty string, "true", "yes", and "0" all stay
-    // headless to avoid false-positive activation from typos.
+    // Conservative env-var contract: only the literal "1" enables headed.
+    // Empty string, "true", "yes", and "0" all stay headless to avoid
+    // false-positive activation from typos.
     process.env.OK_PERF_HEADED = 'true';
     expect(parseArgs(['--scenario=foo']).headed).toBe(false);
     process.env.OK_PERF_HEADED = '0';

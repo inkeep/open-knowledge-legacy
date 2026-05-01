@@ -79,7 +79,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
   // positive cold-load timeouts; running headless eliminates that failure
   // mode. Explicit --headed (or OK_PERF_HEADED=1) opts in for paint/GPU
   // diagnosis on a single scenario. Sentinel-style env contract: only the
-  // literal "1" enables, mirroring OTEL_SDK_DISABLED elsewhere in the repo.
+  // literal "1" enables, so typos like "true" or "yes" stay headless.
   let headed = process.env.OK_PERF_HEADED === '1';
   let viewport = DEFAULT_VIEWPORT;
 
