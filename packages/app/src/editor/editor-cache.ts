@@ -19,9 +19,10 @@
  *       semantic — the consumer's cleanup path still runs).
  *
  *   evict{Tiptap,Cm}Editor(docName)
- *     — THE ONLY PATH that calls editor.destroy() / view.destroy() /
- *       provider.destroy() / ydoc.destroy(). Called on LRU eviction
- *       (MAX_CACHE) or explicit tear-down.
+ *     — THE ONLY PATH that calls provider.destroy() / ydoc.destroy().
+ *       editor.destroy() / view.destroy() are also called on the
+ *       __uncached / kill-switch park branch (see park{Tiptap,Cm}Editor).
+ *       Called on LRU eviction (MAX_CACHE) or explicit tear-down.
  *
  * Why raw `editor.editorView.dom` reparent and NOT `Editor.mount()/unmount()`:
  *   @tiptap/extension-drag-handle@4.x captures the `editor` ref in a plugin
@@ -49,8 +50,44 @@
 import type { EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import type { Editor } from '@tiptap/core';
+import { yUndoPluginKey } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 import { mark } from '@/lib/perf';
+
+/**
+ * Read the per-editor Yjs UndoManager so the caller can null its `restore`
+ * field after `editor.destroy()`. Without this, mount/destroy cycles leak the
+ * full editor graph (~30 MB per cycle on multi-MB docs) via two cooperating
+ * upstream behaviors:
+ *
+ *  1. Yjs's `UndoManager` constructor registers
+ *     `doc.on('destroy', () => this.destroy())` with no stable reference, so
+ *     `UndoManager.destroy()` cannot off it. The Set entry retains the
+ *     UndoManager forever (verified on yjs@13.6.30, v14.0.0-rc.13, and main —
+ *     no upstream fix as of 2026-04-30).
+ *  2. `@tiptap/extension-collaboration`'s plugin-view destroy assigns
+ *     `undoManager.restore = closure(viewRet, view, editor, binding, ...)` —
+ *     the closure captures the entire EditorView + ProsemirrorBinding +
+ *     Editor + PM document tree.
+ *
+ * Clearing `restore` post-destroy breaks the closure chain so the captured
+ * graph is GC-eligible. The leaked UndoManager itself remains in
+ * `Y.Doc._observers.get('destroy')` but its retained payload drops from
+ * ~30 MB to a few hundred bytes per cycle.
+ */
+function readEditorUndoManager(editor: Editor): { restore?: unknown } | null {
+  try {
+    const state = editor.state;
+    const pluginState = yUndoPluginKey.getState(state) as
+      | { undoManager?: { restore?: unknown } }
+      | null
+      | undefined;
+    return pluginState?.undoManager ?? null;
+  } catch {
+    // editor.state is a throwing proxy in known TipTap mid-teardown windows.
+    return null;
+  }
+}
 
 /**
  * Emergency kill switch. When `false`:
@@ -386,10 +423,20 @@ export function parkTiptapEditor(entry: TiptapCacheEntry): void {
     // Kill-switch / uncached fallthrough: destroy the editor now. Provider
     // + ydoc are NOT destroyed — they're owned by the ProviderPool which
     // has its own eviction logic.
+    //
+    // Capture the UndoManager BEFORE destroy — `editor.state` is only safely
+    // readable while the editor is alive. After destroy, clear
+    // `undoManager.restore` to break the @tiptap/extension-collaboration
+    // closure that retains the full editor graph. See `readEditorUndoManager`
+    // above for the complete chain.
+    const undoManager = readEditorUndoManager(entry.editor);
     try {
       entry.editor.destroy();
     } catch {
       // already destroyed or proxy is in a throwing state — safe to ignore
+    }
+    if (undoManager) {
+      undoManager.restore = undefined;
     }
     entry.activeMountKey = null;
     return;
@@ -419,21 +466,26 @@ export function parkTiptapEditor(entry: TiptapCacheEntry): void {
 }
 
 /**
- * Evict the editor for `docName` — THE ONLY path that calls destroy()
- * on the editor / provider / ydoc. Safe no-op if docName is not cached.
- * Returns true if an entry was destroyed, false otherwise.
+ * Evict the editor for `docName` — destroys provider + ydoc + editor.
+ * `editor.destroy()` is also called by `parkTiptapEditor`'s __uncached /
+ * kill-switch branch, but provider/ydoc destruction happens only here.
+ * Safe no-op if docName is not cached. Returns true if an entry was
+ * destroyed, false otherwise.
  *
  * Each sub-destroy is wrapped in try/catch because destroy can throw in
  * known mid-teardown states (e.g. TipTap's throwing proxy). But a
  * genuine memory / socket / Y.Doc leak would manifest as a silent cache
  * bloat with no observable signal. Every catch emits
  * `ok/cache/evict-failed` so a developer profiling V2 in Chrome DevTools
- * Extensibility can see real eviction failures (review Major #12).
+ * Extensibility can see real eviction failures.
  */
 export function evictTiptapEditor(docName: string): boolean {
   const entry = tiptapCache.get(docName);
   if (!entry) return false;
 
+  // See parkTiptapEditor / readEditorUndoManager for the rationale on
+  // capture-before-destroy + clear-restore-after.
+  const undoManager = readEditorUndoManager(entry.editor);
   try {
     entry.editor.destroy();
   } catch (err) {
@@ -443,6 +495,9 @@ export function evictTiptapEditor(docName: string): boolean {
       stage: 'editor',
       message: err instanceof Error ? err.message : String(err),
     });
+  }
+  if (undoManager) {
+    undoManager.restore = undefined;
   }
   try {
     entry.provider.destroy();
@@ -573,7 +628,9 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
 
 /**
  * Park the CM6 editor — detach `view.dom`, save scrollTop, clear
- * activeMountKey. Does NOT call `view.destroy()`.
+ * activeMountKey. Does NOT call `view.destroy()` in the cached path.
+ * When CACHE_ENABLED=false (or entry is __uncached): destroys the view
+ * immediately, restoring pre-V2 destroy-on-unmount semantics.
  */
 export function parkCmEditor(entry: CmCacheEntry): void {
   if (!CACHE_ENABLED || entry.__uncached) {
@@ -603,10 +660,11 @@ export function parkCmEditor(entry: CmCacheEntry): void {
 }
 
 /**
- * Evict the CM6 editor — THE ONLY path that calls view.destroy() /
- * provider.destroy() / ydoc.destroy(). Emits `ok/cache/evict-failed` on
- * any sub-destroy throw so real memory/socket/Y.Doc leaks surface in
- * telemetry (review Major #12).
+ * Evict the CM6 editor — destroys provider + ydoc + view.
+ * `view.destroy()` is also called by `parkCmEditor`'s __uncached /
+ * kill-switch branch, but provider/ydoc destruction happens only here.
+ * Emits `ok/cache/evict-failed` on any sub-destroy throw so real
+ * memory/socket/Y.Doc leaks surface in telemetry.
  */
 export function evictCmEditor(docName: string): boolean {
   const entry = cmCache.get(docName);
