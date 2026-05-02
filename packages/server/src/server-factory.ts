@@ -1286,7 +1286,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     switchReconciledBaseScope(startupBranch);
     backlinkIndex.switchBranch(startupBranch);
 
-    // Start file watcher with content filtering for ignored files and config docs.
+    // Start file watcher (with content filter for gitignore + config exclude)
     try {
       const startedWatcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
       if (shutdownAllowsUnload) {
@@ -1328,7 +1328,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       degraded.push('file-watcher');
     }
 
-    // Start HEAD watcher for project git changes.
+    // Start HEAD watcher (only if project .git/ exists)
     try {
       const startedHeadWatcher = await startHeadWatcher(
         projectDir,
