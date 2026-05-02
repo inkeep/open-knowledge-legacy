@@ -10,14 +10,68 @@ const matchedStatus = {
 } as const;
 
 describe('GBrainSidebarSearch static rendering', () => {
-  test('renders nothing when status is not matched', () => {
-    const html = renderToString(
+  test('stays quiet while status is loading or gbrain is not installed', () => {
+    const loadingHtml = renderToString(<GBrainSidebarSearch initialStatus={null} />);
+    const notInstalledHtml = renderToString(
       <GBrainSidebarSearch
         initialStatus={{ state: 'not-installed', message: 'gbrain is not installed.' }}
       />,
     );
 
-    expect(html).toBe('');
+    expect(loadingHtml).toBe('');
+    expect(notInstalledHtml).toBe('');
+  });
+
+  test('renders compact diagnostics when gbrain is not configured', () => {
+    const html = renderToString(
+      <GBrainSidebarSearch
+        initialStatus={{
+          state: 'not-configured',
+          message: 'gbrain is installed, but sources are not configured.',
+          diagnostic: 'raw CLI stderr should stay hidden',
+        }}
+      />,
+    );
+
+    expect(html).toContain('data-testid="gbrain-diagnostics"');
+    expect(html).toContain('gbrain is installed, but sources are not configured.');
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).not.toContain('raw CLI stderr should stay hidden');
+    expect(html).not.toContain('aria-label="Search gbrain"');
+  });
+
+  test('renders compact diagnostics when the current folder is not registered', () => {
+    const html = renderToString(
+      <GBrainSidebarSearch
+        initialStatus={{
+          state: 'not-registered',
+          projectPath: '/repo/open-knowledge',
+          message: 'This folder is not registered as a gbrain source.',
+        }}
+      />,
+    );
+
+    expect(html).toContain('data-testid="gbrain-diagnostics"');
+    expect(html).toContain('This folder is not registered as a gbrain source.');
+    expect(html).not.toContain('aria-label="Search gbrain"');
+  });
+
+  test('renders a concise diagnostic for unexpected status errors', () => {
+    const html = renderToString(
+      <GBrainSidebarSearch
+        initialStatus={{
+          state: 'error',
+          code: 'timeout',
+          message: 'gbrain did not respond in time.',
+          diagnostic: 'stack trace should stay hidden',
+        }}
+      />,
+    );
+
+    expect(html).toContain('data-testid="gbrain-diagnostics"');
+    expect(html).toContain('gbrain did not respond in time.');
+    expect(html).not.toContain('stack trace should stay hidden');
+    expect(html).not.toContain('aria-label="Search gbrain"');
   });
 
   test('renders a matched-source search module', () => {

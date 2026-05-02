@@ -6,6 +6,8 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarInput,
+  SidebarMenu,
+  SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import {
   DEFAULT_GBRAIN_SEARCH_LIMIT,
@@ -38,13 +40,44 @@ export function GBrainSidebarSearch({
     };
   }, [initialStatus]);
 
-  if (status?.state !== 'matched') return null;
+  if (status === null || status.state === 'not-installed') return null;
+
+  if (status.state !== 'matched') {
+    return <GBrainSidebarDiagnostics status={status} />;
+  }
 
   return (
     <GBrainSidebarSearchPanel
       initialSearchResponse={initialSearchResponse}
       sourceName={status.sourceName}
     />
+  );
+}
+
+type GBrainDiagnosticStatus = Exclude<GBrainStatus, { state: 'matched' | 'not-installed' }>;
+
+function GBrainSidebarDiagnostics({ status }: { status: GBrainDiagnosticStatus }) {
+  return (
+    <SidebarGroup
+      className="border-sidebar-border/70 border-b pb-3"
+      data-testid="gbrain-diagnostics"
+    >
+      <SidebarGroupLabel className="px-0 font-mono text-[0.65rem] uppercase tracking-wider text-sidebar-foreground/50">
+        gbrain
+      </SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <div
+              aria-disabled="true"
+              className="flex min-h-7 w-full items-start rounded-md px-2 py-1.5 text-left text-xs leading-snug text-sidebar-foreground/60"
+            >
+              {status.message}
+            </div>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   );
 }
 
