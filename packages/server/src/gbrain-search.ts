@@ -49,6 +49,10 @@ export type GBrainSearchResponse =
       diagnostic?: string;
     };
 
+export interface GBrainSearcher {
+  search(projectPath: string, request: GBrainSearchRequest): Promise<GBrainSearchResponse>;
+}
+
 interface CreateGBrainSearcherOptions {
   run?: GBrainCommandRunner;
   statusProvider: GBrainSearchStatusProvider;
@@ -57,7 +61,7 @@ interface CreateGBrainSearcherOptions {
 
 class InvalidGBrainSearchJsonError extends Error {}
 
-export function createGBrainSearcher(options: CreateGBrainSearcherOptions) {
+export function createGBrainSearcher(options: CreateGBrainSearcherOptions): GBrainSearcher {
   const run = options.run ?? createDefaultGBrainCommandRunner;
   const timeoutMs = options.timeoutMs ?? GBRAIN_SEARCH_TIMEOUT_MS;
 

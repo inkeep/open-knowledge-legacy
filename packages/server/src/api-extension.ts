@@ -63,6 +63,13 @@ import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.
 import { isAllowedApiOrigin } from './api-origin.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
+  createGBrainSearcher,
+  type GBrainSearcher,
+  type GBrainSearchRequest,
+  type GBrainSearchResponse,
+} from './gbrain-search.ts';
+import { createGBrainStatusDetector, type GBrainStatusDetector } from './gbrain-status.ts';
+import {
   createInstalledAgentsProbe,
   createOsProbe,
   handleInstalledAgents,
@@ -708,6 +715,8 @@ export interface ApiExtensionOptions {
   contentFilter?: ContentFilter;
   installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
   forceUnloadDocument?: (document: Document) => Promise<void>;
+  gbrainStatusDetector?: GBrainStatusDetector;
+  gbrainSearcher?: GBrainSearcher;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -802,6 +811,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   const installedAgentsCache = createInstalledAgentsProbe({
     probe: installedAgentsProbe ?? createOsProbe(process.platform),
   });
+  const gbrainStatusDetector = options.gbrainStatusDetector ?? createGBrainStatusDetector();
+  const gbrainSearcher =
+    options.gbrainSearcher ?? createGBrainSearcher({ statusProvider: gbrainStatusDetector });
+  const getGBrainProjectPath = (): string => projectDir ?? contentDir;
 
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
@@ -3212,6 +3225,83 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, { presence });
   }
 
+  async function handleGBrainStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    const parsedUrl = new URL(req.url ?? '/api/gbrain/status', 'http://localhost');
+    const refresh = parsedUrl.searchParams.get('refresh') === 'true';
+    const status = await gbrainStatusDetector.getStatus(getGBrainProjectPath(), { refresh });
+    json(res, 200, { ok: true, status });
+  }
+
+  async function handleGBrainSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let rawBody: Buffer;
+    try {
+      rawBody = await readBody(req);
+    } catch {
+      json(res, 413, { ok: false, error: 'Payload too large' });
+      return;
+    }
+
+    let body: unknown;
+    try {
+      body = rawBody.length > 0 ? JSON.parse(rawBody.toString()) : {};
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON' });
+      return;
+    }
+
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+      return;
+    }
+
+    const requestBody = body as Record<string, unknown>;
+    if (typeof requestBody.query !== 'string' || requestBody.query.trim() === '') {
+      json(res, 400, { ok: false, code: 'invalid-query', message: 'Enter a search query.' });
+      return;
+    }
+
+    const searchRequest: GBrainSearchRequest = {
+      query: requestBody.query,
+      limit: typeof requestBody.limit === 'number' ? requestBody.limit : undefined,
+    };
+    const searchResponse = await gbrainSearcher.search(getGBrainProjectPath(), searchRequest);
+    json(res, getGBrainSearchStatusCode(searchResponse), searchResponse);
+  }
+
+  function getGBrainSearchStatusCode(response: GBrainSearchResponse): number {
+    if (response.ok) return 200;
+    if (response.code === 'invalid-query') return 400;
+    if (response.code === 'not-matched') return 409;
+    if (response.code === 'timeout') return 504;
+    return 502;
+  }
+
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
       json(res, 403, { ok: false, error: 'loopback-required' });
@@ -5095,6 +5185,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,
+    '/api/gbrain/status': handleGBrainStatus,
+    '/api/gbrain/search': handleGBrainSearch,
     '/api/sync/status': handleSyncStatus,
     '/api/sync/trigger': handleSyncTrigger,
     '/api/sync/set-enabled': handleSyncSetEnabled,
