@@ -73,10 +73,12 @@ export async function startConfigFileWatcher(
       `[config-file-watcher] chokidar error while watching ${absPath}`,
     );
   });
+  let fallbackAttempts = 0;
   const fallbackPoll = setInterval(() => {
+    fallbackAttempts++;
     handlePath(absPath, false);
+    if (lastContent !== null || fallbackAttempts >= 20) clearInterval(fallbackPoll);
   }, 500);
-  fallbackPoll.unref?.();
 
   let closed = false;
   return async () => {
