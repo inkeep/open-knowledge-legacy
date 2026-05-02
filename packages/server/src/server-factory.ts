@@ -1266,6 +1266,10 @@ export function createServer(options: ServerOptions): ServerInstance {
             });
           }
         });
+        if (shutdownAllowsUnload) {
+          await cleanup();
+          return;
+        }
         configFileWatcherCleanups.push({ docName: configDocName, cleanup });
         log.info({ docName: configDocName, path: absPath }, '[config-file-watcher] started');
       } catch (err) {
@@ -1283,7 +1287,12 @@ export function createServer(options: ServerOptions): ServerInstance {
     backlinkIndex.switchBranch(startupBranch);
 
     try {
-      watcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
+      const startedWatcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
+      if (shutdownAllowsUnload) {
+        await startedWatcher.unsubscribe();
+        return;
+      }
+      watcher = startedWatcher;
       backlinkIndex.rebuildFromDisk(getActiveBranch());
       void backlinkIndex.saveToDisk().catch((err) => {
         console.warn(`[backlinks] Failed to persist startup cache for ${getActiveBranch()}:`, err);
@@ -1319,7 +1328,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
 
     try {
-      headWatcher = await startHeadWatcher(
+      const startedHeadWatcher = await startHeadWatcher(
         projectDir,
         async ({ trigger }) => {
           log.info({ trigger }, `[batch] begin trigger=${trigger}`);
@@ -1595,6 +1604,11 @@ export function createServer(options: ServerOptions): ServerInstance {
           }
         },
       );
+      if (shutdownAllowsUnload) {
+        await startedHeadWatcher.unsubscribe();
+        return;
+      }
+      headWatcher = startedHeadWatcher;
     } catch (err) {
       log.error({ err }, '[server] HEAD watcher failed to start');
       degraded.push('head-watcher');
@@ -1605,7 +1619,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       localOpCliArgs && localOpCliArgs.length > 1 ? localOpCliArgs.join(' ') : cliCmd;
     const syncCredentialArgs = ['-c', `credential.helper=!${cliPrefix} auth git-credential`];
     try {
-      syncEngine = new SyncEngine({
+      const startedSyncEngine = new SyncEngine({
         projectDir,
         contentDir,
         contentFilter,
@@ -1639,7 +1653,12 @@ export function createServer(options: ServerOptions): ServerInstance {
           }
         },
       });
-      await syncEngine.start();
+      await startedSyncEngine.start();
+      if (shutdownAllowsUnload) {
+        await startedSyncEngine.destroy();
+        return;
+      }
+      syncEngine = startedSyncEngine;
     } catch (err) {
       log.warn({ err }, '[server] SyncEngine failed to start — sync disabled');
       syncEngine = null;
