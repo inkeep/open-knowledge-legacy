@@ -874,12 +874,12 @@ export function createServer(options: ServerOptions): ServerInstance {
           },
         ),
         new Promise<'timeout'>((r) => {
-          initTimeoutId = setTimeout(() => r('timeout'), 5_000);
+          initTimeoutId = setTimeout(() => r('timeout'), 30_000);
         }),
       ]);
       if (initTimeoutId !== undefined) clearTimeout(initTimeoutId);
       if (initSettled === 'timeout') {
-        log.warn({}, '[server] init did not complete within 5s during shutdown');
+        log.warn({}, '[server] init did not complete within 30s during shutdown');
       }
 
       const documentCount = hocuspocus.documents.size;
