@@ -9,7 +9,7 @@ import { createServer, type ServerInstance, type ServerOptions } from './server-
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
 const DEFAULT_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
-const DESTROY_STEP_TIMEOUT_MS = 5000;
+const DESTROY_STEP_TIMEOUT_MS = 30_000;
 
 export interface BootServerOptions
   extends Pick<
