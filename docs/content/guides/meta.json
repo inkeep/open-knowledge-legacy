@@ -4,6 +4,7 @@
   "pages": [
     "getting-started",
     "github-sync",
+    "gbrain-search",
     "configuration",
     "assets-and-embeds",
     "cli-reference",

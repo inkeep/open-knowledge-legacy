@@ -310,7 +310,15 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   return {
     httpServer: booted.httpServer,
-    destroy: booted.destroy,
+    destroy: async () => {
+      await booted.ready.catch(() => {});
+      try {
+        await booted.destroy();
+      } catch (err) {
+        await booted.serverInstance.destroy().catch(() => {});
+        throw err;
+      }
+    },
     lockDir: booted.lockDir,
     contentDir,
     port: booted.port,

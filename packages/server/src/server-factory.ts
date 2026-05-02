@@ -1266,6 +1266,10 @@ export function createServer(options: ServerOptions): ServerInstance {
             });
           }
         });
+        if (shutdownAllowsUnload) {
+          await cleanup();
+          return;
+        }
         configFileWatcherCleanups.push({ docName: configDocName, cleanup });
         log.info({ docName: configDocName, path: absPath }, '[config-file-watcher] started');
       } catch (err) {

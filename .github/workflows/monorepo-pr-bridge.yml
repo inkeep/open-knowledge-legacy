@@ -82,7 +82,7 @@ jobs:
           # re-introduce content that is already authoritative on
           # agents-private under different intent.
           BRIDGE_EXCLUDED_PATHS: >-
-            [".codex/", ".claude/", ".cursor/", ".openhands/", ".ok/",
+            [".codex/", ".claude/", ".cursor/", ".openhands/", ".ok/", ".okignore",
              "specs/", "reports/", "projects/", "stories/", "strategy/",
              "private/", "ARCHITECTURE.md", "PRECEDENTS.md"]
         run: node .github/scripts/bridge-public-pr-to-monorepo.mjs sync

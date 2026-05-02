@@ -1,6 +1,7 @@
 import { FolderPlus, FoldVertical, ListCollapse, SquarePen, UnfoldVertical } from 'lucide-react';
 import { useRef } from 'react';
 import { FileTree, type FileTreeHandle } from '@/components/FileTree';
+import { GBrainSidebarSearch } from '@/components/GBrainSidebarSearch';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { UpdateNotices } from '@/components/UpdateNotices';
 import { Button } from '@/components/ui/button';
@@ -102,6 +103,7 @@ function FileSidebarInner() {
         </div>
       </SidebarHeader>
       <SidebarContent>
+        <GBrainSidebarSearch />
         <FileTree ref={fileTreeRef} />
       </SidebarContent>
       <SidebarFooter className="px-0">
