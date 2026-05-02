@@ -1288,12 +1288,6 @@ export function createServer(options: ServerOptions): ServerInstance {
 
     try {
       watcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
-      if (shutdownAllowsUnload && watcher) {
-        const startedWatcher = watcher;
-        watcher = null;
-        await startedWatcher.unsubscribe();
-        return;
-      }
       backlinkIndex.rebuildFromDisk(getActiveBranch());
       void backlinkIndex.saveToDisk().catch((err) => {
         console.warn(`[backlinks] Failed to persist startup cache for ${getActiveBranch()}:`, err);
@@ -1605,12 +1599,6 @@ export function createServer(options: ServerOptions): ServerInstance {
           }
         },
       );
-      if (shutdownAllowsUnload && headWatcher) {
-        const startedHeadWatcher = headWatcher;
-        headWatcher = null;
-        await startedHeadWatcher.unsubscribe();
-        return;
-      }
     } catch (err) {
       log.error({ err }, '[server] HEAD watcher failed to start');
       degraded.push('head-watcher');
@@ -1656,12 +1644,6 @@ export function createServer(options: ServerOptions): ServerInstance {
         },
       });
       await syncEngine.start();
-      if (shutdownAllowsUnload && syncEngine) {
-        const startedSyncEngine = syncEngine;
-        syncEngine = null;
-        await startedSyncEngine.destroy();
-        return;
-      }
     } catch (err) {
       log.warn({ err }, '[server] SyncEngine failed to start — sync disabled');
       syncEngine = null;
