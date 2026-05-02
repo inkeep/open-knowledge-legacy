@@ -76,6 +76,7 @@ export async function startConfigFileWatcher(
   const fallbackPoll = setInterval(() => {
     handlePath(absPath, false);
   }, 500);
+  fallbackPoll.unref?.();
 
   let closed = false;
   return async () => {
