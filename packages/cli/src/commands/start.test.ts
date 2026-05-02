@@ -18,12 +18,6 @@ import {
 } from './start.ts';
 import { closeHttpServers, startUiServer, type UiServerHandle } from './ui.ts';
 
-async function destroyBootedStartServer(booted: BootedStartServer): Promise<void> {
-  // Let async startup finish registering server-side resources before destroy drains them.
-  await booted.ready.catch(() => {});
-  await booted.destroy();
-}
-
 describe('decideUiSpawn', () => {
   test('absent lock → spawn(absent)', () => {
     const result = decideUiSpawn({ uiLock: null, isAlive: () => true });
@@ -359,7 +353,7 @@ describe('bootStartServer (integration)', () => {
   afterEach(async () => {
     if (booted) {
       try {
-        await destroyBootedStartServer(booted);
+        await booted.destroy();
       } catch {}
       booted = null;
     }
@@ -592,7 +586,7 @@ describe('bootStartServer — ensureProjectGit wiring (US-004)', () => {
   afterEach(async () => {
     if (booted) {
       try {
-        await destroyBootedStartServer(booted);
+        await booted.destroy();
       } catch {}
       booted = null;
     }
@@ -738,7 +732,7 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
   afterEach(async () => {
     if (booted) {
       try {
-        await destroyBootedStartServer(booted);
+        await booted.destroy();
       } catch {}
       booted = null;
     }
