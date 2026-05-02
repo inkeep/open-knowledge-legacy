@@ -312,7 +312,12 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     httpServer: booted.httpServer,
     destroy: async () => {
       await booted.ready.catch(() => {});
-      await booted.destroy();
+      try {
+        await booted.destroy();
+      } catch (err) {
+        await booted.serverInstance.destroy().catch(() => {});
+        throw err;
+      }
     },
     lockDir: booted.lockDir,
     contentDir,
