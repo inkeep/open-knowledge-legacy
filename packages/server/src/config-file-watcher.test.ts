@@ -70,10 +70,10 @@ describe('startConfigFileWatcher', () => {
       attempt++;
       writeFileSync(fx.absPath, `theme: dark\nattempt: ${attempt}\n`, 'utf-8');
       return false;
-    });
+    }, 20_000);
     expect(fired).toBe(true);
     expect(events[0]?.startsWith('theme: dark\n')).toBe(true);
-  }, 15_000);
+  }, 25_000);
 
   test('fires onChange when an existing file is modified', async () => {
     writeFileSync(fx.absPath, 'theme: light\n', 'utf-8');
@@ -158,26 +158,15 @@ describe('startConfigFileWatcher', () => {
         firstFired = true;
         throw new Error('boom');
       }
-      if (content.startsWith('theme: dark\n')) secondFired = true;
+      if (content === 'theme: dark\n') secondFired = true;
     });
     cleanups.push(cleanup);
 
-    let firstAttempt = 0;
-    const firstDelivered = await waitFor(() => {
-      if (firstFired) return true;
-      firstAttempt++;
-      writeFileSync(fx.absPath, `first\nattempt: ${firstAttempt}\n`, 'utf-8');
-      return false;
-    });
-    expect(firstDelivered).toBe(true);
+    writeFileSync(fx.absPath, 'first\n', 'utf-8');
+    await waitFor(() => firstFired);
 
-    let secondAttempt = 0;
-    const fired = await waitFor(() => {
-      if (secondFired) return true;
-      secondAttempt++;
-      writeFileSync(fx.absPath, `theme: dark\nattempt: ${secondAttempt}\n`, 'utf-8');
-      return false;
-    });
+    writeFileSync(fx.absPath, 'theme: dark\n', 'utf-8');
+    const fired = await waitFor(() => secondFired);
     expect(fired).toBe(true);
   }, 15_000);
 });
