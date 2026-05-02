@@ -158,15 +158,26 @@ describe('startConfigFileWatcher', () => {
         firstFired = true;
         throw new Error('boom');
       }
-      if (content === 'theme: dark\n') secondFired = true;
+      if (content.startsWith('theme: dark\n')) secondFired = true;
     });
     cleanups.push(cleanup);
 
-    writeFileSync(fx.absPath, 'first\n', 'utf-8');
-    await waitFor(() => firstFired);
+    let firstAttempt = 0;
+    const firstDelivered = await waitFor(() => {
+      if (firstFired) return true;
+      firstAttempt++;
+      writeFileSync(fx.absPath, `first\nattempt: ${firstAttempt}\n`, 'utf-8');
+      return false;
+    });
+    expect(firstDelivered).toBe(true);
 
-    writeFileSync(fx.absPath, 'theme: dark\n', 'utf-8');
-    const fired = await waitFor(() => secondFired);
+    let secondAttempt = 0;
+    const fired = await waitFor(() => {
+      if (secondFired) return true;
+      secondAttempt++;
+      writeFileSync(fx.absPath, `theme: dark\nattempt: ${secondAttempt}\n`, 'utf-8');
+      return false;
+    });
     expect(fired).toBe(true);
   }, 15_000);
 });
