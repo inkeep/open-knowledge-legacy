@@ -35,7 +35,8 @@ export async function startConfigFileWatcher(
     watcher.once('ready', () => resolve());
   });
 
-  const handler = (path: string): void => {
+  let lastContent: string | null = null;
+  const handlePath = (path: string, logMissing = true): void => {
     if (path !== absPath) return;
     let content: string;
     try {
@@ -43,18 +44,22 @@ export async function startConfigFileWatcher(
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
-        log.debug({ path }, 'config file disappeared between event and read; dropping');
+        if (logMissing)
+          log.debug({ path }, 'config file disappeared between event and read; dropping');
         return;
       }
       log.warn({ err, path }, 'config file read failed; dropping event');
       return;
     }
+    if (content === lastContent) return;
+    lastContent = content;
     try {
       onChange(content);
     } catch (err) {
       log.warn({ err, path }, 'config file change handler threw');
     }
   };
+  const handler = (path: string): void => handlePath(path);
 
   watcher.on('add', handler);
   watcher.on('change', handler);
@@ -68,11 +73,15 @@ export async function startConfigFileWatcher(
       `[config-file-watcher] chokidar error while watching ${absPath}`,
     );
   });
+  const fallbackPoll = setInterval(() => {
+    handlePath(absPath, false);
+  }, 500);
 
   let closed = false;
   return async () => {
     if (closed) return;
     closed = true;
+    clearInterval(fallbackPoll);
     await watcher.close();
   };
 }
