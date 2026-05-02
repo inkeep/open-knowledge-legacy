@@ -715,6 +715,9 @@ export interface ApiExtensionOptions {
   contentFilter?: ContentFilter;
   installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
   forceUnloadDocument?: (document: Document) => Promise<void>;
+}
+
+interface GBrainApiExtensionOptions {
   gbrainStatusDetector?: GBrainStatusDetector;
   gbrainSearcher?: GBrainSearcher;
 }
@@ -778,7 +781,9 @@ function isSafeDocName(docName: string): boolean {
   );
 }
 
-export function createApiExtension(options: ApiExtensionOptions): Extension {
+export function createApiExtension(
+  options: ApiExtensionOptions & GBrainApiExtensionOptions,
+): Extension {
   const {
     hocuspocus,
     sessionManager,
