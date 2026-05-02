@@ -821,6 +821,83 @@ export function createApiExtension(
     options.gbrainSearcher ?? createGBrainSearcher({ statusProvider: gbrainStatusDetector });
   const getGBrainProjectPath = (): string => projectDir ?? contentDir;
 
+  async function handleGBrainStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    const parsedUrl = new URL(req.url ?? '/api/gbrain/status', 'http://localhost');
+    const refresh = parsedUrl.searchParams.get('refresh') === 'true';
+    const status = await gbrainStatusDetector.getStatus(getGBrainProjectPath(), { refresh });
+    json(res, 200, { ok: true, status });
+  }
+
+  async function handleGBrainSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let rawBody: Buffer;
+    try {
+      rawBody = await readBody(req);
+    } catch {
+      json(res, 413, { ok: false, error: 'Payload too large' });
+      return;
+    }
+
+    let body: unknown;
+    try {
+      body = rawBody.length > 0 ? JSON.parse(rawBody.toString()) : {};
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON' });
+      return;
+    }
+
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+      return;
+    }
+
+    const requestBody = body as Record<string, unknown>;
+    if (typeof requestBody.query !== 'string' || requestBody.query.trim() === '') {
+      json(res, 400, { ok: false, code: 'invalid-query', message: 'Enter a search query.' });
+      return;
+    }
+
+    const searchRequest: GBrainSearchRequest = {
+      query: requestBody.query,
+      limit: typeof requestBody.limit === 'number' ? requestBody.limit : undefined,
+    };
+    const searchResponse = await gbrainSearcher.search(getGBrainProjectPath(), searchRequest);
+    json(res, getGBrainSearchStatusCode(searchResponse), searchResponse);
+  }
+
+  function getGBrainSearchStatusCode(response: GBrainSearchResponse): number {
+    if (response.ok) return 200;
+    if (response.code === 'invalid-query') return 400;
+    if (response.code === 'not-matched') return 409;
+    if (response.code === 'timeout') return 504;
+    return 502;
+  }
+
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
     const resolvedContentDir = resolve(contentDir);
@@ -3228,83 +3305,6 @@ export function createApiExtension(
       }
     }
     json(res, 200, { presence });
-  }
-
-  async function handleGBrainStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!isLoopbackAddress(req.socket.remoteAddress)) {
-      json(res, 403, { ok: false, error: 'loopback-required' });
-      return;
-    }
-    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
-      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
-      return;
-    }
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    const parsedUrl = new URL(req.url ?? '/api/gbrain/status', 'http://localhost');
-    const refresh = parsedUrl.searchParams.get('refresh') === 'true';
-    const status = await gbrainStatusDetector.getStatus(getGBrainProjectPath(), { refresh });
-    json(res, 200, { ok: true, status });
-  }
-
-  async function handleGBrainSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!isLoopbackAddress(req.socket.remoteAddress)) {
-      json(res, 403, { ok: false, error: 'loopback-required' });
-      return;
-    }
-    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
-      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
-      return;
-    }
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    let rawBody: Buffer;
-    try {
-      rawBody = await readBody(req);
-    } catch {
-      json(res, 413, { ok: false, error: 'Payload too large' });
-      return;
-    }
-
-    let body: unknown;
-    try {
-      body = rawBody.length > 0 ? JSON.parse(rawBody.toString()) : {};
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON' });
-      return;
-    }
-
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-      json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-      return;
-    }
-
-    const requestBody = body as Record<string, unknown>;
-    if (typeof requestBody.query !== 'string' || requestBody.query.trim() === '') {
-      json(res, 400, { ok: false, code: 'invalid-query', message: 'Enter a search query.' });
-      return;
-    }
-
-    const searchRequest: GBrainSearchRequest = {
-      query: requestBody.query,
-      limit: typeof requestBody.limit === 'number' ? requestBody.limit : undefined,
-    };
-    const searchResponse = await gbrainSearcher.search(getGBrainProjectPath(), searchRequest);
-    json(res, getGBrainSearchStatusCode(searchResponse), searchResponse);
-  }
-
-  function getGBrainSearchStatusCode(response: GBrainSearchResponse): number {
-    if (response.ok) return 200;
-    if (response.code === 'invalid-query') return 400;
-    if (response.code === 'not-matched') return 409;
-    if (response.code === 'timeout') return 504;
-    return 502;
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
