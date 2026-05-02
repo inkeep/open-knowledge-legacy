@@ -181,6 +181,21 @@ describe('createGBrainStatusDetector', () => {
     });
   });
 
+  test('returns a generic error when sources list fails for an unknown reason', async () => {
+    const runner = createRunner([success('gbrain 1.0.0\n'), failure('database is locked')]);
+    const detector = createGBrainStatusDetector({
+      run: runner,
+      realpath: createRealpath(),
+    });
+
+    await expect(detector.getStatus('/project')).resolves.toEqual({
+      state: 'error',
+      code: 'gbrain-error',
+      message: 'gbrain source detection failed.',
+      diagnostic: 'database is locked',
+    });
+  });
+
   test('returns timeout errors without throwing', async () => {
     const runner = createRunner([{ exitCode: null, stdout: '', stderr: '', timedOut: true }]);
     const detector = createGBrainStatusDetector({

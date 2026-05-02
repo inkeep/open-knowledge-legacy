@@ -109,6 +109,8 @@ describe('GBrainSidebarSearch static rendering', () => {
     expect(html).toContain('notes/family-calendar');
     expect(html).toContain('Calendar notes from the project.');
     expect(html).toContain('0.87');
+    expect(html).toContain('Source:');
+    expect(html).toContain('open-knowledge');
     expect(html).not.toContain('<a ');
   });
 

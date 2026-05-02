@@ -187,11 +187,14 @@ export function createGBrainStatusDetector(
     if (sourcesFailure === 'timeout') return timeoutStatus();
     if (sourcesFailure === 'not-installed') return notInstalledStatus();
     if (sourcesFailure !== null) {
-      return {
-        state: 'not-configured',
-        message: 'gbrain is installed, but sources are not configured.',
-        diagnostic: compactDiagnostic(sourcesResult),
-      };
+      if (isNotConfiguredFailure(sourcesResult)) {
+        return {
+          state: 'not-configured',
+          message: 'gbrain is installed, but sources are not configured.',
+          diagnostic: compactDiagnostic(sourcesResult),
+        };
+      }
+      return gbrainErrorStatus('gbrain source detection failed.', sourcesResult);
     }
 
     let sources: GBrainSource[];
@@ -310,6 +313,16 @@ function gbrainErrorStatus(message: string, result: GBrainCommandResult): GBrain
     message,
     diagnostic: compactDiagnostic(result),
   };
+}
+
+function isNotConfiguredFailure(result: GBrainCommandResult): boolean {
+  const diagnostic = `${result.stderr}\n${result.stdout}`.toLowerCase();
+  return (
+    diagnostic.includes('no brain configured') ||
+    diagnostic.includes('not configured') ||
+    diagnostic.includes('not initialized') ||
+    diagnostic.includes('run: gbrain init')
+  );
 }
 
 function compactDiagnostic(result: GBrainCommandResult): string | undefined {

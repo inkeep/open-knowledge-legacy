@@ -178,13 +178,19 @@ export function GBrainSidebarSearchView({
         {hasSearched && results.length === 0 && error === null && !isSearching ? (
           <p className="px-1 text-xs text-sidebar-foreground/50">No gbrain results found.</p>
         ) : null}
-        {results.length > 0 ? <GBrainResultList results={results} /> : null}
+        {results.length > 0 ? <GBrainResultList results={results} sourceName={sourceName} /> : null}
       </SidebarGroupContent>
     </SidebarGroup>
   );
 }
 
-function GBrainResultList({ results }: { results: GBrainSearchResult[] }) {
+function GBrainResultList({
+  results,
+  sourceName,
+}: {
+  results: GBrainSearchResult[];
+  sourceName: string;
+}) {
   return (
     <ul className="space-y-1" data-testid="gbrain-search-results">
       {results.map((result) => (
@@ -204,6 +210,9 @@ function GBrainResultList({ results }: { results: GBrainSearchResult[] }) {
           </div>
           <div className="truncate font-mono text-[0.65rem] text-sidebar-foreground/50">
             {result.slug}
+          </div>
+          <div className="truncate text-[0.65rem] text-sidebar-foreground/40">
+            Source: {result.sourceId ?? sourceName}
           </div>
           <p className="line-clamp-2 text-sidebar-foreground/70">{result.snippet}</p>
         </li>

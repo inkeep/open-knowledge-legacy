@@ -64,7 +64,6 @@ async function callGBrainRoute(options: {
   projectDir?: string;
   status?: GBrainStatus;
   searchResponse?: GBrainSearchResponse;
-  useDefaultSearcher?: boolean;
 }): Promise<{ captured: CapturedResponse; projectPaths: string[]; searchRequests: unknown[] }> {
   const projectPaths: string[] = [];
   const searchRequests: unknown[] = [];
@@ -80,21 +79,19 @@ async function callGBrainRoute(options: {
     },
     async clearCache() {},
   };
-  const searcher = options.useDefaultSearcher
-    ? undefined
-    : {
-        async search(projectPath: string, request: unknown): Promise<GBrainSearchResponse> {
-          projectPaths.push(projectPath);
-          searchRequests.push(request);
-          return (
-            options.searchResponse ?? {
-              ok: false,
-              code: 'not-matched',
-              message: 'gbrain search is available only for registered gbrain sources.',
-            }
-          );
-        },
-      };
+  const searcher = {
+    async search(projectPath: string, request: unknown): Promise<GBrainSearchResponse> {
+      projectPaths.push(projectPath);
+      searchRequests.push(request);
+      return (
+        options.searchResponse ?? {
+          ok: false,
+          code: 'not-matched',
+          message: 'gbrain search is available only for registered gbrain sources.',
+        }
+      );
+    },
+  };
   const ext = createApiExtension({
     hocuspocus: { documents: new Map() } as unknown as Hocuspocus,
     sessionManager: {} as never,
@@ -103,7 +100,7 @@ async function callGBrainRoute(options: {
     getFileIndex: () => new Map(),
     serverInstanceId: 'test-instance',
     gbrainStatusDetector: statusDetector,
-    ...(searcher === undefined ? {} : { gbrainSearcher: searcher }),
+    gbrainSearcher: searcher,
   });
   const req = makeReq(options);
   const { res, captured } = makeRes();
@@ -135,38 +132,43 @@ describe('gbrain API routes', () => {
     expect(projectPaths).toEqual(['/workspace/project']);
   });
 
-  test('rejects non-loopback peers before invoking gbrain status', async () => {
-    const { captured, projectPaths } = await callGBrainRoute({
-      url: '/api/gbrain/status',
-      remoteAddress: '10.0.0.5',
+  for (const route of [
+    { url: '/api/gbrain/status', method: 'GET' },
+    { url: '/api/gbrain/search', method: 'POST', body: JSON.stringify({ query: 'calendar' }) },
+  ]) {
+    test(`${route.url} rejects non-loopback peers before invoking gbrain`, async () => {
+      const { captured, projectPaths } = await callGBrainRoute({
+        ...route,
+        remoteAddress: '10.0.0.5',
+      });
+
+      expect(captured.status).toBe(403);
+      expect(JSON.parse(captured.body)).toEqual({ ok: false, error: 'loopback-required' });
+      expect(projectPaths).toEqual([]);
     });
 
-    expect(captured.status).toBe(403);
-    expect(JSON.parse(captured.body)).toEqual({ ok: false, error: 'loopback-required' });
-    expect(projectPaths).toEqual([]);
-  });
+    test(`${route.url} rejects disallowed Host headers before invoking gbrain`, async () => {
+      const { captured, projectPaths } = await callGBrainRoute({
+        ...route,
+        headers: { host: 'attacker.example.com' },
+      });
 
-  test('rejects disallowed Host headers before invoking gbrain status', async () => {
-    const { captured, projectPaths } = await callGBrainRoute({
-      url: '/api/gbrain/status',
-      headers: { host: 'attacker.example.com' },
+      expect(captured.status).toBe(403);
+      expect(JSON.parse(captured.body)).toEqual({ ok: false, error: 'host-header-not-allowed' });
+      expect(projectPaths).toEqual([]);
     });
 
-    expect(captured.status).toBe(403);
-    expect(JSON.parse(captured.body)).toEqual({ ok: false, error: 'host-header-not-allowed' });
-    expect(projectPaths).toEqual([]);
-  });
+    test(`${route.url} rejects disallowed Origin headers through the shared API guard`, async () => {
+      const { captured, projectPaths } = await callGBrainRoute({
+        ...route,
+        headers: { origin: 'https://attacker.example.com' },
+      });
 
-  test('rejects disallowed Origin headers through the shared API guard', async () => {
-    const { captured, projectPaths } = await callGBrainRoute({
-      url: '/api/gbrain/status',
-      headers: { origin: 'https://attacker.example.com' },
+      expect(captured.status).toBe(403);
+      expect(JSON.parse(captured.body)).toEqual({ ok: false, error: 'origin-not-allowed' });
+      expect(projectPaths).toEqual([]);
     });
-
-    expect(captured.status).toBe(403);
-    expect(JSON.parse(captured.body)).toEqual({ ok: false, error: 'origin-not-allowed' });
-    expect(projectPaths).toEqual([]);
-  });
+  }
 
   test('rejects unsupported status and search methods', async () => {
     const statusResponse = await callGBrainRoute({
