@@ -41,6 +41,8 @@ In dev (`bun run dev`), a single Vite process serves both surfaces — the produ
 
 Every box in this diagram is scoped to the project. The ContentFilter gates which files participate. The Hocuspocus Server manages Y.Doc instances. The File Watcher and Persistence Extension form a bidirectional bridge between disk and CRDT. The Shadow Repo and HEAD Watcher handle git integration.
 
+`/api/*` routes are also the boundary for local companion integrations. The gbrain search integration adds `/api/gbrain/status` and `/api/gbrain/search` to the API Extension: renderers use relative fetches, while the server owns fixed-argument `gbrain` CLI execution, source-path matching, result normalization, and source filtering before data reaches the sidebar.
+
 ## Persistence pipeline
 
 Three layers, each with its own cadence and responsibility.

@@ -1,0 +1,57 @@
+---
+title: gbrain search
+description: Search a registered gbrain source from the Open Knowledge sidebar.
+---
+
+Open Knowledge can show a compact **gbrain search** module in the file sidebar when the current project folder is registered as a gbrain source. The integration is local-first: the browser calls the local Open Knowledge server, and the server invokes the local `gbrain` CLI.
+
+## Requirements
+
+- `gbrain` installed and available on the server process `PATH`
+- A configured gbrain
+- The current Open Knowledge project folder registered as a gbrain source path
+
+Open Knowledge still works normally when gbrain is missing. In that case the sidebar stays quiet and no gbrain UI appears.
+
+## How it appears
+
+When the current project matches a registered gbrain source, the file sidebar shows a **gbrain search** section above the file tree. Enter a query and submit it to see result rows with:
+
+- title or slug
+- score
+- slug
+- source
+- snippet
+
+Result rows are informational in this version. They do not open local files or replace Open Knowledge's built-in file-tree search.
+
+## Diagnostics
+
+If gbrain is installed but the project is not searchable, the sidebar shows a compact disabled diagnostics row instead of an active search input.
+
+Common states:
+
+| State | What you see | What to do |
+| --- | --- | --- |
+| gbrain is not installed | No gbrain sidebar UI | Install gbrain if you want this integration |
+| gbrain is not configured | Disabled diagnostics row | Run the gbrain setup flow |
+| Project folder is not registered | Disabled diagnostics row | Register the folder as a gbrain source |
+| Search fails or times out | Inline search error | Retry after gbrain is healthy |
+
+## Local API boundary
+
+The browser never spawns local processes. It talks to the local Open Knowledge server:
+
+```http
+GET /api/gbrain/status
+POST /api/gbrain/search
+```
+
+The server owns gbrain CLI execution and uses fixed command arguments. Search responses are normalized before they reach the renderer, and returned rows are filtered to the matched source when gbrain includes source identifiers.
+
+## Notes and limitations
+
+- Open Knowledge does not register folders in gbrain.
+- Open Knowledge does not run gbrain import, sync, or embed commands.
+- You do not need to run a gbrain HTTP daemon.
+- Strict query-time source scoping depends on gbrain exposing that option. Until then, Open Knowledge filters returned rows to the matched source before rendering them.
