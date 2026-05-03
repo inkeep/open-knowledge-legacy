@@ -16,12 +16,14 @@ import { buildUnresolvedWikiLinkAttrs } from './wiki-link-helpers';
 export const wikiLinkSuggestionKey = new PluginKey('wikiLinkSuggestion');
 
 export interface PageItem {
+  kind?: 'page' | 'asset';
   docName: string;
   title: string;
 }
 
 export type WikiLinkSuggestionItem =
   | { kind: 'page'; docName: string; title: string }
+  | { kind: 'asset'; target: string; path: string; title: string }
   | { kind: 'create'; docName: string; title: string; actionLabel: string }
   | { kind: 'anchor'; docName: string; level: number; text: string; slug: string };
 
@@ -63,7 +65,16 @@ export function filterHeadings(headings: HeadingEntry[], anchorQuery: string): H
 export function buildSuggestionItems(pages: PageItem[], query: string): WikiLinkSuggestionItem[] {
   const filtered = filterPages(pages, query);
   if (filtered.length > 0) {
-    return filtered.map((item) => ({ kind: 'page', ...item }));
+    return filtered.map((item) =>
+      item.kind === 'asset'
+        ? {
+            kind: 'asset',
+            target: item.docName,
+            path: item.docName.replace(/^\//, ''),
+            title: item.title,
+          }
+        : { kind: 'page', docName: item.docName, title: item.title },
+    );
   }
 
   const attrs = buildUnresolvedWikiLinkAttrs(query);
@@ -138,7 +149,31 @@ export async function fetchPages(): Promise<PageItem[]> {
   const r = await fetch('/api/pages');
   if (!r.ok) throw new Error(`/api/pages responded with ${r.status}`);
   const data = (await r.json()) as { pages?: Array<{ docName: string; title: string }> };
-  return Array.isArray(data.pages) ? data.pages : [];
+  const pages: PageItem[] = Array.isArray(data.pages)
+    ? data.pages.map((page) => ({ kind: 'page', docName: page.docName, title: page.title }))
+    : [];
+
+  let docData: { documents?: Array<{ kind?: string; path?: string }> };
+  try {
+    const docResponse = await fetch('/api/documents');
+    if (!docResponse.ok) return pages;
+    docData = await docResponse.json();
+    if (!Array.isArray(docData.documents)) return pages;
+  } catch (err) {
+    console.warn('[wiki-link-suggestion] Failed to fetch referenced assets:', err);
+    return pages;
+  }
+
+  const assets = docData.documents
+    .filter((entry): entry is { kind: 'asset'; path: string } => {
+      return entry.kind === 'asset' && typeof entry.path === 'string' && entry.path.length > 0;
+    })
+    .map((asset): PageItem => {
+      const title = asset.path.split('/').pop() ?? asset.path;
+      return { kind: 'asset', docName: `/${asset.path}`, title };
+    });
+
+  return [...pages, ...assets];
 }
 
 export async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
@@ -158,7 +193,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
   // Mutable closure state — reset in onExit for behavioral parity
   let cachedPages: PageItem[] = [];
   let pagesLoaded = false;
-  let pagesFetching = false;
+  let pagesPromise: Promise<PageItem[]> | null = null;
   let cachedHeadings = new Map<string, HeadingEntry[]>();
   let anchorFetchingFor: string | null = null;
   let fetchError: string | null = null;
@@ -195,10 +230,12 @@ export function configureWikiLinkSuggestion(editor: Editor) {
       }
 
       // Page mode — two-flag dedupe (D9)
-      if (!pagesLoaded && !pagesFetching) {
-        pagesFetching = true;
+      if (!pagesLoaded) {
+        if (!pagesPromise) {
+          pagesPromise = fetchPages();
+        }
         try {
-          cachedPages = await fetchPages();
+          cachedPages = await pagesPromise;
           fetchError = null;
         } catch (err) {
           console.error('[wiki-link-suggestion] Failed to fetch pages:', err);
@@ -207,7 +244,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           cachedPages = [];
         } finally {
           pagesLoaded = true;
-          pagesFetching = false;
+          pagesPromise = null;
         }
       }
       return buildSuggestionItems(cachedPages, query);
@@ -219,6 +256,8 @@ export function configureWikiLinkSuggestion(editor: Editor) {
 
         if (item.kind === 'page') {
           attrs = { target: item.docName, alias: null, anchor: null };
+        } else if (item.kind === 'asset') {
+          attrs = { target: item.target, alias: item.title, anchor: null };
         } else if (item.kind === 'anchor') {
           attrs = { target: item.docName, alias: null, anchor: item.slug };
         } else if (item.kind === 'create') {
@@ -395,7 +434,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           fetchError = null;
           anchorFetchError = null;
           pagesLoaded = false;
-          pagesFetching = false;
+          pagesPromise = null;
           anchorFetchingFor = null;
         },
       };

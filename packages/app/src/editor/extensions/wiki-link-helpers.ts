@@ -21,6 +21,10 @@ function getPagesSet(input: PagesLookupInput): ReadonlySet<string> {
   return isSnapshot(input) ? input.pages : input;
 }
 
+function getAssetPathsSet(input: PagesLookupInput, assetPaths?: ReadonlySet<string>) {
+  return isSnapshot(input) ? (input.assetPaths ?? new Set<string>()) : (assetPaths ?? new Set());
+}
+
 /**
  * Look up a target by slug against the pages set / snapshot. Returns the
  * original docName on match, or undefined when no entry's slug matches
@@ -105,9 +109,45 @@ export function getWikiLinkResolutionCandidates(target: string): string[] {
   return slug.length > 0 && slug !== trimmed ? [slug] : [];
 }
 
-export function isResolvedWikiLinkTarget(target: string, pages: PagesLookupInput): boolean {
+function normalizeAssetTarget(target: string): string {
+  const trimmed = target.trim();
+  const withoutHash = (trimmed.split('#')[0] ?? '').trim();
+  const withoutQuery = (withoutHash.split('?')[0] ?? '').trim();
+  return withoutQuery.startsWith('/') ? withoutQuery.slice(1) : withoutQuery;
+}
+
+export function resolveWikiLinkAssetTarget(
+  target: string,
+  assetPaths: ReadonlySet<string>,
+): string | null {
+  const normalized = normalizeAssetTarget(target);
+  if (!normalized) return null;
+
+  if (assetPaths.has(normalized)) return normalized;
+  const lowerTarget = normalized.toLowerCase();
+  for (const path of assetPaths) {
+    if (path.toLowerCase() === lowerTarget) return path;
+  }
+
+  if (normalized.includes('/')) return null;
+  const matches = [...assetPaths].filter((path) => {
+    const slash = path.lastIndexOf('/');
+    const basename = slash === -1 ? path : path.slice(slash + 1);
+    return basename.toLowerCase() === lowerTarget;
+  });
+  if (matches.length === 0) return null;
+  return matches.sort((a, b) => a.localeCompare(b))[0] ?? null;
+}
+
+export function isResolvedWikiLinkTarget(
+  target: string,
+  pages: PagesLookupInput,
+  assetPaths?: ReadonlySet<string>,
+): boolean {
   const trimmed = target.trim();
   if (!trimmed) return false;
+  if (resolveWikiLinkAssetTarget(trimmed, getAssetPathsSet(pages, assetPaths))) return true;
+
   const pagesSet = getPagesSet(pages);
   if (pagesSet.has(trimmed)) return true;
 

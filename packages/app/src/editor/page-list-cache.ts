@@ -7,7 +7,7 @@
  * <PageListProvider /> via React context + usePageList().
  *
  * This module is the bridge:
- * - PageListProvider calls setPageListCache({pages, folderPaths}) on value change.
+ * - PageListProvider calls setPageListCache({pages, folderPaths, assetPaths}) on value change.
  * - Chip PM plugins call subscribePageListCache(fn) to dispatch decoration refresh
  *   when page list mutates; they read via getPageListCache() inside decorations(state).
  *
@@ -40,6 +40,8 @@
 export interface PageListCacheSnapshot {
   readonly pages: ReadonlySet<string>;
   readonly folderPaths: ReadonlySet<string>;
+  /** Referenced, renderable assets from `/api/documents`, contentDir-relative. */
+  readonly assetPaths?: ReadonlySet<string>;
   /**
    * Slug-keyed index: `toWikiLinkSlug(docName) → original docName`.
    * Populated alongside `pages` by `setPageListCache`. Enables O(1)
@@ -90,7 +92,11 @@ export function snapshotsEqual(
 ): boolean {
   if (prev === null) return false;
   if (prev === next) return true;
-  return setsEqual(prev.pages, next.pages) && setsEqual(prev.folderPaths, next.folderPaths);
+  return (
+    setsEqual(prev.pages, next.pages) &&
+    setsEqual(prev.folderPaths, next.folderPaths) &&
+    setsEqual(prev.assetPaths ?? new Set(), next.assetPaths ?? new Set())
+  );
 }
 
 /**

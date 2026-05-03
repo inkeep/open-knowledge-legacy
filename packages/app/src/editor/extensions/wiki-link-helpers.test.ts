@@ -3,6 +3,7 @@ import {
   buildUnresolvedWikiLinkAttrs,
   canUseTargetAsPathSegment,
   isResolvedWikiLinkTarget,
+  resolveWikiLinkAssetTarget,
   toWikiLinkSlug,
   wikiLinkSuggestedFilename,
 } from './wiki-link-helpers';
@@ -47,6 +48,31 @@ describe('isResolvedWikiLinkTarget', () => {
     expect(isResolvedWikiLinkTarget('test-doc', pages)).toBe(true);
     expect(isResolvedWikiLinkTarget('Nonexistent Page', pages)).toBe(true);
     expect(isResolvedWikiLinkTarget('Missing Page', pages)).toBe(false);
+  });
+
+  test('matches referenced asset paths and basenames', () => {
+    const pages = new Set(['test-doc']);
+    const assets = new Set(['docs/public/Wide.png']);
+    expect(isResolvedWikiLinkTarget('/docs/public/Wide.png', pages, assets)).toBe(true);
+    expect(isResolvedWikiLinkTarget('docs/public/wide.png', pages, assets)).toBe(true);
+    expect(isResolvedWikiLinkTarget('Wide.png', pages, assets)).toBe(true);
+    expect(isResolvedWikiLinkTarget('Missing.png', pages, assets)).toBe(false);
+  });
+});
+
+describe('resolveWikiLinkAssetTarget', () => {
+  test('resolves server-absolute, content-relative, and basename asset targets', () => {
+    const assets = new Set(['docs/public/Wide.png']);
+    expect(resolveWikiLinkAssetTarget('/docs/public/Wide.png', assets)).toBe(
+      'docs/public/Wide.png',
+    );
+    expect(resolveWikiLinkAssetTarget('docs/public/wide.png', assets)).toBe('docs/public/Wide.png');
+    expect(resolveWikiLinkAssetTarget('Wide.png', assets)).toBe('docs/public/Wide.png');
+  });
+
+  test('does not basename-match path-shaped misses', () => {
+    const assets = new Set(['docs/public/Wide.png']);
+    expect(resolveWikiLinkAssetTarget('other/Wide.png', assets)).toBeNull();
   });
 });
 

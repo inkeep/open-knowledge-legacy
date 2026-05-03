@@ -87,6 +87,22 @@ describe('buildSuggestionItems', () => {
     ]);
   });
 
+  test('returns referenced asset suggestions', () => {
+    expect(
+      buildSuggestionItems(
+        [...pages, { kind: 'asset', docName: '/docs/public/Wide.png', title: 'Wide.png' }],
+        'wide',
+      ),
+    ).toEqual([
+      {
+        kind: 'asset',
+        target: '/docs/public/Wide.png',
+        path: 'docs/public/Wide.png',
+        title: 'Wide.png',
+      },
+    ]);
+  });
+
   test('returns a selectable create action when there are no matches', () => {
     expect(buildSuggestionItems(pages, 'A Brand New Page')).toEqual([
       {

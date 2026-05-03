@@ -20,10 +20,13 @@
  */
 import { WikiLink as BaseWikiLink, classifyWikiLinkTarget } from '@inkeep/open-knowledge-core';
 import { createElement } from 'react';
+import { hashFromAssetPath } from '../../lib/doc-hash';
 import { getInteractionLayer } from '../interaction-layer-host';
 import { openHashHrefInNewTab, openInternalHashHrefInNewTab } from '../internal-link-helpers';
+import { getPageListCache } from '../page-list-cache';
 import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { WikiLinkPropPanel } from './WikiLinkPropPanel';
+import { resolveWikiLinkAssetTarget } from './wiki-link-helpers';
 import { configureWikiLinkSuggestion, wikiLinkSuggestionKey } from './wiki-link-suggestion';
 
 // Module-level monotonic counter — drives the stable `data-node-id` attribute
@@ -95,11 +98,18 @@ function buildWikiLinkChipDom(params: {
   return { dom };
 }
 
-export const WikiLink = BaseWikiLink.extend({
+export const WikiLink = BaseWikiLink.extend<{ docName: string }>({
   // Higher priority ensures the suggestion plugin's handleKeyDown fires before
   // TipTap's base keymap (Enter → split block, Backspace → joinBackward), so
   // Enter completes a suggestion and Backspace/Delete can target adjacent atoms.
   priority: 200,
+
+  addOptions() {
+    return {
+      ...this.parent?.(),
+      docName: '',
+    };
+  },
 
   addNodeView() {
     return ({ editor, node, getPos }) => {
@@ -156,6 +166,15 @@ export const WikiLink = BaseWikiLink.extend({
               docName: classified.docName,
               anchor: classified.anchor,
             });
+            return true;
+          }
+          if (classified.kind === 'asset') {
+            const assetPath =
+              resolveWikiLinkAssetTarget(
+                classified.url,
+                getPageListCache()?.assetPaths ?? new Set<string>(),
+              ) ?? classified.url.replace(/^\//, '');
+            openHashHrefInNewTab(hashFromAssetPath(assetPath));
             return true;
           }
           // external — refuse unsafe schemes (review Major #13).

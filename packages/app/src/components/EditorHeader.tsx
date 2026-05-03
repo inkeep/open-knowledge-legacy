@@ -1,4 +1,4 @@
-import { FolderOpen, GitFork, Pin, PinOff, Save } from 'lucide-react';
+import { FileImage, FileVideo, FolderOpen, GitFork, Pin, PinOff, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -99,6 +99,7 @@ export function EditorHeader({
   const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
   const sourceDisabled = !activeDocName || !isConnected;
   const isFolderTarget = activeTarget?.kind === 'folder';
+  const isAssetTarget = activeTarget?.kind === 'asset';
   const isNewDoc = activeTarget?.kind === 'missing';
   // Extension for the active doc — pulled from PageListContext so the header
   // renders `foo.mdx` vs `foo.md` faithfully instead of hard-coding `.md`.
@@ -111,6 +112,10 @@ export function EditorHeader({
       : '';
 
   const index = activeDocName?.lastIndexOf('/') ?? -1;
+  const assetPath = isAssetTarget ? activeTarget.assetPath : '';
+  const assetSlash = assetPath.lastIndexOf('/');
+  const assetPrefix = assetSlash === -1 ? '' : assetPath.slice(0, assetSlash);
+  const assetFileName = assetSlash === -1 ? assetPath : assetPath.slice(assetSlash + 1);
 
   // Split doc path into prefix (truncatable) and filename (prioritized).
   // e.g. "reports/some-report/REPORT" → prefix="reports/some-report/" filename="REPORT"
@@ -331,6 +336,23 @@ export function EditorHeader({
             <FolderOpen className="size-4 shrink-0" />
             <span className="truncate">{displayName}</span>
           </span>
+        ) : isAssetTarget ? (
+          <div className="flex min-w-0 items-center gap-2 overflow-hidden text-sm">
+            {activeTarget.mediaKind === 'video' ? (
+              <FileVideo className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            ) : (
+              <FileImage className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            )}
+            <span className="flex min-w-0 items-center overflow-hidden">
+              {assetPrefix ? (
+                <>
+                  <span className="truncate text-muted-foreground/60">{assetPrefix}</span>
+                  <span className="shrink-0 px-2 text-muted-foreground/60">/</span>
+                </>
+              ) : null}
+              <span className="shrink-0 font-medium text-foreground">{assetFileName}</span>
+            </span>
+          </div>
         ) : activeDocName ? (
           <div className="flex min-w-0 items-center overflow-hidden">
             {/* Path prefix — shrinks first so filename stays visible */}

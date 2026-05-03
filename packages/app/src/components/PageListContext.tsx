@@ -33,6 +33,8 @@ interface PageListContextValue {
   pageMeta: ReadonlyMap<string, PageMeta>;
   /** Set of known folder paths derived from the current document list. */
   folderPaths: Set<string>;
+  /** Referenced image/video assets surfaced by `/api/documents`. */
+  assetPaths: Set<string>;
   /** True while the page list is being fetched from the server. */
   loading: boolean;
   /** Error message from the most recent fetch failure, or null on success. */
@@ -51,6 +53,11 @@ interface PageSummary {
   size: number;
   modified: string;
   docExt?: string;
+}
+
+interface DocumentListEntry {
+  kind?: 'document' | 'asset';
+  path?: string;
 }
 
 export function mergePageSets(
@@ -100,14 +107,33 @@ async function loadPages(): Promise<PageSummary[]> {
   return [];
 }
 
+async function loadReferencedAssetPaths(): Promise<string[]> {
+  const r = await fetch('/api/documents');
+  if (!r.ok) {
+    throw new Error(`/api/documents responded with ${r.status}`);
+  }
+  const data = (await r.json()) as { ok?: boolean; documents?: DocumentListEntry[] };
+  if (!Array.isArray(data.documents)) return [];
+  return data.documents
+    .filter((entry): entry is DocumentListEntry & { kind: 'asset'; path: string } => {
+      return entry.kind === 'asset' && typeof entry.path === 'string' && entry.path.length > 0;
+    })
+    .map((entry) => entry.path);
+}
+
 function logLoadPagesError(err: unknown) {
   console.error('[PageListContext] Failed to load pages:', err);
+}
+
+function logLoadAssetsError(err: unknown) {
+  console.warn('[PageListContext] Failed to load referenced assets:', err);
 }
 
 export function PageListProvider({ children }: { children: ReactNode }) {
   const [serverPages, setServerPages] = useState(new Set<string>());
   const [serverPageTitles, setServerPageTitles] = useState(new Map<string, string>());
   const [serverPageMeta, setServerPageMeta] = useState(new Map<string, PageMeta>());
+  const [serverAssetPaths, setServerAssetPaths] = useState(new Set<string>());
   const [optimisticPages, setOptimisticPages] = useState(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -116,8 +142,14 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   function refetch() {
     const requestId = ++latestRequestIdRef.current;
     setLoading(true);
-    void loadPages()
-      .then((pageSummaries) => {
+    void Promise.all([
+      loadPages(),
+      loadReferencedAssetPaths().catch((err) => {
+        logLoadAssetsError(err);
+        return [] as string[];
+      }),
+    ])
+      .then(([pageSummaries, assetPaths]) => {
         if (requestId !== latestRequestIdRef.current) return;
         const pageNames = new Set(pageSummaries.map((page) => page.docName));
         setServerPages(pageNames);
@@ -135,6 +167,7 @@ export function PageListProvider({ children }: { children: ReactNode }) {
             ),
           ),
         );
+        setServerAssetPaths(new Set(assetPaths));
         setOptimisticPages((prev) => pruneConfirmedOptimisticPages(prev, pageNames));
         setError(null);
       })
@@ -184,6 +217,7 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   const pages = mergePageSets(serverPages, optimisticPages);
   const pageTitles = mergePageTitles(serverPageTitles, optimisticPages);
   const pageMeta: ReadonlyMap<string, PageMeta> = serverPageMeta;
+  const assetPaths = serverAssetPaths;
   const folderPaths = deriveKnownFolderPaths(pages);
   const pagesBySlug = buildPagesBySlugIndex(pages, toWikiLinkSlug);
 
@@ -196,8 +230,8 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   // path — dropped `.md` files carry lowercased slugs as targets; the
   // index bridges that to the case-preserved / non-slug-form cache entries.
   useEffect(() => {
-    setPageListCache({ pages, folderPaths, pagesBySlug });
-  }, [pages, folderPaths, pagesBySlug]);
+    setPageListCache({ pages, folderPaths, pagesBySlug, assetPaths });
+  }, [pages, folderPaths, pagesBySlug, assetPaths]);
 
   return (
     <PageListContext
@@ -207,6 +241,7 @@ export function PageListProvider({ children }: { children: ReactNode }) {
         pageTitles,
         pageMeta,
         folderPaths,
+        assetPaths,
         loading,
         error,
         refetch,

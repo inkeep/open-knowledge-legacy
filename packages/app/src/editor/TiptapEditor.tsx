@@ -261,7 +261,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
               // InternalLink's link-resolution decoration plugin (US-005)
               // can compute resolved/folder/unresolved states.
               ...sharedExtensions.map((ext) => {
-                if (ext.name === 'link') {
+                if (ext.name === 'link' || ext.name === 'wikiLink') {
                   return ext.configure({ docName: provider.configuration.name ?? '' });
                 }
                 return ext;

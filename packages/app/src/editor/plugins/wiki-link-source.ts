@@ -24,6 +24,8 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 import { classifyWikiLinkTarget, type HeadingEntry } from '@inkeep/open-knowledge-core';
+import { hashFromAssetPath } from '../../lib/doc-hash';
+import { resolveWikiLinkAssetTarget } from '../extensions/wiki-link-helpers';
 import {
   fetchHeadings,
   fetchPages,
@@ -90,6 +92,12 @@ export function buildPageNameSet(pages: PageItem[]): Set<string> {
   for (const p of pages) {
     s.add(p.docName.toLowerCase());
     if (p.title) s.add(p.title.toLowerCase());
+    if (p.kind === 'asset') {
+      const path = p.docName.replace(/^\//, '');
+      s.add(path.toLowerCase());
+      const slash = path.lastIndexOf('/');
+      s.add((slash === -1 ? path : path.slice(slash + 1)).toLowerCase());
+    }
   }
   return s;
 }
@@ -97,6 +105,7 @@ export function buildPageNameSet(pages: PageItem[]): Set<string> {
 export function buildKnownWikilinkTargetSet(pages: PageItem[]): Set<string> {
   const s = buildPageNameSet(pages);
   for (const page of pages) {
+    if (page.kind === 'asset') continue;
     const segments = page.docName.split('/');
     segments.pop();
     let folderPath = '';
@@ -202,6 +211,21 @@ const wikiLinkClickHandler = EditorView.domEventHandlers({
           event.preventDefault();
           if (classified.kind === 'external') {
             window.open(classified.url, '_blank', 'noopener,noreferrer');
+          } else if (classified.kind === 'asset') {
+            const assetPath =
+              resolveWikiLinkAssetTarget(
+                classified.url,
+                new Set(
+                  (pagesCache ?? [])
+                    .filter((item) => item.kind === 'asset')
+                    .map((item) => item.docName.replace(/^\//, '')),
+                ),
+              ) ?? classified.url.replace(/^\//, '');
+            if (shouldOpenInNewTab(event)) {
+              window.open(hashFromAssetPath(assetPath), '_blank', 'noopener,noreferrer');
+            } else {
+              window.location.hash = hashFromAssetPath(assetPath);
+            }
           } else if (shouldOpenInNewTab(event)) {
             openInternalHashHrefInNewTab(classified);
           } else {
@@ -281,9 +305,10 @@ async function wikiLinkCompletionSource(
       detail: p.title !== p.docName ? p.docName : undefined,
       apply(view: EditorView, _c: unknown, from: number, to: number) {
         const suffix = view.state.doc.sliceString(to, to + 2) === ']]' ? '' : ']]';
+        const insert = p.kind === 'asset' ? `${p.docName}|${p.title}${suffix}` : p.docName + suffix;
         view.dispatch({
-          changes: { from, to, insert: p.docName + suffix },
-          selection: { anchor: from + p.docName.length + suffix.length },
+          changes: { from, to, insert },
+          selection: { anchor: from + insert.length },
         });
       },
     })),

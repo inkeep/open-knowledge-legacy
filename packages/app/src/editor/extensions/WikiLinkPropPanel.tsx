@@ -25,6 +25,7 @@ import {
   CircleAlert,
   ExternalLink,
   File,
+  FileImage,
   FilePlus2,
   FolderOpen,
   Loader2,
@@ -42,11 +43,16 @@ import { NewItemDialog } from '../../components/NewItemDialog';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { hashFromAssetPath } from '../../lib/doc-hash';
 import { cn } from '../../lib/utils';
 import { openInternalHashHrefInNewTab } from '../internal-link-helpers';
 import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { useHeadings } from './use-headings';
-import { getWikiLinkResolutionCandidates, isResolvedWikiLinkTarget } from './wiki-link-helpers';
+import {
+  getWikiLinkResolutionCandidates,
+  isResolvedWikiLinkTarget,
+  resolveWikiLinkAssetTarget,
+} from './wiki-link-helpers';
 
 // ── Edit dialog ───────────────────────────────────────────────────────────────
 
@@ -56,6 +62,7 @@ interface EditWikiLinkDialogProps {
   alias: string | null;
   anchor: string | null;
   pages: Set<string>;
+  assetPaths: Set<string>;
   onOpenChange: (open: boolean) => void;
   onSave: (target: string, alias: string | null, anchor: string | null) => void;
 }
@@ -66,6 +73,7 @@ function EditWikiLinkDialog({
   alias,
   anchor,
   pages,
+  assetPaths,
   onOpenChange,
   onSave,
 }: EditWikiLinkDialogProps) {
@@ -77,8 +85,9 @@ function EditWikiLinkDialog({
   const aliasId = useId();
   const headingListId = useId();
 
-  const isEditTargetResolved = isResolvedWikiLinkTarget(editTarget, pages);
-  const headings = useHeadings(editTarget, isEditTargetResolved && open);
+  const editAssetPath = resolveWikiLinkAssetTarget(editTarget, assetPaths);
+  const isEditTargetResolved = isResolvedWikiLinkTarget(editTarget, pages, assetPaths);
+  const headings = useHeadings(editTarget, isEditTargetResolved && !editAssetPath && open);
 
   useEffect(() => {
     if (open) {
@@ -227,19 +236,25 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
   const anchor = normalizeNullableString(node?.attrs.anchor);
   const label = getWikiLinkText({ target, alias, anchor });
 
-  const { folderPaths, pages, pagesBySlug, loading } = usePageList();
+  const { assetPaths, folderPaths, pages, pagesBySlug, loading } = usePageList();
   const classifiedTarget = classifyWikiLinkTarget(target, anchor);
   const externalTarget = classifiedTarget?.kind === 'external' ? classifiedTarget : null;
-  const linkIntent = resolveLinkTargetIntent(target, {
-    pages,
-    folderPaths,
-    pagesBySlug,
-    fallbackTargets: getWikiLinkResolutionCandidates(target),
-  });
+  const assetPath =
+    classifiedTarget?.kind === 'asset'
+      ? resolveWikiLinkAssetTarget(classifiedTarget.url, assetPaths)
+      : null;
+  const linkIntent = assetPath
+    ? null
+    : resolveLinkTargetIntent(target, {
+        pages,
+        folderPaths,
+        pagesBySlug,
+        fallbackTargets: getWikiLinkResolutionCandidates(target),
+      });
 
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [createDialogMode, setCreateDialogMode] = useState<'missing' | 'folder-index' | null>(null);
-  const folderCreateSeed = folderIndexCreateSeed(linkIntent);
+  const folderCreateSeed = linkIntent ? folderIndexCreateSeed(linkIntent) : null;
 
   if (!node) {
     // Node was removed mid-render — gracefully close.
@@ -281,6 +296,16 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
       }
       return;
     }
+    if (assetPath) {
+      const assetHash = hashFromAssetPath(assetPath);
+      if (opts.newTab) {
+        window.open(assetHash, '_blank', 'noopener,noreferrer');
+      } else {
+        window.location.hash = assetHash;
+      }
+      return;
+    }
+    if (!linkIntent) return;
     if (linkIntent.kind === 'create') {
       setCreateDialogMode('missing');
       return;
@@ -319,17 +344,18 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
     }
   }
 
+  const isAsset = !externalTarget && !loading && assetPath !== null;
   const isResolved =
     !externalTarget &&
     !loading &&
-    linkIntent.kind === 'navigate' &&
+    linkIntent?.kind === 'navigate' &&
     linkIntent.displayState === 'resolved';
   const isFolder =
     !externalTarget &&
     !loading &&
-    linkIntent.kind === 'navigate' &&
+    linkIntent?.kind === 'navigate' &&
     linkIntent.displayState === 'folder';
-  const isUnresolved = !externalTarget && !loading && linkIntent.kind === 'create';
+  const isUnresolved = !externalTarget && !loading && !assetPath && linkIntent?.kind === 'create';
 
   let stateLabel: { icon: React.ReactNode; text: string; className: string };
   if (loading) {
@@ -342,6 +368,12 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
     stateLabel = {
       icon: <ExternalLink className="size-3.5 shrink-0" aria-hidden="true" />,
       text: 'External wiki link',
+      className: 'text-foreground',
+    };
+  } else if (isAsset) {
+    stateLabel = {
+      icon: <FileImage className="size-3.5 shrink-0" aria-hidden="true" />,
+      text: 'Asset',
       className: 'text-foreground',
     };
   } else if (isFolder) {
@@ -403,9 +435,13 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
             <div className={cn('text-sm font-medium', stateLabel.className)}>{stateLabel.text}</div>
             <div
               className="truncate font-mono text-xs text-muted-foreground"
-              title={externalTarget ? externalTarget.url : `${target}${anchor ? `#${anchor}` : ''}`}
+              title={
+                assetPath ??
+                (externalTarget ? externalTarget.url : `${target}${anchor ? `#${anchor}` : ''}`)
+              }
             >
-              {externalTarget ? externalTarget.url : `${target}${anchor ? `#${anchor}` : ''}`}
+              {assetPath ??
+                (externalTarget ? externalTarget.url : `${target}${anchor ? `#${anchor}` : ''}`)}
             </div>
           </div>
         </div>
@@ -458,14 +494,14 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
         initialDir={
           createDialogMode === 'folder-index' && folderCreateSeed
             ? folderCreateSeed.initialDir
-            : linkIntent.kind === 'create'
+            : linkIntent?.kind === 'create'
               ? linkIntent.initialDir
               : ''
         }
         suggestedName={
           createDialogMode === 'folder-index' && folderCreateSeed
             ? folderCreateSeed.suggestedName
-            : linkIntent.kind === 'create'
+            : linkIntent?.kind === 'create'
               ? linkIntent.suggestedName
               : undefined
         }
@@ -490,6 +526,7 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
         alias={alias}
         anchor={anchor}
         pages={pages}
+        assetPaths={assetPaths}
         onOpenChange={setEditDialogOpen}
         onSave={handleSaveEdit}
       />

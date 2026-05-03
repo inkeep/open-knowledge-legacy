@@ -14,12 +14,14 @@ interface WikiLinkSuggestionMenuProps {
 }
 
 function itemKey(item: WikiLinkSuggestionItem): string {
+  if (item.kind === 'asset') return item.target;
   return item.kind === 'anchor' ? `${item.docName}#${item.slug}` : item.docName;
 }
 
 /** Screen-reader announcement text for the currently-selected item. */
 function announcementText(item: WikiLinkSuggestionItem): string {
   if (item.kind === 'anchor') return `Heading H${item.level}: ${item.text}`;
+  if (item.kind === 'asset') return `Asset: ${item.title}`;
   if (item.kind === 'create') return item.actionLabel;
   return item.title;
 }
@@ -179,6 +181,9 @@ export function WikiLinkSuggestionMenu({
             </span>
             {item.kind === 'page' && item.title !== item.docName && (
               <span className="truncate text-xs text-muted-foreground">{item.docName}</span>
+            )}
+            {item.kind === 'asset' && (
+              <span className="truncate text-xs text-muted-foreground">{item.path}</span>
             )}
             {item.kind === 'create' && (
               <span className="truncate text-xs text-muted-foreground">{item.docName}.md</span>
