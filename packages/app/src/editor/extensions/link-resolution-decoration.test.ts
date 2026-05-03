@@ -1,17 +1,3 @@
-/**
- * linkResolutionDecorationPlugin — unit tests.
- *
- * Coverage:
- *  - Pure `computeLinkResolutionDecorations` helper (shape of DecorationSet output).
- *  - Plugin factory + PluginKey wiring.
- *  - Refresh-meta state transitions in plugin apply().
- *  - View subscription lifecycle (dispatches on cache change; stops on destroy).
- *
- * Mock philosophy: use real PM + real `page-list-cache` module. Only the
- * EditorView is mocked (it's not a concern of the plugin beyond `state`
- * and `dispatch`).
- */
-
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { type Mark, Schema } from '@tiptap/pm/model';
 import { EditorState, type Transaction } from '@tiptap/pm/state';
@@ -28,10 +14,6 @@ import {
   linkResolutionDecorationPlugin,
 } from './link-resolution-decoration';
 import { type MarkInfo, markIdentityPlugin } from './mark-identity';
-
-// ---------------------------------------------------------------------------
-// Test schema — minimal shape covering mark types used by the iter-20 suite
-// ---------------------------------------------------------------------------
 
 const schema = new Schema({
   nodes: {
@@ -63,7 +45,6 @@ function wikiMark(page: string): Mark {
   return schema.mark('wikiLink', { page });
 }
 
-// Seeds the module-level page-list-cache for tests that need a non-null snapshot.
 function seedCache(pages: string[] = [], folderPaths: string[] = []): PageListCacheSnapshot {
   const snap: PageListCacheSnapshot = {
     pages: new Set(pages),
@@ -73,12 +54,6 @@ function seedCache(pages: string[] = [], folderPaths: string[] = []): PageListCa
   return snap;
 }
 
-// ---------------------------------------------------------------------------
-// Setup / teardown — reset the module-level cache between every test so the
-// order of cases doesn't influence behavior (subscribe replays the current
-// snapshot if one exists).
-// ---------------------------------------------------------------------------
-
 beforeEach(() => {
   __resetPageListCacheForTests();
 });
@@ -86,10 +61,6 @@ beforeEach(() => {
 afterEach(() => {
   __resetPageListCacheForTests();
 });
-
-// ---------------------------------------------------------------------------
-// Pure helper — `computeLinkResolutionDecorations`
-// ---------------------------------------------------------------------------
 
 describe('computeLinkResolutionDecorations (pure helper)', () => {
   const trackedTypes: ReadonlySet<string> = new Set(['link']);
@@ -225,10 +196,6 @@ describe('computeLinkResolutionDecorations (pure helper)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Factory + PluginKey
-// ---------------------------------------------------------------------------
-
 describe('linkResolutionDecorationPlugin — factory & key', () => {
   test('factory returns a Plugin keyed by linkResolutionDecorationKey', () => {
     const plugin = linkResolutionDecorationPlugin({
@@ -251,10 +218,6 @@ describe('linkResolutionDecorationPlugin — factory & key', () => {
     expect(pluginState).toEqual({ version: 0 });
   });
 });
-
-// ---------------------------------------------------------------------------
-// Refresh-meta apply() — version increments on refresh; unchanged otherwise
-// ---------------------------------------------------------------------------
 
 describe('linkResolutionDecorationPlugin — refresh meta', () => {
   test('refresh meta transaction increments version', () => {
@@ -302,10 +265,6 @@ describe('linkResolutionDecorationPlugin — refresh meta', () => {
     expect(pluginState?.version).toBe(0);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Integration — plugin works alongside markIdentityPlugin
-// ---------------------------------------------------------------------------
 
 describe('linkResolutionDecorationPlugin — integration with markIdentityPlugin', () => {
   test('with markIdentityPlugin + tracked marks → decorations emitted', () => {
@@ -362,14 +321,12 @@ describe('linkResolutionDecorationPlugin — integration with markIdentityPlugin
     const decorationsFn = plugin.props.decorations;
     expect(decorationsFn).toBeDefined();
 
-    // Before cache seed → unresolved
     const r1 = decorationsFn?.call(plugin, state);
     const f1 = (r1 as DecorationSet).find() as unknown as Array<{
       type: { attrs?: Record<string, string> };
     }>;
     expect(f1[0]?.type.attrs?.['data-resolution-state']).toBe('unresolved');
 
-    // After cache seed → resolved (same plugin invocation)
     seedCache(['page']);
     const r2 = decorationsFn?.call(plugin, state);
     const f2 = (r2 as DecorationSet).find() as unknown as Array<{
@@ -378,10 +335,6 @@ describe('linkResolutionDecorationPlugin — integration with markIdentityPlugin
     expect(f2[0]?.type.attrs?.['data-resolution-state']).toBe('resolved');
   });
 });
-
-// ---------------------------------------------------------------------------
-// View subscription lifecycle
-// ---------------------------------------------------------------------------
 
 interface FakeViewBag {
   view: EditorView;
@@ -412,11 +365,9 @@ describe('linkResolutionDecorationPlugin — view subscription lifecycle', () =>
       plugins: [plugin],
     });
     const bag = createFakeView(state);
-    // Cache starts null → subscribe does NOT replay.
     const pluginView = plugin.spec.view?.(bag.view);
     expect(bag.dispatched.length).toBe(0);
 
-    // First cache write fires the listener → plugin dispatches refresh meta.
     seedCache(['page']);
     expect(bag.dispatched.length).toBe(1);
     const meta = bag.dispatched[0]?.getMeta(linkResolutionDecorationKey) as { refresh?: boolean };
@@ -426,7 +377,6 @@ describe('linkResolutionDecorationPlugin — view subscription lifecycle', () =>
   });
 
   test('subscribe replays immediately if cache is non-null at view-create time', () => {
-    // Pre-seed cache so subscribe fires on registration.
     seedCache(['page']);
 
     const plugin = linkResolutionDecorationPlugin({
@@ -440,7 +390,6 @@ describe('linkResolutionDecorationPlugin — view subscription lifecycle', () =>
     const bag = createFakeView(state);
     const pluginView = plugin.spec.view?.(bag.view);
 
-    // Subscribe replays current snapshot → dispatch fires once.
     expect(bag.dispatched.length).toBe(1);
 
     pluginView?.destroy?.();
@@ -464,7 +413,6 @@ describe('linkResolutionDecorationPlugin — view subscription lifecycle', () =>
     pluginView?.destroy?.();
 
     seedCache(['page', 'another']);
-    // After destroy the listener is unsubscribed — dispatch count unchanged.
     expect(bag.dispatched.length).toBe(1);
   });
 });

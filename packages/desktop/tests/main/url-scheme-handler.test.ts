@@ -1,15 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { registerProtocolHandler } from '../../src/main/url-scheme.ts';
 
-/**
- * Unit tests for `registerProtocolHandler`'s queue-then-flush behavior.
- *
- * Uses a fake `app` that captures listeners + exposes a trigger surface so
- * tests can drive the cold-start / warm / argv paths deterministically. No
- * real `electron` import — the pure `app` dep interface is tested against a
- * stub.
- */
-
 type AppEvent = 'open-url' | 'second-instance' | 'before-quit';
 type OpenUrlListener = (event: { preventDefault: () => void }, url: string) => void;
 type SecondInstanceListener = (event: unknown, argv: readonly string[]) => void;
@@ -116,14 +107,11 @@ function makeEnv(opts?: { isPackaged?: boolean }): TestEnv {
   } as unknown as TestEnv;
 }
 
-/** Flush pending microtasks/promises so then-chains observable downstream. */
 async function flushPromises() {
-  // Two await ticks to settle nested .then in the handler's flush loop.
   await Promise.resolve();
   await Promise.resolve();
 }
 
-/** Tick scheduler: fires the next enqueued timer in env.timers. */
 function tickTimer(env: TestEnv): void {
   const next = env.timers.shift();
   if (!next) throw new Error('no timer to tick');
@@ -158,9 +146,6 @@ describe('registerProtocolHandler — setAsDefaultProtocolClient', () => {
   });
 
   test('logs a warn when setAsDefaultProtocolClient returns false', () => {
-    // Per Electron docs the method is non-throwing; `false` signals the OS
-    // refused the binding. Must surface as a warn so developers don't stare
-    // at "dev deep-links not working" without a breadcrumb.
     const env = makeEnv({ isPackaged: false });
     env.app.setAsDefaultProtocolClient = mock(() => false);
     const warnLog: Array<{ obj: object; msg: string }> = [];
@@ -189,9 +174,6 @@ describe('registerProtocolHandler — before-quit Launch Services cleanup', () =
       getAnyReadyWindow: env.getAnyReadyWindow,
       setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
     });
-    // Dev-mode: `setAsDefaultProtocolClient` succeeded → `before-quit` handler
-    // should have been registered. Firing it calls `removeAsDefaultProtocolClient`
-    // so Launch Services doesn't leave a stale binding pointing at this worktree.
     env.app.fireBeforeQuit();
     expect(env.app.removeAsDefaultProtocolClient).toHaveBeenCalledWith('openknowledge');
   });
@@ -206,16 +188,11 @@ describe('registerProtocolHandler — before-quit Launch Services cleanup', () =
       getAnyReadyWindow: env.getAnyReadyWindow,
       setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
     });
-    // Packaged builds don't touch Launch Services at runtime — the binding
-    // comes from the DMG's Info.plist (electron-builder). Nothing to remove.
     expect(() => env.app.fireBeforeQuit()).toThrow(/before-quit listener not registered/);
     expect(env.app.removeAsDefaultProtocolClient).not.toHaveBeenCalled();
   });
 
   test('does NOT register before-quit handler when setAsDefaultProtocolClient returned false', () => {
-    // If the OS refused the binding, we never claimed the scheme, so we must
-    // NOT call `removeAsDefaultProtocolClient` on quit — it would remove a
-    // binding that another app owns, breaking their deep-links.
     const env = makeEnv({ isPackaged: false });
     env.app.setAsDefaultProtocolClient = mock(() => false);
     registerProtocolHandler({
@@ -245,7 +222,6 @@ describe('registerProtocolHandler — before-quit Launch Services cleanup', () =
       setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
       log: { warn: (obj, msg) => warnLog.push({ obj, msg }) },
     });
-    // Must NOT bubble up past the listener — app quit would be aborted.
     expect(() => env.app.fireBeforeQuit()).not.toThrow();
     expect(warnLog.some((e) => e.msg.includes('removeAsDefaultProtocolClient failed'))).toBe(true);
   });
@@ -269,7 +245,6 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     });
 
     env.app.fireOpenUrl('openknowledge://open?project=/tmp/p&doc=a.md');
-    // Not yet flushed — routing should not have happened.
     expect(env.openProject).not.toHaveBeenCalled();
     expect(env.sendDeepLink).not.toHaveBeenCalled();
   });
@@ -288,22 +263,12 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     env.app.resolveReady();
     await flushPromises();
 
-    // Cold path — project not in existingWindows, so focusWindowForProject
-    // returned null and routeUrl took the openProject branch. The deep-link
-    // threads through as `pendingDeepLinkDoc`; delivery happens inside
-    // window-manager's dom-ready hook, NOT via deps.sendDeepLink (which is
-    // reserved for the warm focus-existing path).
     await flushPromises();
     expect(env.openProject).toHaveBeenCalledWith('/tmp/p', { pendingDeepLinkDoc: 'a.md' });
     expect(env.sendDeepLink).not.toHaveBeenCalled();
   });
 
   test('two deep-links received before whenReady both drain in FIFO order', async () => {
-    // QA-054 regression: the real-OS "two URLs in rapid cold-start" case
-    // (parent spec §7 OQ-3) is blocked on signed-DMG, but the queue-drain
-    // mechanism is deterministic and testable here. Fires two open-url
-    // events pre-ready, resolves ready, asserts BOTH routeUrl calls fire
-    // in arrival order.
     env.readyWindow = { id: 'pre-existing' };
     registerProtocolHandler({
       app: env.app,
@@ -316,16 +281,12 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     env.app.fireOpenUrl('openknowledge://open?project=/tmp/p1&doc=a.md');
     env.app.fireOpenUrl('openknowledge://open?project=/tmp/p2&doc=b.md');
 
-    // Pre-ready: neither routed.
     expect(env.openProject).not.toHaveBeenCalled();
 
     env.app.resolveReady();
     await flushPromises();
     await flushPromises();
 
-    // Both URLs drained in FIFO order — no URL lost, no duplicate. Each
-    // cold-path call threads the doc through pendingDeepLinkDoc; the
-    // dom-ready hook inside createProjectWindow handles the send.
     expect(env.openProject).toHaveBeenCalledTimes(2);
     expect(env.openProject).toHaveBeenNthCalledWith(1, '/tmp/p1', {
       pendingDeepLinkDoc: 'a.md',
@@ -350,27 +311,19 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     env.app.resolveReady();
     await flushPromises();
 
-    // First flush attempt schedules a retry because no window exists yet.
-    // Walk retries 1..9, asserting each rescheduled another retry without
-    // draining. Retry 10 is handled separately below — its tick is the
-    // final-attempt boundary where drain MUST fire regardless of window state.
     for (let retryIndex = 1; retryIndex <= 9; retryIndex++) {
       expect(env.timers.length).toBe(1);
       expect(env.timers[0]?.ms).toBe(500);
       expect(env.openProject).not.toHaveBeenCalled();
       tickTimer(env);
       await flushPromises();
-      // After retries 1..9 fired, still no drain — just another 500ms retry scheduled.
       expect(env.openProject).not.toHaveBeenCalled();
     }
-    // Retry 10 is the final attempt. Before we tick it, drain has NOT fired.
     expect(env.timers.length).toBe(1);
     expect(env.timers[0]?.ms).toBe(500);
     expect(env.openProject).not.toHaveBeenCalled();
     tickTimer(env);
     await flushPromises();
-    // After retry 10, drain fires unconditionally (even with no ready window).
-    // Cold-path always threads pendingDeepLinkDoc through openProject.
     expect(env.openProject).toHaveBeenCalledWith('/tmp/p', { pendingDeepLinkDoc: 'a.md' });
   });
 
@@ -441,19 +394,12 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     await flushPromises();
     await flushPromises();
 
-    // Cold path: pendingDeepLinkDoc threads through; sendDeepLink not used.
     expect(env.openProject).toHaveBeenCalledWith('/tmp/B', { pendingDeepLinkDoc: 'x.md' });
     expect(env.sendDeepLink).not.toHaveBeenCalled();
   });
 
   test('handles openProject resolving null without throwing (failure already surfaced)', async () => {
     env.readyWindow = { id: 'primary' };
-    // Stub openProject to resolve null — simulates the Navigator-fallback
-    // path where the user already saw a dialog + the Navigator reopened.
-    // The cold path no longer calls sendDeepLink at all (delivery happens
-    // inside window-manager via dom-ready), so the null return just means
-    // "no window was created, nothing more to do." Regression assertion is
-    // "no throw, no stray sendDeepLink," not "sendDeepLink skipped."
     const openProjectStub = mock(
       async (
         _p: string,
@@ -532,10 +478,6 @@ describe('registerProtocolHandler — second-instance argv parsing', () => {
 
 describe('registerProtocolHandler — cold-start process.argv scan', () => {
   test('queues openknowledge:// URL from process.argv on cold-start CLI launch', async () => {
-    // Simulates: `OK.app/Contents/MacOS/Open\ Knowledge
-    // openknowledge://open?project=/tmp/cs&doc=a.md` — primary-instance boot
-    // where no prior app is running, so no Apple Event fires and no
-    // `second-instance` dispatch. The URL lives in `process.argv`.
     const env = makeEnv();
     env.readyWindow = { id: 'pre-existing' };
     registerProtocolHandler({
@@ -576,9 +518,6 @@ describe('registerProtocolHandler — cold-start process.argv scan', () => {
   });
 
   test('defaults to no-op when getInitialArgv is omitted', async () => {
-    // Without the dep, the handler treats initial argv as empty — the
-    // production call site injects `() => process.argv`; unit tests that
-    // don't care about argv delivery simply omit it.
     const env = makeEnv();
     registerProtocolHandler({
       app: env.app,

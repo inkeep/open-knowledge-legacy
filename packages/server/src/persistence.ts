@@ -1,12 +1,3 @@
-/**
- * Git auto-persistence pipeline.
- *
- * Layer 1 (CRDT → disk): onStoreDocument serializes Y.Doc → markdown → .md file
- * Layer 2 (disk → git): afterStoreDocument commits to shadow repo via git plumbing
- *
- * Hocuspocus config: debounce=2000, maxDebounce=10000 (L1)
- * Git commit debounced separately: 30s idle after last disk write (L2)
- */
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
@@ -25,7 +16,7 @@ import {
   type OkActorEntry,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import type { JSONContent } from '@tiptap/core';
-import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
@@ -65,18 +56,6 @@ import { getMeter, setActiveSpanAttributes, withSpan } from './telemetry.ts';
 
 const log = getLogger('persistence');
 
-/**
- * Derive a WriterIdentity from a Hocuspocus transaction origin.
- *
- * Called from onStoreDocument to determine which writer triggered the store.
- * Handles the three origin shapes Hocuspocus surfaces:
- *   - local  + context.session_id  → per-session agent writer
- *   - local  + context.origin      → classified service writer
- *   - connection + principalId     → human-browser principal writer
- *
- * precedent #1 — origins are LocalTransactionOrigin object refs, not strings.
- * Exported for unit-testing the dispatch table without spinning up a server.
- */
 export function resolveWriterFromOrigin(
   origin: unknown,
   getPrincipal?: () => Principal | null,
@@ -88,7 +67,6 @@ export function resolveWriterFromOrigin(
     const ctx = o.context as Record<string, unknown> | undefined;
     if (!ctx) return null;
 
-    // Per-session origin (agent write, agent undo) — session_id is the connectionId
     if (typeof ctx.session_id === 'string') {
       const sessionId = ctx.session_id;
       return {
@@ -98,26 +76,18 @@ export function resolveWriterFromOrigin(
       };
     }
 
-    // Classified local origins by context.origin value
     if (ctx.origin === 'file-watcher') return FILE_SYSTEM_WRITER;
     if (ctx.origin === 'upstream-import' || ctx.origin === 'git-upstream') {
       return GIT_UPSTREAM_WRITER;
     }
-    // park-snapshot, rollback-apply, managed-rename → service fallback
     return SERVICE_WRITER;
   }
 
   if (o.source === 'connection') {
-    // Human browser write — principalId set via onAuthenticate.
     const conn = o.connection as Record<string, unknown> | undefined;
     const ctx = conn?.context as Record<string, unknown> | undefined;
     if (typeof ctx?.principalId === 'string') {
       const principalId = ctx.principalId as string;
-      // When the claimed principalId matches the loaded principal record,
-      // use the real display_name / display_email (e.g. git-config user.name)
-      // so `ok-actor:` body + Co-Authored-By trailers mirror the user's git
-      // identity. Fall back to a stub only when the server has no principal
-      // loaded or the claim doesn't match.
       const loaded = getPrincipal?.();
       if (loaded && loaded.id === principalId && loaded.display_name && loaded.display_email) {
         return {
@@ -144,84 +114,19 @@ export interface PersistenceOptions {
   gitEnabled?: boolean;
   commitDebounceMs?: number;
   wipRef?: string;
-  /** Shadow repo ref — read at commit time so deferred init propagates. */
   shadowRef?: ShadowRef;
-  /** Content root relative to project dir (e.g., 'content/docs'). Used for shadow repo staging. */
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
-  /** Accessor for the current branch from the HEAD watcher. Used to scope WIP refs per branch. */
   getCurrentBranch?: () => string | null;
-  /**
-   * US-013 FR-3b: resolves `![[photo.png]]` embed targets to disk-relative
-   * paths before PM dispatch. Consumed by `onLoadDocument`'s
-   * `mdManager.parseWithFallback` call so image-extension embeds materialize
-   * as PM `image` nodes with the resolved `src` (not the literal target).
-   */
   resolveEmbed?: (basename: string, sourcePath: string) => string | null;
-  /**
-   * Accessor for the server's principal record. When a browser connection's
-   * `ctx.principalId` matches `loadedPrincipal.id`, `resolveWriterFromOrigin`
-   * emits WriterIdentity with the real display_name / display_email instead
-   * of a "Local User" stub (post-QA review fix).
-   */
   getPrincipal?: () => Principal | null;
-  /**
-   * Optional callback fired after each successful `commitWipFromTree` for an
-   * agent writer (`writerId.startsWith('agent-')`). Used to emit CC1
-   * `ch:'session-activity'` so Activity Panel clients get live invalidations.
-   * Omitted in plugin mode where no CC1Broadcaster is available.
-   */
   onAgentCommit?: () => void;
-  /**
-   * Optional callback fired after each successful L1 disk write
-   * (post-`tracedRename`). The state vector is captured PRE-WRITE so
-   * the watermark reflects exactly the doc state that landed on disk —
-   * any updates received after capture but before the rename completes
-   * are excluded by construction, matching the actual durable state.
-   *
-   * Wired to `cc1Broadcaster.emitDiskAck(docName, sv)` in standalone
-   * boot. Omitted in plugin mode where no CC1Broadcaster is available
-   * — the closure shape is identical to `onAgentCommit`.
-   */
   onDiskFlush?: (docName: string, sv: Uint8Array) => void;
   applyDiskContentToDoc?: (document: Y.Doc, content: string) => void;
-  /**
-   * Override `os.homedir()` for config-doc persistence (US-006). Tests
-   * scope user-global writes (`__user__/config.yml`) to a tempdir; if
-   * unset, defaults to `os.homedir()` via `resolveConfigPath`.
-   */
   configHomedirOverride?: string;
-  /**
-   * Fired after the L3 persistence-hook reverts an invalid Y.Text
-   * mutation on a config doc. Wired in standalone boot to
-   * `cc1Broadcaster.emitConfigValidationRejected(docName, error)`
-   * so any open Settings pane sees the rejection toast. Omitted in
-   * plugin mode where no CC1Broadcaster is available.
-   */
   onConfigRejected?: (docName: string, error: ConfigValidationError) => void;
 }
 
-/**
- * Atomic snapshot of a Y.Doc's pre-write state for the L1 persistence path.
- *
- * Returned together because the disk-ack watermark contract depends on
- * the SV being captured at the SAME synchronous instant the JSON is
- * extracted: any update applied to the doc AFTER `json` is read but
- * BEFORE `tracedRename` resolves is — by construction — NOT in the
- * markdown that lands on disk. Including it in the watermark would
- * tell clients "the server has durably persisted this update" when the
- * server has not, causing them to drop the corresponding unsynced bytes
- * from the recycle buffer on the next instance-mismatch.
- *
- * Single-threaded JS guarantees this helper is uninterruptible:
- * `Y.encodeStateVector` and `yXmlFragmentToProseMirrorRootNode` both
- * run synchronously, so a Y.js transaction cannot interleave between
- * them. Returning both as a single value (rather than two separate
- * locals at the call site) makes that uninterruptible-co-capture
- * a structural property — a future refactor can't naturally split
- * the SV from the JSON across an `await` boundary without explicitly
- * undoing the destructure, which is loud at review time.
- */
 export function captureDocSnapshotForPersistence(document: Y.Doc): {
   readonly sv: Uint8Array;
   readonly json: JSONContent;
@@ -248,20 +153,10 @@ export function isWithinContentDir(p: string, contentDir: string): boolean {
   return p === contentDir || p.startsWith(contentDir + sep);
 }
 
-/**
- * Reconciled base: last known-good markdown for each document, scoped by branch.
- * Updated on load, store, and reconciliation. Used as the merge base
- * for three-way reconciliation.
- *
- * Outer key = branch name (e.g. "main", "feature/xyz", "detached-abc123def456")
- * Inner key = docName, value = last-synced markdown content
- */
 const reconciledBaseByBranch = new Map<string, Map<string, string>>();
 
-/** Active branch scope for reconciledBase lookups. Defaults to 'main'. */
 let activeBranch = 'main';
 
-/** Switch the active branch scope. Creates a fresh scope if first visit. */
 export function switchReconciledBaseScope(branch: string): void {
   activeBranch = branch;
   if (!reconciledBaseByBranch.has(branch)) {
@@ -269,17 +164,14 @@ export function switchReconciledBaseScope(branch: string): void {
   }
 }
 
-/** Get the active branch name for reconciledBase. */
 export function getActiveBranch(): string {
   return activeBranch;
 }
 
-/** Get the reconciledBase value for a doc in the active branch scope. */
 export function getReconciledBase(docName: string): string | undefined {
   return reconciledBaseByBranch.get(activeBranch)?.get(docName);
 }
 
-/** Set the reconciledBase value for a doc in the active branch scope. */
 export function setReconciledBase(docName: string, content: string): void {
   if (!reconciledBaseByBranch.has(activeBranch)) {
     reconciledBaseByBranch.set(activeBranch, new Map());
@@ -287,12 +179,10 @@ export function setReconciledBase(docName: string, content: string): void {
   reconciledBaseByBranch.get(activeBranch)?.set(docName, content);
 }
 
-/** Delete the reconciledBase entry for a doc in the active branch scope. */
 export function deleteReconciledBase(docName: string): void {
   reconciledBaseByBranch.get(activeBranch)?.delete(docName);
 }
 
-/** Batch-in-progress flag — gates L1 writes and L2 commits during coordinated git operations. */
 let batchInProgress = false;
 
 export function setBatchInProgress(value: boolean): void {
@@ -308,13 +198,6 @@ export interface PersistenceHandle {
   flushDeferredStores: (mode?: 'within-branch' | 'discard-stale') => Promise<void>;
   flushPendingGitCommit: () => Promise<void>;
   waitForPendingCommits: () => Promise<void>;
-  /**
-   * Config-doc persistence context (US-007). Exposed so the file-watcher
-   * orchestration in `standalone.ts` can call `applyExternalConfigChange`
-   * with the same LKG cache + `onConfigRejected` callback the L3 hook uses.
-   * Treat as read-only — direct mutation breaks the L3 invariant that the
-   * cache only updates after a successful persist.
-   */
   readonly configPersistenceCtx: ConfigPersistenceCtx;
 }
 
@@ -328,19 +211,12 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   }
   const projectDir = options?.projectDir ?? process.cwd();
   const shadowRef = options?.shadowRef;
-  // `relative(a, a) === ''` (falsy), so workspaces with content.dir at the
-  // project root must fall back to '.' — using the literal pathspec would
-  // make `git add <fallback>` look for a non-existent subfolder.
   const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || '.');
   const backlinkIndex = options?.backlinkIndex;
   const getPrincipal = options?.getPrincipal;
   const onAgentCommit = options?.onAgentCommit;
   const onDiskFlush = options?.onDiskFlush;
 
-  // Per-server-instance LKG cache for config docs (D45 L3 / D58). Maps
-  // each well-known config doc name to the most recent successfully-
-  // validated YAML string. Lives in the closure so multiple server
-  // instances don't share mutable state.
   const configLkgCache = new Map<string, string>();
   const configPersistenceCtx: ConfigPersistenceCtx = {
     projectDir,
@@ -349,25 +225,15 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     onConfigRejected: options?.onConfigRejected,
   };
 
-  // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
-  // Lives inside the closure so multiple server instances don't share mutable state.
-  const frontmatterCache = new Map<string, string>();
   const tripwireResetFailedDocs = new Set<string>();
   const applyDiskContent = options?.applyDiskContentToDoc ?? applyDiskContentToDoc;
   let pendingDeferredStoreFlushMode: 'within-branch' | 'discard-stale' | null = null;
-
-  // reconciledBase and batchInProgress use the module-level systems
-  // (reconciledBaseByBranch via get/setReconciledBase, and isBatchInProgress)
-  // so that standalone.ts and persistence stay in sync.
 
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 15_000;
   const wipRef = options?.wipRef ?? 'refs/wip/main';
   const getCurrentBranch = options?.getCurrentBranch;
 
-  // No longer hardcoded — resolved from contributor snapshot (D32, FR-16)
-
-  // Debounce git commits
   let gitCommitTimer: ReturnType<typeof setTimeout> | null = null;
   let consecutiveGitFailures = 0;
   let commitInFlight: Promise<void> | null = null;
@@ -394,14 +260,12 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   }
 
   async function commitToWipRefInner(): Promise<void> {
-    // Read shadow ref at commit time (not construction time) so deferred init propagates
     const shadow = shadowRef?.current;
     if (shadow) {
       const snapshot = swapContributors(); // atomic drain — new writes go to fresh map
       const branch = getCurrentBranch?.() ?? 'main';
 
       if (snapshot.size === 0) {
-        // No attributed contributors — fall back to single SERVICE_WRITER commit (D32)
         const serviceActorEntry: OkActorEntry = {
           v: 1,
           writer_id: SERVICE_WRITER.id,
@@ -440,15 +304,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         return;
       }
 
-      // Per-writer fan-out (FR-7, US-014, precedent #25): build tree once, commit per writer.
-      // All per-writer commits share the same tree SHA for this drain cycle.
-      // Writer IDs follow the taxonomy in parseWriterId (shadow-repo-layout.ts): agent-<connId>,
-      // principal-<UUID>, file-system, git-upstream, openknowledge-service.
       let treeSha: string;
       try {
         treeSha = await buildWipTree(shadow, contentRoot);
       } catch (e) {
-        // Tree build failed — restore all contributors and abort this cycle
         restoreContributors(snapshot);
         consecutiveGitFailures++;
         incrementGitAutoSaveFailure();
@@ -467,16 +326,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           email: `${writerId}@openknowledge.local`,
         };
         const docs = [...entry.docs];
-        // Consolidated write path: emit ONLY `ok-actor:` (retires the legacy
-        // `ok-contributors:` body line). `writer_id` is now carried as a
-        // first-class field so the commit body is self-describing without a
-        // ref-name join. Reader side (`readContributors` in shadow-repo-layout)
-        // prefers ok-actor and falls back to parseContributors for legacy
-        // on-disk commits — both surfaces keep rendering without migration.
         const a = entry.actor;
-        // FR-8 / §8.7 — populate full actor tuple from ContributorEntry.actor when present.
-        // Classified writers (file-system, git-upstream, openknowledge-service) leave these
-        // null because they have no principal/agent attribution at record time.
         const summaries = [...entry.summaries];
         const actorEntry: OkActorEntry = {
           v: 1,
@@ -493,10 +343,6 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           ...(summaries.length > 0 ? { summaries } : {}),
         };
         const baseSubject = entry.subjectOverride ?? formatWipSubject(docs);
-        // FR14 — project summaries onto the subject line too. Single-summary
-        // writes embed the summary inline (`wip: notes.md — added auth`);
-        // multi-summary drains get `(N edits)` + the bullets in the body.
-        // Zero summaries → baseSubject unchanged (pre-spec byte-identity).
         const subject = composeCommitSubject(baseSubject, summaries);
         const writerMessage = `${subject}\n\n${formatOkActor(actorEntry)}`;
         try {
@@ -506,12 +352,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             { sha: sha.slice(0, 8), writer: writerId, tree: treeSha.slice(0, 8) },
             `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${writerId}`,
           );
-          // Notify Activity Panel clients when an agent writer commits (FR-P25).
           if (writerId.startsWith('agent-')) {
             onAgentCommit?.();
           }
         } catch (e) {
-          // Per-writer failure — restore this writer's entry, let others succeed (D38)
           restoreContributorEntry(writerId, entry);
           incrementGitWriterCommitFailure();
           log.error(
@@ -536,7 +380,6 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       return;
     }
 
-    // Legacy path: commit to project repo (used when no shadow repo is configured)
     const sg = shadowGit({
       gitDir: resolve(projectDir, '.git'),
       workTree: projectDir,
@@ -598,23 +441,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     } finally {
       try {
         tracedUnlinkSync(tmpIndex);
-      } catch {
-        // ignore cleanup failure
-      }
+      } catch {}
     }
   }
 
-  /**
-   * Exponential backoff delay for the next commit attempt.
-   *
-   * Happy path (0 failures): fires at `commitDebounceMs` exactly — matches
-   * the pre-backoff behavior that tests + callers depend on.
-   *
-   * Under sustained git lock contention (N consecutive failures),
-   * multiplies by `2^min(N, 5)` and adds 0–25% jitter. Cap at 5 doublings
-   * ⇒ 32× base (e.g., 30s base → 16min ceiling). Jitter decorrelates
-   * retry storms if multiple processes hit the same lock.
-   */
   function computeCommitDelay(failures: number): number {
     if (failures <= 0) return commitDebounceMs;
     const exponent = Math.min(failures, 5);
@@ -643,7 +473,6 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     }, computeCommitDelay(consecutiveGitFailures));
   }
 
-  /** Flush pending L1 writes by forcing the Hocuspocus store cycle. */
   async function flushPendingGitCommit(): Promise<void> {
     if (gitCommitTimer) {
       clearTimeout(gitCommitTimer);
@@ -661,13 +490,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     if (commitInFlight) await commitInFlight;
   }
 
-  /** Await any in-flight git commit (for graceful shutdown). */
   async function _awaitPendingCommit(): Promise<void> {
     if (commitInFlight) await commitInFlight;
   }
 
-  // Lazy-init histograms; safe to call in every hook. Meter is a no-op when OTel
-  // SDK is disabled, so allocations are essentially free.
   let loadDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
   let storeDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
   let commitDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
@@ -703,38 +529,22 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       'persistence.onStoreDocument',
       { attributes: { 'doc.name': documentName } },
       async () => {
-        // Atomic pre-write snapshot — `sv` and `json` MUST be captured
-        // at the same synchronous instant. See
-        // `captureDocSnapshotForPersistence` for the timing contract;
-        // splitting the destructure across the upcoming `await`
-        // boundary would silently break the disk-ack watermark.
+        const lifecycleStatus = document.getMap('lifecycle').get('status');
+        if (lifecycleStatus === 'deleted-upstream' || lifecycleStatus === 'renamed') {
+          log.info(
+            { documentName, lifecycleStatus },
+            `[persistence] Skipped store for ${documentName}: lifecycle=${lifecycleStatus}`,
+          );
+          return;
+        }
+
         const { sv: stateVectorAtRead, json } = captureDocSnapshotForPersistence(document);
 
         const body = mdManager.serialize(json);
-        const metaMap = document.getMap('metadata');
-        const fmFromDoc = metaMap.get('frontmatter');
-        const frontmatter =
-          typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
+        const ytextSnapshot = document.getText('source').toString();
+        const { frontmatter } = stripFrontmatter(ytextSnapshot);
         const markdown = prependFrontmatter(frontmatter, body);
 
-        // Skip the write when the serialized output matches the load-time
-        // baseline. Hocuspocus fires onStoreDocument after any Y.Doc mutation,
-        // including the first-pass observer sync that populates Y.Text from the
-        // freshly-loaded XmlFragment — that mutation is semantically a no-op
-        // but would otherwise rewrite the file in normalized form (padded
-        // tables, added backslash-escapes, etc.), polluting the user's git
-        // working tree on mere file open.
-        //
-        // normalizeBridge-tolerant compare: y-prosemirror's ySyncPlugin appends
-        // an empty <paragraph> to Y.XmlFragment on every editor mount. That
-        // serializes to extra trailing newlines — byte-unequal to currentBase
-        // but semantically identical. Reusing normalizeBridge (the canonical
-        // bridge-invariant normalization — trim per-line whitespace, collapse
-        // 3+ newlines to 2, strip trailing newlines) keeps comparison semantics
-        // consistent with server-observers.ts + the test-harness. Catching this
-        // class as a no-op skips both the disk write AND the principal
-        // safety-net below, preventing phantom commits attributed to the
-        // browser's principal when a later agent write triggers the L2 fan-out.
         const currentBase = getReconciledBase(documentName);
         const markdownSemanticallyUnchanged =
           currentBase !== undefined && normalizeBridge(markdown) === normalizeBridge(currentBase);
@@ -743,30 +553,6 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           return;
         }
 
-        // Phantom-doc guard: refuse to materialize a 0-byte file when the
-        // Y.Doc was never confirmed to exist on disk (no reconciled base
-        // from a successful onLoadDocument) AND the serialized content is
-        // empty. This blocks accidental orphan files from any code path
-        // that opens a Y.Doc for a non-existent docName: the browser race
-        // during a rename, GETs to `/api/document?docName=<missing>`, MCP
-        // queries on deleted docs, and any future caller of
-        // `openDirectConnection` that hits a missing path.
-        //
-        // Legitimate first-write flows are unaffected:
-        //   - `/api/create-page` writes the file synchronously before any
-        //     transaction, so the next onLoadDocument sets reconciledBase
-        //     to '' (defined) before this guard fires.
-        //   - `/api/agent-write-md` populates the XmlFragment with the
-        //     agent's content INSIDE the same transact that triggers the
-        //     debounced store, so by the time we get here `markdown` is
-        //     non-empty even when reconciledBase is still undefined.
-        //
-        // Mode-coupling note: the guard is asymmetric. It only blocks
-        // file *creation*. Once a file exists and reconciledBase is set,
-        // subsequent stores fall through to the normal write path,
-        // including legitimate transitions to empty content (user clears
-        // a doc) — those compare against the non-empty base above and
-        // proceed.
         if (currentBase === undefined && normalizeBridge(markdown) === '') {
           log.warn(
             { documentName },
@@ -775,39 +561,13 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           return;
         }
 
-        // Thread origin → contributor tracker. Safety-net for writes that
-        // bypass api-extension.ts handlers. Agent write handlers already
-        // call recordContributor explicitly; this handles human-browser
-        // connection writes and any other origin that doesn't go through a
-        // handler. Gated on `markdown !== currentBase` above — semantic
-        // no-op writes (y-prosemirror empty-paragraph init) do not record
-        // the principal, so the L2 fan-out no longer attributes phantom
-        // commits to the browser alongside a legitimate agent write.
         const writer = resolveWriterFromOrigin(lastTransactionOrigin, getPrincipal);
         if (writer && writer.id !== SERVICE_WRITER.id) {
-          // api-extension handlers register rich WriterIdentity BEFORE the Y.Doc
-          // transact fires; onStoreDocument runs on Hocuspocus's 2s debounce, so
-          // the handler-path entry is in the tracker by the time we get here.
-          // The safety-net only fills in for writes that never pass through an
-          // /api/* handler — specifically browser-principal writes via the
-          // `source: 'connection'` origin path. Skipping when the entry already
-          // exists guarantees the stub `Agent (<short>)` displayName can never
-          // overwrite the handler's rich identity under any ordering edge case.
           if (!hasContributor(writer.id)) {
             recordContributor(documentName, writer.id, writer.name, writer.id);
           }
-          // else: entry exists with rich handler-path identity; keep it untouched.
-          // The docs Set is still correct because the handler path recorded this
-          // docName already when it fired recordContributor for this write.
         }
 
-        // Structural-duplication tripwire. Refuses to overwrite the disk
-        // file when the candidate body is an integer concatenation (k≥2) of
-        // the bridge-normalized base body — the failure shape the stale
-        // browser-IDB merge causes. Resets the live Y.Doc to the disk
-        // canonical state so the in-memory duplicate doesn't keep
-        // re-triggering this hook on its 2s debounce. First writes (no
-        // currentBase) bypass — there's nothing to duplicate yet.
         if (currentBase !== undefined) {
           const classification = classifyDuplication(markdown, currentBase);
           if (classification.kind === 'block') {
@@ -899,21 +659,12 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           await tracedWriteFile(tmpPath, markdown, 'utf-8');
           await tracedRename(tmpPath, canonicalPath);
           registerWrite(canonicalPath, contentHash(markdown));
-          // Increment disk-write counter after the atomic rename succeeds.
-          // Used as the Mutation F regression gate — if OBSERVER_SYNC_ORIGIN
-          // drops skipStoreHooks, observer writes trigger onStoreDocument
-          // and produce amplified disk writes per user/agent edit.
           incrementPersistenceDiskWrite();
-          // Notify clients that disk durability has been achieved up to the
-          // pre-write state vector. Fired AFTER `tracedRename` succeeds so
-          // a write failure (caught below) skips the watermark advance.
           onDiskFlush?.(documentName, stateVectorAtRead);
         } catch (e) {
           try {
             tracedUnlinkSync(tmpPath);
-          } catch {
-            /* cleanup best-effort */
-          }
+          } catch {}
           log.error({ err: e, documentName }, `[persistence] Failed to save ${documentName}`);
           throw e;
         }
@@ -922,7 +673,6 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           `[persistence] Wrote ${canonicalPath} (${markdown.length} bytes)`,
         );
 
-        // Update reconciled base after successful store
         setReconciledBase(documentName, markdown);
         tripwireResetFailedDocs.delete(documentName);
 
@@ -940,8 +690,6 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         scheduleGitCommit();
       },
     ).finally(() => {
-      // doc.name deliberately NOT recorded on the histogram — per-doc cardinality
-      // would blow up Prometheus label storage at scale. The span carries it.
       storeDurationHist?.record((Date.now() - started) / 1000);
     });
   }
@@ -1044,13 +792,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           }
 
           const raw = readFileSync(filePath, 'utf-8');
-          const { frontmatter, body } = stripFrontmatter(raw);
-
-          if (frontmatter) {
-            frontmatterCache.set(documentName, frontmatter);
-            const metaMap = document.getMap('metadata');
-            metaMap.set('frontmatter', frontmatter);
-          }
+          const { frontmatter } = stripFrontmatter(raw);
 
           const xmlFragment = document.getXmlFragment('default');
           log.info(
@@ -1058,36 +800,12 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             `[persistence] onLoadDocument ${documentName}: fragment.length=${xmlFragment.length} before update`,
           );
 
-          // Markdown is the sole source of truth (precedent #1). CRDT restart
-          // recovery is now a client-side concern: y-indexeddb hydrates the
-          // tab's Y.Doc from IndexedDB, and the server-instance-ID defense
-          // plus buffer-and-replay reconcile divergence on reconnect. See
-          // packages/app/src/editor/client-persistence.ts + provider-pool.ts.
-          //
-          // parseWithFallback — never throws (R6).
-          // On parse failure with position info, degrades to block-level
-          // rawMdxFallback preserving surrounding structure. On position-less
-          // error, splits at blank-line boundaries per-block. Only falls
-          // through to whole-doc raw text when every block fails — strictly
-          // better than parse() throwing on broken MDX. The optional
-          // `resolveEmbed` threads the basename-index resolver so post-load
-          // PM image/link nodes carry resolved src/href for `![[file.ext]]`.
-          const parseOpts = options?.resolveEmbed
-            ? { resolveEmbed: options.resolveEmbed, sourcePath: documentName }
-            : undefined;
-          const json = mdManager.parseWithFallback(body, parseOpts);
-
           if (xmlFragment.length === 0) {
-            const pmNode = schema.nodeFromJSON(json);
-            updateYFragment(document, xmlFragment, pmNode, {
-              mapping: new Map(),
-              isOMark: new Map(),
-            });
+            applyDiskContentToDoc(document, raw, options?.resolveEmbed, documentName);
             log.info(
               { filePath, children: xmlFragment.length },
               `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
             );
-            // Watch for unexpected mutations
             xmlFragment.observeDeep(() => {
               log.info(
                 { documentName, fragmentLength: xmlFragment.length },
@@ -1100,33 +818,17 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
               `[persistence] Skipped load for ${documentName} — fragment already has ${xmlFragment.length} children`,
             );
           }
-          // Use normalized serialization as the base so onStoreDocument doesn't
-          // false-positive on the first store after load. Raw file content may
-          // differ from TipTap's output (blank lines, trailing newlines, list
-          // formatting) without any actual content change.
+
           const normalizedBody = mdManager.serialize(
             yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
           );
           setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
         },
       ).finally(() => {
-        // doc.name deliberately NOT recorded on the histogram — per-doc cardinality
-        // would blow up Prometheus label storage at scale. The span carries it.
         loadDurationHist?.record((Date.now() - started) / 1000);
       });
     },
 
-    // STOP: Do NOT add additional `Y.encodeStateVector(document)` calls
-    // anywhere in this function. The only sanctioned capture is via
-    // `captureDocSnapshotForPersistence` at the top of the body — its
-    // co-capture of `{sv, json}` is what guarantees the disk-ack
-    // watermark reflects the exact doc state that lands on disk. A
-    // second SV captured later (e.g., after `await tracedRename`) would
-    // include updates from the async write window, falsely advancing the
-    // watermark past content that's NOT durably persisted, and
-    // clients would drop those bytes from the recycle buffer →
-    // unsynced-edit loss on server-restart. See the helper's docstring
-    // for the full timing contract.
     async onStoreDocument({
       document,
       documentName,

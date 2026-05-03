@@ -1,28 +1,3 @@
-/**
- * InternalLinkPropPanel — singleton React UI for the active internal link mark.
- *
- * Replaces the per-instance `InternalLinkView` React MarkView with a single
- * subtree rendered at editor root via the InteractionLayer (FR4/FR5). The
- * chip itself is plain DOM (see `internal-link.ts` `renderHTML`), so on a
- * PROJECT.md-scale doc 768 React portals collapse to one. See V2 SPEC §9.2
- * + cold-mount-profile §Corrected 5-component attribution row 4.
- *
- * Reads live MarkInfo via `getCurrentMarkInfo(editor.state, nodeId)` (the
- * `mark-interaction-bridge` contract) so positions stay current as the user
- * edits — captured `from`/`to` would go stale across transactions.
- *
- * Three cases handled at render time, mirroring the pre-V2 InternalLinkView:
- *   - 'doc'      → show navigate / edit / remove + create-dialog when missing
- *   - 'external' → show navigate / edit / remove
- *   - 'anchor'   → show navigate / edit / remove
- *
- * The PropPanel is anchored to the chip via Floating UI (`computePosition` +
- * `autoUpdate`) inside `InteractionPropPanel`. The caller passes a virtual
- * reference whose `getBoundingClientRect` resolves the live mark range via
- * `getCurrentMarkInfo` + `posToDOMRect`, so the panel tracks PM edits and
- * scroll without stale rects.
- */
-
 import {
   type ClassifiedLinkTarget,
   classifyMarkdownHref,
@@ -40,6 +15,7 @@ import {
   Loader2,
   Pencil,
   Trash2,
+  Unlink2,
 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
@@ -276,15 +252,11 @@ export function InternalLinkPropPanel({
   const { folderPaths, pages, loading } = usePageList();
 
   if (!info || !href) {
-    // Mark removed mid-render — gracefully close.
     return null;
   }
 
   const target = classifyMarkdownHref(href, sourceDocName);
 
-  // Human-readable display path. Strips markdown-link surface
-  // (`./` prefix, `.md` suffix) for doc kinds; preserves the URL form
-  // for external; preserves `#anchor` for in-doc anchor jumps.
   const displayHref =
     target?.kind === 'doc'
       ? `${target.docName}${target.anchor ? `#${target.anchor}` : ''}`
@@ -321,12 +293,6 @@ export function InternalLinkPropPanel({
   function handleNavigate(opts: { newTab?: boolean }) {
     if (!target) return;
     if (target.kind === 'asset') {
-      // PropPanel asset branch. Bare click on an asset ref normally
-      // bypasses the PropPanel (handled by `internal-link.ts`
-      // handlePrimary), but if the panel does open for an asset
-      // (path-escape fallback, programmatic open), "Open" routes through
-      // the same dispatcher so the user always reaches the asset via
-      // the canonical path.
       const projectRelPath = resolveAssetProjectPath(target.url, sourceDocName);
       if (!projectRelPath) return;
       void dispatchAssetClick({
@@ -370,7 +336,6 @@ export function InternalLinkPropPanel({
       .run();
   }
 
-  // Determine resolution state for the panel header label.
   let stateLabel: { icon: React.ReactNode; text: string; className: string };
   let isUnresolved = false;
   let isFolder = false;
@@ -432,9 +397,6 @@ export function InternalLinkPropPanel({
     };
   }
 
-  // Floating-UI virtual reference. Each tick `getCurrentMarkInfo` resolves
-  // the current mark range from PM state, then `posToDOMRect` yields the
-  // chip's rect. Tracks live edits + scroll. Mirrors WikiLinkPropPanel.
   const triggerReference = {
     getBoundingClientRect: () => {
       const live = getCurrentMarkInfo(editor.state, nodeId);
@@ -499,8 +461,12 @@ export function InternalLinkPropPanel({
             Edit
           </Button>
           <Button size="sm" variant="destructive" onClick={handleRemove}>
-            <Trash2 className="size-3.5" aria-hidden="true" />
-            Remove
+            {isUnresolved ? (
+              <Unlink2 className="size-3.5" aria-hidden="true" />
+            ) : (
+              <Trash2 className="size-3.5" aria-hidden="true" />
+            )}
+            {isUnresolved ? 'Unlink' : 'Remove'}
           </Button>
         </div>
       </InteractionPropPanel>

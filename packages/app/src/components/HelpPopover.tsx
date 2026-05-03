@@ -59,9 +59,6 @@ export const HelpPopover: FC = () => {
                 data-testid="help-popover-settings"
                 onClick={() => {
                   setPopoverOpen(false);
-                  // Same hash-routed open contract used by the CommandPalette
-                  // entry, the Cmd-, shortcut, and the Electron menu — see
-                  // App.tsx + use-settings-route.ts (US-010).
                   if (window.location.hash !== SETTINGS_OPEN_HASH) {
                     window.location.hash = SETTINGS_OPEN_HASH;
                   }

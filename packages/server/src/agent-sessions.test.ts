@@ -12,14 +12,6 @@ import {
   iconFromClientName,
 } from './agent-sessions.ts';
 
-// Minimal Hocuspocus mock for session management tests.
-// Each openDirectConnection call returns a unique mock DC so we can track disconnects.
-// Uses a real Y.Doc so Y.UndoManager creation succeeds (US-008).
-//
-// Awareness is also represented as a call-log, NOT as state plumbing.
-// Post-FR-3 (US-003), `AgentSessionManager` MUST NOT touch per-doc awareness —
-// presence is published on the `__system__` Y.Doc via `AgentPresenceBroadcaster`
-// instead. The log lets tests assert "getSession did not reach for awareness".
 function createMockHocuspocus() {
   const openedDocs: string[] = [];
   const ydocs = new Map<string, Y.Doc>();
@@ -27,7 +19,6 @@ function createMockHocuspocus() {
 
   function makeDC(docName: string): AgentDirectConnection {
     let disconnected = false;
-    // Reuse the same Y.Doc per docName so concurrent sessions share state.
     let ydoc = ydocs.get(docName);
     if (!ydoc) {
       ydoc = new Y.Doc();
@@ -150,11 +141,7 @@ describe('getSession — composite key (docName + agentId)', () => {
   });
 
   test('rejects reserved config doc names with a thrown error (D49 / FR-29)', async () => {
-    // Config docs (US-005) are admitted Y.Text-only at boot; agent
-    // sessions on them would attempt to attach the markdown bridge and
-    // corrupt YAML. The short-circuit at AgentSessionManager.getSession
-    // is the load-bearing gate.
-    await expect(manager.getSession('__config__/workspace', 'agent-alice')).rejects.toThrow(
+    await expect(manager.getSession('__config__/project', 'agent-alice')).rejects.toThrow(
       /reserved doc/i,
     );
     await expect(manager.getSession('__user__/config.yml', 'agent-alice')).rejects.toThrow(
@@ -231,25 +218,20 @@ describe('closeAll', () => {
   });
 });
 
-// US-007 acceptance criteria (F1, D2, D23, D30)
 describe('per-session origin — US-007', () => {
   test('D30: concurrent getSession calls produce exactly one openDirectConnection call', async () => {
-    // Launch two concurrent first-calls; dedup map must collapse them to one DC.
     const [session1, session2] = await Promise.all([
       manager.getSession('doc.md', 'agent-alice'),
       manager.getSession('doc.md', 'agent-alice'),
     ]);
-    // Same SessionRecord object — only one DC created.
     expect(session1).toBe(session2);
     expect(mockHocuspocus.openedDocs.filter((d) => d === 'doc.md')).toHaveLength(1);
   });
 
   test('D23: session.origin is deep-frozen — mutation throws in strict mode', async () => {
     const session = await manager.getSession('doc.md', 'agent-alice');
-    // Both outer object and context must be frozen.
     expect(Object.isFrozen(session.origin)).toBe(true);
     expect(Object.isFrozen(session.origin.context)).toBe(true);
-    // Strict-mode mutation of a frozen object throws TypeError.
     expect(() => {
       (session.origin as Record<string, unknown>).source = 'remote';
     }).toThrow(TypeError);
@@ -267,13 +249,6 @@ describe('per-session origin — US-007', () => {
     expect(session.docName).toBe('doc.md');
   });
 
-  // Regression: phantom `Agent (agent-<shortid>)` timeline commits (2026-04-22).
-  // extractAgentIdentity returns `agent-<raw>` as the sessions-map key / writerId,
-  // but `context.session_id` must be the RAW connection id — the `agent-` prefix
-  // is the writerId namespace added by `resolveWriterFromOrigin` in persistence.ts.
-  // When session_id carried the prefix, resolveWriterFromOrigin double-prefixed to
-  // `agent-agent-<raw>` and the onStoreDocument safety-net booked phantom commits
-  // under that mismatched writerId.
   test('session_id in origin context is RAW (unprefixed) even when agentId is prefixed', async () => {
     const session = await manager.getSession('doc.md', 'agent-85aabbcc-1234');
     expect(session.agentId).toBe('agent-85aabbcc-1234');
@@ -289,7 +264,6 @@ describe('per-session origin — US-007', () => {
   });
 });
 
-// US-008 acceptance criteria (D25, D24, D21)
 describe('per-session UndoManager — US-008', () => {
   test('session.um exists and is a Y.UndoManager', async () => {
     const session = await manager.getSession('doc.md', 'agent-alice');
@@ -321,21 +295,15 @@ describe('per-session UndoManager — US-008', () => {
   test('um.destroy() is called on closeSession — subsequent doc transact does not push to undoStack', async () => {
     const session = await manager.getSession('doc.md', 'agent-alice');
     await manager.closeSession('doc.md', 'agent-alice');
-    // After destroy, the UM should have an empty stack (no tracking post-destroy).
-    // We just verify the destroy didn't throw.
     expect(session.um.undoStack.length).toBe(0);
   });
 });
 
-// V0-14 (FR-4) applyAgentUndo drain semantics. Complements the end-to-end
-// integration test at packages/app/tests/integration/agent-undo.test.ts.
 describe('applyAgentUndo — scope drain semantics (V0-14)', () => {
   test("scope='session' drains every UM frame in one call and reports it", async () => {
     const session = await manager.getSession('doc-drain.md', 'agent-drain');
     const ytext = session.dc.document.getText('source');
 
-    // stopCapturing() separates the next transact into its own UM frame,
-    // without waiting for the captureTimeout (500ms default).
     session.dc.document.transact(() => ytext.insert(0, 'a'), session.origin);
     session.um.stopCapturing();
     session.dc.document.transact(() => ytext.insert(0, 'b'), session.origin);
@@ -375,11 +343,6 @@ describe('applyAgentUndo — scope drain semantics (V0-14)', () => {
   });
 
   test('post-undo XmlFragment uses embedResolver for `![[file]]` refs', async () => {
-    // Composition-equivalence with applyAgentMarkdownWrite: the post-undo
-    // body re-parse must use the same resolver so PM image `src` lands as
-    // the resolved disk path, not the literal target. Without this, the
-    // editor renders the inline image with a broken src until the next
-    // round-trip.
     const session = await manager.getSession('doc-resolve.md', 'agent-resolve');
     const xmlFragment = session.dc.document.getXmlFragment('default');
     const ytext = session.dc.document.getText('source');
@@ -390,30 +353,20 @@ describe('applyAgentUndo — scope drain semantics (V0-14)', () => {
       sourcePath: 'doc-resolve.md',
     };
 
-    // Write 1: body containing `![[photo.png]]`
     session.dc.document.transact(() => {
       applyAgentMarkdownWrite(session.dc.document, '![[photo.png]]\n', 'replace', embedResolver);
     }, session.origin);
     session.um.stopCapturing();
 
-    // Write 2: a different body so 'last' undo brings us back to Write 1.
     session.dc.document.transact(() => {
       applyAgentMarkdownWrite(session.dc.document, '# Heading\n', 'replace', embedResolver);
     }, session.origin);
 
-    // Sanity: post-write-2 ytext is the heading, no embed.
     expect(ytext.toString()).toContain('# Heading');
 
-    // Undo 'last' restores the wiki-embed body. Pass embedResolver so the
-    // re-parse maps `photo.png` → `attachments/photo.png` on the PM image.
     const undone = applyAgentUndo(session, 'last', embedResolver);
     expect(undone).toBe(true);
 
-    // Block-context wiki-embed images materialize as a `jsxComponent` PM
-    // node (componentName='WikiEmbedImage'); the resolved disk path lives
-    // on `attrs.props.src`. Without the resolver fix the post-undo
-    // XmlFragment would carry `props.src='photo.png'` (literal target),
-    // diverging from a fresh-load shape.
     const schema = getSchema(sharedExtensions);
     const pmJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const node = pmJson.content?.[0] as

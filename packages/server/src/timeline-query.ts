@@ -1,21 +1,3 @@
-/**
- * Timeline query — walk the shadow repo DAG and return a merged, paginated
- * list of timeline entries for a given document.
- *
- * Entry types are classified from commit message prefixes:
- *   'checkpoint:' → checkpoint
- *   'import:'     → upstream  (canonical since D53/FR-13)
- *   'upstream:'   → upstream  (legacy fallback for pre-D53 commits)
- *   'park:'       → park      (branch-switch infrastructure; never returned)
- *   else          → wip
- *
- * Park commits store blobs at extension-less docName paths so
- * `restoreBranchWIP` can three-way merge against disk. The per-version fetch
- * (`/api/history/:sha`) reads at `${contentRoot}/${docName}.md` and cannot
- * resolve them — clicking a park row would yield "Diff unavailable". Park
- * is internal state, not user history, so it is excluded unconditionally.
- */
-
 import { existsSync } from 'node:fs';
 import type { EntryType, TimelineEntry } from '@inkeep/open-knowledge-core';
 import { parseCheckpoint, readContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
@@ -26,11 +8,8 @@ import { shadowGit } from './shadow-repo.ts';
 interface HistoryQuery {
   docName: string;
   branch?: string;
-  /** Filter to specific entry types (comma-separated or array). */
   type?: string | string[];
-  /** Only include entries from these authors (by name or email). */
   author?: string | string[];
-  /** Exclude entries from these authors (by name or email). */
   excludeAuthor?: string | string[];
   limit?: number;
   offset?: number;
@@ -42,13 +21,6 @@ interface HistoryResult {
   hasMore: boolean;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * NUL-delimited format for `git log --format`.
- * Fields: sha, authorDate, authorName, authorEmail, subject, rawBody (full message via %B).
- * Records are terminated with ASCII Record Separator \x1e to handle multi-line commit bodies.
- */
 const GIT_LOG_FORMAT = '%H%x00%aI%x00%an%x00%ae%x00%s%x00%B%x1e';
 
 const EMPTY: HistoryResult = { entries: [], total: 0, hasMore: false };
@@ -104,22 +76,11 @@ function matchesAuthor(entry: TimelineEntry, authors: string[]): boolean {
   );
 }
 
-// ─── Main export ──────────────────────────────────────────────────────────────
-
-/**
- * Query the shadow repo DAG and return a merged, paginated timeline.
- *
- * Reads are intentionally NOT protected by the shadow-root writer lock —
- * concurrent reads with writes are safe on git object storage.
- *
- * Returns an empty result (never throws) when shadow repo is missing or corrupt.
- */
 export async function getDocumentHistory(
   shadow: ShadowHandle,
   query: HistoryQuery,
   contentRoot = '.',
 ): Promise<HistoryResult> {
-  // Graceful degradation: if the shadow workTree doesn't exist, return empty
   if (!existsSync(shadow.workTree) || !existsSync(shadow.gitDir)) {
     return EMPTY;
   }
@@ -132,9 +93,6 @@ export async function getDocumentHistory(
   const authorFilter = toArray(query.author);
   const excludeAuthorFilter = toArray(query.excludeAuthor);
 
-  // Build file pathspec so git log only returns commits touching this document.
-  // Normalize: strip leading './' AND treat bare '.' as empty (git rejects
-  // both "./foo" and "./" pathspecs when operating against a bare repo).
   const normalizedRoot = contentRoot === '.' ? '' : contentRoot.replace(/^\.\//, '');
   const docPath = query.docName
     ? normalizedRoot
@@ -145,9 +103,6 @@ export async function getDocumentHistory(
   try {
     const sg = shadowGit(shadow);
 
-    // ── Fast path: checkpoint-only query ───────────────────────────────────
-    // Uses for-each-ref to list checkpoint SHAs, then resolves commit details
-    // via git log --no-walk (avoids walking ancestry — reads only specified commits).
     if (typeFilter.length === 1 && typeFilter[0] === 'checkpoint') {
       const branchCpShas = (
         await sg.raw(
@@ -161,7 +116,6 @@ export async function getDocumentHistory(
         .split('\n')
         .filter((s) => s.length === 40);
 
-      // On feature branches, fall back to main's checkpoints
       let mainCpShas: string[] = [];
       if (branch !== 'main') {
         try {
@@ -176,16 +130,12 @@ export async function getDocumentHistory(
             .trim()
             .split('\n')
             .filter((s) => s.length === 40);
-        } catch {
-          // no main checkpoints
-        }
+        } catch {}
       }
 
       const allShas = [...branchCpShas, ...mainCpShas];
       if (allShas.length === 0) return EMPTY;
 
-      // Bulk-resolve commit details without walking ancestry.
-      // Note: --no-walk ignores pathspecs, so we filter afterwards via cat-file.
       const raw = await sg.raw(
         'log',
         '--no-walk',
@@ -210,7 +160,6 @@ export async function getDocumentHistory(
         allEntries = allEntries.filter((_, i) => relevant[i]);
       }
 
-      // Apply branch-takes-over-main cutoff
       if (branch !== 'main' && branchCpShas.length > 0 && mainCpShas.length > 0) {
         const branchSet = new Set(branchCpShas);
         const branchCps = allEntries.filter((e) => branchSet.has(e.sha));
@@ -236,10 +185,6 @@ export async function getDocumentHistory(
       return { entries: page, total, hasMore: offset + limit < total };
     }
 
-    // ── Full DAG walk ───────────────────────────────────────────────────────
-
-    // Collect refs separately: checkpoints are queried via --no-walk (always
-    // included as user-triggered landmarks), WIP/upstream walk the full DAG.
     const checkpointShas: string[] = [];
     const startRefs: string[] = [];
     const isFeatureBranch = branch !== 'main';
@@ -252,13 +197,8 @@ export async function getDocumentHistory(
         .split('\n')
         .filter((s) => s.length === 40);
       checkpointShas.push(...cpRefs);
-    } catch {
-      // no checkpoints
-    }
+    } catch {}
 
-    // On feature branches, also collect main's checkpoints as fallback history.
-    // Main's checkpoints older than the branch's first checkpoint are shown;
-    // main's checkpoints newer than that are hidden (branch has its own timeline).
     let mainCheckpointShas: string[] = [];
     if (isFeatureBranch) {
       try {
@@ -268,9 +208,7 @@ export async function getDocumentHistory(
           .trim()
           .split('\n')
           .filter((s) => s.length === 40);
-      } catch {
-        // no main checkpoints
-      }
+      } catch {}
     }
 
     try {
@@ -279,12 +217,8 @@ export async function getDocumentHistory(
         .split('\n')
         .filter(Boolean);
       startRefs.push(...wipRefs);
-    } catch {
-      // no WIP refs
-    }
+    } catch {}
 
-    // On feature branches with no branch-specific refs, also walk main's WIP
-    // so pre-divergence auto-saves are visible.
     if (isFeatureBranch && startRefs.length === 0) {
       try {
         const mainWipRefs = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip/main/'))
@@ -292,18 +226,13 @@ export async function getDocumentHistory(
           .split('\n')
           .filter(Boolean);
         startRefs.push(...mainWipRefs);
-      } catch {
-        // no main WIP refs
-      }
+      } catch {}
     }
 
     if (startRefs.length === 0 && checkpointShas.length === 0 && mainCheckpointShas.length === 0) {
       return EMPTY;
     }
 
-    // 1) Resolve checkpoint entries.
-    //    Branch checkpoints are always included. Main checkpoints are included
-    //    only up to the branch's first checkpoint (branch takes over its own history).
     const allCpShas = [...checkpointShas, ...mainCheckpointShas];
     let checkpointEntries: TimelineEntry[] = [];
     if (allCpShas.length > 0) {
@@ -319,8 +248,6 @@ export async function getDocumentHistory(
         type: 'checkpoint' as const,
       }));
 
-      // --no-walk ignores pathspecs, so filter checkpoints to only those
-      // whose tree actually contains the target document.
       if (docPath) {
         const relevant = await Promise.all(
           allCpEntries.map(async (e) => {
@@ -336,9 +263,6 @@ export async function getDocumentHistory(
       }
 
       if (isFeatureBranch && checkpointShas.length > 0 && mainCheckpointShas.length > 0) {
-        // Find the earliest branch checkpoint timestamp — main's checkpoints
-        // older than this are pre-divergence history (show them).
-        // Main's checkpoints at or newer than this are post-divergence (hide them).
         const branchCpShaSet = new Set(checkpointShas);
         const branchCps = allCpEntries.filter((e) => branchCpShaSet.has(e.sha));
         const mainCps = allCpEntries.filter((e) => !branchCpShaSet.has(e.sha));
@@ -348,19 +272,15 @@ export async function getDocumentHistory(
           return t < min ? t : min;
         }, Number.POSITIVE_INFINITY);
 
-        // Keep all branch checkpoints + main checkpoints older than the branch's first
         checkpointEntries = [
           ...branchCps,
           ...mainCps.filter((e) => new Date(e.timestamp).getTime() < earliestBranchCp),
         ];
       } else {
-        // No branch checkpoints exist, or we're on main — show all
         checkpointEntries = allCpEntries;
       }
     }
 
-    // 2) WIP + upstream: walk ancestry from all refs (including checkpoints
-    //    so their WIP ancestry is reachable).
     const allStartRefs = [...startRefs];
     for (const sha of allCpShas) allStartRefs.push(sha);
 
@@ -377,10 +297,8 @@ export async function getDocumentHistory(
       wipEntries = parseGitLogOutput(raw);
     }
 
-    // Merge checkpoint + WIP entries
     const allEntries = [...checkpointEntries, ...wipEntries];
 
-    // Deduplicate by SHA (multiple refs may reach same commits)
     const seen = new Set<string>();
     const unique: TimelineEntry[] = [];
     for (const e of allEntries) {
@@ -390,15 +308,10 @@ export async function getDocumentHistory(
       }
     }
 
-    // Sort by timestamp descending (newest first). Git log outputs are pre-sorted
-    // within each ref walk, but merging checkpoint + WIP results may interleave.
     unique.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-    // Apply filters
     let filtered = unique;
 
-    // Park commits are branch-switch infrastructure (extension-less docName
-    // tree paths), not user history — never expose them through the timeline.
     filtered = filtered.filter((e) => e.type !== 'park');
 
     if (typeFilter.length > 0) {

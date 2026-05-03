@@ -1,15 +1,5 @@
-/**
- * `open-knowledge status` — human-readable inspection of the server / ui
- * lockfile state.
- *
- * SPEC FR-1.14 / L11. Exits 0 regardless of whether processes are live;
- * this is a pure query command. Prints formatted text by default, JSON
- * with `--json`.
- */
-
+import { type Config, resolveContentDir, resolveLockDir } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
-import type { Config } from '../config/schema.ts';
 import { inspectLock, type LockState } from './lock-state.ts';
 
 interface StatusEntry {
@@ -19,8 +9,6 @@ interface StatusEntry {
   port?: number;
   startedAt?: string;
   host?: string;
-  /** Resolved `alive` verdict — `true` for local-live locks, `false` for
-   *  `missing` / `dead-pid` / `corrupt`, `'unknown'` for foreign-host. */
   alive: boolean | 'unknown';
 }
 
@@ -93,7 +81,6 @@ function renderEntry(entry: StatusEntry): string {
   if (entry.state === 'dead-pid') {
     return `${label}  stale (dead pid=${entry.pid}) — run \`ok clean\``;
   }
-  // alive
   return `${label}  alive  pid=${entry.pid} port=${entry.port} started=${entry.startedAt}`;
 }
 

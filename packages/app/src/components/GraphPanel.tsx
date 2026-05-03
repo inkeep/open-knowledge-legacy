@@ -53,9 +53,7 @@ function saveBoolPref(key: string, value: boolean): void {
     } else {
       window.localStorage.removeItem(key);
     }
-  } catch {
-    // quota exceeded / private mode — ignore, stays in-memory
-  }
+  } catch {}
 }
 
 type FullscreenGraphMode = 'explore' | 'orphans' | 'hubs';

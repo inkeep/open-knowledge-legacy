@@ -43,12 +43,7 @@ export {
   ORPHAN_MODES,
   type OrphanMode,
 } from './backlink-index.ts';
-export {
-  type BootedServer,
-  type BootServerOptions,
-  bootServer,
-  parseKeepaliveConnectionId,
-} from './boot.ts';
+export { type BootedServer, type BootServerOptions, bootServer } from './boot.ts';
 export {
   type BuildSkillZipOptions,
   type BuildSkillZipResult,
@@ -63,6 +58,9 @@ export {
   isSystemDoc,
   SYSTEM_DOC_NAME,
 } from './cc1-broadcast.ts';
+export { resolveContentDir, resolveLockDir } from './config/paths.ts';
+export { type Config, ConfigSchema } from './config/schema.ts';
+export { MCP_SERVER_NAME } from './constants.ts';
 export {
   type ContentFilter,
   type ContentFilterOptions,
@@ -113,6 +111,30 @@ export {
   type LiveDerivedIndexOptions,
 } from './live-derived-index.ts';
 export {
+  type AuthEvent,
+  type AuthReposResponse,
+  type AuthStatusResponse,
+  type CloneCompleteEvent,
+  type CloneErrorEvent,
+  type CloneEvent,
+  type CloneProgressEvent,
+  type DeviceCompleteEvent,
+  type DeviceErrorEvent,
+  type DeviceVerificationEvent,
+  type RawCloneEvent,
+  type RepoEntry,
+  type RunAuthQueryOptions,
+  type RunCloneController,
+  type RunCloneOptions,
+  type RunDeviceFlowController,
+  type RunDeviceFlowOptions,
+  runAuthReposSubprocess,
+  runAuthStatusSubprocess,
+  runCloneSubprocess,
+  runDeviceFlowSubprocess,
+  validateCloneInputs,
+} from './local-ops/index.ts';
+export {
   createTestLogger,
   getLogger,
   installTestLoggers,
@@ -126,6 +148,21 @@ export {
   rewriteMarkdownLinksForDocumentRename,
   rewriteWikiLinksForDocumentRename,
 } from './managed-rename-rewrite.ts';
+export type { AgentIdentity } from './mcp/agent-identity.ts';
+export { getCurrentMcpLogger, McpLogger, runWithMcpLogger } from './mcp/logger.ts';
+export { buildExecResult, type ExecStructuredResult } from './mcp/tools/exec.ts';
+export { buildReadResult } from './mcp/tools/read-document.ts';
+export {
+  createMcpHttpHandler,
+  type McpHttpHandler,
+  type McpHttpHandlerOptions,
+} from './mcp-http.ts';
+export {
+  type MountMcpAndApiHandle,
+  type MountMcpAndApiOptions,
+  mountMcpAndApi,
+  parseKeepaliveConnectionId,
+} from './mcp-mount.ts';
 export {
   getMetrics,
   handleCollabSocketError,
@@ -169,10 +206,6 @@ export {
   reconcile,
   splitMarkdownBlocks,
 } from './reconciliation.ts';
-// Seed scaffolder (`ok seed`) — shared module for the CLI Commander wrapper
-// and the Electron IPC handler. Deterministic plan/apply split; writes the
-// Karpathy three-layer starter + optional log.md + config.yml folders: entries.
-// See specs/2026-04-23-ok-seed-scaffold/SPEC.md.
 export {
   type ApplyError,
   type ApplyResult,
@@ -193,6 +226,7 @@ export {
   type StarterFolder,
   starterFolderRule,
 } from './seed/index.ts';
+export { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 export {
   acquireServerLock,
   readServerLock,
@@ -237,13 +271,16 @@ export {
   type WriterIdentity,
 } from './shadow-repo.ts';
 export {
+  type BuildAndOpenSkillOptions,
+  type BuildAndOpenSkillResult,
+  type BuildAndOpenSkillStatus,
+  buildAndOpenSkill,
   type InstallUserSkillOptions,
   type InstallUserSkillResult,
   installUserSkill,
   type SkillInstallLogger,
   type SpawnLike,
 } from './skill-install.ts';
-export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
   assertCompatibleStateManifest,
   detectProjectShape,
@@ -273,4 +310,4 @@ export {
   type UiLockMetadata,
   updateUiLockPort,
 } from './ui-lock.ts';
-export { PROTOCOL_VERSION, RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';
+export { RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';

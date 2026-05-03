@@ -169,7 +169,6 @@ function FieldError({
 }: React.ComponentProps<'div'> & {
   errors?: Array<{ message?: string } | undefined>;
 }) {
-  // React Compiler memoizes this automatically — no useMemo needed.
   const content = (() => {
     if (children) {
       return children;

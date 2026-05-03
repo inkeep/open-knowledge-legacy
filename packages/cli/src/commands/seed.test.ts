@@ -58,7 +58,6 @@ describe('runSeed — happy path', () => {
     const result = await runSeed({ cwd: testDir, confirmStream: no() });
     expect(result.status).toBe('cancelled');
     expect(result.exitCode).toBe(0);
-    // No changes applied
     for (const folder of STARTER_FOLDERS) {
       expect(existsSync(join(testDir, folder.path))).toBe(false);
     }
@@ -91,7 +90,7 @@ describe('runSeed — no-op', () => {
 });
 
 describe('runSeed — prerequisite', () => {
-  test('exits 1 when .open-knowledge/ is absent', async () => {
+  test('exits 1 when .ok/ is absent', async () => {
     const result = await runSeed({ cwd: testDir });
     expect(result.status).toBe('prerequisite-missing');
     expect(result.exitCode).toBe(1);
@@ -121,7 +120,6 @@ describe('runSeed — --root', () => {
     writeFileSync(join(testDir, 'knowledge', '.keep'), '', 'utf-8');
     const result = await runSeed({ cwd: testDir, root: 'knowledge', yes: true });
     expect(result.status).toBe('applied');
-    // Pre-existing user file is untouched.
     expect(existsSync(join(testDir, 'knowledge', '.keep'))).toBe(true);
     for (const folder of STARTER_FOLDERS) {
       expect(existsSync(join(testDir, 'knowledge', folder.path))).toBe(true);
@@ -170,7 +168,6 @@ describe('runSeed — path argument', () => {
   test('operates on explicit path rather than cwd', async () => {
     scaffoldOkDir(testDir);
     const previousCwd = process.cwd();
-    // Move process cwd somewhere else to ensure explicit cwd wins
     const otherDir = mkdtempSync(join(tmpdir(), 'other-'));
     try {
       process.chdir(otherDir);

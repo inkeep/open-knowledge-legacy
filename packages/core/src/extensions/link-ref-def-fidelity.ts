@@ -1,12 +1,3 @@
-/**
- * LinkRefDef custom node for source-text fidelity (Option A — doc-footer).
- *
- * Atom node that stores link reference definitions ([label]: url "title").
- * Rendered as footnote-style definitions at the document position where they appear.
- *
- * Markdown parsing/serialization is handled by the unified pipeline (packages/core/src/markdown/).
- */
-
 import { Node } from '@tiptap/core';
 
 export const LinkRefDefFidelity = Node.create({

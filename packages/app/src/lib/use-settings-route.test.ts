@@ -1,10 +1,3 @@
-/**
- * Pure unit tests for the hash → settings-scope parser. The hook itself
- * (subscribing to `hashchange` + reading `window.location.hash`) is exercised
- * by Playwright in US-009/US-010 — repo convention is to keep DOM/event
- * coverage in stress tests and unit-test only the pure parser surface.
- */
-
 import { describe, expect, test } from 'bun:test';
 import {
   isSettingsShortcut,
@@ -23,12 +16,12 @@ describe('parseSettingsHash', () => {
     expect(parseSettingsHash('#install-claude-desktop')).toBeNull();
   });
 
-  test('bare `#settings` → workspace (canonical synonym)', () => {
-    expect(parseSettingsHash('#settings')).toBe('workspace');
+  test('bare `#settings` → project (canonical synonym)', () => {
+    expect(parseSettingsHash('#settings')).toBe('project');
   });
 
-  test('`#settings/workspace` → workspace', () => {
-    expect(parseSettingsHash('#settings/workspace')).toBe('workspace');
+  test('`#settings/project` → project', () => {
+    expect(parseSettingsHash('#settings/project')).toBe('project');
   });
 
   test('`#settings/user` → user', () => {
@@ -41,26 +34,26 @@ describe('parseSettingsHash', () => {
   });
 
   test('hash without leading `#` is tolerated', () => {
-    expect(parseSettingsHash('settings/workspace')).toBe('workspace');
+    expect(parseSettingsHash('settings/project')).toBe('project');
   });
 });
 
 describe('settingsHash', () => {
   test('builds canonical hashes', () => {
-    expect(settingsHash('workspace')).toBe('#settings/workspace');
+    expect(settingsHash('project')).toBe('#settings/project');
     expect(settingsHash('user')).toBe('#settings/user');
   });
 
   test('round-trips with parseSettingsHash', () => {
-    expect(parseSettingsHash(settingsHash('workspace'))).toBe('workspace');
+    expect(parseSettingsHash(settingsHash('project'))).toBe('project');
     expect(parseSettingsHash(settingsHash('user'))).toBe('user');
   });
 });
 
 describe('SETTINGS_OPEN_HASH', () => {
-  test('is the bare-`#settings` synonym (workspace tab on open)', () => {
+  test('is the bare-`#settings` synonym (project tab on open)', () => {
     expect(SETTINGS_OPEN_HASH).toBe('#settings');
-    expect(parseSettingsHash(SETTINGS_OPEN_HASH)).toBe('workspace');
+    expect(parseSettingsHash(SETTINGS_OPEN_HASH)).toBe('project');
   });
 });
 

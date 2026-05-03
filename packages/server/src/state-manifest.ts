@@ -1,48 +1,12 @@
-/**
- * Durable per-project state schema manifest.
- *
- * `.open-knowledge/state.json` answers one question: *can the current binary
- * read this project's on-disk state at all?* A version-mismatching runtime
- * must refuse to boot rather than silently misinterpret durable state.
- *
- * Rules (specs/2026-04-24-cross-install-version-handshake/SPEC.md §6.2 +
- * G2 fresh-vs-adopt):
- *
- * - Manifest present + `stateSchemaVersion` matches → proceed. Update
- *   `lastWriteBy` opportunistically.
- * - Manifest present + version mismatch → throw. NG4 prohibits on-the-fly
- *   migration in this scope.
- * - Manifest present + corrupt → throw. NG8 — corrupt is NOT treated as
- *   absent; that would silently overwrite real durable state.
- * - Manifest absent + no `.open-knowledge/` AND no `.git/open-knowledge/`
- *   shadow repo → genuinely fresh project. Write the manifest at the
- *   current `STATE_SCHEMA_VERSION`.
- * - Manifest absent + any pre-existing state (`.open-knowledge/` directory
- *   OR a shadow repo) → adopting a pre-versioned project. Write the manifest
- *   at `stateSchemaVersion = 0` (pre-manifest sentinel) with `createdBy.adoptedAt`
- *   set, log a one-time adoption warning. v1 binaries can read schema-0 state
- *   by definition; future v≥2 binaries can still refuse.
- *
- * The fresh-vs-adopt split is load-bearing for the rollout — every existing
- * project on the day this ships has a shadow repo and no manifest. Stamping
- * today's `STATE_SCHEMA_VERSION` over them would erase the information that
- * they pre-date the manifest scheme.
- */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { getLogger } from './logger.ts';
-import { PROTOCOL_VERSION, RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';
+import { RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';
 
-/**
- * Filename for the state manifest, relative to the lock dir
- * (`<contentDir>/.open-knowledge/`).
- */
 export const STATE_MANIFEST_FILENAME = 'state.json';
 
 export interface StateManifestWriter {
   runtimeVersion: string;
-  protocolVersion: number;
-  /** Set on the adoption write to mark "this project pre-dates the manifest scheme". */
   adoptedAt?: string;
 }
 
@@ -55,33 +19,7 @@ export interface StateManifestRecord {
 
 export type ProjectShape = 'fresh' | 'adopt';
 
-/**
- * Determine whether the project is genuinely fresh (no prior state) or has
- * pre-existing on-disk state that pre-dates the manifest scheme.
- *
- * Adoption is signaled ONLY by the shadow repo at `<projectRoot>/.git/open-knowledge/`.
- * The `<contentDir>/.open-knowledge/` directory is NOT a reliable signal — it
- * can exist for reasons that don't imply pre-version-field durable state:
- *
- * - `initContent` (CLI's `ok start` autoInitFn) creates it during boot before
- *   the manifest check runs.
- * - `acquireServerLock` creates it when writing the lock file.
- * - A prior boot crash mid-init may have left an empty `.open-knowledge/`.
- *
- * If we treated lockDir-existence as adoption, every fresh project would be
- * misclassified as adopted and stamp schema-0 instead of the current schema.
- * The shadow repo is durable, version-relevant state — the actual artifact
- * future binaries might not be able to read. The `.open-knowledge/` directory
- * contents (`config.yml`, sync caches) are version-independent or cheap to
- * regenerate. The lockDir parameter is retained for API stability and future
- * use (e.g., a more specific signal once we have one).
- *
- * Note: the original spec text in §6.2 listed both signals; this implementation
- * narrows to the shadow repo per D14's calibration after the user's smoke test
- * surfaced the lockDir-misclassification bug (2026-04-27).
- */
 export function detectProjectShape(opts: { lockDir: string; shadowRepoDir: string }): ProjectShape {
-  // lockDir intentionally unused — see docstring above.
   void opts.lockDir;
   if (existsSync(opts.shadowRepoDir)) return 'adopt';
   return 'fresh';
@@ -91,20 +29,6 @@ function manifestPath(lockDir: string): string {
   return resolve(lockDir, STATE_MANIFEST_FILENAME);
 }
 
-/**
- * Compatibility table for the pre-flight gate.
- *
- * Strict equality is the default (D14 — strict-only, no `minCompatibleProtocol`
- * range). One special case: schema 0 is the pre-manifest adoption sentinel,
- * and v1 was the first manifest-aware schema. v1 binaries can read schema-0
- * state by definition — that's how the rollout works (every existing project
- * on the day v1 ships has shadow-repo state and no manifest).
- *
- * Future versions (v2+) need to make their own explicit decision. If v2 wants
- * to read schema-0 / schema-1 state it adds itself here. Migration tooling
- * (NG5) will eventually convert older schemas in place — this table only
- * answers "can I read this without migrating?"
- */
 function isCompatibleSchema(manifestSchema: number, currentSchema: number): boolean {
   if (manifestSchema === currentSchema) return true;
   if (manifestSchema === 0 && currentSchema === 1) return true;
@@ -138,15 +62,9 @@ function isStateManifestRecord(value: unknown): value is StateManifestRecord {
   if (!v.createdBy || typeof v.createdBy !== 'object') return false;
   const c = v.createdBy as Record<string, unknown>;
   if (typeof c.runtimeVersion !== 'string') return false;
-  if (typeof c.protocolVersion !== 'number') return false;
   return true;
 }
 
-/**
- * Read the manifest. Returns `{status: 'absent'}` when no file exists.
- * Throws `StateManifestError({kind: 'corrupt'})` for parse errors or shape
- * violations — corrupt is NEVER treated as absent (NG8).
- */
 export function readStateManifest(lockDir: string): ReadStateManifestResult {
   const path = manifestPath(lockDir);
   if (!existsSync(path)) return { status: 'absent' };
@@ -180,12 +98,6 @@ export function readStateManifest(lockDir: string): ReadStateManifestResult {
   return { status: 'present', manifest: parsed };
 }
 
-/**
- * Write the manifest, atomically replacing any prior file. Creates the lock
- * dir if absent. Owner-only readable (`mode: 0o600`) — the manifest contains
- * project-identifying metadata that has no business being world-readable on
- * shared hosts.
- */
 export function writeStateManifest(lockDir: string, record: StateManifestRecord): void {
   const path = manifestPath(lockDir);
   mkdirSync(dirname(path), { recursive: true });
@@ -194,34 +106,18 @@ export function writeStateManifest(lockDir: string, record: StateManifestRecord)
 
 interface AssertCompatibleStateManifestOptions {
   lockDir: string;
-  /** Path to the project's shadow repo (`.git/open-knowledge/`). Used for adopt detection. */
   shadowRepoDir: string;
-  /** Override the current binary's STATE_SCHEMA_VERSION — primarily for tests. */
   currentStateSchemaVersion?: number;
-  /** Override the current binary's RUNTIME_VERSION — primarily for tests. */
   currentRuntimeVersion?: string;
-  /** Override the current binary's PROTOCOL_VERSION — primarily for tests. */
-  currentProtocolVersion?: number;
-  /** Injectable clock — primarily for deterministic tests. */
   now?: () => Date;
 }
 
-/**
- * Pre-flight gate called before any shadow-repo IO. Implements the full
- * fresh-vs-adopt rule set (G2). Writes the manifest on first open; throws
- * `StateManifestError({kind: 'incompatible'})` when an existing manifest
- * does not match the current binary's `STATE_SCHEMA_VERSION`.
- *
- * Returns the resolved manifest after the call so callers (notably
- * `bootServer`) can log the outcome with the actual `stateSchemaVersion`.
- */
 export function assertCompatibleStateManifest(
   opts: AssertCompatibleStateManifestOptions,
 ): StateManifestRecord {
   const log = getLogger('state-manifest');
   const currentStateSchemaVersion = opts.currentStateSchemaVersion ?? STATE_SCHEMA_VERSION;
   const currentRuntimeVersion = opts.currentRuntimeVersion ?? RUNTIME_VERSION;
-  const currentProtocolVersion = opts.currentProtocolVersion ?? PROTOCOL_VERSION;
   const now = (opts.now ?? (() => new Date()))();
   const nowIso = now.toISOString();
   const path = manifestPath(opts.lockDir);
@@ -238,18 +134,14 @@ export function assertCompatibleStateManifest(
           `State manifest at ${path} declares stateSchemaVersion=${m.stateSchemaVersion} ` +
           `but this binary supports ${currentStateSchemaVersion}. ` +
           `Refusing to boot — on-the-fly migration is out of scope. ` +
-          `(Manifest written by runtime ${m.createdBy.runtimeVersion}, ` +
-          `protocol ${m.createdBy.protocolVersion}.)`,
+          `(Manifest written by runtime ${m.createdBy.runtimeVersion}.)`,
       });
     }
-    // Compatible — opportunistically refresh `lastWriteBy`. Best-effort; a
-    // failure here should not crash the boot path.
     try {
       const updated: StateManifestRecord = {
         ...m,
         lastWriteBy: {
           runtimeVersion: currentRuntimeVersion,
-          protocolVersion: currentProtocolVersion,
           at: nowIso,
         },
       };
@@ -261,7 +153,6 @@ export function assertCompatibleStateManifest(
     }
   }
 
-  // Absent — fresh-vs-adopt split.
   const shape = detectProjectShape({
     lockDir: opts.lockDir,
     shadowRepoDir: opts.shadowRepoDir,
@@ -273,7 +164,6 @@ export function assertCompatibleStateManifest(
       createdAt: nowIso,
       createdBy: {
         runtimeVersion: currentRuntimeVersion,
-        protocolVersion: currentProtocolVersion,
       },
     };
     writeStateManifest(opts.lockDir, fresh);
@@ -284,13 +174,11 @@ export function assertCompatibleStateManifest(
     return fresh;
   }
 
-  // Adopt — pre-existing state, no manifest. Stamp schema-0 sentinel.
   const adopted: StateManifestRecord = {
     stateSchemaVersion: 0,
     createdAt: nowIso,
     createdBy: {
       runtimeVersion: currentRuntimeVersion,
-      protocolVersion: currentProtocolVersion,
       adoptedAt: nowIso,
     },
   };

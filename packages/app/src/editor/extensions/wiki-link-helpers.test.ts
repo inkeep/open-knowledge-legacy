@@ -76,23 +76,8 @@ describe('resolveWikiLinkAssetTarget', () => {
   });
 });
 
-// Regression guard: `buildUnresolvedWikiLinkAttrs` stores
-// the lowercased slug as target (e.g. `README.md` drop → target='readme'),
-// but the page-list cache populated from /api/documents is keyed by
-// case-preserved docName (`README`). Exact `pages.has(target)` never matches,
-// and `getWikiLinkResolutionCandidates` adds no candidate when input already
-// equals its own slug. Result: every non-lowercase-alphanum filename drop OR
-// hand-typed wiki-link (via fallback/create paths in the suggestion menu)
-// shows "Page not found" in the PropPanel even though the doc exists.
-//
-// Fix contract: resolver must recognize case-preserved cache entries. These
-// tests pin the case-insensitive fallback behavior so it survives future
-// refactors of `buildUnresolvedWikiLinkAttrs` / the slug function / the
-// suggestion-menu paths.
 describe('isResolvedWikiLinkTarget — case-insensitive resolution against case-preserved pages cache', () => {
   test('lowercased slug resolves against case-preserved cache entry', () => {
-    // Simulates: user drops `README.md` → `buildUnresolvedWikiLinkAttrs`
-    // stores target='readme'. Cache has 'README' from /api/documents.
     const pages = new Set(['README']);
     expect(isResolvedWikiLinkTarget('readme', pages)).toBe(true);
   });
@@ -103,7 +88,6 @@ describe('isResolvedWikiLinkTarget — case-insensitive resolution against case-
   });
 
   test('underscore/case filename (BA_for_Depression_Research) resolves', () => {
-    // Common real-world shape: snake_case or mixed-case doc names.
     const pages = new Set(['BA_for_Depression_Research']);
     expect(isResolvedWikiLinkTarget('ba-for-depression-research', pages)).toBe(true);
     expect(isResolvedWikiLinkTarget('BA_for_Depression_Research', pages)).toBe(true);
@@ -122,10 +106,6 @@ describe('isResolvedWikiLinkTarget — case-insensitive resolution against case-
   });
 
   test('subdirectory-preserving docName (packages/server/README) resolves case-insensitively', () => {
-    // Page cache stores full subdirectory paths like `packages/server/README`.
-    // A hand-typed `[[packages/server/README]]` should resolve. The drop
-    // flow wouldn't produce this target (file.name is basename-only), but
-    // the resolver still needs to work for hand-typed cross-subdir links.
     const pages = new Set(['packages/server/README']);
     expect(isResolvedWikiLinkTarget('packages/server/README', pages)).toBe(true);
     expect(isResolvedWikiLinkTarget('packages/server/readme', pages)).toBe(true);

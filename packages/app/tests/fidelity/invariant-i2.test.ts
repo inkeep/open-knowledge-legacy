@@ -1,11 +1,3 @@
-/**
- * Invariant I2 — Character preservation: every literal char in input
- * appears literally in the output. No HTML entity encoding.
- *
- * Specifically tests that & < > are NOT entity-encoded to &amp; &lt; &gt;.
- * Also tests R20: link URLs with & preserved.
- */
-
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
 import { paragraphWithFidelityChars } from './arbitraries';
@@ -16,11 +8,9 @@ describe('I2 — character preservation: no entity encoding', () => {
     fc.assert(
       fc.property(paragraphWithFidelityChars, (md) => {
         const output = mdRoundTrip(md);
-        // No HTML entity encoding
         expect(output).not.toContain('&amp;');
         expect(output).not.toContain('&lt;');
         expect(output).not.toContain('&gt;');
-        // Original chars preserved
         if (md.includes('&')) expect(output).toContain('&');
         if (md.includes('<')) expect(output).toContain('<');
         if (md.includes('>')) expect(output).toContain('>');

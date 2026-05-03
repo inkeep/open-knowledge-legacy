@@ -22,13 +22,6 @@ async function readGitConfig(
   }
 }
 
-/**
- * Load (or create) the principal record at `<contentDir>/.open-knowledge/principal.json`.
- *
- * First call: synthesizes a stable UUID, reads git config for display fields,
- * persists, and returns. Subsequent calls: keeps id + created_at immutable;
- * refreshes display_name and display_email from git config on each load.
- */
 export async function loadPrincipal(contentDir: string): Promise<Principal> {
   const okDir = resolve(contentDir, OK_DIR);
   const principalPath = resolve(okDir, PRINCIPAL_FILE);
@@ -76,7 +69,6 @@ export async function loadPrincipal(contentDir: string): Promise<Principal> {
     return updated;
   }
 
-  // First run: create
   mkdirSync(okDir, { recursive: true });
   const id = `principal-${randomUUID()}`;
   const shortId = id.slice('principal-'.length, 'principal-'.length + 8);

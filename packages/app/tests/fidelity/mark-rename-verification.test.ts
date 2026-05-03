@@ -1,10 +1,3 @@
-/**
- * Mark-rename verification — R16(f).
- *
- * Verifies that the D16/D17 schema renames produce PM nodes/marks
- * with the correct mdast-canonical names: `strong` (not `bold`),
- * `emphasis` (not `italic`), `thematicBreak` (not `horizontalRule`).
- */
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import type { JSONContent } from '@tiptap/core';
@@ -79,9 +72,6 @@ describe('renamed marks round-trip markdown correctly', () => {
     expect(normalize(mdRoundTrip('*em*\n'))).toBe(normalize('*em*\n'));
   });
 
-  // NG10: doc-start `---` normalizes to `***` — remark-frontmatter
-  // interference. Parse-side transformer + serialize-side normalization
-  // work together for idempotent round-trip.
   test('doc-start --- normalizes to *** (NG10)', () => {
     expect(normalize(mdRoundTrip('---\n'))).toBe(normalize('***\n'));
   });

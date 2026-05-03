@@ -5,7 +5,6 @@ import { z } from 'zod';
 import { fieldRegistry } from './field-registry.ts';
 import { ConfigSchema } from './schema.ts';
 
-// Single shared Ajv instance for the equivalence fixture run.
 function buildAjv() {
   const ajv = new Ajv({ allErrors: true, strict: false });
   addFormats(ajv);
@@ -24,29 +23,19 @@ const validate = ajv.compile(jsonSchema);
 interface Fixture {
   name: string;
   input: unknown;
-  /** True if both validators should accept; false if both should reject. */
   shouldAccept: boolean;
 }
 
-// Representative coverage across leaves and section defaults. Both ajv (over
-// the published JSON Schema) and ConfigSchema.safeParse must agree on every
-// fixture — guards against `.transform()` / `.coerce()` slipping into the
-// schema and silently breaking IDE/runtime equivalence.
 const FIXTURES: Fixture[] = [
   { name: 'empty object — defaults fill in', input: {}, shouldAccept: true },
   {
-    name: 'full content section',
-    input: { content: { dir: '.', include: ['**/*.md'], exclude: [] } },
+    name: 'content section with dir set',
+    input: { content: { dir: 'docs' } },
     shouldAccept: true,
   },
   {
-    name: 'partial content (only include)',
-    input: { content: { include: ['**/*.md'] } },
-    shouldAccept: true,
-  },
-  {
-    name: 'empty include array — min(1) fails',
-    input: { content: { include: [] } },
+    name: 'content with non-string dir rejected',
+    input: { content: { dir: 12345 } },
     shouldAccept: false,
   },
   { name: 'invalid host (number)', input: { server: { host: 12345 } }, shouldAccept: false },
@@ -70,6 +59,16 @@ const FIXTURES: Fixture[] = [
     name: 'appearance.theme=midnight rejected',
     input: { appearance: { theme: 'midnight' } },
     shouldAccept: false,
+  },
+  {
+    name: 'autoSync.enabled accepted',
+    input: { autoSync: { enabled: true } },
+    shouldAccept: true,
+  },
+  {
+    name: 'autoSync empty object accepted for stale/partial YAML',
+    input: { autoSync: {} },
+    shouldAccept: true,
   },
   {
     name: 'mcp.tools.search.maxResults=25 accepted',
@@ -132,9 +131,7 @@ describe('loose-mode forgiveness', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.server.host).toBe('example.dev');
-      // Defaults still resolve for known fields.
       expect(result.data.mcp.autoStart).toBe(true);
-      // Unknown top-level passes through into the loose-typed payload.
       expect((result.data as Record<string, unknown>).sync).toEqual({
         pushIntervalSeconds: 30,
         autoCommit: true,

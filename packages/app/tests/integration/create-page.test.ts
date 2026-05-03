@@ -1,21 +1,3 @@
-/**
- * Integration tests for `POST /api/create-page` covering the new-file/new-folder
- * sidebar flows.
- *
- * Spins up a real Hocuspocus server via createTestServer (random port,
- * tmp contentDir, debounce=200ms). Every case below uses raw `fetch` against
- * the server exactly as NewItemDialog does in the browser.
- *
- * Scenarios covered:
- *   - QA-001/003 — simple file creation
- *   - QA-002     — composite folder create (kind='folder' flow)
- *   - QA-008     — 409 EEXIST surfaces with structured error body
- *   - QA-009     — server rejects ".." / leading-/ / backslash / null-byte
- *   - QA-010     — reserved __system__ name rejected with 400
- *   - QA-012     — mkdirSync recursive for deep, not-yet-existing folder paths
- *   - QA-017     — `.md` suffix is required (server's hard contract)
- */
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -53,7 +35,6 @@ describe('/api/create-page — simple file', () => {
   });
 
   test('creates a file in an existing subdirectory', async () => {
-    // Create parent via an earlier composite so the directory already exists.
     await createPage('qa-pre/seed.md');
     const { status, body } = await createPage('qa-pre/child.md');
     expect(status).toBe(200);

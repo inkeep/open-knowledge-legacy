@@ -1,21 +1,10 @@
-/**
- * Integration test for config-edit OTel spans.
- *
- * Registers a `BasicTracerProvider` with an `InMemorySpanExporter`, runs
- * the bindConfigDoc → patch → validate → persist → revert chain end-to-end,
- * and asserts the recorded spans have the expected names, attributes, and
- * parent/child relationships.
- *
- * Bounded enum attributes only — Zod issue paths land in span events, not
- * attributes (cardinality discipline).
- */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   bindConfigDoc,
-  CONFIG_DOC_NAME_WORKSPACE,
+  CONFIG_DOC_NAME_PROJECT,
   type ConfigDocProvider,
   type ConfigPatch,
 } from '@inkeep/open-knowledge-core';
@@ -40,10 +29,6 @@ function setupExporter(): void {
     spanProcessors: [new SimpleSpanProcessor(exporter)],
   });
   trace.setGlobalTracerProvider(provider);
-  // Required for parent/child span tracking across `startActiveSpan` calls.
-  // Without it, the active-span lookup uses `ROOT_CONTEXT` and every span
-  // becomes a root span. server's initTelemetry() registers this in
-  // production; the test wires the same plumbing locally.
   context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
 }
 
@@ -62,8 +47,6 @@ function attr(span: ReadableSpan, key: string): unknown {
   return span.attributes[key];
 }
 
-/** Pick the first matching span by name; throws if none — biome-friendly
- * alternative to non-null assertions on `spansByName(...)[0]!`. */
 function requireSpan(name: string): ReadableSpan {
   const spans = spansByName(name);
   if (spans.length === 0) throw new Error(`requireSpan: no span named '${name}'`);
@@ -98,7 +81,7 @@ describe('config-edit OTel spans', () => {
   beforeEach(() => {
     setupExporter();
     testDir = mkdtempSync(join(tmpdir(), 'config-otel-'));
-    mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
   });
 
   afterEach(async () => {
@@ -110,10 +93,10 @@ describe('config-edit OTel spans', () => {
     it('emits one config.bind span on bindConfigDoc with scope attribute', () => {
       const ydoc = new Y.Doc();
       const mock = createMockProvider(ydoc);
-      bindConfigDoc(mock, 'workspace');
+      bindConfigDoc(mock, 'project');
       expect(spansByName('config.bind').length).toBe(1);
       const span = requireSpan('config.bind');
-      expect(attr(span, 'config.scope')).toBe('workspace');
+      expect(attr(span, 'config.scope')).toBe('project');
       expect(attr(span, 'config.transport')).toBe('ytext');
     });
 
@@ -130,7 +113,7 @@ describe('config-edit OTel spans', () => {
     it('emits config.patch + config.validate(L1) on a successful patch', () => {
       const ydoc = new Y.Doc();
       const mock = createMockProvider(ydoc);
-      const binding = bindConfigDoc(mock, 'workspace');
+      const binding = bindConfigDoc(mock, 'project');
       const result = binding.patch({
         appearance: { theme: 'dark' },
       } as ConfigPatch);
@@ -140,21 +123,19 @@ describe('config-edit OTel spans', () => {
       const validateSpan = requireSpan('config.validate');
       expect(spansByName('config.patch').length).toBe(1);
       expect(spansByName('config.validate').length).toBe(1);
-      expect(attr(patchSpan, 'config.scope')).toBe('workspace');
+      expect(attr(patchSpan, 'config.scope')).toBe('project');
       expect(attr(patchSpan, 'config.transport')).toBe('ytext');
       expect(attr(patchSpan, 'config.outcome')).toBe('success');
       expect(attr(validateSpan, 'config.validation.layer')).toBe('L1');
       expect(attr(validateSpan, 'config.outcome')).toBe('success');
 
-      // config.validate is a child of config.patch (started inside its sync fn).
       expect(validateSpan.parentSpanContext?.spanId).toBe(patchSpan.spanContext().spanId);
     });
 
     it('emits config.outcome=rejected + issue events on a schema-invalid patch', () => {
       const ydoc = new Y.Doc();
       const mock = createMockProvider(ydoc);
-      const binding = bindConfigDoc(mock, 'workspace');
-      // theme must be 'light'|'dark'|'system' — supply a number.
+      const binding = bindConfigDoc(mock, 'project');
       const result = binding.patch({
         appearance: { theme: 42 as unknown as 'dark' },
       } as ConfigPatch);
@@ -169,7 +150,6 @@ describe('config-edit OTel spans', () => {
       expect(spansByName('config.validate').length).toBe(1);
       const ev = validateSpan.events.find((e) => e.name === 'config.validation.issue');
       expect(ev).toBeDefined();
-      // Issue path contains 'theme'; exact path may vary by Zod's discriminated-union resolution.
       const path = ev?.attributes?.['issue.path'];
       expect(typeof path).toBe('string');
       expect((path as string).includes('theme')).toBe(true);
@@ -180,7 +160,7 @@ describe('config-edit OTel spans', () => {
     it('emits config.patch + config.validate(L2) on a successful headless write', async () => {
       const result = await writeConfigPatch({
         cwd: testDir,
-        scope: 'workspace',
+        scope: 'project',
         patch: { appearance: { theme: 'dark' } } as ConfigPatch,
       });
       expect(result.ok).toBe(true);
@@ -188,7 +168,7 @@ describe('config-edit OTel spans', () => {
       const patchSpan = requireSpan('config.patch');
       const validateSpan = requireSpan('config.validate');
       expect(spansByName('config.patch').length).toBe(1);
-      expect(attr(patchSpan, 'config.scope')).toBe('workspace');
+      expect(attr(patchSpan, 'config.scope')).toBe('project');
       expect(attr(patchSpan, 'config.transport')).toBe('fs');
       expect(attr(patchSpan, 'config.outcome')).toBe('success');
       expect(spansByName('config.validate').length).toBe(1);
@@ -199,7 +179,7 @@ describe('config-edit OTel spans', () => {
     it('marks outcome=rejected + records error.code on schema fail', async () => {
       const result = await writeConfigPatch({
         cwd: testDir,
-        scope: 'workspace',
+        scope: 'project',
         patch: { appearance: { theme: 99 as unknown as 'dark' } } as ConfigPatch,
       });
       expect(result.ok).toBe(false);
@@ -218,13 +198,13 @@ describe('config-edit OTel spans', () => {
       const lkgCache = new Map<string, string>();
       const ctx = { projectDir: testDir, lkgCache };
 
-      const outcome = await storeConfigDoc(ydoc, CONFIG_DOC_NAME_WORKSPACE, undefined, ctx);
+      const outcome = await storeConfigDoc(ydoc, CONFIG_DOC_NAME_PROJECT, undefined, ctx);
       expect(outcome).toBe('persisted');
 
       const persistSpan = requireSpan('config.persist');
       const validateSpan = requireSpan('config.validate');
       expect(spansByName('config.persist').length).toBe(1);
-      expect(attr(persistSpan, 'config.scope')).toBe('workspace');
+      expect(attr(persistSpan, 'config.scope')).toBe('project');
       expect(attr(persistSpan, 'config.transport')).toBe('fs');
       expect(attr(persistSpan, 'config.outcome')).toBe('success');
       expect(spansByName('config.validate').length).toBe(1);
@@ -240,12 +220,10 @@ describe('config-edit OTel spans', () => {
       const ctx = {
         projectDir: testDir,
         lkgCache,
-        onConfigRejected: () => {
-          /* noop */
-        },
+        onConfigRejected: () => {},
       };
 
-      const outcome = await storeConfigDoc(ydoc, CONFIG_DOC_NAME_WORKSPACE, undefined, ctx);
+      const outcome = await storeConfigDoc(ydoc, CONFIG_DOC_NAME_PROJECT, undefined, ctx);
       expect(outcome).toBe('reverted');
 
       const persistSpan = requireSpan('config.persist');
@@ -264,12 +242,12 @@ describe('config-edit OTel spans', () => {
     it('emits config.validate(L3) on a watcher-driven change', () => {
       const ydoc = new Y.Doc();
       const lkgCache = new Map<string, string>();
-      lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, 'mcp:\n  autoStart: false\n');
+      lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'mcp:\n  autoStart: false\n');
       const ctx = { projectDir: testDir, lkgCache };
 
       const outcome = applyExternalConfigChange(
         ydoc,
-        CONFIG_DOC_NAME_WORKSPACE,
+        CONFIG_DOC_NAME_PROJECT,
         'mcp:\n  autoStart: true\n',
         ctx,
       );
@@ -284,17 +262,13 @@ describe('config-edit OTel spans', () => {
 
   describe('zero-overhead when SDK is disabled', () => {
     it('does not throw when no tracer provider is registered (no-op SDK)', async () => {
-      // Tear down the in-memory exporter — the @opentelemetry/api package
-      // returns no-op tracers when no SDK is registered. Spans become inert.
       await teardownExporter();
-      // Re-init the exporter so afterEach's teardownExporter doesn't trip.
       setupExporter();
 
       const ydoc = new Y.Doc();
       const mock = createMockProvider(ydoc);
-      // The act of binding + patching SHOULD NOT throw regardless of SDK state.
       expect(() => {
-        const binding = bindConfigDoc(mock, 'workspace');
+        const binding = bindConfigDoc(mock, 'project');
         binding.patch({ appearance: { theme: 'system' } } as ConfigPatch);
       }).not.toThrow();
     });

@@ -21,10 +21,6 @@ describe('formatContainerAriaLabel', () => {
   });
 
   test('irregular noun is not inflected — "item/items" stays fixed', () => {
-    // Previously this helper used `(childName + 's')` which produced
-    // "Cards with 3 Foots" for an irregular childName. The new shape
-    // ignores childName for the output prose so irregular plurals are
-    // unreachable.
     expect(formatContainerAriaLabel('Feet', 'Foot', 3)).toBe('Feet with 3 items');
   });
 });

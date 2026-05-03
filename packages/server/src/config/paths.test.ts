@@ -1,0 +1,28 @@
+import { describe, expect, test } from 'bun:test';
+import { resolve } from 'node:path';
+import { OK_DIR } from '@inkeep/open-knowledge-core';
+import { resolveContentDir, resolveLockDir } from './paths.ts';
+import type { Config } from './schema.ts';
+
+function makeConfig(dir: string): Config {
+  return { content: { dir } } as unknown as Config;
+}
+
+describe('resolveContentDir', () => {
+  test('returns absolute path under cwd for relative dir', () => {
+    const cwd = '/tmp/project';
+    expect(resolveContentDir(makeConfig('.'), cwd)).toBe('/tmp/project');
+    expect(resolveContentDir(makeConfig('docs'), cwd)).toBe('/tmp/project/docs');
+    expect(resolveContentDir(makeConfig('./content'), cwd)).toBe('/tmp/project/content');
+  });
+
+  test('returns absolute path unchanged when dir is absolute', () => {
+    expect(resolveContentDir(makeConfig('/var/vault'), '/tmp/cwd')).toBe('/var/vault');
+  });
+});
+
+describe('resolveLockDir', () => {
+  test('returns <contentDir>/.ok', () => {
+    expect(resolveLockDir('/tmp/project')).toBe(resolve('/tmp/project', OK_DIR));
+  });
+});

@@ -1,29 +1,4 @@
 #!/usr/bin/env bun
-/**
- * `bun run tests/perf/profile.ts --scenario=<name>` — scenario driver.
- *
- * Loads `./scenarios/<name>.ts`, launches a dedicated Chromium (headed by
- * default — required for GPU/paint events; cross-ref `reports/perf-profiling-
- * landscape-2026/evidence/cdp-tracing.md`), attaches a CDP session + Tracing
- * domain, calls `scenario.run(ctx)`, drains the `globalThis.__ok_perf`
- * collector, and writes `results/<scenario>.<timestamp>.json`.
- *
- * Standalone Bun entry point — NO `@playwright/test` runner (D2 LOCKED —
- * retries / fixtures fight perf-measurement stability). Mirrors the
- * `packages/core/tests/perf/run-regression-gate.ts` pattern.
- *
- * CLI:
- *   --scenario=<name>         Required. Matches file at ./scenarios/<name>.ts
- *   --target=<url>            Base URL. Default: http://localhost:5173
- *   --out=<dir>               Results dir. Default: ./results
- *   --headless                Launch headless (default headed)
- *   --viewport=<WxH>          Viewport, e.g. 1920x1080. Default 1440x900
- *
- * Exit codes:
- *   0  scenario completed, result JSON written
- *   1  usage error (bad args, scenario not found)
- *   2  scenario threw — result JSON still written with `error` field
- */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname, platform } from 'node:os';
@@ -43,14 +18,10 @@ import type {
   WebVitalRecord,
 } from './lib/scenario';
 
-// ─────────────────────────── Constants ─────────────────────────────────────
-
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TARGET = 'http://localhost:5173';
 const DEFAULT_OUT_DIR = resolve(HERE, 'results');
 const DEFAULT_VIEWPORT = { width: 1440, height: 900 };
-
-// ─────────────────────────── CLI parsing ──────────────────────────────────
 
 interface CliArgs {
   scenario: string;
@@ -60,11 +31,11 @@ interface CliArgs {
   viewport: { width: number; height: number };
 }
 
-function parseArgs(argv: readonly string[]): CliArgs {
+export function parseArgs(argv: readonly string[]): CliArgs {
   let scenario = '';
   let target = DEFAULT_TARGET;
   let outDir = DEFAULT_OUT_DIR;
-  let headed = true;
+  let headed = process.env.OK_PERF_HEADED === '1';
   let viewport = DEFAULT_VIEWPORT;
 
   for (const raw of argv) {
@@ -98,7 +69,10 @@ function usageAndExit(err: string | null): never {
     '  --scenario=<name>        Required. Loads ./scenarios/<name>.ts',
     '  --target=<url>           Base URL. Default: http://localhost:5173',
     '  --out=<dir>              Output dir. Default: ./results',
-    '  --headless               Launch headless (default headed)',
+    '  --headed                 Launch with a visible browser window.',
+    '                           Default: headless. Equivalent to',
+    '                           OK_PERF_HEADED=1 in the environment.',
+    '  --headless               Launch headless (the default).',
     '  --viewport=<WxH>         Viewport, e.g. 1920x1080. Default 1440x900',
     '',
     'Scenarios live at packages/app/tests/perf/scenarios/*.ts',
@@ -109,8 +83,6 @@ function usageAndExit(err: string | null): never {
   console.log(lines.join('\n'));
   process.exit(err ? 1 : 0);
 }
-
-// ─────────────────────────── Scenario loader ──────────────────────────────
 
 async function loadScenario(name: string): Promise<ScenarioDefinition> {
   const path = resolve(HERE, 'scenarios', `${name}.ts`);
@@ -129,8 +101,6 @@ async function loadScenario(name: string): Promise<ScenarioDefinition> {
   }
   return scen;
 }
-
-// ─────────────────────────── Runner ───────────────────────────────────────
 
 async function runScenario(args: CliArgs): Promise<void> {
   const scen = await loadScenario(args.scenario);
@@ -217,9 +187,7 @@ async function runScenario(args: CliArgs): Promise<void> {
   } finally {
     try {
       await browser?.close();
-    } catch {
-      // browser may already have closed on scenario failure
-    }
+    } catch {}
   }
 
   const outPath = resolve(
@@ -245,8 +213,6 @@ async function runScenario(args: CliArgs): Promise<void> {
     process.exit(2);
   }
 }
-
-// ─────────────────────────── Helpers ──────────────────────────────────────
 
 function buildMetadata(args: CliArgs): ScenarioResultMetadata {
   return {
@@ -360,8 +326,6 @@ function round2(v: number): number {
   if (!Number.isFinite(v)) return 0;
   return Math.round(v * 100) / 100;
 }
-
-// ─────────────────────────── Entry ────────────────────────────────────────
 
 if (import.meta.main) {
   const args = parseArgs(process.argv.slice(2));

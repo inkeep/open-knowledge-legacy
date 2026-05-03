@@ -83,8 +83,6 @@ describe('unknownMdastGuardPlugin (R8 wildcard)', () => {
   });
 
   test('does not recurse into a node it just replaced', () => {
-    // If a node both (a) has unknown type and (b) contains unknown-type children,
-    // we replace the outer node and stop — the inner tree is embedded in sourceRaw.
     const src = '<<outer>> <<inner>>';
     const tree = {
       type: 'root',
@@ -101,7 +99,6 @@ describe('unknownMdastGuardPlugin (R8 wildcard)', () => {
     const outer = tree.children[0] as any;
     expect(outer.type).toBe('rawMdxFallbackMdast');
     expect(outer.originalType).toBe('unknownOuter');
-    // Children array should NOT be on the replacement — outer span captures whole thing
     expect(outer.children).toBeUndefined();
     expect(outer.value).toBe(src);
   });
@@ -125,19 +122,12 @@ describe('unknownMdastGuardPlugin (R8 wildcard)', () => {
   });
 
   test('end-to-end: synthetic unknown-type mdast does NOT throw whole-doc — block-level fallback', async () => {
-    // Integration: construct an mdast tree with an unknown block, feed it
-    // through the same handlers the full MarkdownManager uses, and assert we
-    // get a rawMdxFallback (not a whole-doc paragraph of raw text).
     const { MarkdownManager } = await import('./index.ts');
     const { sharedExtensions } = await import('../extensions/shared.ts');
     const mgr = new MarkdownManager({ extensions: sharedExtensions });
 
-    // Simulate a doc whose mdast WOULD have an unknown type by using a
-    // construct that agnostic MDX + remark-gfm both parse clean — so we
-    // prove the happy path is unaffected.
     const md = '# Heading\n\nparagraph\n\n## Section\n';
     const result = mgr.parseWithFallback(md);
-    // First child should be heading (structured), NOT a single whole-doc paragraph
     expect(result.content?.length).toBeGreaterThan(1);
     expect(result.content?.[0]?.type).toBe('heading');
   });

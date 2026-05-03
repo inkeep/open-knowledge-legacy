@@ -1,10 +1,3 @@
-/**
- * Tests for rehypeStripGdocsWrapper — unwraps Google Docs clipboard HTML.
- * Fixture fixtures/gdocs-sample.html contains a captured paste from Google
- * Docs with a <b id="docs-internal-guid-..."> outer wrapper around heading
- * + paragraph + bulleted list.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -21,9 +14,6 @@ describe('rehypeStripGdocsWrapper', () => {
     const mdast = htmlToMdast(html, {
       additionalCleanupPlugins: [rehypeStripGdocsWrapper],
     });
-    // The outer <b> should be gone — children surface at the root level.
-    // Assert heading depth=2 (h2) and a list node appear as root children
-    // (not nested inside a single wrapper).
     const types = mdast.children.map((c) => c.type);
     expect(types).toContain('heading');
     expect(types).toContain('list');
@@ -34,8 +24,6 @@ describe('rehypeStripGdocsWrapper', () => {
     const mdast = htmlToMdast(html, {
       additionalCleanupPlugins: [rehypeStripGdocsWrapper],
     });
-    // Serialize via the sister mdast→html pipeline? We just walk the mdast
-    // for visible text — that's sufficient for this fixture.
     const serialized = JSON.stringify(mdast);
     expect(serialized).toContain('Meeting Notes');
     expect(serialized).toContain('First action item');

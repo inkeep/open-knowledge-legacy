@@ -27,7 +27,6 @@ describe('sidebar-hover-prewarm (review Major #7 + V2 FR12 Option G)', () => {
   test('quick mouse trail (dismiss before 80ms) fires no prewarm', async () => {
     const prewarm = mock(() => {});
     scheduleHoverPrewarm('doc-a', prewarm);
-    // Mouse leaves after 30ms, well before the 80ms intent threshold.
     await wait(30);
     cancelHoverPrewarm('doc-a');
     await wait(120);
@@ -37,9 +36,7 @@ describe('sidebar-hover-prewarm (review Major #7 + V2 FR12 Option G)', () => {
   test('system docs are refused (__system__)', () => {
     const prewarm = mock(() => {});
     scheduleHoverPrewarm('__system__', prewarm);
-    // No timer scheduled — cancel is a no-op.
     cancelHoverPrewarm('__system__');
-    // Nothing fires even at the timer horizon.
     expect(prewarm).not.toHaveBeenCalled();
   });
 
@@ -48,7 +45,6 @@ describe('sidebar-hover-prewarm (review Major #7 + V2 FR12 Option G)', () => {
     scheduleHoverPrewarm('doc-b', prewarm);
     await wait(120);
     expect(prewarm).toHaveBeenCalledTimes(1);
-    // Second hover on the same doc — no re-fire.
     scheduleHoverPrewarm('doc-b', prewarm);
     await wait(120);
     expect(prewarm).toHaveBeenCalledTimes(1);

@@ -1,23 +1,8 @@
-/**
- * Unit tests for `emitMdxJsx`'s opt-in default-omission behavior. The
- * `omitOnDefault` PropDef flag (combined with a declared `defaultValue`)
- * tells the emitter to drop redundant attribute values that match the
- * browser-equivalent default — `<img loading="lazy">` becomes `<img>` on
- * dirty serialize, since the renderer applies `lazy` whether or not the
- * attribute is present.
- *
- * Pristine sourceRaw round-trips byte-identically (descriptor-pattern
- * invariant, precedent #9), so this canonicalization is bounded to the
- * dirty serialize path.
- */
 import { describe, expect, test } from 'bun:test';
 import { Schema } from '@tiptap/pm/model';
 import type { PropDef } from '../registry/types.ts';
 import { emitMdxJsx } from './serialize-helpers.ts';
 
-// Minimal PM schema with a single `jsxComponent` block node carrying the
-// attrs we exercise. Keeps the test free of the production schema's
-// transitive deps (StarterKit, etc.).
 const schema = new Schema({
   nodes: {
     doc: { content: 'block+' },
@@ -104,8 +89,6 @@ describe('emitMdxJsx — omitOnDefault behavior', () => {
         type: 'string',
         required: false,
         defaultValue: '',
-        // No omitOnDefault — `alt=""` is semantically distinct from absent
-        // alt (decorative-image vs. no-info per WCAG), so opt-in matters.
       },
     ];
     const node = makeNode({ src: '/x.png', alt: '' });
@@ -133,8 +116,6 @@ describe('emitMdxJsx — omitOnDefault behavior', () => {
   });
 
   test('keeps boolean false even when default is true', () => {
-    // `controls={false}` is the explicit "no chrome" choice — distinct from
-    // absent (which renders WITH controls per the descriptor's true default).
     const props: PropDef[] = [
       { name: 'src', type: 'string', required: true },
       {
@@ -152,9 +133,6 @@ describe('emitMdxJsx — omitOnDefault behavior', () => {
   });
 
   test('strips matching default from preserved attrs (re-save stability)', () => {
-    // A previous parse populated `attributes` from the source `<img loading="lazy">`.
-    // The current dirty path must drop it on re-emit so the on-disk shape
-    // converges to `<img />`.
     const props: PropDef[] = [
       { name: 'src', type: 'string', required: true },
       {
@@ -184,8 +162,6 @@ describe('emitMdxJsx — omitOnDefault behavior', () => {
   });
 
   test('without props arg, no omission applies (back-compat with non-canonical callers)', () => {
-    // Wildcard descriptor + compat descriptors that fall through to
-    // emitMdxJsx without a props array see the pre-flag behavior.
     const node = makeNode({ src: '/x.png', loading: 'lazy' });
     const result = emitMdxJsx('img', node, stubCtx /* no props */);
     const names = result.attributes.map((a) => ('name' in a ? a.name : '<expr>'));
@@ -196,7 +172,6 @@ describe('emitMdxJsx — omitOnDefault behavior', () => {
 
 describe('emitMdxJsx — empty-string-omission for optional strings', () => {
   test('omits empty string for optional prop without explicit defaultValue', () => {
-    // `srcset` / `sizes` / `title` etc. — empty string ≡ absent; clean noise.
     const props: PropDef[] = [
       { name: 'src', type: 'string', required: true },
       { name: 'srcset', type: 'string', required: false },
@@ -213,9 +188,6 @@ describe('emitMdxJsx — empty-string-omission for optional strings', () => {
   });
 
   test('preserves empty string for prop with explicit defaultValue: "" (alt="" WCAG decorative)', () => {
-    // `alt=""` is semantically distinct from absent alt — screen-readers
-    // skip decorative images on `alt=""` but announce filename on absent.
-    // Explicit `defaultValue: ''` opts the prop out of empty-string-omit.
     const props: PropDef[] = [
       { name: 'src', type: 'string', required: true },
       { name: 'alt', type: 'string', required: false, defaultValue: '' },
@@ -227,9 +199,6 @@ describe('emitMdxJsx — empty-string-omission for optional strings', () => {
   });
 
   test('keeps empty string for required string prop (validation-loud failure)', () => {
-    // Required props with empty value should round-trip the empty value
-    // so the descriptor's runtime validation can fire (or the user can
-    // see the validation error in the editor).
     const props: PropDef[] = [{ name: 'src', type: 'string', required: true }];
     const node = makeNode({ src: '' });
     const result = emitMdxJsx('img', node, stubCtx, props);
@@ -249,8 +218,6 @@ describe('emitMdxJsx — empty-string-omission for optional strings', () => {
   });
 
   test('strips empty string from preserved attrs (re-save stability)', () => {
-    // Existing on-disk `<img srcset="">` from a prior dirty round-trip
-    // gets canonicalized away on the next emit.
     const props: PropDef[] = [
       { name: 'src', type: 'string', required: true },
       { name: 'srcset', type: 'string', required: false },
@@ -273,9 +240,6 @@ describe('emitMdxJsx — empty-string-omission for optional strings', () => {
   });
 
   test('numeric 0 and boolean false are NOT stripped (only empty strings on string PropDefs)', () => {
-    // `width={0}` is semantically distinct from absent width (renders as
-    // collapsed image, vs absent which renders at intrinsic size).
-    // `controls={false}` is the explicit "no chrome" choice for video.
     const props: PropDef[] = [
       { name: 'src', type: 'string', required: true },
       { name: 'width', type: 'number', required: false },

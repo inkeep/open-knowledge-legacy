@@ -1,13 +1,3 @@
-/**
- * Link mark override for source-text fidelity.
- *
- * Extends @tiptap/extension-link (preserving autolink, linkOnPaste,
- * and click handling plugins) and adds fidelity attributes for link
- * style (inline, full, collapsed, shortcut) and reference label.
- *
- * Markdown parsing/serialization is handled by the unified pipeline (packages/core/src/markdown/).
- */
-
 import Link from '@tiptap/extension-link';
 
 export const LinkFidelity = Link.extend({
@@ -44,13 +34,6 @@ export const LinkFidelity = Link.extend({
       ...this.parent?.(),
       linkStyle: { default: 'inline', rendered: false },
       refLabel: { default: null, rendered: false },
-      // US-013 FR-3c: when handlers.wikiLinkEmbed dispatches a non-image
-      // wiki-embed to a link-marked text, it tags the mark with
-      // `sourceForm='wikiembed'` + preserves `target`/`anchor`/`alias`
-      // separately from the resolved `href`. markHandlers.link reads the
-      // tag to round-trip back to mdast wikiLinkEmbed. All four default
-      // null and `rendered: false` so plain markdown links round-trip
-      // unchanged.
       sourceForm: { default: null, rendered: false },
       target: { default: null, rendered: false },
       anchor: { default: null, rendered: false },

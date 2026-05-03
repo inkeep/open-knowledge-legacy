@@ -16,9 +16,9 @@ afterEach(async () => {
 });
 
 describe('loadPrincipal — first run', () => {
-  test('creates principal.json under .open-knowledge/', async () => {
+  test('creates principal.json under .ok/', async () => {
     const principal = await loadPrincipal(tmpDir);
-    const path = resolve(tmpDir, '.open-knowledge', 'principal.json');
+    const path = resolve(tmpDir, '.ok', 'principal.json');
     expect(existsSync(path)).toBe(true);
     const raw = JSON.parse(readFileSync(path, 'utf-8'));
     expect(raw.id).toBe(principal.id);
@@ -36,8 +36,6 @@ describe('loadPrincipal — first run', () => {
 
   test('synthesized source when no git config available', async () => {
     const principal = await loadPrincipal(tmpDir);
-    // git config returns empty for a non-git tmpDir with no global config
-    // (source may be 'synthesized' or 'git-config' depending on local env)
     expect(['git-config', 'synthesized']).toContain(principal.source);
   });
 });
@@ -52,22 +50,20 @@ describe('loadPrincipal — idempotence', () => {
 
   test('second call preserves id even if on-disk file is partially corrupted', async () => {
     const first = await loadPrincipal(tmpDir);
-    // Partially corrupt by removing display fields
-    const path = resolve(tmpDir, '.open-knowledge', 'principal.json');
+    const path = resolve(tmpDir, '.ok', 'principal.json');
     const minimal = { id: first.id, created_at: first.created_at };
     writeFileSync(path, JSON.stringify(minimal), 'utf-8');
 
     const second = await loadPrincipal(tmpDir);
     expect(second.id).toBe(first.id);
     expect(second.created_at).toBe(first.created_at);
-    // display fields should be filled in
     expect(typeof second.display_name).toBe('string');
     expect(second.display_name.length).toBeGreaterThan(0);
   });
 
   test('corrupt JSON is recovered — new principal synthesized', async () => {
-    mkdirSync(resolve(tmpDir, '.open-knowledge'), { recursive: true });
-    writeFileSync(resolve(tmpDir, '.open-knowledge', 'principal.json'), '{invalid json', 'utf-8');
+    mkdirSync(resolve(tmpDir, '.ok'), { recursive: true });
+    writeFileSync(resolve(tmpDir, '.ok', 'principal.json'), '{invalid json', 'utf-8');
     const principal = await loadPrincipal(tmpDir);
     expect(principal.id.startsWith('principal-')).toBe(true);
   });
@@ -81,7 +77,6 @@ describe('loadPrincipal — display field refresh', () => {
   });
 
   test('synthesized email has principal-<shortId>@openknowledge.local shape', async () => {
-    // In a bare tmpDir with no git config, the email may be synthesized
     const principal = await loadPrincipal(tmpDir);
     if (principal.source === 'synthesized') {
       expect(principal.display_email).toMatch(/@openknowledge\.local$/);

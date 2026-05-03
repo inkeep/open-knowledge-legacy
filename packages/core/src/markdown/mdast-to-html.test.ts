@@ -1,16 +1,3 @@
-/**
- * Tests for mdast-to-html — canonical mdast → HTML for clipboard copy paths.
- *
- * Covers simple markdown → semantic HTML conversion and the no-private-data-*
- * invariant: the pipeline's output must not carry OK-internal attributes like
- * `data-wiki-link` or `data-jsx-*`. Those appear only when US-007 wires
- * first-class mdast types; at US-003 scaffold time there are no custom types
- * in the tree yet, so the absence is trivial but still asserted as a
- * regression gate.
- *
- * Parallels the coverage shape of html-to-mdast.test.ts (US-002).
- */
-
 import { describe, expect, test } from 'bun:test';
 import { markdownToHtml, mdastToHtml } from './mdast-to-html.ts';
 
@@ -82,7 +69,6 @@ describe('markdownToHtml — markdown string → HTML', () => {
   });
 
   test('no OK-private data-* attributes in output', () => {
-    // Nothing in this markdown is a custom node — the invariant is the absence.
     const html = markdownToHtml('# title\n\n[link](#x)\n\n**bold**');
     expect(html).not.toContain('data-wiki-link');
     expect(html).not.toContain('data-jsx');
@@ -90,10 +76,6 @@ describe('markdownToHtml — markdown string → HTML', () => {
   });
 
   test('script HTML in markdown passthrough is dropped (no allowDangerousHtml)', () => {
-    // Raw HTML in markdown lands as mdast `html` nodes → hast `raw` nodes →
-    // dropped by default rehype-stringify. D10 / NG7 storage-fidelity
-    // invariant: no paste-time DOMPurify needed because the pipeline
-    // structurally drops it on the way out.
     const html = markdownToHtml('<script>alert(1)</script>');
     expect(html).not.toContain('<script>');
   });
@@ -114,10 +96,6 @@ describe('mdastToHtml — mdast Root → HTML', () => {
   });
 
   test('cross-view symmetry — same logical content yields same HTML', () => {
-    // markdownToHtml('## hi') and mdastToHtml(parse('## hi')) must be
-    // byte-identical for the clipboard copy contract. Here we assert the
-    // cross-view symmetry on a simple heading by constructing the mdast
-    // tree by hand (what PM→mdast would produce for a WYSIWYG selection).
     const viaMarkdown = markdownToHtml('## hi');
     const viaMdast = mdastToHtml({
       type: 'root',
@@ -128,32 +106,10 @@ describe('mdastToHtml — mdast Root → HTML', () => {
 });
 
 describe('custom-node regression gate — every promoted mdast type emits semantic HTML', () => {
-  // This table parallels `PromotedMdastType` (mdast-augmentation.ts). For
-  // each custom node type we assert that the outbound HTML pipeline emits
-  // its Q1 shape — not a silent degradation to literal text or an empty
-  // span. Two entry points:
-  //
-  //   (a) `markdownToHtml(source)` — string-entry pipeline. Guards the
-  //       F8-class bug where a remark plugin is missing from the parse
-  //       chain and the custom syntax degrades to literal source
-  //       (`[[Target]]` → text). Only applicable to types produced by a
-  //       remark plugin during parse (wikiLink today; future custom
-  //       syntaxes here).
-  //
-  //   (b) `mdastToHtml(tree)` — tree-entry pipeline. For types whose
-  //       source-form fidelity requires `data.sourceRaw` populated by the
-  //       PM→mdast handlers (the string-entry pipeline has no PM, so
-  //       sourceRaw is never populated for mdxJsx* nodes coming from
-  //       remark-parse). Tests exercise the hast handler directly with a
-  //       synthetic tree mirroring what the PM copy path produces.
-  //
-  // Adding a new PromotedMdastType MUST add a case to the correct group.
-
   describe('(a) markdownToHtml string-entry — remark-plugin-produced types', () => {
     test('wikiLink bare target emits <a class="wiki-link">', () => {
       const html = markdownToHtml('[[Target]]');
       expect(html).toMatch(/<a[^>]*class="wiki-link"[^>]*>Target<\/a>/);
-      // F8 regression: literal `[[Target]]` must NOT appear as text.
       expect(html).not.toMatch(/\[\[Target\]\]/);
     });
 
@@ -184,12 +140,11 @@ describe('custom-node regression gate — every promoted mdast type emits semant
       });
       expect(html).toContain('<pre class="mdx-component">');
       expect(html).toContain('<code>');
-      // FR-20 security boundary: raw `<Callout>` must be entity-encoded.
       expect(html).toMatch(/&#x3C;Callout/);
       expect(html).not.toMatch(/<Callout/);
     });
 
-    test('mdxJsxTextElement emits <span class="mdx-inline"> with entity-escaped raw', () => {
+    test('mdxJsxTextElement emits <span class="mdx-inline" data-jsx-inline=""> with entity-escaped raw', () => {
       const html = mdastToHtml({
         type: 'root',
         children: [
@@ -210,12 +165,13 @@ describe('custom-node regression gate — every promoted mdast type emits semant
           },
         ],
       });
-      expect(html).toContain('<span class="mdx-inline">');
+      expect(html).toContain('class="mdx-inline"');
+      expect(html).toContain('data-jsx-inline=""');
       expect(html).toMatch(/&#x3C;Tag/);
       expect(html).not.toMatch(/<Tag /);
     });
 
-    test('rawMdxFallback emits parse-error comment + <pre class="mdx-fallback">', () => {
+    test('rawMdxFallback emits parse-error comment + <pre> with class + data-raw-mdx-fallback markers', () => {
       const html = mdastToHtml({
         type: 'root',
         children: [
@@ -228,7 +184,9 @@ describe('custom-node regression gate — every promoted mdast type emits semant
         ],
       });
       expect(html).toContain('<!-- Parse error: Unclosed JSX -->');
-      expect(html).toContain('<pre class="mdx-fallback">');
+      expect(html).toContain('class="mdx-fallback"');
+      expect(html).toContain('data-raw-mdx-fallback=""');
+      expect(html).toContain('data-reason="Unclosed JSX"');
       expect(html).toContain('<code>');
       expect(html).toMatch(/&#x3C;Broken/);
       expect(html).not.toMatch(/<Broken /);
@@ -240,7 +198,6 @@ describe('URL scheme filter — outbound clipboard HTML sanitization', () => {
   test('strips javascript: href from links', () => {
     const html = markdownToHtml('[click](javascript:alert(1))');
     expect(html).not.toContain('javascript:');
-    // Text content + <a> preserved; just the href is dropped.
     expect(html).toContain('>click<');
   });
 

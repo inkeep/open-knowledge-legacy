@@ -1,29 +1,9 @@
-/**
- * Persistence-time validation + LKG-backed revert for config docs.
- *
- * Three-layer defense-in-depth: this is L3 (server-side last line of
- * defense). L1 (Modal walker) and L2 (`writeConfigPatch` headless writer)
- * already validate before reaching here; L3 catches malicious/buggy clients,
- * schema drift, and external hand-edits that bypass L1/L2.
- *
- * On success, atomically writes Y.Text content to the resolved config path
- * (workspace or user-global). On failure, reverts Y.Text via
- * `CONFIG_VALIDATION_REVERT_ORIGIN` to the in-memory LKG cache and fires
- * `onConfigRejected` so the upstream CC1 emitter (`emitConfigValidationRejected`)
- * can broadcast to any connected Settings pane.
- *
- * Per-server-instance LKG cache: a `Map<docName, string>` holding the most
- * recent successfully-validated YAML string. Initialized on doc load by
- * reading the file from disk; falls back to schema-defaults serialized as
- * YAML when disk is missing, empty, or invalid (cold-start recovery).
- */
-
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
   addConfigSpanEvent,
+  CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
-  CONFIG_DOC_NAME_WORKSPACE,
   type ConfigIssue,
   ConfigSchema,
   type ConfigValidationError,
@@ -41,26 +21,12 @@ import {
 import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './fs-traced.ts';
 import { getLogger } from './logger.ts';
 
-/**
- * Map a documentName to the OTel `config.scope` enum attribute.
- * Returns `undefined` for non-config docs (caller should never invoke this
- * helper for those; config-persistence's branches are isConfigDoc-gated).
- */
-function configScopeAttr(documentName: string): 'user' | 'workspace' | undefined {
-  if (documentName === CONFIG_DOC_NAME_WORKSPACE) return 'workspace';
+function configScopeAttr(documentName: string): 'user' | 'project' | undefined {
+  if (documentName === CONFIG_DOC_NAME_PROJECT) return 'project';
   if (documentName === CONFIG_DOC_NAME_USER) return 'user';
   return undefined;
 }
 
-/**
- * Emit one span event per Zod issue when validation fails with SCHEMA_INVALID.
- * Bounded enum attributes only on the parent span; per-issue paths land in
- * span events to keep cardinality bounded (`concerns/observability.md`).
- *
- * The narrowing dance via `isKnownConfigError` is the canonical pattern for
- * the discriminated-union-plus-forward-compat-tail shape — without it, TS
- * sees `error.issues` as `unknown` because the tail variant doesn't carry it.
- */
 function emitSchemaInvalidIssueEvents(error: ConfigValidationError): void {
   if (!isKnownConfigError(error)) return;
   if (error.code !== 'SCHEMA_INVALID') return;
@@ -73,32 +39,15 @@ function emitSchemaInvalidIssueEvents(error: ConfigValidationError): void {
 }
 
 export interface ConfigPersistenceCtx {
-  /** Project root — workspace config resolves to `<projectDir>/.open-knowledge/config.yml`. */
   projectDir: string;
-  /**
-   * Per-server-instance LKG cache. Maps each well-known config doc name
-   * (`__config__/workspace`, `__user__/config.yml`) to the most recent
-   * successfully-validated YAML string. Cleared at server shutdown.
-   */
   lkgCache: Map<string, string>;
-  /**
-   * Override `os.homedir()` for tests. User-global config resolves to
-   * `<homedir>/.open-knowledge/config.yml`; tests use a tempdir override
-   * so they don't touch the developer's real `~/`.
-   */
   homedirOverride?: string;
-  /**
-   * Fired synchronously after a validation rejection completes (Y.Text
-   * already reverted to LKG). Wired in standalone boot to
-   * `cc1Broadcaster.emitConfigValidationRejected(docName, error)`.
-   */
   onConfigRejected?: (docName: string, error: ConfigValidationError) => void;
 }
 
-/** Resolve the on-disk path for a well-known config doc name. */
 export function configDocAbsPath(documentName: string, ctx: ConfigPersistenceCtx): string {
-  if (documentName === CONFIG_DOC_NAME_WORKSPACE) {
-    return resolveConfigPath('workspace', ctx.projectDir, ctx.homedirOverride);
+  if (documentName === CONFIG_DOC_NAME_PROJECT) {
+    return resolveConfigPath('project', ctx.projectDir, ctx.homedirOverride);
   }
   if (documentName === CONFIG_DOC_NAME_USER) {
     return resolveConfigPath('user', ctx.projectDir, ctx.homedirOverride);
@@ -106,13 +55,6 @@ export function configDocAbsPath(documentName: string, ctx: ConfigPersistenceCtx
   throw new Error(`configDocAbsPath: not a config doc name: ${documentName}`);
 }
 
-/**
- * Schema-defaults serialized as YAML. Used as the LKG fallback when no
- * prior valid state exists (cold-start, disk broken, disk empty).
- *
- * Module-level memoized at first use because `ConfigSchema.parse({})`
- * runs every Zod default callback synchronously.
- */
 let cachedDefaultsYaml: string | null = null;
 function serializedDefaults(): string {
   if (cachedDefaultsYaml === null) {
@@ -129,11 +71,6 @@ interface InvalidConfig {
   readonly error: ConfigValidationError;
 }
 
-/**
- * Parse + validate a YAML string against `ConfigSchema`. Empty input is
- * valid (parses to null → coerced to `{}` → defaults applied — same
- * convention as `writeConfigPatch`).
- */
 function validateConfigYaml(content: string): ValidConfig | InvalidConfig {
   const parsed = parseDocument(content);
   if (parsed.errors.length > 0) {
@@ -165,25 +102,6 @@ function validateConfigYaml(content: string): ValidConfig | InvalidConfig {
   return { ok: true };
 }
 
-/**
- * Seed a config doc's Y.Text from disk + initialize the LKG cache entry.
- * Idempotent: re-seeds only when Y.Text is empty.
- *
- * The seed transaction uses `CONFIG_VALIDATION_REVERT_ORIGIN`
- * (`skipStoreHooks: true`) so Hocuspocus does NOT fire `onStoreDocument`
- * for the load mutation — lazy file creation means admitting a doc must
- * never auto-write disk.
- *
- * LKG behavior:
- * - Disk valid + non-empty   → LKG = disk bytes
- * - Disk missing/empty/invalid → LKG = schema-defaults YAML
- *
- * The disk-invalid case does NOT fire `onConfigRejected` from the load path
- * (`readConfigSafely` already sidelines broken user-global files at boot,
- * before the synthetic doc is admitted). The persistence-hook
- * `storeConfigDoc` will surface a rejection on the first invalid Y.Text
- * mutation.
- */
 export function loadConfigDoc(
   document: Y.Doc,
   documentName: string,
@@ -206,10 +124,6 @@ export function loadConfigDoc(
 
   const validation = validateConfigYaml(raw);
   if (!validation.ok && raw.length > 0) {
-    // Surface invalid disk content so operators see "your config has
-    // errors" at boot rather than discovering it only via the L3 hook
-    // when the next mutation triggers a revert. The Y.Text is still
-    // seeded with the raw content so a UI can display + repair it.
     getLogger('config-persistence').warn(
       { docName: documentName, path: filePath },
       `[config-persistence] loadConfigDoc seeding invalid YAML for ${documentName} into Y.Text — first mutation will revert to LKG`,
@@ -236,36 +150,13 @@ async function atomicWriteConfig(absPath: string, content: string): Promise<void
   } catch (e) {
     try {
       tracedUnlinkSync(tmpPath);
-    } catch {
-      /* best-effort cleanup */
-    }
+    } catch {}
     throw e;
   }
 }
 
-/**
- * Outcome surfaced by `storeConfigDoc` for tests + telemetry.
- *
- * - `'persisted'`: validated successfully and written to disk; LKG updated.
- * - `'reverted'`: validation failed; Y.Text reverted to LKG; `onConfigRejected` fired.
- * - `'write-failed'`: validation passed but the disk write threw (disk full,
- *   permissions, parent dir replaced by file, etc.); `onConfigRejected` fired
- *   with `WRITE_ERROR`. Y.Text is NOT reverted (content was valid) and LKG is
- *   NOT updated, so the next mutation re-attempts the write naturally.
- * - `'no-op'`: entry-gate matched (revert origin), Y.Text empty, or content equals LKG.
- */
 type StoreConfigDocOutcome = 'persisted' | 'reverted' | 'write-failed' | 'no-op';
 
-/**
- * Persistence-time validation hook for a config doc (L3).
- *
- * Entry-gate at top: if `lastTransactionOrigin === CONFIG_VALIDATION_REVERT_ORIGIN`,
- * skip — belt-and-suspenders alongside the origin's `skipStoreHooks: true`.
- *
- * Empty-content + LKG-equality short-circuits prevent spurious writes when
- * the load path seeds Y.Text to disk content (which by definition matches
- * LKG).
- */
 export async function storeConfigDoc(
   document: Y.Doc,
   documentName: string,
@@ -284,9 +175,6 @@ export async function storeConfigDoc(
 }
 
 function persistOutcomeAttr(outcome: StoreConfigDocOutcome): 'success' | 'reverted' | 'rejected' {
-  // 'persisted' → success; 'reverted' → reverted; 'write-failed' → rejected;
-  // 'no-op' renders as success (no failure occurred — a no-op is a
-  // successful completion of the hook).
   if (outcome === 'reverted') return 'reverted';
   if (outcome === 'write-failed') return 'rejected';
   return 'success';
@@ -343,11 +231,6 @@ async function storeConfigDocInner(
     await atomicWriteConfig(filePath, content);
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
-    // Surface the write failure to operators in headless sessions where no
-    // Settings pane is mounted to observe the `onConfigRejected` callback.
-    // Disk-full / permissions / parent-replaced-by-file are otherwise
-    // invisible — the L3 hook returns silently and the next mutation
-    // re-attempts indefinitely.
     getLogger('config-persistence').warn(
       { docName: documentName, path: filePath, err: e },
       `[config-persistence] write-failed at ${filePath}: ${detail}`,
@@ -362,41 +245,8 @@ async function storeConfigDocInner(
   return 'persisted';
 }
 
-/**
- * Outcome surfaced by `applyExternalConfigChange` for tests + telemetry.
- *
- * - `'applied'`: external content was valid; Y.Text replaced under
- *   `CONFIG_FILE_WATCHER_ORIGIN`; LKG updated.
- * - `'rejected'`: external content failed validation; Y.Text NOT mutated;
- *   `onConfigRejected` fired so the caller can broadcast CC1.
- * - `'no-op'`: content equals LKG (self-write reflection or unchanged
- *   external read), OR the document was not loaded.
- */
 type ApplyExternalConfigChangeOutcome = 'applied' | 'rejected' | 'no-op';
 
-/**
- * Apply an externally-detected config file change.
- *
- * Called by the file-watcher orchestration when chokidar fires a change
- * event. Mirrors `storeConfigDoc` but inverted: disk → Y.Text rather than
- * Y.Text → disk.
- *
- * Self-write detection uses the LKG cache: when persistence writes content
- * `C` to disk, it sets `lkgCache[doc] = C`. When the watcher reads `C` back
- * (chokidar fires for OUR own write), this comparison short-circuits before
- * any Y.Text mutation. The residual race (rename completes before LKG
- * updates) is benign — Y.Text would be replaced with content it already
- * holds, which Yjs handles as an idempotent no-op delta.
- *
- * The Y.Text mutation runs under `CONFIG_FILE_WATCHER_ORIGIN`
- * (`skipStoreHooks: true`) so the persistence-hook does NOT re-write the
- * file we just read. Without this, every external edit would generate a
- * redundant disk write before the LKG-equality check fires next time.
- *
- * On invalid YAML or schema fail: Y.Text is NOT mutated (stays at LKG);
- * `onConfigRejected` fires so the caller can emit a CC1 broadcast for any
- * open Settings pane to surface the rejection toast.
- */
 export function applyExternalConfigChange(
   document: Y.Doc | null,
   documentName: string,

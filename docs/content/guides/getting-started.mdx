@@ -3,7 +3,7 @@ title: Getting started
 description: Initialize Open Knowledge on an existing project or clone a GitHub repo, start the editor, and connect AI agents.
 ---
 <Callout type="info" title="Installed from the macOS DMG?">
-The desktop app launches a [first-launch MCP consent dialog](/guides/mcp-integration#desktop-app-first-launch-consent) that writes user-level MCP entries to every detected editor — so your AI tools can already see Open Knowledge without any terminal commands. This guide covers the CLI-driven path for project-scoped scaffolding (`.open-knowledge/`, `AGENTS.md`, `launch.json`). The two paths coexist; run `ok init` on any project where you want that scaffolding landed.
+The desktop app launches a [first-launch MCP consent dialog](/guides/mcp-integration#desktop-app-first-launch-consent) that writes user-level MCP entries to every detected editor — so your AI tools can already see Open Knowledge without any terminal commands. This guide covers the CLI-driven path for project-scoped scaffolding (`.ok/`, `AGENTS.md`, `launch.json`). The two paths coexist; run `ok init` on any project where you want that scaffolding landed.
 </Callout>
 
 ## Prerequisites
@@ -26,7 +26,7 @@ The fastest path from a GitHub URL to editing:
 npx @inkeep/open-knowledge clone https://github.com/company/docs
 ```
 
-This clones the repository, scaffolds `.open-knowledge/`, and starts the editor. Authentication is handled automatically -- if you have the [GitHub CLI](https://cli.github.com/) installed, its session is reused. Otherwise, you'll be prompted to sign in via Device Flow or paste a Personal Access Token.
+This clones the repository, scaffolds `.ok/`, and starts the editor. Authentication is handled automatically -- if you have the [GitHub CLI](https://cli.github.com/) installed, its session is reused. Otherwise, you'll be prompted to sign in via Device Flow or paste a Personal Access Token.
 
 After cloning, changes sync with the remote automatically. See [GitHub Sync](/guides/github-sync) for details on auto-sync, conflict resolution, and configuration.
 
@@ -51,7 +51,7 @@ npx @inkeep/open-knowledge init
 
 When run interactively, `init` prompts you to select which editors you use. Based on your selection it:
 
-1. Scaffolds `.open-knowledge/` with `AGENTS.md`, `config.yml`, and `.gitignore` (no content subdirectories — content lives wherever `config.yml` points, defaulting to the repo root). If the project has no `.git/` yet, `init` runs `git init --initial-branch=main` first so Open Knowledge's attribution journal has a parent repo to hang off of.
+1. Scaffolds `.ok/` with `AGENTS.md`, `config.yml`, and `.gitignore`, plus a project-root `.okignore` file (commented header explaining gitignore syntax — edit it to exclude folders or files from the document index). No content subdirectories are created — content lives wherever `config.yml` points, defaulting to the repo root. If the project has no `.git/` yet, `init` runs `git init --initial-branch=main` first so Open Knowledge's attribution journal has a parent repo to hang off of.
 2. Registers the MCP server in each editor's config file at the correct per-editor path (table below).
 3. Injects the Open Knowledge section into the editor's agent instruction file — `CLAUDE.md` for Claude Code, `.cursorrules` for [[Cursor]], `.windsurfrules` for [[Windsurf]] (VS Code has no standard agent rules file). This is what teaches the agent to use `exec`, `write_document`, and the other tools correctly.
 4. Scaffolds `.claude/launch.json` (Claude Code only) so `preview_start("open-knowledge")` knows how to start the editor.
@@ -167,13 +167,14 @@ The agent now has access to three workflow tools:
 ## What got created
 
 ```
-.open-knowledge/
+.ok/
   AGENTS.md          — Navigation guide for AI agents (tool usage, linking conventions)
-  config.yml         — Workspace config (content dir, include/exclude globs, server port)
+  config.yml         — Workspace config (content dir, server host, MCP tool caps)
   .gitignore         — Excludes per-machine runtime state (cache, locks, sync-state, principal identity, spawn diagnostics)
   cache/             — Derived data (gitignored)
+.okignore            — Project-root exclusion patterns (gitignore syntax) for the document index
 .git/                — Initialized via `git init --initial-branch=main` if not already present
-.git/open-knowledge/ — Attribution journal (bare git repo; see Service Topology)
+.git/ok/             — Attribution journal (bare git repo; see Service Topology)
 AGENTS.md            — Root agent instructions with Open Knowledge section injected
 .mcp.json            — MCP server entry for open-knowledge
 .claude/
@@ -190,7 +191,7 @@ To see which files Open Knowledge will track -- without starting the server or c
 npx @inkeep/open-knowledge preview
 ```
 
-This works before or after `init` and reflects the current state of your config. Useful after editing `content.include` or `content.exclude` in `.open-knowledge/config.yml`.
+This works before or after `init` and reflects the current state of your config. Useful after editing `.okignore`.
 
 ## Next steps
 
@@ -199,7 +200,10 @@ This works before or after `init` and reflects the current state of your config.
     Clone repos, auto-sync with your team, and resolve conflicts.
   </Card>
   <Card title="Configuration" href="/guides/configuration">
-    Customize ports, content directory, and file patterns.
+    Customize ports, content directory, and server behavior.
+  </Card>
+  <Card title="Content filtering" href="/guides/content-filtering">
+    Exclude files via `.gitignore` and `.okignore` (gitignore syntax).
   </Card>
   <Card title="MCP integration" href="/guides/mcp-integration">
     Understand disk-only vs connected mode and all available tools.

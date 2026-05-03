@@ -1,28 +1,3 @@
-/**
- * E2E coverage for the asset-click dispatcher (SPEC 2026-04-23 amendment
- * FR-A1..A8; `evidence/e2e-acceptance-scenarios.md` Path P9).
- *
- * Focuses on real-Chromium scenarios that can't be covered by unit /
- * integration tests:
- *
- *   - P9.1   Post-reload click on `![[file.pdf]]` → new tab opens
- *   - P9.9   [[foo]] wiki-link navigation UNCHANGED (regression guard)
- *   - P9.10  Hand-authored `[spec](./file.pdf)` click fires dispatcher
- *   - P9.11  Image inline render — click is a no-op (regression guard)
- *   - P9.15  Path-escape (`../../etc/passwd`) doesn't open new tab
- *
- * Electron-specific scenarios (P9.2 / P9.4 / P9.6 / P9.7 / P9.8 / P9.16)
- * require the Electron test harness (not available in the Playwright
- * web-tier); /qa invocation is gated on them per the plan's fidelity-
- * ladder protocol. Integration coverage of the main-process pieces
- * (openAssetSafely / revealAssetSafely / showAssetMenu / safety net)
- * lives in:
- *   - packages/desktop/tests/main/asset-open-handlers.test.ts
- *   - packages/desktop/tests/main/asset-menu.test.ts
- *   - packages/desktop/tests/main/asset-safety-net.test.ts
- *   - packages/desktop/tests/integration/asset-open-ipc.test.ts
- */
-
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { expect, test, waitForActiveProviderSynced as waitForProvider } from './_helpers';
@@ -34,11 +9,6 @@ async function getSourceText(page: Page): Promise<string> {
   });
 }
 
-/**
- * Synthetic drag-drop of a File into the editor. Mirrors
- * `asset-embed.e2e.ts`'s dropFileIntoEditor — dispatches dragover then
- * drop so TipTap's FileHandler extension completes its event sequence.
- */
 async function dropFileIntoEditor(
   page: Page,
   bytes: number[],
@@ -78,8 +48,6 @@ async function dropFileIntoEditor(
   );
 }
 
-// 1x1 transparent PNG — valid bytes, minimal size. Byte-identical across
-// test runs so dedup is predictable.
 const TINY_PNG_BYTES = Array.from(
   Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAABJRElEQrkJggg==',
@@ -87,10 +55,6 @@ const TINY_PNG_BYTES = Array.from(
   ),
 );
 
-// Minimal valid PDF bytes — PDF 1.4 header + catalog + trailer. Chromium's
-// built-in PDF viewer accepts this shape; adversarial tests would want a
-// larger corpus but a valid 1-page PDF is enough to verify server Content-
-// Type + URL resolution.
 const TINY_PDF_BYTES = Array.from(
   Buffer.from(
     `%PDF-1.4
@@ -129,19 +93,11 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     api,
     context,
   }) => {
-    // Seed with `![[meeting.pdf]]` directly via the API. Loading the doc
-    // exercises the server Observer B parse → mdast → PM dispatch, which
-    // emits a text + link mark with sourceForm='wikiembed' for PDF
-    // extensions. That's the exact post-roundtrip shape the Gap 3b fix
-    // targets — clicking it pre-fix opened the doc-link PropPanel; post-
-    // fix, `internal-link.ts` handlePrimary's asset branch fires and
-    // routes through dispatchAssetClick → web fallback window.open.
     await api.replaceDoc(docName, `# Source\n\n![[meeting.pdf]]\n`);
     await page.goto(`/#/${docName}`);
     await waitForProvider(page);
     await page.waitForSelector('.ProseMirror');
 
-    // Chip should be rendered as `<span data-link>` (plain-DOM V2).
     const chip = page.locator('span[data-link]').first();
     await chip.waitFor({ state: 'visible', timeout: 5_000 });
 
@@ -150,7 +106,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
       chip.click(),
     ]);
     expect(newPage.url()).toContain('meeting.pdf');
-    // Editor window stays on the original doc — no same-tab nav.
     expect(page.url()).toContain(docName);
   });
 
@@ -159,13 +114,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     api,
     context,
   }) => {
-    // Regression invariant: clicking a doc-to-doc wiki-link chip (`[[foo]]`)
-    // should NOT fire the asset dispatcher — the existing wiki-link
-    // handler has its own flow (bare click opens the WikiLinkPropPanel;
-    // Cmd+click navigates to the target doc via hash nav). The 2026-04-23
-    // amendment must not accidentally route wiki-links through the asset
-    // dispatcher. We assert via no-new-page-opened: if the dispatcher
-    // fired, its web fallback would window.open() → context 'page' event.
     const targetDoc = `foo-target-${randomUUID().slice(0, 8)}`;
     await api.createPage(`${targetDoc}.md`);
     await api.replaceDoc(targetDoc, '# Target\n');
@@ -188,8 +136,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     api,
     context,
   }) => {
-    // Seed source with a hand-authored markdown link to a PDF. Post-
-    // roundtrip classifyMarkdownHref returns {kind:'asset'} for this.
     await api.replaceDoc(
       docName,
       `# Markdown link test\n\nSee [the spec](./reference.pdf) for details.\n`,
@@ -209,7 +155,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
   test('P9.11: inline image click is a no-op (regression guard — dispatcher does not fire)', async ({
     page,
   }) => {
-    // Seed with a PM image node (drop a PNG).
     const TINY_PNG = Array.from(
       Buffer.from(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAABJRElEQrkJggg==',
@@ -246,9 +191,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     const img = page.locator('img').first();
     await img.waitFor({ state: 'visible', timeout: 5_000 });
 
-    // Clicking an image should NOT open a new tab. `waitForEvent` rejects
-    // on timeout; a null result confirms no new-page event fired — no
-    // wall-clock `page.waitForTimeout` needed (precedent #20(a)).
     await img.click();
     const openedPage = await page
       .context()
@@ -262,10 +204,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     api,
     context,
   }) => {
-    // Relative escape with an asset extension — classifier returns
-    // `asset` kind, but `resolveAssetProjectPath` detects the `..` pop
-    // past project root and returns null → handlePrimary returns false
-    // → PropPanel opens instead of dispatcher. No new tab.
     await api.replaceDoc(
       docName,
       `# Escape attempt\n\n[evil](../../etc/config.pdf) should refuse.\n`,
@@ -279,25 +217,10 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     expect(openedPage).toBeNull();
   });
 
-  // ── 2026-04-24 additions (Bug B/C + Bug A regression guards) ───────────
-  //
-  // The existing P9.1..P9.15 scenarios all seed docs at the content ROOT,
-  // where the doc-relative `<img src>` / `<a href>` coincidentally matches
-  // the server-absolute URL (everything is at `/`). Under hash routing
-  // (editor URL `http://localhost:<port>/#/docs/sub/notes`), the browser
-  // resolves relative URLs against `location.pathname === '/'`, not
-  // against the doc's subdirectory. The bugs surface only when the doc
-  // lives at a non-root path.
-  //
-  // These scenarios pin the user-observable behavior: subdir asset drops
-  // must render (image decodes, PDF tab serves application/pdf), and
-  // `.md` drops must resolve against case-preserved cache entries.
-
   test('P9.17: subdirectory PNG drop — rendered <img> actually loads (naturalWidth > 0)', async ({
     page,
     api,
   }) => {
-    // Override the root-level docName from beforeEach — use a subdir doc.
     const subdirDoc = `docs/sub-${randomUUID().slice(0, 6)}/notes`;
     await api.createPage(`${subdirDoc}.md`);
     await api.replaceDoc(subdirDoc, '# Subdir doc\n');
@@ -308,9 +231,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
 
     await dropFileIntoEditor(page, TINY_PNG_BYTES, 'photo.png', 'image/png');
 
-    // Wait for Y.Text to carry a photo.png reference — image-extension
-    // drops emit the canonical `<img src="…/photo.png" alt="" />` JSX
-    // shape (US-004). The substring assertion is shape-tolerant.
     await expect
       .poll(async () => await getSourceText(page), { timeout: 5_000 })
       .toContain('photo.png');
@@ -318,11 +238,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     const img = page.locator('.ProseMirror img').first();
     await img.waitFor({ state: 'attached', timeout: 5_000 });
 
-    // THE assertion: naturalWidth > 0 means the bytes loaded + decoded.
-    // Pre-fix the <img src> points at root-level `/photo.png` which is
-    // served by Vite's SPA fallback as text/html (not image/png) — the
-    // browser fails to decode, naturalWidth stays 0. The regression
-    // guard catches any future change that breaks subdir-doc image URLs.
     await expect
       .poll(
         async () => {
@@ -337,16 +252,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     page,
     api,
   }) => {
-    // Bug B regression guard (upgraded 2026-04-24c from href-shape to
-    // full round-trip via page.request.get). Commit A's synchronous
-    // `/api/create-page` → `contentFilter.incrementMdDir` + `registerWrite`
-    // closed the file-watcher race that made the original round-trip
-    // assertion flaky. Now safe to assert the full server behavior.
-    //
-    // Pre-fix: chip emitted `<a href="doc.pdf">` which resolved against
-    // `/` under hash routing → SPA fallback served `text/html`. Post-fix:
-    // chip href is `/docs/sub-xxx/doc.pdf`, server streams the PDF bytes
-    // with `Content-Disposition: inline` + `Content-Type: application/pdf`.
     const subdirDoc = `docs/sub-${randomUUID().slice(0, 6)}/notes`;
     await api.createPage(`${subdirDoc}.md`);
     await api.replaceDoc(subdirDoc, '# Subdir doc\n');
@@ -368,8 +273,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     expect(href).toMatch(/^\//);
     expect(href).toMatch(/\/doc\.pdf$/);
 
-    // Full round-trip assertion: fetch the chip's URL directly and
-    // verify the server serves the PDF correctly (not SPA-fallback HTML).
     const res = await page.request.get(href ?? '');
     expect(res.status()).toBe(200);
     expect(res.headers()['content-type'] ?? '').toMatch(/^application\/pdf/);
@@ -381,22 +284,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     page,
     api,
   }) => {
-    // Bug A regression guard. Scenario: an existing doc `CaseCheckXXXXXX`
-    // (cap-C, mixed-case) is in the cache. User drops `CaseCheckXXXXXX.md`.
-    // Drop flow: `pickInsertShape('CaseCheckXXXXXX.md')` → `wiki-link` kind;
-    // `buildUnresolvedWikiLinkAttrs('CaseCheckXXXXXX')` → target='casecheckXXXXXX'
-    // (lowercased slug). Pre-fix: `isResolvedWikiLinkTarget('casecheckXXXXXX',
-    // {CaseCheckXXXXXX, ...})` returns false → click opens prop panel showing
-    // "Page not found". Post-fix: slug-keyed cache lookup matches → prop panel
-    // shows "Wiki link" + "Open" button.
-    //
-    // Assertion surface: click the chip to open WikiLinkPropPanel, then check
-    // the rendered stateLabel text. "Wiki link" = resolved, "Page not found"
-    // = unresolved. Using UX-level text avoids coupling to the chip's internal
-    // DOM structure (wiki-link NodeView has no persistent data-resolved attr;
-    // resolution is computed on-demand by the prop panel via
-    // `isResolvedWikiLinkTarget`, which is exactly the function Bug A's fix
-    // lives in).
     const existingBasename = `CaseCheck${randomUUID().slice(0, 6)}`;
     await api.createPage(`${existingBasename}.md`);
     await api.replaceDoc(existingBasename, '# Target doc\n');
@@ -412,19 +299,11 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
       .poll(async () => await getSourceText(page), { timeout: 5_000 })
       .toContain(existingBasename);
 
-    // The drop flow emits a wiki-link NODE (not a link mark). Its NodeView
-    // renders `<span data-wiki-link>` with `role="button"`.
     const chip = page.locator('[data-wiki-link]').first();
     await chip.waitFor({ state: 'visible', timeout: 5_000 });
 
-    // Click the chip to open WikiLinkPropPanel. The prop panel's state label
-    // reads `isResolvedWikiLinkTarget(target, pages)` — this is where Bug A
-    // lives.
     await chip.click();
 
-    // Resolved state: "Wiki link" text is visible AND "Page not found" is NOT.
-    // Pre-fix this assertion fails: panel renders "Page not found" because
-    // the lowercased slug target does not match the case-preserved cache key.
     await expect(page.getByText('Wiki link').first()).toBeVisible({ timeout: 5_000 });
     await expect(page.getByText('Page not found')).not.toBeVisible();
   });
@@ -433,22 +312,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     page,
     api,
   }) => {
-    // SPEC §Post-finalization amendment (2026-04-24b) regression guard,
-    // post-WikiEmbed-convergence reshaped: video extensions now drop as
-    // `<video src>` JSX (descriptor-rendered via Video.tsx) instead of a
-    // wiki-embed `<a>` chip. The original three defects this guarded:
-    //   (1) `.m4v` NOT in `ASSET_EXTENSIONS` → content-filter refused
-    //       serve → SPA fallback.        [STILL LOAD-BEARING — `<video>`
-    //                                     fetches the resource itself]
-    //   (2) FR-A5 InteractionLayer wiring (chip dispatch on click).
-    //                                     [SUPERSEDED — JSX has no chip;
-    //                                      P9.18 (PDF) covers chip path]
-    //   (3) `classifyMarkdownHref` asset classification.
-    //                                     [SUPERSEDED — same as (2)]
-    // This test now pins defect (1): the URL embedded in `<video src>`
-    // MUST be server-absolute and the asset-serve middleware MUST stream
-    // the bytes with `Content-Disposition: inline` + `Content-Type:
-    // video/mp4`. Without those, in-page playback fails on Chromium.
     const subdirDoc = `docs/sub-${randomUUID().slice(0, 6)}/notes`;
     await api.createPage(`${subdirDoc}.md`);
     await api.replaceDoc(subdirDoc, '# Video doc\n');
@@ -457,11 +320,6 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
 
-    // Minimal M4V bytes — the ISO-BMFF signature at offset 4 is enough for
-    // file-type sniff (`ftypM4V ` branded MP4 variant). Content-Type
-    // dispatch happens at sirv via mrmime; the test asserts HREF SHAPE
-    // only (full round-trip Content-Type requires the filewatcher's
-    // dirCount to propagate — a timing-dependent surface).
     const TINY_M4V_BYTES = Array.from(
       Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypM4V '), Buffer.alloc(8, 0)]),
     );
@@ -471,31 +329,14 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
       .poll(async () => await getSourceText(page), { timeout: 5_000 })
       .toContain('clip.m4v');
     const text = await getSourceText(page);
-    // Source emits the lowercase `<video>` JSX shape (descriptor render via
-    // Video.tsx). Server-absolute src so the browser resolves it against
-    // origin under hash routing, not against the doc's hash fragment.
     expect(text).toMatch(/<video\s+src="\/docs\/sub-[^/]+\/clip\.m4v"/);
-    // `controls={true}` matches the canonical `<video>` descriptor's
-    // declared default; emit-time omit-on-default strips the attribute on
-    // the canonical serialize path. Renderer applies controls=true on
-    // load regardless. See `serialize-helpers.ts` reconstructAttrs.
     expect(text).not.toMatch(/controls(=|\s|\/>|>)/);
 
-    // The Video NodeView renders the lowercase `<video>` element. Pin its
-    // server-absolute src — pre-fix it was doc-relative (broken under
-    // hash routing).
     const videoEl = page.locator('.ProseMirror video[src*="/clip.m4v"]').first();
     await videoEl.waitFor({ state: 'visible', timeout: 5_000 });
     const src = await videoEl.getAttribute('src');
     expect(src).toMatch(/^\/docs\/sub-[^/]+\/clip\.m4v$/);
 
-    // Full round-trip: fetching the embedded URL streams the file bytes
-    // with `Content-Disposition: inline` + `Content-Type: video/mp4`
-    // (mrmime gap closed in `asset-serve-middleware.ts` at module load).
-    // Pre-2026-04-24b, the server served `text/html` SPA fallback.
-    // Pre-mrmime-patch (between 2026-04-24b initial landing and this
-    // commit), the Content-Type was empty → Chromium rendered the bytes
-    // as garbled text. This assertion pins both fixes together.
     const res = await page.request.get(src ?? '');
     expect(res.status()).toBe(200);
     expect(res.headers()['content-disposition']).toBe('inline');
@@ -506,22 +347,11 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
   test('P9.22: missing asset URL returns 404, not the SPA fallback editor shell (2026-04-24b)', async ({
     page,
   }) => {
-    // The exact regression the user surfaced on 2026-04-24: navigating
-    // directly to a non-existent asset URL returned HTML (the editor
-    // shell) instead of 404. Vite's `htmlFallbackMiddleware` serves
-    // index.html for any unmatched path; without my Commit A's 404
-    // guard, this falls through and the browser renders the app.
-    //
-    // Now asserted at the top test tier: any asset-extension path that
-    // the server can't serve MUST 404 with a non-HTML Content-Type. No
-    // setup required — just hit a URL that's guaranteed to not exist.
     const res = await page.request.get('/definitely-not-there.m4v');
     expect(res.status()).toBe(404);
     const contentType = res.headers()['content-type'] ?? '';
     expect(contentType).not.toMatch(/^text\/html/);
     const body = await res.text();
-    // The editor shell HTML contains an app-root element; the 404 body
-    // should not.
     expect(body).not.toContain('id="root"');
   });
 });

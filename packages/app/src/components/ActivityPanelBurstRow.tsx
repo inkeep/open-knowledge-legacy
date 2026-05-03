@@ -1,11 +1,3 @@
-/**
- * ActivityPanelBurstRow — one burst (StackItem) inside an expanded file
- * row. Shows {relative timestamp, `+N −M` diff stat, optional summary},
- * and lazy-loads the unified-diff mini hunk on click (FR-P14, FR-P15).
- *
- * Bursts are display-only (D-P2 LOCKED) — no undo action button here; undo
- * lives on the file-row action area (FR-P18, FR-P19).
- */
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import type { BurstData } from '@/lib/use-activity-panel';
@@ -25,7 +17,6 @@ function formatRelative(ms: number, now: number): string {
   const diff = Math.max(0, now - ms);
   if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
   if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
-  // Older than an hour → absolute HH:MM:SS
   const d = new Date(ms);
   return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
@@ -39,9 +30,6 @@ export function ActivityPanelBurstRow({
   const [diff, setDiff] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  // React Compiler: `Date.now()` is impure — hoist behind useState + tick
-  // every 30 s so relative-timestamp labels stay fresh without violating
-  // render purity.
   const [now, setNow] = useState<number>(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);

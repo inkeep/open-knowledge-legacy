@@ -1,24 +1,14 @@
-/**
- * Tests for POST /api/create-page — create a new empty markdown file.
- *
- * These tests exercise the handler through the `createApiExtension` factory,
- * using a real temp directory on the filesystem so 409 (already exists) and
- * the actual file creation can be verified without mocking node:fs.
- */
-
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import type { Principal } from '@inkeep/open-knowledge-core';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
+import { clearContributors, contributorCount, hasContributor } from './contributor-tracker.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeReq(method: string, body: unknown): IncomingMessage {
   const raw = JSON.stringify(body);
@@ -56,6 +46,7 @@ async function callCreatePage(
   options?: {
     fileIndex?: Map<string, FileIndexEntry>;
     backlinkIndex?: BacklinkIndex;
+    getPrincipal?: () => Principal | null;
   },
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
@@ -64,10 +55,10 @@ async function callCreatePage(
     contentDir,
     getFileIndex: () => options?.fileIndex ?? new Map<string, FileIndexEntry>(),
     backlinkIndex: options?.backlinkIndex,
+    getPrincipal: options?.getPrincipal,
   });
   const req = makeReq(method, body);
   const { res, captured } = makeRes();
-  // onRequest is guaranteed to be defined by createApiExtension
   await (
     ext as {
       onRequest: (ctx: { request: IncomingMessage; response: ServerResponse }) => Promise<void>;
@@ -76,10 +67,6 @@ async function callCreatePage(
   return captured;
 }
 
-// ---------------------------------------------------------------------------
-// Test setup
-// ---------------------------------------------------------------------------
-
 let tmpDir: string;
 
 function setupTmpDir(): string {
@@ -87,19 +74,17 @@ function setupTmpDir(): string {
   return tmpDir;
 }
 
+beforeEach(() => {
+  clearContributors();
+});
+
 afterEach(() => {
   if (tmpDir) {
     try {
       rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      // ignore cleanup failures
-    }
+    } catch {}
   }
 });
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('POST /api/create-page', () => {
   test('creates a file and returns { ok: true, docName }', async () => {
@@ -122,7 +107,6 @@ describe('POST /api/create-page', () => {
     expect(body.ok).toBe(true);
     expect(body.docName).toBe('component');
     expect(existsSync(join(dir, 'component.mdx'))).toBe(true);
-    // Must not create a shadow .md file.
     expect(existsSync(join(dir, 'component.md'))).toBe(false);
   });
 
@@ -188,10 +172,8 @@ describe('POST /api/create-page', () => {
 
   test('returns 409 when the file already exists', async () => {
     const dir = setupTmpDir();
-    // Create the file first
     await callCreatePage(dir, 'POST', { path: 'existing.md' });
 
-    // Try to create again — should 409
     const result = await callCreatePage(dir, 'POST', { path: 'existing.md' });
 
     expect(result.status).toBe(409);
@@ -204,5 +186,49 @@ describe('POST /api/create-page', () => {
     const result = await callCreatePage(dir, 'GET', {});
 
     expect(result.status).toBe(405);
+  });
+});
+
+describe('POST /api/create-page — attribution (D22 LOCKED)', () => {
+  const fixturePrincipal: Principal = {
+    id: 'principal-test',
+    display_name: 'Test User',
+    display_email: 'test@example.test',
+    onboarded_at: '2026-04-30T00:00:00.000Z',
+  };
+
+  test('UI-driven create (no agentId, no principal) records no contributor — never attributes to Claude', async () => {
+    const dir = setupTmpDir();
+    const result = await callCreatePage(dir, 'POST', { path: 'manual-page.md' });
+
+    expect(result.status).toBe(200);
+    expect(contributorCount()).toBe(0);
+    expect(hasContributor('agent-claude-1')).toBe(false);
+  });
+
+  test('UI-driven create with loaded principal attributes to the principal, not Claude', async () => {
+    const dir = setupTmpDir();
+    const result = await callCreatePage(
+      dir,
+      'POST',
+      { path: 'manual-page.md' },
+      { getPrincipal: () => fixturePrincipal },
+    );
+
+    expect(result.status).toBe(200);
+    expect(hasContributor('agent-claude-1')).toBe(false);
+    expect(hasContributor(fixturePrincipal.id)).toBe(true);
+  });
+
+  test('agent-driven create (agentId in body) attributes to the agent', async () => {
+    const dir = setupTmpDir();
+    const result = await callCreatePage(dir, 'POST', {
+      path: 'agent-page.md',
+      agentId: 'claude-7',
+      agentName: 'Claude',
+    });
+
+    expect(result.status).toBe(200);
+    expect(hasContributor('agent-claude-7')).toBe(true);
   });
 });

@@ -31,9 +31,6 @@ export function FileSidebar() {
 }
 
 function FileSidebarInner() {
-  // Imperative handle to the FileTree — replaces the prior createTrigger seq
-  // counter. Header buttons call methods directly; no useEffect on the child
-  // side, no "did-I-already-handle-this-seq" bookkeeping. See FileTree.tsx.
   const fileTreeRef = useRef<FileTreeHandle | null>(null);
 
   return (

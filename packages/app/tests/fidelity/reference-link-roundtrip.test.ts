@@ -1,11 +1,3 @@
-/**
- * Reference-link + definition round-trip — R16(c), R12, M4.
- *
- * Verifies that reference-link forms are preserved on round-trip,
- * not normalized to inline. This was BROKEN on the old stack —
- * the migration FIXES it via the R12 `definition` handler override
- * in remark-prosemirror.
- */
 import { describe, expect, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import { mdRoundTrip, normalize } from './helpers';

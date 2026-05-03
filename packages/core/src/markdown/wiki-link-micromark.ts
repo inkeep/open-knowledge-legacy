@@ -1,18 +1,9 @@
-/**
- * Wiki-link micromark extension: tokenizer + mdast-util + remark plugin.
- *
- * Tokenizes: [[Page]], [[Page|Alias]], [[Page#Heading]], [[Page#Heading|Alias]]
- * Produces mdast node: { type: 'wikiLink', value, data: { target, anchor, alias } }
- *
- * Ported from tech-probes/wiki-link-micromark/ (20/20 tests pass, ~100 SLOC).
- */
 import type { CompileContext, Extension as FromMarkdownExtension } from 'mdast-util-from-markdown';
 import type { Handle as ToMarkdownHandle } from 'mdast-util-to-markdown';
 import type { Construct, Extension, State, Token, Tokenizer } from 'micromark-util-types';
 import type { Processor } from 'unified';
 import type { WikiLinkEmbedMdast, WikiLinkMdast } from './mdast-augmentation.ts';
 
-// Augment micromark's TokenTypeMap with our custom token types
 declare module 'micromark-util-types' {
   interface TokenTypeMap {
     wikiLink: 'wikiLink';
@@ -25,8 +16,6 @@ declare module 'micromark-util-types' {
     wikiLinkEmbedBang: 'wikiLinkEmbedBang';
   }
 }
-
-// ─────────────── micromark syntax extension ───────────────
 
 const CODE_BANG = 33; // !
 const CODE_LBRACKET = 91; // [
@@ -58,7 +47,6 @@ const tokenizeWikiLink: Tokenizer = (effects, ok, nok) => {
   }
 
   function target(code: number | null): State | undefined {
-    // EOF or line ending
     if (code === null || code === -5 || code === -4 || code === -3) return nok(code);
     if (code === CODE_LBRACKET) return nok(code);
     if (code === CODE_RBRACKET) {
@@ -145,13 +133,6 @@ const wikiLinkConstruct: Construct = {
   tokenize: tokenizeWikiLink,
 };
 
-// Asset embed: `![[file.ext]]`, `![[file.ext|alt]]`, `![[file.pdf#page=3]]`.
-// Distinct state machine so the outer token is `wikiLinkEmbed` — the compile
-// step keys off outer-token to build a `wikiLinkEmbed` mdast node rather
-// than mixing embeds into the `wikiLink` type. Inner target/anchor/alias
-// tokens reuse the wikiLink* token names because the exit handlers mutate
-// the top-of-stack node, which is `wikiLinkEmbed` during an embed parse —
-// the data shape is identical.
 const tokenizeWikiLinkEmbed: Tokenizer = (effects, ok, nok) => {
   let targetSize = 0;
   let anchorSize = 0;
@@ -270,17 +251,6 @@ const wikiLinkEmbedConstruct: Construct = {
   tokenize: tokenizeWikiLinkEmbed,
 };
 
-/**
- * Micromark syntax extension for wiki-links AND asset embeds.
- * CODE_LBRACKET (91) → `[[Page]]` link construct.
- * CODE_BANG (33)    → `![[file.ext]]` embed construct.
- *
- * Both constructs are registered on the `text` map so they're available
- * anywhere inline content is allowed. Backslash-escape of either sigil
- * (`\!` or `\[`) is handled upstream by CommonMark §2.4 escape parsing —
- * the escape construct consumes the backslash+char pair before our
- * tokenizers see the stream.
- */
 export function wikiLinkSyntax(): Extension {
   return {
     text: {
@@ -289,8 +259,6 @@ export function wikiLinkSyntax(): Extension {
     },
   };
 }
-
-// ─────────────── mdast-util-from-markdown extension ───────────────
 
 function enterWikiLink(this: CompileContext, token: Token) {
   this.enter(
@@ -341,9 +309,6 @@ function finalizeLabel(node: WikiLinkMdast | WikiLinkEmbedMdast): void {
   const { target, anchor, alias } = node.data;
   const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
   node.value = label;
-  // Populate children so mdast→hast (US-007 / US-010) renders `<a>label</a>`
-  // with visible text. The markdown handler reads `data`, not children, so
-  // there is no double-emit on serialize.
   node.children = [{ type: 'text', value: label }];
 }
 
@@ -357,7 +322,6 @@ function exitWikiLinkEmbed(this: CompileContext, token: Token) {
   this.exit(token);
 }
 
-/** mdast-util-from-markdown extension */
 export const wikiLinkFromMarkdown: FromMarkdownExtension = {
   enter: {
     wikiLink: enterWikiLink,
@@ -372,7 +336,6 @@ export const wikiLinkFromMarkdown: FromMarkdownExtension = {
   },
 };
 
-/** mdast-util-to-markdown extension (handlers + unsafe) */
 const wikiLinkHandler: ToMarkdownHandle = (node) => {
   const wiki = node as unknown as WikiLinkMdast;
   const target = wiki.data?.target ?? '';
@@ -406,26 +369,8 @@ export const wikiLinkToMarkdown: {
   unsafe: [{ character: '[', inConstruct: ['phrasing'] }],
 };
 
-// ─────────────── remark plugin ───────────────
-
-/**
- * Module-level singleton. wikiLinkSyntax() builds a fresh Extension each call;
- * R16 (spec 2026-04-16 markdown-pipeline-engineering-health) requires the
- * attacher to be idempotent under re-entry, which means identity-based dedup:
- * we always push the SAME object reference, never a rebuilt clone.
- */
 const MICROMARK_EXT = wikiLinkSyntax();
 
-/**
- * Remark plugin that adds wiki-link syntax support.
- * Use: `.use(remarkWikiLink)`
- *
- * Idempotent: if the processor's `data()` already carries the exact
- * `MICROMARK_EXT` / `wikiLinkFromMarkdown` / `wikiLinkToMarkdown` references,
- * the attacher leaves them alone. Under the cached-processor pattern this is
- * defense-in-depth — unified freezes the processor on first use, so the
- * attacher only ever fires once per processor anyway.
- */
 export function remarkWikiLink(this: Processor) {
   const data = this.data() as {
     micromarkExtensions?: unknown[];
@@ -433,13 +378,11 @@ export function remarkWikiLink(this: Processor) {
     toMarkdownExtensions?: unknown[];
   };
 
-  // Register micromark syntax extension
   if (!data.micromarkExtensions) data.micromarkExtensions = [];
   if (!data.micromarkExtensions.some((e) => e === MICROMARK_EXT)) {
     data.micromarkExtensions.push(MICROMARK_EXT);
   }
 
-  // Register mdast-util extensions (already module-level singletons)
   if (!data.fromMarkdownExtensions) data.fromMarkdownExtensions = [];
   if (!data.fromMarkdownExtensions.some((e) => e === wikiLinkFromMarkdown)) {
     data.fromMarkdownExtensions.push(wikiLinkFromMarkdown);

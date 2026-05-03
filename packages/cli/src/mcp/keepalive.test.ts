@@ -3,10 +3,6 @@ import { setImmediate as runMicrotasks } from 'node:timers/promises';
 import type { KeepaliveScheduler, MinimalWebSocket } from './keepalive.ts';
 import { startKeepalive } from './keepalive.ts';
 
-// ── Deterministic scheduler ─────────────────────────────────────────────
-// Holds timers in a sorted queue keyed by dueAt. `advance(ms)` fires every
-// timer whose deadline has been reached. No wall-clock dependency.
-
 interface ManualScheduler extends KeepaliveScheduler {
   advance: (ms: number) => void;
   pending: () => number;
@@ -30,9 +26,6 @@ function createScheduler(): ManualScheduler {
     },
     advance(ms) {
       now += ms;
-      // Fire every due timer; a timer's callback can schedule new ones with
-      // future deadlines — they're only fired if they become due within the
-      // same advance() call.
       for (let pass = 0; pass < 100; pass++) {
         const due = queue.filter((e) => e.dueAt <= now);
         if (due.length === 0) return;
@@ -46,10 +39,6 @@ function createScheduler(): ManualScheduler {
     pending: () => queue.length,
   };
 }
-
-// ── Fake WebSocket ─────────────────────────────────────────────────────
-// Tracks listeners, exposes `fire('open'|'close'|'error')` so tests drive
-// the connection lifecycle deterministically.
 
 class FakeWebSocket implements MinimalWebSocket {
   readyState = 0; // CONNECTING
@@ -97,7 +86,6 @@ describe('startKeepalive', () => {
     expect(opened[0].url).toContain('ws://localhost:12345/collab/keepalive');
     expect(opened[0].url).toContain(`pid=${process.pid}`);
 
-    // Simulate server accepting the upgrade
     opened[0].fire('open');
     expect(handle.isConnected()).toBe(true);
     handle.close();
@@ -145,14 +133,12 @@ describe('startKeepalive', () => {
     await runMicrotasks();
     expect(opened.length).toBe(1);
 
-    // First disconnect — reconnects after 100ms
     opened[0].fire('close');
     expect(scheduler.pending()).toBe(1);
     scheduler.advance(100);
     await runMicrotasks();
     expect(opened.length).toBe(2);
 
-    // Second disconnect without ever opening — backoff doubles to 200ms
     opened[1].fire('close');
     scheduler.advance(100);
     await runMicrotasks();
@@ -179,14 +165,12 @@ describe('startKeepalive', () => {
     });
 
     await runMicrotasks();
-    // Connect: fires open, then closes. Backoff should STAY at initial (100ms).
     opened[0].fire('open');
     opened[0].fire('close');
     scheduler.advance(100);
     await runMicrotasks();
     expect(opened.length).toBe(2);
 
-    // Second connection never opens — backoff doubles to 200ms
     opened[1].fire('close');
     scheduler.advance(100);
     await runMicrotasks();
@@ -260,7 +244,6 @@ describe('startKeepalive', () => {
     expect(opened[0].closed).toBe(true);
     expect(scheduler.pending()).toBe(0);
 
-    // Advance past any backoff — no more WS should open.
     scheduler.advance(60_000);
     await runMicrotasks();
     expect(opened.length).toBe(1);
@@ -329,7 +312,6 @@ describe('startKeepalive', () => {
     });
     await runMicrotasks();
     expect(opened.length).toBe(1);
-    // encodeURIComponent: /→%2F, =→%3D, &→%26
     expect(opened[0].url).toContain('connectionId=user%2Fagent%3D1%262');
     handle.close();
   });

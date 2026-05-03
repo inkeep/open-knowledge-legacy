@@ -1,8 +1,3 @@
-/**
- * Tests for rehypeSkipNotionWhitespace — preserves Notion's literal-\n
- * hard breaks and strips the notionvc comment marker.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -20,7 +15,6 @@ describe('rehypeSkipNotionWhitespace', () => {
       additionalCleanupPlugins: [rehypeSkipNotionWhitespace],
     });
     const serialized = JSON.stringify(mdast);
-    // Hard breaks land as mdast `break` nodes.
     expect(serialized).toContain('"type":"break"');
   });
 
@@ -49,8 +43,6 @@ describe('rehypeSkipNotionWhitespace', () => {
     const after = htmlToMdast('<p>line1\nline2</p>', {
       additionalCleanupPlugins: [rehypeSkipNotionWhitespace],
     });
-    // Without the Notion marker, the literal \n is unchanged; rehype-remark
-    // collapses whitespace per normal — both trees are identical.
     expect(after).toEqual(before);
   });
 });

@@ -38,8 +38,6 @@ describe('PrincipalResponseSchema', () => {
       future_field: 'new-server-value',
     });
     expect(result.success).toBe(true);
-    // .loose() must pass unknown fields through to result.data, not strip them.
-    // A change from .loose() to .strip() would make success: true but drop the field.
     if (result.success) {
       expect((result.data as Record<string, unknown>).future_field).toBe('new-server-value');
     }
@@ -63,18 +61,11 @@ describe('PrincipalResponseSchema', () => {
   });
 
   test('fails when display_name is an empty string', () => {
-    // An empty git-config user.name (template-rendered configs, mis-quoted setup
-    // scripts) must not propagate to the awareness publish-site as name: ''. The
-    // safeParse failure here routes the client to the random-identity fallback
-    // — same path as a 404 / network error.
     const result = PrincipalResponseSchema.safeParse({ ...validPrincipal, display_name: '' });
     expect(result.success).toBe(false);
   });
 
   test('accepts empty display_email (field is server-only; absence should not discard usable name+id)', () => {
-    // display_email is never rendered in awareness — only used server-side for
-    // shadow-repo authoring / Co-Authored-By. An absent or empty email must not
-    // cause a valid principal (with a good display_name and id) to be rejected.
     const result = PrincipalResponseSchema.safeParse({ ...validPrincipal, display_email: '' });
     expect(result.success).toBe(true);
   });

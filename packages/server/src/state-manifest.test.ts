@@ -14,8 +14,8 @@ import {
 
 function makeTmp(): { lockDir: string; shadowRepoDir: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), 'state-manifest-test-'));
-  const lockDir = join(root, '.open-knowledge');
-  const shadowRepoDir = join(root, '.git', 'open-knowledge');
+  const lockDir = join(root, '.ok');
+  const shadowRepoDir = join(root, '.git', 'ok');
   return {
     lockDir,
     shadowRepoDir,
@@ -34,10 +34,6 @@ describe('detectProjectShape', () => {
   });
 
   test('returns "fresh" when only lockDir exists (lockDir is NOT an adoption signal)', () => {
-    // Regression: `initContent` and `acquireServerLock` both create `.open-knowledge/`
-    // before the manifest check runs. If lockDir-existence triggered "adopt",
-    // every fresh project would misclassify and stamp schema-0. Only the shadow
-    // repo signals adoption.
     const { lockDir, shadowRepoDir, cleanup } = makeTmp();
     try {
       mkdirSync(lockDir, { recursive: true });
@@ -67,6 +63,23 @@ describe('detectProjectShape', () => {
       cleanup();
     }
   });
+
+  test('only the configured shadowRepoDir triggers adopt — unrelated dirs nearby do not leak', () => {
+    const root = mkdtempSync(join(tmpdir(), 'state-manifest-shadow-only-'));
+    try {
+      const lockDir = join(root, '.ok');
+      const shadowRepoDir = join(root, '.git', 'ok');
+      const unrelatedSiblingDir = join(root, '.git', 'some-other-tooling-dir');
+
+      mkdirSync(unrelatedSiblingDir, { recursive: true });
+      expect(detectProjectShape({ lockDir, shadowRepoDir })).toBe('fresh');
+
+      mkdirSync(shadowRepoDir, { recursive: true });
+      expect(detectProjectShape({ lockDir, shadowRepoDir })).toBe('adopt');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('readStateManifest', () => {
@@ -85,7 +98,7 @@ describe('readStateManifest', () => {
       const record: StateManifestRecord = {
         stateSchemaVersion: 1,
         createdAt: '2026-04-27T00:00:00.000Z',
-        createdBy: { runtimeVersion: '0.2.0', protocolVersion: 1 },
+        createdBy: { runtimeVersion: '0.2.0' },
       };
       writeStateManifest(lockDir, record);
       expect(readStateManifest(lockDir)).toEqual({ status: 'present', manifest: record });
@@ -135,16 +148,13 @@ describe('assertCompatibleStateManifest', () => {
         shadowRepoDir,
         currentStateSchemaVersion: 1,
         currentRuntimeVersion: '0.2.0',
-        currentProtocolVersion: 1,
         now: () => new Date('2026-04-27T12:00:00.000Z'),
       });
       expect(result.stateSchemaVersion).toBe(1);
       expect(result.createdBy.runtimeVersion).toBe('0.2.0');
-      expect(result.createdBy.protocolVersion).toBe(1);
       expect(result.createdBy.adoptedAt).toBeUndefined();
       expect(result.createdAt).toBe('2026-04-27T12:00:00.000Z');
 
-      // Manifest is now persisted.
       const re = readStateManifest(lockDir);
       expect(re.status).toBe('present');
     } finally {
@@ -161,7 +171,6 @@ describe('assertCompatibleStateManifest', () => {
         shadowRepoDir,
         currentStateSchemaVersion: 1,
         currentRuntimeVersion: '0.2.0',
-        currentProtocolVersion: 1,
         now: () => new Date('2026-04-27T12:00:00.000Z'),
       });
       expect(result.stateSchemaVersion).toBe(0);
@@ -172,11 +181,7 @@ describe('assertCompatibleStateManifest', () => {
     }
   });
 
-  test('writes fresh manifest when only .open-knowledge dir exists (no shadow repo)', () => {
-    // Regression for the smoke-test bug: `initContent` / `acquireServerLock`
-    // create `.open-knowledge/` before the manifest check runs. That alone is
-    // NOT adoption — only the shadow repo signals durable pre-version-field
-    // state. This is the user's exact scenario from the smoke test.
+  test('writes fresh manifest when only .ok dir exists (no shadow repo)', () => {
     const { lockDir, shadowRepoDir, cleanup } = makeTmp();
     try {
       mkdirSync(lockDir, { recursive: true });
@@ -185,7 +190,6 @@ describe('assertCompatibleStateManifest', () => {
         shadowRepoDir,
         currentStateSchemaVersion: 1,
         currentRuntimeVersion: '0.2.0',
-        currentProtocolVersion: 1,
         now: () => new Date('2026-04-27T12:00:00.000Z'),
       });
       expect(result.stateSchemaVersion).toBe(1);
@@ -201,7 +205,7 @@ describe('assertCompatibleStateManifest', () => {
       const initial: StateManifestRecord = {
         stateSchemaVersion: 1,
         createdAt: '2026-04-27T00:00:00.000Z',
-        createdBy: { runtimeVersion: '0.2.0', protocolVersion: 1 },
+        createdBy: { runtimeVersion: '0.2.0' },
       };
       writeStateManifest(lockDir, initial);
       const result = assertCompatibleStateManifest({
@@ -209,7 +213,6 @@ describe('assertCompatibleStateManifest', () => {
         shadowRepoDir,
         currentStateSchemaVersion: 1,
         currentRuntimeVersion: '0.2.1',
-        currentProtocolVersion: 1,
         now: () => new Date('2026-04-27T13:00:00.000Z'),
       });
       expect(result.stateSchemaVersion).toBe(1);
@@ -217,7 +220,6 @@ describe('assertCompatibleStateManifest', () => {
       expect(result.lastWriteBy?.runtimeVersion).toBe('0.2.1'); // updated
       expect(result.lastWriteBy?.at).toBe('2026-04-27T13:00:00.000Z');
 
-      // Persisted on disk.
       const re = readStateManifest(lockDir);
       if (re.status !== 'present') throw new Error('expected present');
       expect(re.manifest.lastWriteBy?.runtimeVersion).toBe('0.2.1');
@@ -232,7 +234,7 @@ describe('assertCompatibleStateManifest', () => {
       const manifest: StateManifestRecord = {
         stateSchemaVersion: 2,
         createdAt: '2026-04-27T00:00:00.000Z',
-        createdBy: { runtimeVersion: '0.3.0', protocolVersion: 1 },
+        createdBy: { runtimeVersion: '0.3.0' },
       };
       writeStateManifest(lockDir, manifest);
       expect(() =>
@@ -241,7 +243,6 @@ describe('assertCompatibleStateManifest', () => {
           shadowRepoDir,
           currentStateSchemaVersion: 1,
           currentRuntimeVersion: '0.2.0',
-          currentProtocolVersion: 1,
         }),
       ).toThrow(StateManifestError);
 
@@ -251,7 +252,6 @@ describe('assertCompatibleStateManifest', () => {
           shadowRepoDir,
           currentStateSchemaVersion: 1,
           currentRuntimeVersion: '0.2.0',
-          currentProtocolVersion: 1,
         });
       } catch (err) {
         expect(err).toBeInstanceOf(StateManifestError);
@@ -265,11 +265,6 @@ describe('assertCompatibleStateManifest', () => {
   });
 
   test('schema-0 manifest is readable by v1 binary (adoption path round-trips)', () => {
-    // Per SPEC §6.2 G2 + the isCompatibleSchema table in state-manifest.ts:
-    // schema-0 is the pre-manifest adoption sentinel; v1 was the first
-    // manifest-aware schema. v1 binaries MUST accept schema-0 manifests on
-    // re-boot, otherwise the adoption path self-incompatibilizes after one
-    // write. This test guards that compatibility.
     const { lockDir, shadowRepoDir, cleanup } = makeTmp();
     try {
       const adopted: StateManifestRecord = {
@@ -277,7 +272,6 @@ describe('assertCompatibleStateManifest', () => {
         createdAt: '2026-04-27T12:00:00.000Z',
         createdBy: {
           runtimeVersion: '0.2.0',
-          protocolVersion: 1,
           adoptedAt: '2026-04-27T12:00:00.000Z',
         },
       };
@@ -288,12 +282,9 @@ describe('assertCompatibleStateManifest', () => {
         shadowRepoDir,
         currentStateSchemaVersion: 1,
         currentRuntimeVersion: '0.2.1',
-        currentProtocolVersion: 1,
         now: () => new Date('2026-04-27T13:00:00.000Z'),
       });
 
-      // Schema-0 is preserved (NOT silently bumped to 1) — adoption stays
-      // recorded. lastWriteBy is updated.
       expect(result.stateSchemaVersion).toBe(0);
       expect(result.createdBy.adoptedAt).toBe('2026-04-27T12:00:00.000Z');
       expect(result.lastWriteBy?.runtimeVersion).toBe('0.2.1');
@@ -313,7 +304,6 @@ describe('assertCompatibleStateManifest', () => {
           shadowRepoDir,
           currentStateSchemaVersion: 1,
           currentRuntimeVersion: '0.2.0',
-          currentProtocolVersion: 1,
         }),
       ).toThrow(StateManifestError);
     } finally {
@@ -329,7 +319,7 @@ describe('writeStateManifest', () => {
       const record: StateManifestRecord = {
         stateSchemaVersion: 1,
         createdAt: '2026-04-27T00:00:00.000Z',
-        createdBy: { runtimeVersion: '0.2.0', protocolVersion: 1 },
+        createdBy: { runtimeVersion: '0.2.0' },
       };
       writeStateManifest(lockDir, record);
       const written = JSON.parse(readFileSync(join(lockDir, STATE_MANIFEST_FILENAME), 'utf-8'));

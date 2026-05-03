@@ -1,8 +1,3 @@
-/**
- * Tests for rehypeStripSlackClasses — removes Slack CSS-class noise
- * and timestamp spans.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

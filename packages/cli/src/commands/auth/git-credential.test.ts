@@ -6,10 +6,6 @@ import { Readable, Writable } from 'node:stream';
 import { FileBackend } from '../../auth/token-store.ts';
 import { handleCredentialGet } from './git-credential.ts';
 
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
 function makeStream(content: string): Readable {
   return Readable.from([Buffer.from(content, 'utf-8')]);
 }
@@ -31,10 +27,6 @@ function makeOutput(): { writable: Writable; result: () => string } {
 function makeStore(tmpDir: string) {
   return new FileBackend(join(tmpDir, 'auth.yml'));
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('handleCredentialGet', () => {
   let tmpDir: string;

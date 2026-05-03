@@ -1,14 +1,5 @@
-/**
- * `open-knowledge stop` — SIGTERM live server + ui processes; leave stale
- * locks untouched (they belong to `ok clean`).
- *
- * SPEC FR-1.7 / D-005: single-responsibility split from lock pruning. Exits 0
- * when there's nothing live; exits 1 only when a SIGTERM fails (EPERM, etc).
- */
-
+import { type Config, resolveContentDir, resolveLockDir } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
-import type { Config } from '../config/schema.ts';
 import { inspectLock, type LockState } from './lock-state.ts';
 
 interface StopTargetPlan {
@@ -21,12 +12,6 @@ interface StopPlan {
   targets: StopTargetPlan[];
 }
 
-/**
- * Pure plan builder — from two inspected lock states, list which pids to
- * SIGTERM. Only `alive` states produce a target; missing / corrupt /
- * foreign-host / dead-pid are all ignored at this layer (they're the realm
- * of `ok clean` and `ok status`).
- */
 export function buildStopPlan(server: LockState, ui: LockState): StopPlan {
   const targets: StopTargetPlan[] = [];
   if (server.status === 'alive') {
@@ -52,11 +37,6 @@ interface StopOutcome {
   hadTargets: boolean;
 }
 
-/**
- * Execute a stop plan. Exported for tests so they can drive it without
- * going through Commander. The Commander action wraps this and translates
- * `failed.length > 0` into `process.exitCode = 1`.
- */
 export function runStop(deps: RunStopDeps): StopOutcome {
   const inspect = deps.inspect ?? ((name) => inspectLock(deps.lockDir, name));
   const kill = deps.kill ?? ((pid, signal) => process.kill(pid, signal));

@@ -1,7 +1,3 @@
-/**
- * Unit tests for sync-timing helpers (US-016: restart recovery).
- */
-
 import { describe, expect, test } from 'bun:test';
 import { computeRemainingMs } from './sync-timing.ts';
 
@@ -15,7 +11,6 @@ describe('computeRemainingMs', () => {
   });
 
   test('returns remaining ms when last fetch was recent', () => {
-    // Last fetch was 20s ago, interval is 30s → 10s remaining
     const now = Date.now();
     const lastUtc = new Date(now - 20 * SECOND).toISOString();
     const remaining = computeRemainingMs(lastUtc, 30, now);
@@ -23,7 +18,6 @@ describe('computeRemainingMs', () => {
   });
 
   test('returns 0 when interval has already elapsed (overdue)', () => {
-    // Last fetch was 35s ago, interval is 30s → 0 (overdue)
     const now = Date.now();
     const lastUtc = new Date(now - 35 * SECOND).toISOString();
     expect(computeRemainingMs(lastUtc, 30, now)).toBe(0);
@@ -68,8 +62,6 @@ describe('computeRemainingMs', () => {
   });
 
   test('restart recovery scenario: server restarted mid-interval', () => {
-    // Simulate: pull every 30s, last fetch was 22s ago
-    // Expected remaining: 8s
     const simulatedNow = 1_700_000_000_000;
     const lastUtc = new Date(simulatedNow - 22 * SECOND).toISOString();
     const remaining = computeRemainingMs(lastUtc, 30, simulatedNow);

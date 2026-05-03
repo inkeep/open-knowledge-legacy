@@ -1,24 +1,19 @@
 import { type SpawnOptions, spawn } from 'node:child_process';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { homedir, platform as osPlatform } from 'node:os';
+import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveBundledSkillDir } from './build-skill-zip.ts';
+import {
+  type BuildSkillZipResult,
+  buildSkillZip,
+  resolveBundledSkillDir,
+} from './build-skill-zip.ts';
 
-/**
- * Minimal logger duck-type accepted by `installUserSkill`. Compatible with
- * `PinoLogger` (`warn(data, message)`) and ad-hoc console-style shims.
- */
 export interface SkillInstallLogger {
   warn: (data: unknown, message: string) => void;
   info?: (data: unknown, message: string) => void;
 }
 
-/**
- * Minimal signature of `node:child_process`'s `spawn` — the subset this
- * module actually calls. Injectable so unit tests can replace with a
- * deterministic fake subprocess.
- */
 export type SpawnLike = (
   command: string,
   args: readonly string[],
@@ -26,50 +21,22 @@ export type SpawnLike = (
 ) => ReturnType<typeof spawn>;
 
 export interface InstallUserSkillOptions {
-  /**
-   * Override `$HOME`. Sidecar path becomes `${home}/.open-knowledge/skill-installed-version`
-   * and `HOME` env var is overridden for the `npx skills` subprocess so it writes
-   * per-host skill copies under the overridden home. Tests pass a tmpdir here.
-   */
   home?: string;
-  /** Optional logger. Falls back to `console.warn` / `console.info`. */
   logger?: SkillInstallLogger;
-  /**
-   * Inject a `spawn`-like function for unit tests. Defaults to `node:child_process#spawn`.
-   * Production callers never pass this.
-   */
   spawn?: SpawnLike;
-  /**
-   * Subprocess timeout in milliseconds. Defaults to 60_000 (60 s) per SPEC FR6.
-   * Tests may lower this for faster coverage.
-   */
   timeoutMs?: number;
 }
 
 export type InstallUserSkillResult = 'installed' | 'skip-current' | 'failed';
 
-/** Sidecar filename — plain version string + trailing newline. SPEC D5/FR7. */
 const SIDECAR_FILENAME = 'skill-installed-version';
 
-/**
- * Central source directory the `skills` CLI writes when invoked with
- * `add … -g --copy`. The skip-current gate verifies this exists alongside the
- * sidecar version match — sidecar presence alone is not proof the skill is
- * still on disk (e.g. after a manual `npx skills remove -g`).
- */
 const CENTRAL_SKILL_DIR_REL = ['.agents', 'skills', 'open-knowledge'] as const;
 
-/** Pinned patch-range for the `skills` CLI. SPEC D16. */
 const SKILLS_CLI_SPEC = 'skills@~1.5.0';
 
-/** Subprocess timeout default. SPEC FR6. */
 const DEFAULT_TIMEOUT_MS = 60_000;
 
-/**
- * Match a plain semver-ish version string (digits + dots + optional prerelease).
- * Empty / malformed sidecar content falls through the test and is treated as
- * "fresh install" per SPEC FR7.
- */
 const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/;
 
 async function readServerPackageVersion(): Promise<string> {
@@ -83,7 +50,7 @@ async function readServerPackageVersion(): Promise<string> {
 }
 
 function sidecarPath(home: string): string {
-  return join(home, '.open-knowledge', SIDECAR_FILENAME);
+  return join(home, '.ok', SIDECAR_FILENAME);
 }
 
 async function readSidecarVersion(home: string): Promise<string | null> {
@@ -158,7 +125,6 @@ function runSpawn(
     });
 
     child.on('error', (err) => {
-      // ENOENT on `npx` itself surfaces here.
       settle({ kind: 'spawn-error', stderr, error: err });
     });
 
@@ -170,34 +136,12 @@ function runSpawn(
     const timer = setTimeout(() => {
       try {
         child.kill('SIGTERM');
-      } catch {
-        /* already exited */
-      }
+      } catch {}
       settle({ kind: 'timeout', stderr });
     }, timeoutMs);
   });
 }
 
-/**
- * Install Open Knowledge's user-global Agent Skill to every detected agent host
- * via `npx skills@~1.5.0 add <bundled-path> --agent '*' -g -y --copy`.
- *
- * Idempotency: a plain version-string sidecar at
- * `${home}/.open-knowledge/skill-installed-version` gates re-install. The
- * subprocess is NOT invoked (and `'skip-current'` is returned) only when BOTH
- * the sidecar matches the current `@inkeep/open-knowledge-server` package
- * version AND the central skill source directory at
- * `${home}/.agents/skills/open-knowledge` is still on disk. The disk-presence
- * check exists because a manual `npx skills remove -g` (or equivalent rm)
- * leaves the sidecar untouched, which would otherwise wedge the next `ok init`
- * into a no-op despite the skill being gone.
- *
- * Always resolves (never throws). Non-zero exit, timeout, or spawn error logs
- * a warning via `opts.logger` (or `console.warn`) and returns `'failed'`.
- *
- * See SPEC `specs/2026-04-22-mcp-guidance-no-project-pollution/SPEC.md` §6
- * (FR5-FR9) and §10 (D4-D6, D15-D19) for the full contract.
- */
 export async function installUserSkill(
   opts: InstallUserSkillOptions = {},
 ): Promise<InstallUserSkillResult> {
@@ -298,7 +242,6 @@ export async function installUserSkill(
     return 'failed';
   }
 
-  // nonzero
   logger.warn(
     {
       event: 'skill-install.failed',
@@ -310,4 +253,116 @@ export async function installUserSkill(
       `${SKILLS_CLI_SPEC} add ${bundledDir} --agent '*' -g -y --copy`,
   );
   return 'failed';
+}
+
+const DOWNLOADS_DIR = 'Downloads';
+const SKILL_FILENAME = 'openknowledge.skill';
+
+export interface BuildAndOpenSkillOptions {
+  out?: string;
+  noOpen?: boolean;
+  spawnFn?: SpawnLike;
+  platformName?: NodeJS.Platform;
+  homeDir?: string;
+}
+
+export type BuildAndOpenSkillStatus = 'installed' | 'built' | 'failed';
+
+export interface BuildAndOpenSkillResult {
+  status: BuildAndOpenSkillStatus;
+  outputPath?: string;
+  size?: number;
+  sha256?: string;
+  cliVersion?: string;
+  skillVersion?: string;
+  handoffError?: { reason: 'unsupported-platform' | 'spawn-error'; message: string };
+  buildError?: string;
+}
+
+function defaultDownloadsPath(home: string): string {
+  return join(home, DOWNLOADS_DIR, SKILL_FILENAME);
+}
+
+function invokeFileAssociation(
+  skillPath: string,
+  platformName: NodeJS.Platform,
+  spawnFn: SpawnLike,
+): { ok: true } | { ok: false; reason: 'unsupported-platform' | 'spawn-error'; message: string } {
+  const detached: SpawnOptions = { detached: true, stdio: 'ignore' };
+  try {
+    if (platformName === 'darwin') {
+      spawnFn('open', [skillPath], detached).unref();
+      return { ok: true };
+    }
+    if (platformName === 'win32') {
+      spawnFn('cmd', ['/c', 'start', '""', skillPath], detached).unref();
+      return { ok: true };
+    }
+    if (platformName === 'linux') {
+      spawnFn('xdg-open', [skillPath], detached).unref();
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      reason: 'unsupported-platform',
+      message: `Platform '${platformName}' has no file-association invocation wired.`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'spawn-error',
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function buildAndOpenSkill(
+  opts: BuildAndOpenSkillOptions = {},
+): Promise<BuildAndOpenSkillResult> {
+  const home = opts.homeDir ?? homedir();
+  const outputPath = resolvePath(opts.out ?? defaultDownloadsPath(home));
+  const platformName = opts.platformName ?? osPlatform();
+  const spawnFn = opts.spawnFn ?? spawn;
+
+  try {
+    await mkdir(dirname(outputPath), { recursive: true });
+  } catch (err) {
+    return {
+      status: 'failed',
+      buildError: `could not create output directory: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  let build: BuildSkillZipResult;
+  try {
+    build = await buildSkillZip({ outputPath, skipVersionCheck: true });
+  } catch (err) {
+    return {
+      status: 'failed',
+      buildError: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const baseResult: BuildAndOpenSkillResult = {
+    status: 'built',
+    outputPath: build.outputPath,
+    size: build.size,
+    sha256: build.sha256,
+    cliVersion: build.cliVersion,
+    skillVersion: build.skillVersion,
+  };
+
+  if (opts.noOpen) {
+    return baseResult;
+  }
+
+  const invocation = invokeFileAssociation(build.outputPath, platformName, spawnFn);
+  if (!invocation.ok) {
+    return {
+      ...baseResult,
+      handoffError: { reason: invocation.reason, message: invocation.message },
+    };
+  }
+
+  return { ...baseResult, status: 'installed' };
 }

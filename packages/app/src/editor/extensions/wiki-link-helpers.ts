@@ -3,14 +3,6 @@ import type { PageListCacheSnapshot } from '../page-list-cache';
 
 export { getHeadingSlug, toWikiLinkSlug };
 
-/**
- * Input shape accepted by resolution helpers. A bare `Set<string>` works
- * for tests and legacy callers — the helper derives the slug index on the
- * fly (O(n) per call with a slug computation each). A `PageListCacheSnapshot`
- * carries a precomputed `pagesBySlug` map — O(1) lookup. React components
- * that consume `usePageList()` typically pass the bare `pages` Set; chip
- * PM plugins that read `getPageListCache()` pass the snapshot.
- */
 type PagesLookupInput = ReadonlySet<string> | PageListCacheSnapshot;
 
 function isSnapshot(input: PagesLookupInput): input is PageListCacheSnapshot {
@@ -50,19 +42,12 @@ function slugLookup(target: string, input: PagesLookupInput): string | undefined
   if (isSnapshot(input)) {
     return input.pagesBySlug.get(targetSlug);
   }
-  // Bare Set — O(n) scan with slug computation per entry. Acceptable for
-  // PropPanel / non-hot-path callers (tests, one-off resolutions).
   for (const page of input) {
     if (toWikiLinkSlug(page) === targetSlug) return page;
   }
   return undefined;
 }
 
-/**
- * True when the wiki-link target text can safely be used as a path segment
- * verbatim (no path separators, no reserved chars, not "." or ".."). When
- * false, callers should fall back to `toWikiLinkSlug`.
- */
 export function canUseTargetAsPathSegment(target: string): boolean {
   const trimmed = target.trim();
   return (
@@ -74,11 +59,6 @@ export function canUseTargetAsPathSegment(target: string): boolean {
   );
 }
 
-/**
- * Suggested filename (with `.md`) for the NewItemDialog when creating a page
- * from a wiki-link target. Preserves the literal target name when it's a safe
- * path segment; otherwise falls back to the kebab-case slug.
- */
 export function wikiLinkSuggestedFilename(target: string): string {
   const baseName = canUseTargetAsPathSegment(target) ? target.trim() : toWikiLinkSlug(target);
   return `${baseName}.md`;
@@ -155,14 +135,5 @@ export function isResolvedWikiLinkTarget(
     return true;
   }
 
-  // Slug-based fallback. Handles dropped `.md`
-  // (target='readme' from slug) against case-preserved cache entry
-  // (`README`) AND underscore/space/punctuation cache entries
-  // (`BA_for_Depression_Research` → slug `ba-for-depression-research`).
-  // Plus hand-typed `[[README]]` via the suggestion-menu fallback path
-  // that also runs the slug transform. First-wins on slug collision —
-  // if both `README` and `ReadMe` exist (different case, same slug), the
-  // insertion-order-first entry wins (documented in the
-  // PageListCacheSnapshot JSDoc at `page-list-cache.ts`).
   return slugLookup(trimmed, pages) !== undefined;
 }

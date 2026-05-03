@@ -1,8 +1,6 @@
-/** Shared heading/anchor slug interface — used by API responses and client-side consumers. */
 export interface HeadingEntry {
   level: number;
   text: string;
-  /** URL-safe slug derived from the heading text — matches wiki link anchor syntax. */
   slug: string;
 }
 
@@ -10,15 +8,6 @@ const COMBINING_MARK_RE = /\p{M}+/gu;
 const NON_LETTER_OR_NUMBER_RE = /[^\p{L}\p{N}]+/gu;
 const EDGE_HYPHENS_RE = /^-+|-+$/g;
 
-/**
- * Convert arbitrary heading text to a URL-safe slug suitable for wiki link anchors.
- * Any run of non-alphanumeric characters becomes a single hyphen; leading/trailing
- * hyphens are stripped.
- *
- * This is the canonical implementation shared between:
- *   - server  (api-extension.ts — generates slugs for /api/page-headings)
- *   - app     (wiki-link-helpers.ts, heading-anchors.ts — renders heading IDs + resolves links)
- */
 export function toWikiLinkSlug(text: string): string {
   return text
     .trim()
@@ -29,7 +18,6 @@ export function toWikiLinkSlug(text: string): string {
     .replace(EDGE_HYPHENS_RE, '');
 }
 
-/** Reuse the same duplicate-slug suffixing across server and client heading IDs. */
 export function disambiguateSlug(baseSlug: string, slugCounts: Map<string, number>): string {
   const count = slugCounts.get(baseSlug) ?? 0;
   slugCounts.set(baseSlug, count + 1);

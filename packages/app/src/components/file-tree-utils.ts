@@ -3,14 +3,6 @@
 export interface DocumentEntry {
   kind?: 'document';
   docName: string;
-  /**
-   * On-disk extension — `.md` (default) or `.mdx`. Surfaced by `/api/documents`
-   * via `getDocExtension(docName)`. Carrying it on the entry lets the sidebar
-   * adapter map `docName` ↔ `treePath` faithfully and lets display sites
-   * (delete-confirmation dialog, drag previews, rename hints) render the
-   * actual extension instead of hardcoding `.md`. Optional for backward
-   * compat; defaults to `.md` at every consumer.
-   */
   docExt?: string;
   size: number;
   modified: string;

@@ -4,13 +4,6 @@ import { type FileEntry, isAssetEntry } from '@/components/file-tree-utils';
 const DEFAULT_TREE_EXTENSION = '.md';
 const TREE_EXTENSION_PATTERN = /\.(md|mdx)$/i;
 
-/**
- * Map a docName to the tree path the @pierre/trees model uses. `docExt`
- * carries the actual on-disk extension (`.md` / `.mdx`) — defaults to `.md`
- * for sites that don't have it yet. Two files with the same docName but
- * different extensions are distinct file system entries; passing the wrong
- * extension breaks tree-model mapping.
- */
 export function docNameToTreePath(
   docName: string,
   docExt: string = DEFAULT_TREE_EXTENSION,
@@ -114,8 +107,6 @@ export function relativePathForTreeItem(item: ContextMenuItem): string {
 
 export function normalizeTreePathForKind(path: string, isFolder: boolean): string {
   if (isFolder) return folderPathToTreeDirectoryPath(path);
-  // Already-extended paths pass through (preserves authored .md/.mdx); bare
-  // names get the default extension appended for new-file placeholders.
   return TREE_EXTENSION_PATTERN.test(path) ? path : `${path}${DEFAULT_TREE_EXTENSION}`;
 }
 

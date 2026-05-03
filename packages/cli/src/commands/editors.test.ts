@@ -1,5 +1,4 @@
-import { describe, expect, it } from 'bun:test';
-import { resolve } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   buildManagedServerEntry,
   EDITOR_TARGETS,
@@ -173,6 +172,14 @@ describe('resolveCodexConfigPath', () => {
 });
 
 describe('buildManagedServerEntry', () => {
+  const originalArgv1 = process.argv[1];
+  beforeEach(() => {
+    process.argv[1] = '/repo/packages/cli/src/cli.ts';
+  });
+  afterEach(() => {
+    process.argv[1] = originalArgv1;
+  });
+
   it('produces the canonical npx shape by default (no cliPath, published mode)', () => {
     expect(buildManagedServerEntry()).toEqual({
       command: 'npx',
@@ -188,10 +195,7 @@ describe('buildManagedServerEntry', () => {
   });
 
   it('produces the dev shape when mode is dev and no cliPath is set', () => {
-    const entry = buildManagedServerEntry({
-      mode: 'dev',
-      cliEntryPath: '/repo/packages/cli/src/cli.ts',
-    });
+    const entry = buildManagedServerEntry({ mode: 'dev' });
     expect(entry).toEqual({
       command: 'node',
       args: ['/repo/packages/cli/dist/cli.mjs', 'mcp'],
@@ -213,11 +217,9 @@ describe('buildManagedServerEntry', () => {
   it('cliPath overrides dev mode (highest-precedence — no dev args leak through)', () => {
     const entry = buildManagedServerEntry({
       mode: 'dev',
-      cliEntryPath: '/repo/packages/cli/src/cli.ts',
       cliPath: '/usr/local/bin/ok',
     });
     expect(entry).toEqual({ command: '/usr/local/bin/ok', args: ['mcp'] });
-    // No env field — cliPath branch does not carry dev-mode env
     expect(entry.env).toBeUndefined();
   });
 
@@ -226,45 +228,6 @@ describe('buildManagedServerEntry', () => {
     expect(entry.command).toBe('/usr/local/bin/ok');
     expect((entry.args as string[]).includes('@inkeep/open-knowledge')).toBe(false);
     expect((entry.args as string[]).includes('npx')).toBe(false);
-  });
-
-  it('produces a node + absolute argv[1] shape when mode is pinned (explicit cliEntryPath)', () => {
-    const entry = buildManagedServerEntry({
-      mode: 'pinned',
-      cliEntryPath: '/Users/me/.npm-global/bin/ok',
-    });
-    expect(entry).toEqual({
-      command: 'node',
-      args: ['/Users/me/.npm-global/bin/ok', 'mcp'],
-    });
-    expect(entry.env).toBeUndefined();
-  });
-
-  it('pinned mode resolves a relative cliEntryPath to absolute', () => {
-    const entry = buildManagedServerEntry({
-      mode: 'pinned',
-      // Relative path — node would resolve relative to cwd at spawn time.
-      // We resolve at write time so the editor config is location-independent.
-      cliEntryPath: 'packages/cli/dist/cli.mjs',
-    });
-    expect((entry.args as string[])[0]).toMatch(/^\//);
-    expect((entry.args as string[])[0].endsWith('packages/cli/dist/cli.mjs')).toBe(true);
-  });
-
-  it('pinned mode falls back to process.argv[1] when cliEntryPath is omitted', () => {
-    const entry = buildManagedServerEntry({ mode: 'pinned' });
-    expect(entry.command).toBe('node');
-    expect((entry.args as string[])[0]).toBe(resolve(process.argv[1]));
-    expect((entry.args as string[])[1]).toBe('mcp');
-  });
-
-  it('cliPath overrides pinned mode (highest-precedence)', () => {
-    const entry = buildManagedServerEntry({
-      mode: 'pinned',
-      cliEntryPath: '/Users/me/dist/cli.mjs',
-      cliPath: '/usr/local/bin/ok',
-    });
-    expect(entry).toEqual({ command: '/usr/local/bin/ok', args: ['mcp'] });
   });
 });
 

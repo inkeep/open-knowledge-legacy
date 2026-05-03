@@ -1,17 +1,3 @@
-/**
- * UpdateNotices — unit tests for the pure subscription logic
- * (`attachUpdateSubscribers`) + the canonical copy strings.
- *
- * The React effect wrapper in `UpdateNotices()` is a thin adapter over
- * `attachUpdateSubscribers` — the interesting logic (channel subscription,
- * notice shape, action-button plumbing, unsubscribe-on-unmount semantics)
- * is all exercised here without a DOM renderer.
- *
- * Verifying the full render path (card actually appears in the sidebar
- * footer, close button dismisses, action button fires) is manual +
- * Playwright's job per AC6.
- */
-
 import { describe, expect, mock, test } from 'bun:test';
 import type { OkDesktopBridge } from '@/lib/desktop-bridge-types';
 import {
@@ -37,7 +23,6 @@ interface FakeBridge {
   onUpdateStuckHint: ReturnType<typeof mock>;
   update: { relaunchNow: ReturnType<typeof mock> };
   shell: { openExternal: ReturnType<typeof mock> };
-  /** Test-side handles — set by the `on*` mocks so tests can drive dispatches. */
   _downloaded?: UpdateDownloadedCb;
   _whatsNew?: WhatsNewCb;
   _stuckHint?: StuckHintCb;
@@ -76,10 +61,6 @@ function castBridge(fake: FakeBridge): OkDesktopBridge {
   return fake as unknown as OkDesktopBridge;
 }
 
-// ————————————————————————————————————————————————————————
-// Pure helpers
-// ————————————————————————————————————————————————————————
-
 describe('copy helpers (minimal-wording revision)', () => {
   test('toastBBody formats the "Updated to v<X>" string', () => {
     expect(toastBBody('0.1.1')).toBe('Updated to v0.1.1');
@@ -94,10 +75,6 @@ describe('copy helpers (minimal-wording revision)', () => {
     expect(TOAST_C_ACTION).toBe('Download');
   });
 });
-
-// ————————————————————————————————————————————————————————
-// attachUpdateSubscribers — subscription
-// ————————————————————————————————————————————————————————
 
 describe('attachUpdateSubscribers — registration', () => {
   test('subscribes to all three update channels on the bridge', () => {
@@ -119,10 +96,6 @@ describe('attachUpdateSubscribers — registration', () => {
     expect(bridge._stuckHintUnsub).toHaveBeenCalledTimes(1);
   });
 });
-
-// ————————————————————————————————————————————————————————
-// Notice A: update-downloaded
-// ————————————————————————————————————————————————————————
 
 describe('Notice A — ok:update:downloaded', () => {
   test('emits notice with canonical copy + relaunch action on dispatch', () => {
@@ -158,7 +131,6 @@ describe('Notice A — ok:update:downloaded', () => {
     bridge._downloaded?.({ version: '0.1.1' });
     const noticeA = addNotice.mock.calls[0]?.[0] as UpdateNotice;
     noticeA.action?.onClick();
-    // Yield microtasks for the async catch to fire.
     await Promise.resolve();
     await Promise.resolve();
     expect(addNotice).toHaveBeenCalledTimes(2);
@@ -180,7 +152,6 @@ describe('Notice A — ok:update:downloaded', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(bridge.update.relaunchNow).toHaveBeenCalledTimes(1);
-    // Only the initial notice was emitted, no error follow-up.
     expect(addNotice).toHaveBeenCalledTimes(1);
   });
 
@@ -234,10 +205,6 @@ describe('Notice A — ok:update:downloaded', () => {
   });
 });
 
-// ————————————————————————————————————————————————————————
-// Notice B: what's-new
-// ————————————————————————————————————————————————————————
-
 describe('Notice B — ok:update:whats-new', () => {
   test('emits notice with version-specific copy + release URL action', () => {
     const bridge = makeFakeBridge();
@@ -255,10 +222,6 @@ describe('Notice B — ok:update:whats-new', () => {
     expect(bridge.shell.openExternal).toHaveBeenCalledWith(releaseUrl);
   });
 });
-
-// ————————————————————————————————————————————————————————
-// Notice C: stuck-hint (D12)
-// ————————————————————————————————————————————————————————
 
 describe('Notice C — ok:update:stuck-hint', () => {
   test('emits notice with D12 copy + download URL action', () => {
@@ -287,14 +250,6 @@ describe('Notice C — ok:update:stuck-hint', () => {
     expect(ids).toEqual(['update-stuck-hint', 'update-stuck-hint']);
   });
 });
-
-// ————————————————————————————————————————————————————————
-// Unsubscribe semantics
-// ————————————————————————————————————————————————————————
-
-// ————————————————————————————————————————————————————————
-// pickActiveNotice — single-card priority selector
-// ————————————————————————————————————————————————————————
 
 describe('pickActiveNotice', () => {
   const a: UpdateNotice = { id: 'a', body: 'A', priority: 2 };

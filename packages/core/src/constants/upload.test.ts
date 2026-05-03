@@ -40,10 +40,6 @@ describe('upload extension sets', () => {
     }
   });
 
-  // Partition guard — defense against drift between dispatch surfaces
-  // (pickInsertShape, handlers.wikiLinkEmbed). If a new extension lands in
-  // WIKI_EMBED_EXTENSIONS without a matching home in IMAGE/VIDEO/AUDIO/{pdf},
-  // this fails loudly so the dispatch tables stay in sync.
   test('IMAGE ∪ VIDEO ∪ AUDIO ∪ {pdf} === WIKI_EMBED_EXTENSIONS (set equality)', () => {
     const union = new Set<string>([
       ...IMAGE_EXTENSIONS,
@@ -52,17 +48,14 @@ describe('upload extension sets', () => {
       'pdf',
     ]);
 
-    // ⊆ direction: union subset of WIKI_EMBED_EXTENSIONS
     for (const ext of union) {
       expect(WIKI_EMBED_EXTENSIONS.has(ext)).toBe(true);
     }
 
-    // ⊇ direction: WIKI_EMBED_EXTENSIONS subset of union
     for (const ext of WIKI_EMBED_EXTENSIONS) {
       expect(union.has(ext)).toBe(true);
     }
 
-    // Same cardinality (defense against duplicates inside individual sets)
     expect(union.size).toBe(WIKI_EMBED_EXTENSIONS.size);
   });
 });

@@ -12,8 +12,6 @@ import {
   isSafeLocalPath,
 } from './local-op-security.ts';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 function makeReq(remoteAddress: string, origin?: string): IncomingMessage {
   const req = new EventEmitter() as unknown as IncomingMessage;
   req.socket = { remoteAddress } as IncomingMessage['socket'];
@@ -36,8 +34,6 @@ function makeSendJson(calls: Array<{ status: number; data: unknown }>) {
   };
 }
 
-// ─── isLoopbackRequest ────────────────────────────────────────────────────────
-
 describe('isLoopbackRequest', () => {
   test('allows 127.0.0.1', () => {
     expect(isLoopbackRequest(makeReq('127.0.0.1'))).toBe(true);
@@ -55,8 +51,6 @@ describe('isLoopbackRequest', () => {
     expect(isLoopbackRequest(makeReq('2001:db8::1'))).toBe(false);
   });
 });
-
-// ─── hasValidLocalOpOrigin ────────────────────────────────────────────────────
 
 describe('hasValidLocalOpOrigin', () => {
   test('allows absent origin', () => {
@@ -78,8 +72,6 @@ describe('hasValidLocalOpOrigin', () => {
     expect(hasValidLocalOpOrigin(makeReq('127.0.0.1', 'http://192.168.1.1:3000'))).toBe(false);
   });
 });
-
-// ─── isAllowedGitUrl ──────────────────────────────────────────────────────────
 
 describe('isAllowedGitUrl', () => {
   test('allows https URL', () => {
@@ -120,8 +112,6 @@ describe('isAllowedGitUrl', () => {
   });
 });
 
-// ─── isSafeLocalPath ─────────────────────────────────────────────────────────
-
 describe('isSafeLocalPath', () => {
   const home = homedir();
 
@@ -144,12 +134,9 @@ describe('isSafeLocalPath', () => {
     expect(isSafeLocalPath(`${home}/repo\0/evil`)).toBe(false);
   });
   test('rejects path that escapes via ..', () => {
-    // Resolved path of home + '/../etc' lands outside home
     expect(isSafeLocalPath(`${home}/../etc`)).toBe(false);
   });
 });
-
-// ─── checkLocalOpSecurity ────────────────────────────────────────────────────
 
 describe('checkLocalOpSecurity', () => {
   test('allows loopback request with no origin', () => {
@@ -190,8 +177,6 @@ describe('checkLocalOpSecurity', () => {
     expect(calls[0].status).toBe(403);
   });
 });
-
-// ─── createConcurrencyGuard ───────────────────────────────────────────────────
 
 describe('createConcurrencyGuard', () => {
   test('tryAcquire succeeds first time', () => {

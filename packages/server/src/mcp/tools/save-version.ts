@@ -1,0 +1,61 @@
+import { z } from 'zod';
+import type { AgentIdentity } from '../agent-identity.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import {
+  HOCUSPOCUS_NOT_RUNNING_ERROR,
+  httpPost,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectServerContext,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
+
+export const DESCRIPTION = [
+  '[Requires: Hocuspocus server] Save a version checkpoint of all documents.',
+  'Creates a checkpoint commit in the shadow repo and project repo,',
+  'preserving the current state of all documents. The checkpoint can later',
+  'be found via `get_history` and restored via `rollback_to_version`.',
+].join('\n');
+
+export function register(
+  server: ServerInstance,
+  config: ConfigOrResolver,
+  serverUrl: ServerUrlOrResolver,
+  resolveCwd: (explicit?: string) => Promise<string>,
+  identityRef?: { current: AgentIdentity },
+): void {
+  server.tool(
+    'save_version',
+    DESCRIPTION,
+    {
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { cwd?: string } = {}) => {
+      const context = await resolveProjectServerContext(resolveCwd, config, serverUrl, args.cwd);
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      if (!context.url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const { url } = context;
+
+      const identity = identityRef?.current;
+      const result = await httpPost(url, '/api/save-version', {
+        ...(identity
+          ? {
+              writers: [
+                {
+                  id: `agent-${identity.connectionId}`,
+                  name: identity.displayName,
+                  email: `agent-${identity.connectionId}@openknowledge.local`,
+                },
+              ],
+            }
+          : {}),
+      });
+      if (!result.ok) return textResult(`Error: ${result.error}`, true);
+
+      return textPlusStructured(`Checkpoint saved. Checkpoint ref: ${result.checkpointRef}`, {
+        checkpointRef: result.checkpointRef,
+        previewUrl: null,
+      });
+    },
+  );
+}

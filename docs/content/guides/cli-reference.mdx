@@ -37,10 +37,10 @@ npx @inkeep/open-knowledge              # equivalent
 | `--host <host>`        | Bind address (overrides config)                                |
 | `--open`               | Open the editor in your default browser                        |
 | `--content-dir <path>` | Content directory to serve                                     |
-| `--no-init`            | Skip `.open-knowledge/` scaffolding and parent-repo `git init` |
+| `--no-init`            | Skip `.ok/` scaffolding and parent-repo `git init` |
 
-The content directory comes from your workspace's `.open-knowledge/config.yml`
-(or `~/.open-knowledge/config.yml` at user level) or the current working
+The content directory comes from your project's `.ok/config.yml`
+(or `~/.ok/config.yml` at user level) or the current working
 directory resolved via `--cwd`. Override at runtime with `--cwd <path>` or
 by running `open-knowledge start` from inside the target directory.
 
@@ -48,11 +48,11 @@ The server binds to `localhost:3000` by default. Only one server can run per con
 
 If the content directory has no `.git/`, `start` runs `git init --initial-branch=main` before the attribution journal is created. The CLI's first-run preview block discloses the auto-init with the line `Initialized git repo at <cwd>/.git/ (default branch: main)`. If git is not on PATH, `start` exits non-zero with a clear install-or-init-yourself message.
 
-To opt out of both `.open-knowledge/` scaffolding and the parent-repo auto-`git init`, pass `--no-init`. The flag is a single opt-out for both scaffolding behaviors — `start` will boot against whatever state the directory is in, and the attribution journal still initializes if a `.git/` exists. Useful for non-interactive smoke tests and for operators who prefer to manage `git init` themselves.
+To opt out of both `.ok/` scaffolding and the parent-repo auto-`git init`, pass `--no-init`. The flag is a single opt-out for both scaffolding behaviors — `start` will boot against whatever state the directory is in, and the attribution journal still initializes if a `.git/` exists. Useful for non-interactive smoke tests and for operators who prefer to manage `git init` themselves.
 
 ## `init`
 
-Scaffold the `.open-knowledge/` directory and register the MCP server in editor config files.
+Scaffold the `.ok/` directory plus a project-root `.okignore`, and register the MCP server in editor config files.
 
 ```bash
 npx @inkeep/open-knowledge init [options]
@@ -76,11 +76,11 @@ Project-level configs are useful for teams who want all contributors to pick up 
 
 The command is idempotent -- safe to run again without side effects. If the project has no `.git/`, `init` runs `git init --initial-branch=main` first and prints the same disclosure line as `start`.
 
-Desktop app users may already have MCP wired — the first-launch consent dialog writes user-level MCP entries without any of the project-scoped scaffolding (`.open-knowledge/`, `AGENTS.md`, `launch.json`) that `ok init` performs. Run `init` when you want that project-scoped scaffolding; the dialog and the CLI can coexist. See [MCP integration](/guides/mcp-integration#desktop-app-first-launch-consent).
+Desktop app users may already have MCP wired — the first-launch consent dialog writes user-level MCP entries without any of the project-scoped scaffolding (`.ok/`, `AGENTS.md`, `launch.json`) that `ok init` performs. Run `init` when you want that project-scoped scaffolding; the dialog and the CLI can coexist. See [MCP integration](/guides/mcp-integration#desktop-app-first-launch-consent).
 
 ## `clone`
 
-Clone a git repository, scaffold `.open-knowledge/`, and start the editor.
+Clone a git repository, scaffold `.ok/`, and start the editor.
 
 ```bash
 npx @inkeep/open-knowledge clone <url> [dir] [options]
@@ -242,7 +242,7 @@ Show which files the content filter will track, without starting the server.
 npx @inkeep/open-knowledge preview
 ```
 
-Prints the file count, applied include/exclude patterns, and a sample of matched paths.
+Prints the file count, applied `.gitignore` and `.okignore` patterns, and a sample of matched paths.
 
 ## `config`
 
@@ -250,31 +250,33 @@ Inspect and maintain Open Knowledge configuration files. Two subcommands.
 
 ### `config validate`
 
-Load the merged config (defaults → user → workspace) and report conformance.
+Load the merged config (defaults → user → project) and report conformance.
 
 ```bash
 npx @inkeep/open-knowledge config validate
 ```
 
-Exit `0` on success with a one-line summary like `✓ Configuration valid (sources: ./.open-knowledge/config.yml)` to stderr. Exit `1` on failure with the offending Zod issues rendered in `file:line:col` + snippet form (Biome-style); each error line points at the exact YAML byte range. Stdout is reserved — emits nothing — so this composes cleanly into pre-commit hooks and CI shells.
+Exit `0` on success with a one-line summary like `✓ Configuration valid (sources: ./.ok/config.yml)` to stderr. Exit `1` on failure with the offending Zod issues rendered in `file:line:col` + snippet form (Biome-style); each error line points at the exact YAML byte range. Stdout is reserved — emits nothing — so this composes cleanly into pre-commit hooks and CI shells.
 
 | Option         | Description                                                |
 | -------------- | ---------------------------------------------------------- |
-| `--cwd <path>` | Working directory (inherited global; selects the workspace config to load) |
+| `--cwd <path>` | Working directory (inherited global; selects the project config to load) |
 
 ### `config migrate`
 
-Idempotent codemod that drops fields removed from the schema during upgrades. Currently removes the 10 fields retired in 0.2: `sync.*` (all 7 keys), `persistence.debounceMs`, `persistence.maxDebounceMs`, and `server.port`. Future codemods extend this command rather than spawning new ones.
+Idempotent codemod that drops fields removed from the schema during upgrades. Currently removes: `sync.*` (all 7 keys), `persistence.debounceMs`, `persistence.maxDebounceMs`, `server.port`, `content.include`, and `content.exclude`. Future codemods extend this command rather than spawning new ones.
+
+For the content keys, `config migrate` strips the YAML entries; you must still recreate any exclusion patterns in `.okignore` manually — see [Content filtering](/guides/content-filtering#migrating-from-contentinclude--contentexclude). If removed keys remain in `config.yml`, OK rejects the file at load time with a source-located error directing you to `.okignore`.
 
 ```bash
-npx @inkeep/open-knowledge config migrate                       # workspace + user
+npx @inkeep/open-knowledge config migrate                       # project + user
 npx @inkeep/open-knowledge config migrate --dry-run             # preview only
-npx @inkeep/open-knowledge config migrate --scope workspace     # one scope
+npx @inkeep/open-knowledge config migrate --scope project     # one scope
 ```
 
 | Option              | Description                                                                                          |
 | ------------------- | ---------------------------------------------------------------------------------------------------- |
 | `--dry-run`         | Print which fields would be removed from each file; do not write.                                    |
-| `--scope <s>`       | `workspace`, `user`, or `both` (default).                                                             |
+| `--scope <s>`       | `project`, `user`, or `both` (default).                                                             |
 
 Comments, blank lines, anchors, and untouched keys are preserved through the round-trip via `yaml@2`'s Document layer. Writes are atomic (tmp + rename) and gated by the same Zod parse the runtime uses, so a partial / invalid file never lands. Re-running on a clean file is a no-op.

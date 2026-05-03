@@ -1,6 +1,14 @@
 /// <reference types="vite/client" />
 /// <reference types="bun-types" />
 
+declare module 'lucide-react/dist/esm/icons/bot' {
+  export const __iconNode: [string, Record<string, string>][];
+}
+
+declare module 'lucide-react/dist/esm/icons/link-2' {
+  export const __iconNode: [string, Record<string, string>][];
+}
+
 declare namespace globalThis {
   import type { HocuspocusProvider } from '@hocuspocus/provider';
   import type { Editor } from '@tiptap/core';
@@ -59,9 +67,4 @@ declare namespace globalThis {
    * post-sync reconnect paths (F8 acceptance criterion).
    */
   var __test_closeActiveWebSocket: (() => boolean) | undefined;
-  /**
-   * Test-only hook: set the pinned doc via the DocumentContext API without
-   * reaching into `localStorage` internals. Pass `null` to unpin.
-   */
-  var __test_setPin: ((docName: string | null) => void) | undefined;
 }

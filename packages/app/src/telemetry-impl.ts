@@ -1,22 +1,3 @@
-/**
- * OpenTelemetry SDK initialization — loaded lazily from `telemetry.ts`
- * only when `VITE_OTEL_ENABLED === 'true'`. The dynamic import keeps this
- * file (and its ~45 KB gzipped OTel dependencies) out of the main bundle.
- *
- * Instrumentations (minimum viable set per local-dev research):
- *   - DocumentLoadInstrumentation     — page-load navigation timing
- *   - FetchInstrumentation            — /api/* requests, auto-injects traceparent
- *   - UserInteractionInstrumentation  — click / submit spans
- *
- * Skipped on purpose:
- *   - ZoneContextManager — 40 KB gzipped, not needed for React 19 / async-await.
- *   - auto-instrumentations-web meta package — pulls in XHR we don't use.
- *   - @opentelemetry/instrumentation-xml-http-request — app is fetch-only.
- *
- * Hocuspocus WebSocket trace propagation: see `editor/collab-otel.ts` —
- * the browser's native WebSocket API cannot set headers, so we inject
- * traceparent as a URL query param at HocuspocusProvider construction.
- */
 import { trace } from '@opentelemetry/api';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { registerInstrumentations } from '@opentelemetry/instrumentation';
@@ -59,8 +40,6 @@ export function install(): void {
         }),
       ],
     });
-    // Default StackContextManager — synchronous, good enough for React 19
-    // + fetch + user-interaction. ZoneContextManager is not worth the 40 KB.
     provider.register();
     registered = true;
 
@@ -71,8 +50,6 @@ export function install(): void {
           eventNames: ['click', 'submit'],
         }),
         new FetchInstrumentation({
-          // Inject traceparent ONLY on loopback / relative /api/* URLs.
-          // Third-party origins won't receive trace context (privacy + CORS).
           propagateTraceHeaderCorsUrls: [
             /^https?:\/\/localhost(:\d+)?\/api\//,
             /^https?:\/\/127\.0\.0\.1(:\d+)?\/api\//,
@@ -87,13 +64,8 @@ export function install(): void {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn('[otel] frontend telemetry init failed — continuing without', err);
-    // Tear down any partial registration so a retry doesn't double-register.
-    // `installed = false` alone doesn't unwind provider.register() + span
-    // processors / exporter batch flush timers already wired up.
     if (registered && provider) {
-      void provider.shutdown().catch(() => {
-        /* best-effort — we're already in the error path */
-      });
+      void provider.shutdown().catch(() => {});
     }
     installed = false;
   }

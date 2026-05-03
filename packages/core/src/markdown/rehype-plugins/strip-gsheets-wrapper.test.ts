@@ -1,7 +1,3 @@
-/**
- * Tests for rehypeStripGsheetsWrapper — unwraps Google Sheets clipboard HTML.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

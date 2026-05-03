@@ -1,41 +1,13 @@
 import type { FolderRule } from './types.ts';
 
-/**
- * A starter-pack folder entry. Drives both the filesystem scaffold and the
- * `config.yml` `folders:` rule that the scaffolder writes for that folder.
- */
 export interface StarterFolder {
-  /** Directory name created under the project root, e.g. `external-sources`. */
   path: string;
-  /** Glob written to `config.yml` `folders:` entry `match:` field, e.g. `external-sources/**`. */
   match: string;
-  /** Human-readable title written to the folder rule frontmatter. */
   title: string;
-  /**
-   * Description written to the folder rule frontmatter. This is the **primary
-   * agent-guidance surface** for folder purpose — per SPEC 2026-04-22 D2 LOCKED,
-   * `ok seed` does NOT emit AGENTS.md files; agent guidance for each folder lives
-   * in this description, which surfaces at every `exec("ls <folder>")` /
-   * `read_document` / `search` call.
-   */
   description: string;
-  /** Tags written to the folder rule frontmatter. */
   tags: string[];
 }
 
-/**
- * The Karpathy three-layer knowledge-base starter pack.
- *
- * Mirrors the workflow tools the MCP server exposes:
- *   `external-sources/` ⇔ `ingest`
- *   `research/`         ⇔ `research`
- *   `articles/`         ⇔ `consolidate`
- *
- * See specs/2026-04-23-ok-seed-scaffold/SPEC.md §Design for the canonical text
- * and the bundled user-global skill at
- * packages/server/assets/skills/open-knowledge/SKILL.md §"Workflow tools" for
- * the layer semantics.
- */
 export const STARTER_FOLDERS: readonly StarterFolder[] = [
   {
     path: 'external-sources',
@@ -63,10 +35,6 @@ export const STARTER_FOLDERS: readonly StarterFolder[] = [
   },
 ] as const;
 
-/**
- * Content written to the optional root `log.md` (append-only work log per the
- * Karpathy pattern). Seeded empty; user appends entries over time.
- */
 export const LOG_MD_TEMPLATE = `---
 title: Work Log
 description: Append-only audit trail. After each turn that creates, edits, or restructures content in the knowledge base, append one dated entry here (one per turn, not per file). Silent edits break the audit trail.
@@ -82,7 +50,7 @@ What to log:
 - \`research\` / \`consolidate\` runs (provisional or canonical articles produced)
 - Direct \`write_document\` / \`edit_document\` / renames / deletions outside the three workflow tools
 - Folder restructures (\`ok seed\`, manual reorganization)
-- \`.open-knowledge/config.yml\` changes
+- \`.ok/config.yml\` changes
 
 **Reference docs as markdown links, not bare paths.** Every doc you touched should appear as \`[path/to/doc](./path/to/doc.md)\` so the log shows up in \`get_backlinks\` for those docs. A bare path string (\`Files touched: foo/bar.md\`) does not register in the doc graph — the audit trail compounds only when the log is a real linker.
 
@@ -98,11 +66,6 @@ What to log:
 -->
 `;
 
-/**
- * Build a `FolderRule` for the given starter folder. Used by `planSeed` /
- * `applySeed` to produce config.yml entries that match the existing
- * `FolderRuleSchema` shape.
- */
 export function starterFolderRule(folder: StarterFolder): FolderRule {
   return {
     match: folder.match,

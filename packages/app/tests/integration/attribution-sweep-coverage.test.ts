@@ -1,18 +1,15 @@
-/**
- * Attribution sweep meta-test (FR-5, D42) — static analysis gate.
- *
- * Asserts that every mutating POST handler in api-extension.ts calls
- * `extractAgentIdentity` and that no new POST handler can be added to the
- * route registry without being explicitly tracked here.
- */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const API_EXT_PATH = join(import.meta.dirname, '../../../server/src/api-extension.ts');
 const source = readFileSync(API_EXT_PATH, 'utf8');
+const ACTOR_HELPER_PATH = join(
+  import.meta.dirname,
+  '../../../server/src/extract-actor-identity.ts',
+);
+const actorHelperSource = readFileSync(ACTOR_HELPER_PATH, 'utf8');
 
-/** Mutating POST handlers that must call extractAgentIdentity. */
 const REQUIRED_HANDLERS = [
   'handleAgentWrite',
   'handleAgentWriteMd',
@@ -21,24 +18,11 @@ const REQUIRED_HANDLERS = [
   'handleSaveVersion',
   'handleRollback',
   'handleCreatePage',
-  'handleRename',
   'handleRenamePath',
   'handleDeletePath',
-  // Single unified upload handler — `/api/upload` (accept-all by extension).
-  // The per-MIME `handleUploadVideo` / `handleUploadAudio` shape was retired
-  // when this branch superseded #310's pipeline; one handler, one identity
-  // call site.
   'handleUploadImage',
 ];
 
-/**
- * Handlers exempt from identity threading: GET-only endpoints, test utilities,
- * local-op handlers whose callers are not agents, and sync orchestrator
- * handlers where the HTTP boundary is control-plane only — the actual commits
- * they produce come from the SyncEngine internally and are already attributed
- * via classified writers (git-upstream, file-system, openknowledge-service).
- * See D42 corrigendum on SPEC.md §10.
- */
 const EXEMPT_HANDLERS = new Set([
   'handleDocumentRead',
   'handleDocumentList',
@@ -81,16 +65,12 @@ const EXEMPT_HANDLERS = new Set([
   'handleTestReset',
   'handlePrincipal',
   'handleInstalledAgentsRoute',
-  // GET /api/server-info — identity-free readonly endpoint surfacing the
-  // per-process serverInstanceId for CRDT restart-recovery defense.
   'handleServerInfo',
-  // `ok seed` scaffolder endpoints (SPEC 2026-04-23-ok-seed-scaffold). Both
-  // operate on project-level folder structure + config.yml on behalf of the
-  // local user, not agent content — same rationale as sync/local-op handlers.
   'handleSeedPlan',
   'handleSeedApply',
   'handleAgentActivity',
   'handleAgentBurstDiff',
+  'handleInstallSkill',
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {
@@ -112,7 +92,7 @@ function extractStaticRouteHandlerNames(): string[] {
 }
 
 describe('attribution sweep coverage (FR-5, D42)', () => {
-  test('all required POST handlers call extractAgentIdentity', () => {
+  test('all required POST handlers call an identity-threading helper', () => {
     const failures: string[] = [];
     for (const handler of REQUIRED_HANDLERS) {
       const body = extractHandlerBody(handler);
@@ -120,8 +100,8 @@ describe('attribution sweep coverage (FR-5, D42)', () => {
         failures.push(`${handler}: function not found in source`);
         continue;
       }
-      if (!body.includes('extractAgentIdentity(')) {
-        failures.push(`${handler}: missing extractAgentIdentity call`);
+      if (!body.includes('extractAgentIdentity(') && !body.includes('extractActorIdentity(')) {
+        failures.push(`${handler}: missing extractAgentIdentity or extractActorIdentity call`);
       }
     }
     expect(failures).toEqual([]);
@@ -132,5 +112,10 @@ describe('attribution sweep coverage (FR-5, D42)', () => {
     const required = new Set(REQUIRED_HANDLERS);
     const untracked = names.filter((h) => !required.has(h) && !EXEMPT_HANDLERS.has(h));
     expect(untracked).toEqual([]);
+  });
+
+  test('extract-actor-identity.ts never reads body-supplied principalId (D-A11 trust boundary)', () => {
+    const code = actorHelperSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(/body\s*[.[][^a-zA-Z0-9_]*['"]?principalId/.test(code)).toBe(false);
   });
 });

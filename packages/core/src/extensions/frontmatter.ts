@@ -1,11 +1,4 @@
-/**
- * Frontmatter strip/prepend utilities for markdown round-trip.
- *
- * marked treats `---` as a thematic break (horizontal rule).
- * Frontmatter must be regex-stripped before parsing and re-prepended after serialization.
- */
-
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)?---(\r?\n|$)/;
+export const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)?---(\r?\n|$)/;
 
 export function stripFrontmatter(markdown: string): { frontmatter: string; body: string } {
   const match = markdown.match(FRONTMATTER_RE);
@@ -21,4 +14,12 @@ export function stripFrontmatter(markdown: string): { frontmatter: string; body:
 export function prependFrontmatter(frontmatter: string, body: string): string {
   if (!frontmatter) return body;
   return frontmatter + body;
+}
+
+export function unwrapFrontmatterFences(fenced: string): string {
+  if (fenced === '') return '';
+  const match = fenced.match(FRONTMATTER_RE);
+  if (!match) return fenced;
+  const body = match[1] ?? '';
+  return body.replace(/\r?\n$/, '');
 }

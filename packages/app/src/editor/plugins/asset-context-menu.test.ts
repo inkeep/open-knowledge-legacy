@@ -1,9 +1,3 @@
-/**
- * Unit tests for the right-click context-menu target classifier.
- * Exercises `classifyContextMenuTarget` against fake DOM ancestors
- * without mounting an editor.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { classifyContextMenuTarget } from './asset-context-menu';
 

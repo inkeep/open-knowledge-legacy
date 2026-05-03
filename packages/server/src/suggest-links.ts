@@ -16,7 +16,6 @@ const log = getLogger('suggest-links');
 
 const WORD_CHAR_RE = /[\p{L}\p{N}]/u;
 
-// Line-oriented variants: excludes \n since lines are pre-split.
 const WIKI_LINK_RE = /\[\[([^\n#[\]|]+)(?:#([^\n[\]|]+))?(?:\|([^\n[\]]+))?\]\]/y;
 const MD_LINK_RE =
   /\[([^\]\n]*)\]\((<[^>\n]+>|[^)\s\n]+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\)/y;
@@ -499,9 +498,8 @@ function scanMarkdownForMentions(
 function serializeLiveDocument(document: Document): string {
   const xmlFragment = document.getXmlFragment('default');
   const body = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON());
-  const metaMap = document.getMap('metadata');
-  const frontmatter = metaMap.get('frontmatter');
-  return prependFrontmatter(typeof frontmatter === 'string' ? frontmatter : '', body);
+  const fm = stripFrontmatter(document.getText('source').toString()).frontmatter;
+  return prependFrontmatter(fm, body);
 }
 
 async function readDocumentMarkdown(

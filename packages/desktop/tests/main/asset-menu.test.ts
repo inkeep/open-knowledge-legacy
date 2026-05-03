@@ -1,9 +1,3 @@
-/**
- * Unit tests for asset context-menu template + pop dispatch (SPEC 2026-04-23
- * amendment FR-A8 / D-A7). Covers platform-specific Reveal label, action
- * dispatch wiring, and the pop integration with an injected Menu ctor.
- */
-
 import { describe, expect, mock, test } from 'bun:test';
 import type { BrowserWindow, Menu, MenuItemConstructorOptions } from 'electron';
 import {

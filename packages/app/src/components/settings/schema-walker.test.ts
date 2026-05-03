@@ -1,9 +1,3 @@
-/**
- * Pure tests for the schema-walker helpers. Runs against the real
- * `ConfigSchema` from `@inkeep/open-knowledge-core`, so any drift between
- * the published schema and the form's introspection surfaces here.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { ConfigSchema } from '@inkeep/open-knowledge-core';
 import {
@@ -11,8 +5,6 @@ import {
   getEnumOptions,
   getFieldDefault,
   getLeafTypeTag,
-  pathHasValue,
-  readPath,
   resolveLeafSchema,
 } from './schema-walker';
 
@@ -38,31 +30,6 @@ describe('buildPatch', () => {
   });
 });
 
-describe('readPath / pathHasValue', () => {
-  const sample = {
-    mcp: { tools: { search: { maxResults: 50 } } },
-    appearance: {},
-  };
-
-  test('readPath traverses object path', () => {
-    expect(readPath(sample, ['mcp', 'tools', 'search', 'maxResults'])).toBe(50);
-  });
-
-  test('readPath returns undefined for missing leaf', () => {
-    expect(readPath(sample, ['mcp', 'tools', 'missing'])).toBeUndefined();
-  });
-
-  test('pathHasValue is true for set keys', () => {
-    expect(pathHasValue(sample, ['mcp', 'tools'])).toBe(true);
-    expect(pathHasValue(sample, ['mcp', 'tools', 'search', 'maxResults'])).toBe(true);
-  });
-
-  test('pathHasValue is false for missing keys', () => {
-    expect(pathHasValue(sample, ['appearance', 'theme'])).toBe(false);
-    expect(pathHasValue(sample, ['github', 'oauthAppClientId'])).toBe(false);
-  });
-});
-
 function requireLeaf(path: readonly string[]) {
   const leaf = resolveLeafSchema(ConfigSchema, path);
   if (!leaf) throw new Error(`expected leaf at ${path.join('.')}`);
@@ -76,7 +43,6 @@ describe('resolveLeafSchema against ConfigSchema', () => {
 
   test('descends to a number leaf', () => {
     const tag = getLeafTypeTag(requireLeaf(['mcp', 'tools', 'search', 'maxResults']));
-    // Could be 'number' or 'int' depending on Zod's representation
     expect(['number', 'int', 'integer'].includes(tag ?? '')).toBe(true);
   });
 
@@ -91,7 +57,7 @@ describe('resolveLeafSchema against ConfigSchema', () => {
   });
 
   test('descends to an array leaf', () => {
-    expect(getLeafTypeTag(requireLeaf(['content', 'include']))).toBe('array');
+    expect(getLeafTypeTag(requireLeaf(['folders']))).toBe('array');
   });
 
   test('returns undefined for non-existent path', () => {
@@ -107,7 +73,7 @@ describe('getFieldDefault against ConfigSchema', () => {
   });
 
   test('returns array defaults', () => {
-    expect(getFieldDefault(requireLeaf(['content', 'exclude']))).toEqual([]);
+    expect(getFieldDefault(requireLeaf(['folders']))).toEqual([]);
   });
 
   test('returns undefined for fields without .default()', () => {

@@ -1,17 +1,6 @@
-/**
- * `open-knowledge clean` — prune stale / corrupt lock files; never touch live
- * or foreign-host locks.
- *
- * SPEC FR-1.7b / D-024: split from `ok stop` so lock-hygiene is a distinct
- * step. "Stale" here means same-host + dead pid OR unparseable JSON. A
- * cross-host lock is NOT ours to clean (we can't verify the remote pid), so
- * `ok clean` leaves it alone.
- */
-
 import { unlinkSync } from 'node:fs';
+import { type Config, resolveContentDir, resolveLockDir } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
-import type { Config } from '../config/schema.ts';
 import { inspectLock, type LockState } from './lock-state.ts';
 
 interface PruneTarget {
@@ -24,10 +13,6 @@ interface CleanPlan {
   prune: PruneTarget[];
 }
 
-/**
- * Pure plan builder — decides which lock files should be removed. `alive`,
- * `missing`, and `foreign-host` states are all left alone.
- */
 export function buildCleanPlan(server: LockState, ui: LockState): CleanPlan {
   const prune: PruneTarget[] = [];
   for (const [name, state] of [['server', server] as const, ['ui', ui] as const]) {

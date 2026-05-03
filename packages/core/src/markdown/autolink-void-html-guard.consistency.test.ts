@@ -1,19 +1,7 @@
-/**
- * Guard self-consistency: protectFromMdx + restoreFromMdx preserves content.
- *
- * Two properties:
- * 1. Text round-trip: for any string without PUA chars (U+E000-E004),
- *    restoreString(protectFromMdx(s)) === s. The guard is a bijection on
- *    the non-PUA string space.
- * 2. Sentinel exhaustiveness: protectFromMdx output never contains literal
- *    unmatched `<` or `{` (they're all replaced with PUA sentinels).
- */
-
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
 import { protectFromMdx } from './autolink-void-html-guard.ts';
 
-// Inline restoreString since it's not exported
 function restoreString(s: string): string {
   return s
     .replaceAll('\uE000', '<')
@@ -23,7 +11,6 @@ function restoreString(s: string): string {
     .replaceAll('\uE004', '{');
 }
 
-/** Generate strings that never contain PUA sentinel chars. */
 const nonPuaString = fc
   .array(
     fc.oneof(
@@ -59,19 +46,10 @@ describe('Guard self-consistency', () => {
       fc.assert(
         fc.property(nonPuaString, (s) => {
           const protected_ = protectFromMdx(s);
-          // Count literal { and } (not PUA sentinels). US-009 (R6a) widened
-          // the invariant: braces preceded by an odd number of backslashes
-          // are CommonMark-escaped and remark-parse consumes the escape, so
-          // they don't need PUA protection (and must NOT be protected —
-          // protecting defeats the escape and causes safeText cumulation).
-          //
-          // We ignore escaped braces in the depth count: the post-fix
-          // invariant is "no unmatched, UNESCAPED literal { remains."
           let depth = 0;
           for (let i = 0; i < protected_.length; i++) {
             const ch = protected_[i];
             if (ch !== '{' && ch !== '}') continue;
-            // Count preceding backslashes; odd = escaped → ignore.
             let bs = 0;
             for (let j = i - 1; j >= 0 && protected_[j] === '\\'; j--) bs++;
             if (bs % 2 === 1) continue;
@@ -92,16 +70,13 @@ describe('Guard self-consistency', () => {
   test('braces across paragraph break are treated as unmatched', () => {
     const input = '{\n\n}text';
     const protected_ = protectFromMdx(input);
-    // Opening { should be protected since } is in a different paragraph
     expect(protected_[0]).toBe('\uE004');
-    // The rest should be unchanged (} is just text, not a closing brace)
     expect(protected_.slice(1)).toBe('\n\n}text');
   });
 
   test('braces within same paragraph remain matched', () => {
     const input = '{expr}\nmore text';
     const protected_ = protectFromMdx(input);
-    // No paragraph break — braces should remain as-is (matched pair)
     expect(protected_).toBe('{expr}\nmore text');
   });
 

@@ -1,16 +1,3 @@
-/**
- * 5-class error taxonomy for git sync operations.
- *
- * Inspired by Temporal's ApplicationFailure.non_retryable pattern:
- * each class is explicitly tagged as retryable or non-retryable so
- * callers can decide recovery strategy without inspecting raw stderr.
- */
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/** Subclass strings, narrowed per class. */
 type NetworkSubclass = 'dns' | 'timeout' | '5xx' | '429' | 'connection-refused' | 'unknown-network';
 type AuthSubclass = '401' | '403' | 'expired-token' | 'scope-mismatch' | 'unknown-auth';
 type SemanticSubclass =
@@ -26,7 +13,6 @@ type StructuralSubclass =
   | 'unknown-structural';
 type LocalSubclass = 'index-lock' | 'dirty-tree' | 'disk-full' | 'unknown-local';
 
-/** Tagged result from classifyGitError(). */
 export type ClassifiedError =
   | {
       class: 'network';
@@ -58,12 +44,7 @@ export type ClassifiedError =
       rawStderr?: string;
     };
 
-// ---------------------------------------------------------------------------
-// Stderr pattern matchers
-// ---------------------------------------------------------------------------
-
 function extractStderr(error: Error): string {
-  // simple-git errors may have a `git` property or message with stderr
   const raw = (error as unknown as Record<string, unknown>).git?.toString() ?? error.message ?? '';
   return raw;
 }
@@ -71,10 +52,6 @@ function extractStderr(error: Error): string {
 function matchesAny(haystack: string, patterns: RegExp[]): boolean {
   return patterns.some((re) => re.test(haystack));
 }
-
-// ---------------------------------------------------------------------------
-// Class 2 (Auth) matchers
-// ---------------------------------------------------------------------------
 
 const AUTH_PATTERNS: RegExp[] = [
   /\b(401|403)\b/,
@@ -96,10 +73,6 @@ const SCOPE_MISMATCH_PATTERNS: RegExp[] = [
   /required scope/i,
 ];
 
-// ---------------------------------------------------------------------------
-// Class 3 (Semantic) matchers
-// ---------------------------------------------------------------------------
-
 const NON_FAST_FORWARD_PATTERNS: RegExp[] = [
   /non-fast-forward/i,
   /rejected.*non-fast-forward/i,
@@ -115,12 +88,10 @@ const PROTECTED_BRANCH_PATTERNS: RegExp[] = [
   /at least \d+ approving review/i,
   /required status check/i,
   /branch policy/i,
-  // GitHub-specific error codes (GH001-GH004 dugite equivalents)
   /GH001/i,
   /GH002/i,
   /GH003/i,
   /GH004/i,
-  // GitHub API rejection wording
   /push declined due to repository rule/i,
   /cannot push to a protected branch/i,
 ];
@@ -130,14 +101,8 @@ const MERGE_CONFLICT_PATTERNS: RegExp[] = [
   /automatic merge failed/i,
   /CONFLICT \(/,
   /\bconflict\b.*\bmerge\b/i,
-  // simple-git's GitResponseError wraps MergeSummaryDetail; both its
-  // `message` and `error.git.toString()` produce "CONFLICTS: file:reason[, …]".
   /(?:^|\n)CONFLICTS:\s/i,
 ];
-
-// ---------------------------------------------------------------------------
-// Class 4 (Structural) matchers
-// ---------------------------------------------------------------------------
 
 const LFS_PATTERNS: RegExp[] = [/lfs.*quota/i, /exceeded.*bandwidth/i, /lfs storage/i];
 
@@ -161,10 +126,6 @@ const SECRET_DETECTED_PATTERNS: RegExp[] = [
   /token.*detected/i,
 ];
 
-// ---------------------------------------------------------------------------
-// Class 5 (Local) matchers
-// ---------------------------------------------------------------------------
-
 const INDEX_LOCK_PATTERNS: RegExp[] = [
   /\.git\/index\.lock/i,
   /another git process/i,
@@ -185,10 +146,6 @@ const DIRTY_TREE_PATTERNS: RegExp[] = [
 
 const DISK_FULL_PATTERNS: RegExp[] = [/no space left on device/i, /disk quota exceeded/i, /ENOSPC/];
 
-// ---------------------------------------------------------------------------
-// Class 1 (Network) matchers
-// ---------------------------------------------------------------------------
-
 const NETWORK_PATTERNS: RegExp[] = [
   /could not resolve host/i,
   /name.*resolution/i,
@@ -205,9 +162,6 @@ const NETWORK_PATTERNS: RegExp[] = [
   /ehostunreach/i,
 ];
 
-// Anchored to HTTP-status contexts so unrelated 3-digit numbers (file paths
-// like `/data/file501.txt`, error text like "502 bytes") don't route local
-// faults into the network class with retry/backoff.
 const HTTP_5XX_PATTERNS: RegExp[] = [
   /\bHTTP[\s/]*5[0-9]{2}\b/i,
   /\bstatus:?\s*5[0-9]{2}\b/i,
@@ -222,27 +176,11 @@ const HTTP_429_PATTERNS: RegExp[] = [
   /too many requests/i,
 ];
 
-// ---------------------------------------------------------------------------
-// Classifier
-// ---------------------------------------------------------------------------
-
-/**
- * Classify a git operation error into one of 5 retry-tagged classes.
- *
- * Priority order (most specific first):
- *   1. Local (index.lock, dirty tree) — must check before semantic
- *   2. Auth (401, 403, bad credentials)
- *   3. Semantic (protected branch > non-FF > merge conflict)
- *   4. Structural (LFS, large file, pre-receive, secret)
- *   5. Network (DNS, timeout, 5xx, 429)
- *   6. Local fallback (catch-all for git process errors)
- */
 export function classifyGitError(error: Error | unknown): ClassifiedError {
   const err = error instanceof Error ? error : new Error(String(error));
   const raw = extractStderr(err);
   const combined = `${err.message}\n${raw}`.toLowerCase();
 
-  // --- Class 5 (Local) — check early to avoid misclassifying index.lock as auth
   if (matchesAny(combined, INDEX_LOCK_PATTERNS)) {
     return {
       class: 'local',
@@ -271,7 +209,6 @@ export function classifyGitError(error: Error | unknown): ClassifiedError {
     };
   }
 
-  // --- Class 2 (Auth)
   if (matchesAny(combined, SCOPE_MISMATCH_PATTERNS)) {
     return {
       class: 'auth',
@@ -282,7 +219,6 @@ export function classifyGitError(error: Error | unknown): ClassifiedError {
     };
   }
   if (matchesAny(combined, AUTH_PATTERNS)) {
-    // Distinguish 401 vs 403
     if (/\b401\b/.test(combined) || /token.*expired/i.test(combined)) {
       return {
         class: 'auth',
@@ -293,7 +229,6 @@ export function classifyGitError(error: Error | unknown): ClassifiedError {
       };
     }
     if (/\b403\b/.test(combined)) {
-      // 403 might be protected branch — check semantic first in subsequent block
       if (matchesAny(combined, PROTECTED_BRANCH_PATTERNS)) {
         return {
           class: 'semantic',
@@ -320,7 +255,6 @@ export function classifyGitError(error: Error | unknown): ClassifiedError {
     };
   }
 
-  // --- Class 3 (Semantic)
   if (matchesAny(combined, PROTECTED_BRANCH_PATTERNS)) {
     return {
       class: 'semantic',
@@ -349,7 +283,6 @@ export function classifyGitError(error: Error | unknown): ClassifiedError {
     };
   }
 
-  // --- Class 4 (Structural)
   if (matchesAny(combined, LFS_PATTERNS)) {
     return {
       class: 'structural',
@@ -387,7 +320,6 @@ export function classifyGitError(error: Error | unknown): ClassifiedError {
     };
   }
 
-  // --- Class 1 (Network)
   if (matchesAny(combined, HTTP_429_PATTERNS)) {
     return {
       class: 'network',
@@ -447,7 +379,6 @@ export function classifyGitError(error: Error | unknown): ClassifiedError {
     };
   }
 
-  // --- Class 5 fallback (local unknown)
   return {
     class: 'local',
     subclass: 'unknown-local',

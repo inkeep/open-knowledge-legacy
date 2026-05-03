@@ -1,24 +1,3 @@
-/**
- * Tests for agent-write frontmatter handling.
- *
- * These tests capture the bug where write_document (POST /api/agent-write-md)
- * and edit_document (POST /api/agent-patch) silently drop or mishandle
- * YAML frontmatter in the agent's payload.
- *
- * The canonical markdown representation is frontmatter + body. Both agent
- * write surfaces MUST address both regions:
- *
- * 1. write_document with a replace payload that includes frontmatter must
- *    route that frontmatter into Y.Map('metadata') so it reaches disk via
- *    onStoreDocument's `prependFrontmatter(fmFromDoc, body)` path.
- *
- * 2. write_document with a body-only replace payload must preserve existing
- *    frontmatter (don't drop it, don't duplicate it).
- *
- * 3. edit_document (agent-patch) must be able to find/replace text inside
- *    the frontmatter region, not just the body — frontmatter is part of
- *    the document as the agent sees it on disk.
- */
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -26,10 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { Hocuspocus } from '@hocuspocus/server';
+import { readFmMap, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import {
   AGENT_WRITE_ORIGIN,
   AgentSessionManager,
   applyAgentMarkdownWrite,
+  applyAgentUndo,
 } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 
@@ -95,20 +76,28 @@ function setup() {
   return { projectDir, contentDir, hocuspocus, sessionManager, cleanup };
 }
 
+function ytextFm(doc: import('yjs').Doc): string {
+  return stripFrontmatter(doc.getText('source').toString()).frontmatter;
+}
+
+function fmMap(doc: import('yjs').Doc): Record<string, unknown> {
+  return readFmMap(doc.getText('source').toString());
+}
+
 describe('POST /api/agent-write-md (write_document) — frontmatter handling', () => {
-  test('replace with a payload containing frontmatter updates Y.Map("metadata") — not just body', async () => {
+  test('replace with payload containing FM updates the YAML region of Y.Text', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
 
-      // Seed existing frontmatter in metaMap (simulates a file loaded from disk).
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', '---\ntitle: Old Title\n---\n');
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nOriginal body.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          '---\ntitle: Old Title\n---\n# Body\n\nOriginal body.\n',
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
-      // Agent sends a full document — frontmatter AND body — via write_document.
       const payload =
         '---\ntitle: New Title\ncluster: research\n---\n\n# Body\n\nAgent-updated body.\n';
       const response = await callApi(
@@ -121,22 +110,17 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
 
       expect(response.status).toBe(200);
 
-      // metaMap must now reflect the agent's new frontmatter.
-      const fm = metaMap.get('frontmatter');
-      expect(fm).toBe('---\ntitle: New Title\ncluster: research\n---\n');
+      expect(fmMap(session.dc.document)).toEqual({
+        title: 'New Title',
+        cluster: 'research',
+      });
 
-      // Y.Text must NOT contain the literal --- fences (they're in metaMap, not body).
-      // After Observer A debounce, ytext should be frontmatter + body. We assert the
-      // synchronous state that applyAgentMarkdownWrite produces via applyFastDiff:
-      // ytext === prependFrontmatter(fm, canonicalBody).
       const ytext = session.dc.document.getText('source').toString();
       expect(ytext).toContain('title: New Title');
       expect(ytext).toContain('cluster: research');
       expect(ytext).toContain('Agent-updated body.');
-      // The body region must NOT contain a stray --- fence (the bug produced
-      // a document with either doubled frontmatter or a thematicBreak from
-      // the agent's --- being parsed as body).
-      const closingFenceIdx = ytext.indexOf('---\n', 4); // skip opening ---\n at 0
+
+      const closingFenceIdx = ytext.indexOf('---\n', 4);
       expect(closingFenceIdx).toBeGreaterThan(-1);
       const afterFmClose = ytext.slice(closingFenceIdx + 4);
       expect(afterFmClose).not.toContain('---');
@@ -145,20 +129,16 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
     }
   });
 
-  test('replace with body-only payload preserves existing frontmatter', async () => {
+  test('replace with body-only payload preserves existing FM', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
 
-      // Seed a document with frontmatter already loaded.
       const existingFm = '---\ntitle: Keep Me\nauthor: Alice\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Old Body\n', 'replace');
+        applyAgentMarkdownWrite(session.dc.document, `${existingFm}# Old Body\n`, 'replace');
       }, AGENT_WRITE_ORIGIN);
 
-      // Agent replaces the body only — no frontmatter in payload.
       const response = await callApi(
         hocuspocus,
         sessionManager,
@@ -169,8 +149,11 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
 
       expect(response.status).toBe(200);
 
-      // Existing frontmatter must survive unchanged.
-      expect(metaMap.get('frontmatter')).toBe(existingFm);
+      expect(ytextFm(session.dc.document)).toBe(existingFm);
+      expect(fmMap(session.dc.document)).toEqual({
+        title: 'Keep Me',
+        author: 'Alice',
+      });
 
       const ytext = session.dc.document.getText('source').toString();
       expect(ytext.startsWith(existingFm)).toBe(true);
@@ -182,16 +165,18 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
     }
   });
 
-  test('append payload never touches frontmatter', async () => {
+  test('append payload never touches FM', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
 
       const existingFm = '---\ntitle: Stable\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Header\n\nFirst paragraph.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          `${existingFm}# Header\n\nFirst paragraph.\n`,
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callApi(
@@ -203,33 +188,27 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
       );
 
       expect(response.status).toBe(200);
-      expect(metaMap.get('frontmatter')).toBe(existingFm);
+      expect(ytextFm(session.dc.document)).toBe(existingFm);
+      expect(fmMap(session.dc.document)).toEqual({ title: 'Stable' });
 
       const ytext = session.dc.document.getText('source').toString();
       expect(ytext).toContain('title: Stable');
       expect(ytext).toContain('First paragraph.');
       expect(ytext).toContain('Appended paragraph.');
-      // Frontmatter must appear exactly once.
-      expect(ytext.split('---\n').length).toBe(3); // opening ---, closing ---, trailing after = 3 splits
+      expect(ytext.split('---\n').length).toBe(3);
     } finally {
       await cleanup();
     }
   });
 
-  test('append payload that itself starts with frontmatter does NOT double-write frontmatter', async () => {
-    // Defensive case: an agent mistakenly prepends frontmatter to an append payload.
-    // The append operation should treat the payload as body — strip any leading
-    // frontmatter before composing (or at minimum, never produce a document with
-    // two --- frontmatter blocks).
+  test('append payload that itself starts with FM does NOT double-write FM', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
 
       const existingFm = '---\ntitle: First\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n', 'replace');
+        applyAgentMarkdownWrite(session.dc.document, `${existingFm}# Body\n`, 'replace');
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callApi(
@@ -245,31 +224,24 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
       );
 
       expect(response.status).toBe(200);
+      expect(fmMap(session.dc.document)).toEqual({ title: 'First' });
 
       const ytext = session.dc.document.getText('source').toString();
-      // Must not contain two frontmatter blocks.
       const fmOpenMatches = ytext.match(/^---\n|^\n---\n/gm) ?? [];
-      expect(fmOpenMatches.length).toBeLessThanOrEqual(2); // opener + closer of ONE block
+      expect(fmOpenMatches.length).toBeLessThanOrEqual(2);
     } finally {
       await cleanup();
     }
   });
 
-  test('prepend payload that itself starts with frontmatter does NOT double-write frontmatter', async () => {
-    // Parity with the append case above: if an agent mistakenly prepends frontmatter
-    // to a prepend payload, the operation must treat the payload as body — strip any
-    // leading frontmatter before composing so the document never ends up with two
-    // --- blocks. Guards against regressions in the prepend branch of
-    // applyAgentMarkdownWrite, which uses the same defensive-strip pattern as append.
+  test('prepend payload that itself starts with FM does NOT double-write FM', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
 
       const existingFm = '---\ntitle: First\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Original Body\n', 'replace');
+        applyAgentMarkdownWrite(session.dc.document, `${existingFm}# Original Body\n`, 'replace');
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callApi(
@@ -285,18 +257,14 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
       );
 
       expect(response.status).toBe(200);
-
-      // Existing frontmatter must survive; payload FM must be stripped.
-      expect(metaMap.get('frontmatter')).toBe(existingFm);
+      expect(ytextFm(session.dc.document)).toBe(existingFm);
+      expect(fmMap(session.dc.document)).toEqual({ title: 'First' });
 
       const ytext = session.dc.document.getText('source').toString();
-      // Must not contain two frontmatter blocks.
       const fmOpenMatches = ytext.match(/^---\n|^\n---\n/gm) ?? [];
-      expect(fmOpenMatches.length).toBeLessThanOrEqual(2); // opener + closer of ONE block
-      // Body carries the prepended content, original body still present.
+      expect(fmOpenMatches.length).toBeLessThanOrEqual(2);
       expect(ytext).toContain('Prepended.');
       expect(ytext).toContain('# Original Body');
-      // The payload's 'title: Second' must NOT leak into the body or metaMap.
       expect(ytext).not.toContain('title: Second');
     } finally {
       await cleanup();
@@ -304,49 +272,159 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
   });
 });
 
-describe('POST /api/agent-patch (edit_document) — frontmatter handling', () => {
-  test('can find and replace text inside frontmatter', async () => {
+describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () => {
+  test('rejects yaml-shape find (e.g. "cluster: misc") with 400 + migration hint', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
 
       const existingFm = '---\ntitle: Old Title\ncluster: misc\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nThe body stays.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          `${existingFm}# Body\n\nThe body stays.\n`,
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
-      // Agent wants to change cluster: misc → cluster: research.
       const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
         docName: 'test-doc',
         find: 'cluster: misc',
         replace: 'cluster: research',
       });
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(400);
+      const parsed = JSON.parse(response.body);
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error).toContain('Frontmatter edits are not supported');
+      expect(parsed.error).toContain('write_document');
 
-      const fm = metaMap.get('frontmatter');
-      expect(fm).toBe('---\ntitle: Old Title\ncluster: research\n---\n');
-
-      // Body must remain untouched.
+      expect(ytextFm(session.dc.document)).toBe(existingFm);
+      expect(fmMap(session.dc.document)).toEqual({
+        title: 'Old Title',
+        cluster: 'misc',
+      });
       const ytext = session.dc.document.getText('source').toString();
+      expect(ytext).toContain('cluster: misc');
+      expect(ytext).not.toContain('cluster: research');
       expect(ytext).toContain('The body stays.');
-      expect(ytext).not.toContain('cluster: misc');
     } finally {
       await cleanup();
     }
   });
 
-  test('returns 404 not-found (not a success) when find is absent from BOTH frontmatter and body', async () => {
+  test('rejects find containing "---" fence with 400 + doc unchanged', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
+
+      const existingFm = '---\ntitle: ToRemove\n---\n';
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          `${existingFm}# Body\n\nKeep me.\n`,
+          'replace',
+        );
+      }, AGENT_WRITE_ORIGIN);
+
+      const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
+        docName: 'test-doc',
+        find: '---\ntitle: ToRemove\n---\n',
+        replace: '',
+      });
+
+      expect(response.status).toBe(400);
+      const parsed = JSON.parse(response.body);
+      expect(parsed.error).toContain('Frontmatter edits are not supported');
+
+      expect(ytextFm(session.dc.document)).toBe(existingFm);
+      expect(fmMap(session.dc.document)).toEqual({ title: 'ToRemove' });
+      const ytext = session.dc.document.getText('source').toString();
+      expect(ytext).toContain('title: ToRemove');
+      expect(ytext).toContain('Keep me.');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('rejects body-shape find ("draft") that first-matches inside FM via position-based check', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      const session = await sessionManager.getSession('test-doc');
+
+      const existingFm = '---\nstatus: draft\n---\n';
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          `${existingFm}# Body\n\nNot a draft.\n`,
+          'replace',
+        );
+      }, AGENT_WRITE_ORIGIN);
+
+      const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
+        docName: 'test-doc',
+        find: 'draft',
+        replace: 'published',
+      });
+
+      expect(response.status).toBe(400);
+      const parsed = JSON.parse(response.body);
+      expect(parsed.error).toContain('Frontmatter edits are not supported');
+
+      expect(ytextFm(session.dc.document)).toBe(existingFm);
+      expect(fmMap(session.dc.document)).toEqual({ status: 'draft' });
+      const ytext = session.dc.document.getText('source').toString();
+      expect(ytext).toContain('status: draft');
+      expect(ytext).toContain('Not a draft.');
+      expect(ytext).not.toContain('published');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('body-only patch with non-yaml find still applies (regression — body path unaffected)', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      const session = await sessionManager.getSession('test-doc');
+
+      const existingFm = '---\ntitle: Doc\n---\n';
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          `${existingFm}# Body\n\nalpha appears here.\n`,
+          'replace',
+        );
+      }, AGENT_WRITE_ORIGIN);
+
+      const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
+        docName: 'test-doc',
+        find: 'alpha',
+        replace: 'beta',
+      });
+
+      expect(response.status).toBe(200);
+
+      expect(ytextFm(session.dc.document)).toBe(existingFm);
+      expect(fmMap(session.dc.document)).toEqual({ title: 'Doc' });
+      const ytext = session.dc.document.getText('source').toString();
+      expect(ytext).toContain('beta appears here.');
+      expect(ytext).not.toContain('alpha appears here.');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('returns 404 (not 400) when non-yaml find is absent from both FM and body', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      const session = await sessionManager.getSession('test-doc');
 
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', '---\ntitle: Stable\n---\n');
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nReal content.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          '---\ntitle: Stable\n---\n# Body\n\nReal content.\n',
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
@@ -358,106 +436,101 @@ describe('POST /api/agent-patch (edit_document) — frontmatter handling', () =>
       expect(response.status).toBe(404);
       const parsed = JSON.parse(response.body);
       expect(parsed.ok).toBe(false);
+      expect(parsed.error).not.toContain('Frontmatter edits are not supported');
     } finally {
       await cleanup();
     }
   });
 
-  test('patch in body still works (regression — frontmatter fix must not break body patching)', async () => {
+  test('rejects yaml-shape find even when no FM exists in the doc (heuristic precheck is doc-stateless)', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
 
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', '---\ntitle: Doc\n---\n');
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nalpha appears here.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          '# Body\n\nfoo: bar appears here.\n',
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
         docName: 'test-doc',
-        find: 'alpha',
-        replace: 'beta',
+        find: 'foo: bar',
+        replace: 'baz: qux',
       });
 
-      expect(response.status).toBe(200);
-
-      // Frontmatter unchanged.
-      expect(metaMap.get('frontmatter')).toBe('---\ntitle: Doc\n---\n');
+      expect(response.status).toBe(400);
+      const parsed = JSON.parse(response.body);
+      expect(parsed.error).toContain('Frontmatter edits are not supported');
 
       const ytext = session.dc.document.getText('source').toString();
-      expect(ytext).toContain('beta appears here.');
-      expect(ytext).not.toContain('alpha appears here.');
+      expect(ytext).toContain('foo: bar appears here.');
+      expect(ytext).not.toContain('baz: qux');
     } finally {
       await cleanup();
     }
   });
 
-  test('patch that prefers frontmatter match over later body match (first-match semantics across full doc)', async () => {
+  test('does NOT precheck-reject body-only patch on bare-colon prose (`IMPORTANT:`, `Note:`)', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
 
-      // Both frontmatter and body contain the word "draft".
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', '---\nstatus: draft\n---\n');
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nNot a draft.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          '---\ntitle: Doc\n---\n# Body\n\nIMPORTANT: read this.\n',
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
-      // With no offset, agent-patch uses first-match — that's in the frontmatter.
       const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
         docName: 'test-doc',
-        find: 'draft',
-        replace: 'published',
+        find: 'IMPORTANT:',
+        replace: 'NOTE:',
       });
 
       expect(response.status).toBe(200);
-
-      expect(metaMap.get('frontmatter')).toBe('---\nstatus: published\n---\n');
-
-      // Body's "draft" must survive since only the first occurrence is replaced.
       const ytext = session.dc.document.getText('source').toString();
-      expect(ytext).toContain('Not a draft.');
+      expect(ytext).toContain('NOTE: read this.');
+      expect(ytext).not.toContain('IMPORTANT:');
     } finally {
       await cleanup();
     }
   });
+});
 
-  test('patch that deletes the entire frontmatter region clears metaMap', async () => {
-    // The patch handler composes `prependFrontmatter(currentFm, currentBody)` before
-    // running find/replace, then re-splits the result. When the replace is '', the
-    // FM region disappears from the composed full-doc, stripFrontmatter on the result
-    // returns an empty FM string, and metaMap must be cleared accordingly. Without
-    // this, stale frontmatter would persist in Y.Map('metadata') even though the
-    // on-disk canonical form has none.
-    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+describe('agent-undo round-trip across FM-touching writes', () => {
+  test('applyAgentUndo reverts FM region in lock-step with body changes', async () => {
+    const { sessionManager, cleanup } = setup();
     try {
-      const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
+      const session = await sessionManager.getSession('doc-fm-undo.md');
+      const document = session.dc.document;
 
-      const existingFm = '---\ntitle: ToRemove\n---\n';
-      session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nKeep me.\n', 'replace');
-      }, AGENT_WRITE_ORIGIN);
+      document.transact(() => {
+        applyAgentMarkdownWrite(
+          document,
+          '---\ntitle: Original\nstatus: draft\n---\n# Body\n',
+          'replace',
+        );
+      }, session.origin);
+      session.um.stopCapturing();
 
-      const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
-        docName: 'test-doc',
-        find: '---\ntitle: ToRemove\n---\n',
-        replace: '',
-      });
+      document.transact(() => {
+        applyAgentMarkdownWrite(
+          document,
+          '---\ntitle: Updated\nstatus: draft\n---\n# Body\n',
+          'replace',
+        );
+      }, session.origin);
 
-      expect(response.status).toBe(200);
+      expect(fmMap(document)).toEqual({ title: 'Updated', status: 'draft' });
 
-      // metaMap must reflect "no frontmatter" — stale 'title: ToRemove' gone.
-      expect(metaMap.get('frontmatter')).toBe('');
-
-      const ytext = session.dc.document.getText('source').toString();
-      expect(ytext).not.toContain('title: ToRemove');
-      expect(ytext).not.toContain('---');
-      // Body survives the patch.
-      expect(ytext).toContain('Keep me.');
+      const undone = applyAgentUndo(session, 'last');
+      expect(undone).toBe(true);
+      expect(fmMap(document)).toEqual({ title: 'Original', status: 'draft' });
     } finally {
       await cleanup();
     }

@@ -138,7 +138,6 @@ describe('setPageListCache', () => {
       folderPaths: new Set(['dir']),
     };
     setPageListCache(equal);
-    // Content-equal snapshot — store should NOT rotate identity.
     expect(getPageListCache()).toBe(first);
   });
 

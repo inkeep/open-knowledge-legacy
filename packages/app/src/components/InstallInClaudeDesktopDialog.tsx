@@ -13,20 +13,6 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 
-/**
- * `InstallInClaudeDesktopDialog` — concierge for installing the Open
- * Knowledge skill for **Claude Chat & Cowork** inside the **Claude Desktop
- * App**. Distinct from Claude Code (CLI / Code tab) which is already covered
- * by `ok init`'s `npx skills add` flow.
- *
- * Runtime branches on `'okDesktop' in window`:
- *   - Electron: calls `window.okDesktop.skill.buildAndOpen()` — main process
- *     builds + saves to ~/Downloads + invokes `shell.openPath`. Claude
- *     Desktop's native install dialog takes over.
- *   - Web: shows the `npx @inkeep/open-knowledge install-skill` command
- *     with a copy button. User runs it in their terminal.
- */
-
 const INSTALL_COMMAND = 'npx @inkeep/open-knowledge install-skill';
 const DOCS_URL = 'https://inkeep.github.io/open-knowledge/guides/install-claude-cowork';
 
@@ -75,14 +61,6 @@ function StepNumber({ n }: { n: number }) {
   );
 }
 
-/**
- * The Claude Desktop App upload path — shared across Electron and web
- * modes. This is the MANUAL click-sequence inside the Claude Desktop App
- * that the user has to do after we've put `openknowledge.skill` in their
- * Downloads folder. Double-clicking the `.skill` file opens the Claude
- * Desktop App but does NOT auto-install; users upload via the Customize
- * → Skills UI.
- */
 function UploadStepsSection() {
   return (
     <div className="flex flex-col gap-3">

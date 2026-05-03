@@ -1,14 +1,3 @@
-/**
- * ConflictResolver — right-side Sheet for resolving merge conflicts.
- *
- * Lists conflicted files from GET /api/sync/conflicts. Per-file actions:
- *   - Keep my version  → POST /api/sync/resolve-conflict { strategy: 'mine' }
- *   - Keep team's version → POST /api/sync/resolve-conflict { strategy: 'theirs' }
- *   - Resolve manually → opens a large Dialog containing DiffView in conflictMode.
- *
- * Progress shows "N of M resolved". "Exit merge" aborts and closes.
- * When all files are resolved the sheet closes with a success toast.
- */
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
@@ -28,7 +17,6 @@ type ResolveStrategy = 'mine' | 'theirs' | 'content';
 
 interface ConflictsFetchResult {
   conflicts: ConflictEntry[];
-  /** Set when the fetch itself failed — distinguishes from a real empty list. */
   error?: 'network' | 'server';
 }
 
@@ -92,19 +80,12 @@ interface ManualResolveDialogProps {
   onAbort: () => void;
 }
 
-// Override DialogContent's default `grid gap-4` + `sm:max-w-sm` for a
-// near-fullscreen diff editor. Width/height pin to viewport so the diff has
-// room to breathe; flex column lets the inner DiffView fill the area.
 const DIALOG_SIZE_CLASSES = 'w-[98vw] !max-w-[98vw] h-[96vh] flex flex-col gap-0 sm:!max-w-[98vw]';
 
 function ManualResolveDialog({ file, onResolve, onAbort }: ManualResolveDialogProps) {
   const [sides, setSides] = useState<ConflictSides | null>(null);
 
   useEffect(() => {
-    // Guard against the dialog closing before the fetch resolves — otherwise
-    // React warns about setting state on an unmounted component and the
-    // previous file's content would also briefly flicker into a re-opened
-    // dialog.
     let cancelled = false;
     void fetchConflictSides(file).then((result) => {
       if (!cancelled) setSides(result);
@@ -170,7 +151,6 @@ export function ConflictResolver({ open, onOpenChange }: ConflictResolverProps) 
     void fetchConflicts().then(({ conflicts: list, error }) => {
       setFetchError(error ?? null);
       setConflicts(list);
-      // Remove resolved entries that no longer appear in the list
       setResolved((prev) => {
         const stillPresent = new Set(list.map((e) => e.file));
         return new Set([...prev].filter((f) => !stillPresent.has(f)));
@@ -192,7 +172,6 @@ export function ConflictResolver({ open, onOpenChange }: ConflictResolverProps) 
     });
   }, [open]);
 
-  // Auto-close when all conflicts resolved
   useEffect(() => {
     if (open && conflicts.length > 0 && resolved.size >= conflicts.length) {
       toast.success('All conflicts resolved — sync resuming');

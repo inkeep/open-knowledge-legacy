@@ -1,22 +1,3 @@
-/**
- * E2E coverage for the Timeline inline-diff side-pane (US-008).
- *
- * Each test creates its own uniquely-named doc via the `api` fixture —
- * STOP rule: never hardcode 'test-doc'; workers share a dev-server instance
- * and parallel tests would corrupt shared CRDT state.
- *
- * **Test infrastructure dependency.** These tests require the worker's
- * Hocuspocus instance to have a working shadow-repo so `/api/history`
- * returns Timeline entries. The per-worker fixture in `_helpers/fixtures.ts`
- * satisfies this by spawning the dev server with `OK_TEST_GIT_ENABLED=1`,
- * which opts the isolated `contentDir` into shadow-repo mode (git-init +
- * `gitEnabled: true` in `createServer`). `/api/save-version` and
- * `/api/history` work correctly in the worker environment.
- *
- * Reference patterns:
- *   - agent-activity-panel.e2e.ts  (per-test seeding + writeAsAgent)
- *   - outline-navigation.e2e.ts    (DocPanel tab panel selectors)
- */
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import type { ApiHelpers } from './_helpers';
@@ -32,13 +13,6 @@ const AGENT = {
   clientName: 'claude' as const,
 };
 
-// ── Shared helpers ─────────────────────────────────────────────────────────────
-
-/**
- * Best-effort `/api/save-version` checkpoint. Network errors and 400 (no
- * shadow repo in the test fixture) are silently dropped. Any other unexpected
- * HTTP status throws so failures don't disappear into void.
- */
 async function saveVersion(baseURL: string): Promise<void> {
   let res: Response;
   try {
@@ -59,11 +33,6 @@ async function saveVersion(baseURL: string): Promise<void> {
   }
 }
 
-/**
- * Seed a doc with N versions. With a working shadow repo, each version lands
- * as a Save Version checkpoint visible in the Timeline. Without one, only
- * WIP commits are emitted (visible inside an auto-saves group).
- */
 async function seedTimelineDoc(
   api: ApiHelpers,
   baseURL: string,
@@ -85,7 +54,6 @@ async function navigateToDoc(page: Page, docName: string) {
   await expect(page.locator('.ProseMirror')).toBeVisible({ timeout: 15_000 });
 }
 
-/** Click the Timeline tab in DocPanel and wait for the loading skeleton to settle. */
 async function openTimelineTab(page: Page) {
   await page.getByRole('tab', { name: 'Timeline' }).click();
   await expect(page.locator('#panel-timeline')).toBeVisible();
@@ -94,20 +62,15 @@ async function openTimelineTab(page: Page) {
   });
 }
 
-/** All EntryRow expand-zone buttons (div[role="button"]) in the Timeline panel. */
 function expandButtons(page: Page) {
   return page.locator('[data-testid="timeline-entry-expand"]');
 }
 
-/** All open diff content panels (present in DOM only while a row is expanded). */
 function diffPanels(page: Page) {
   return page.locator('[data-testid="timeline-entry-diff"]');
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 test.describe('Timeline inline diff — side pane', () => {
-  // ── AC-D1 ──────────────────────────────────────────────────────────────────
   test('AC-D1: click entry expands inline diff; click again collapses; main editor untouched', async ({
     page,
     api,
@@ -132,7 +95,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(row).toHaveAttribute('aria-expanded', 'true');
     await expect(diffPanels(page)).toHaveCount(1);
 
-    // Main editor is still visible — no hijack
     await expect(page.locator('.ProseMirror')).toBeVisible();
 
     await row.click();
@@ -140,7 +102,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(diffPanels(page)).toHaveCount(0);
   });
 
-  // ── AC-D2 ──────────────────────────────────────────────────────────────────
   test('AC-D2: multiple entries can be open simultaneously (multi-expand)', async ({
     page,
     api,
@@ -168,7 +129,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(diffPanels(page)).toHaveCount(3);
   });
 
-  // ── AC-D3 ──────────────────────────────────────────────────────────────────
   test('AC-D3: second expand of same entry uses cache — no second GET /api/history/{sha}', async ({
     page,
     api,
@@ -188,7 +148,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(expandButtons(page).first()).toBeVisible({ timeout: 15_000 });
     const row = expandButtons(page).first();
 
-    // First expand — triggers the SHA fetch
     await row.click();
     await page.waitForResponse(/\/api\/history\/\w+/, { timeout: 10_000 });
     await expect(page.getByText('Loading diff…')).toBeHidden({ timeout: 10_000 });
@@ -197,14 +156,12 @@ test.describe('Timeline inline diff — side pane', () => {
     await row.click();
     await expect(diffPanels(page)).toHaveCount(0);
 
-    // Re-expand — cache hit, no new request
     await row.click();
     await expect(diffPanels(page)).toHaveCount(1);
     await expect(page.getByText('Loading diff…')).toBeHidden({ timeout: 5_000 });
     expect(historyShaCalls).toBe(1);
   });
 
-  // ── AC-D5 ──────────────────────────────────────────────────────────────────
   test('AC-D5: Restore icon (aria-label + tooltip) is visible on every row — collapsed and expanded', async ({
     page,
     api,
@@ -223,21 +180,15 @@ test.describe('Timeline inline diff — side pane', () => {
 
     await expect(restoreButtons).toHaveCount(rowCount);
     for (let i = 0; i < rowCount; i++) {
-      // The aria-label varies by row semantic ("Restore this version" /
-      // "Restore this auto-save" / "Restore to this intermediate state").
-      // Assert it starts with "Restore" so the test survives semantic
-      // refinement without false negatives.
       const label = await restoreButtons.nth(i).getAttribute('aria-label');
       expect(label).toMatch(/^Restore/);
     }
 
-    // After expanding row 0, all Restore buttons remain (no count change)
     await expandButtons(page).first().click();
     await expect(restoreButtons).toHaveCount(rowCount);
     await expect(restoreButtons.first()).toBeVisible();
   });
 
-  // ── AC-D6 ──────────────────────────────────────────────────────────────────
   test('AC-D6: Restore icon click does NOT expand the row (stopPropagation)', async ({
     page,
     api,
@@ -263,7 +214,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(page.locator('[role="alertdialog"]')).toHaveCount(0);
   });
 
-  // ── AC-D7 ──────────────────────────────────────────────────────────────────
   test('AC-D7: Dialog confirm fires POST /api/rollback with correct body; dialog closes on success', async ({
     page,
     api,
@@ -304,7 +254,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(dialog).toBeHidden();
   });
 
-  // ── AC-D8 ──────────────────────────────────────────────────────────────────
   test('AC-D8: split/unified toggle in EditorHeader re-renders expanded diff layout', async ({
     page,
     api,
@@ -328,10 +277,6 @@ test.describe('Timeline inline diff — side pane', () => {
     const layoutGroup = page.getByRole('group', { name: 'Diff layout' });
     await expect(layoutGroup).toBeVisible();
 
-    // The diff renderer (react-diff-view) emits a single root <table> with
-    // class `diff diff-{viewType}` — we assert against the rendered structure
-    // so a future regression that drops the prop chain (e.g. hardcoding
-    // `viewType="unified"` on ActivityPanelDiffView) fails this test.
     const diffRoot = diffPanels(page).first().locator('table.diff').first();
 
     await layoutGroup.getByRole('button', { name: 'Split diff' }).click();
@@ -351,7 +296,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(diffRoot).toHaveClass(/diff-unified/);
   });
 
-  // ── AC-D9 ──────────────────────────────────────────────────────────────────
   test('AC-D9: navigating to a different doc resets per-entry expanded state', async ({
     page,
     api,
@@ -362,7 +306,6 @@ test.describe('Timeline inline diff — side pane', () => {
 
     await seedTimelineDoc(api, baseURL ?? '', docA, ['# Doc A v1', '# Doc A v2']);
 
-    // Seed docB without resetting the workspace (use createPage + replaceDoc + saveVersion).
     await api.createPage(`${docB}.md`);
     await api.replaceDoc(docB, '# Doc B v1');
     await saveVersion(baseURL ?? '');
@@ -375,7 +318,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expandButtons(page).first().click();
     await expect(diffPanels(page)).toHaveCount(1);
 
-    // Navigate to docB — Timeline tab stays active (activeTab state lives in EditorPane)
     await page.goto(`/#/${docB}`);
     await expect(page.locator('.ProseMirror')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('[aria-label="Loading timeline history"]')).toBeHidden({
@@ -383,7 +325,6 @@ test.describe('Timeline inline diff — side pane', () => {
     });
     await expect(expandButtons(page).first()).toBeVisible({ timeout: 15_000 });
 
-    // No diff panels — docB's entries are all collapsed (per-row expanded state reset)
     await expect(diffPanels(page)).toHaveCount(0);
     const count = await expandButtons(page).count();
     for (let i = 0; i < count; i++) {
@@ -391,7 +332,6 @@ test.describe('Timeline inline diff — side pane', () => {
     }
   });
 
-  // ── AC-D10 ─────────────────────────────────────────────────────────────────
   test('AC-D10: main editor is never replaced; no sticky "Viewing:" bar appears', async ({
     page,
     api,
@@ -414,7 +354,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(page.getByText(/^Viewing:/)).toHaveCount(0);
   });
 
-  // ── AC-D11 ─────────────────────────────────────────────────────────────────
   test('AC-D11: expanded entry has no Close button; only the Restore icon action button', async ({
     page,
     api,
@@ -437,7 +376,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(page.locator('[data-testid="timeline-entry-restore"]').first()).toBeVisible();
   });
 
-  // ── FR-D17 ─────────────────────────────────────────────────────────────────
   test('FR-D17: all expanded entries collapse after a successful restore', async ({
     page,
     api,
@@ -471,7 +409,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(expandButtons(page).nth(1)).toHaveAttribute('aria-expanded', 'false');
   });
 
-  // ── Restore failure ─────────────────────────────────────────────────────────
   test('restore failure: toast appears, dialog stays open, both confirm + outer Restore re-enable', async ({
     page,
     api,
@@ -509,7 +446,6 @@ test.describe('Timeline inline diff — side pane', () => {
     });
   });
 
-  // ── Cancel aborts in-flight restore ────────────────────────────────────────
   test('Cancel during a slow rollback aborts the request — no side effects fire on late response', async ({
     page,
     api,
@@ -546,9 +482,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await dialog.getByTestId('timeline-entry-restore-cancel').click();
     await expect(dialog).toBeHidden();
 
-    // Verify the late response fires no side-effects. Auto-retrying assertions
-    // can't catch absence-of-change, so wait for the response to actually arrive
-    // and yield two frames to let React run (or correctly skip) handlers first.
     const lateResponse = page.waitForResponse('/api/rollback');
     release();
     await lateResponse;
@@ -567,7 +500,6 @@ test.describe('Timeline inline diff — side pane', () => {
     });
   });
 
-  // ── Real (un-mocked) rollback round-trip ───────────────────────────────────
   test('un-mocked rollback round-trip: confirming Restore actually replaces editor content with the historical version', async ({
     page,
     api,
@@ -580,13 +512,11 @@ test.describe('Timeline inline diff — side pane', () => {
 
     await navigateToDoc(page, doc);
 
-    // Editor shows v2 currently
     await expect(page.locator('.ProseMirror')).toContainText('Version-two body');
 
     await openTimelineTab(page);
     await expect(expandButtons(page).first()).toBeVisible({ timeout: 15_000 });
 
-    // The OLDEST entry (last in the rendered list) is the v1 checkpoint.
     const lastRestoreIcon = page.locator('[data-testid="timeline-entry-restore"]').last();
     await lastRestoreIcon.click();
 
@@ -594,7 +524,6 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(dialog).toBeVisible();
     await dialog.getByTestId('timeline-entry-restore-confirm').click();
 
-    // Editor content updates via the CRDT bridge to the v1 body
     await expect(page.locator('.ProseMirror')).toContainText('Version-one body', {
       timeout: 15_000,
     });

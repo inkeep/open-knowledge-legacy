@@ -3,22 +3,9 @@ import { setTimeout as wait } from 'node:timers/promises';
 import type { KeyringSmokeResult } from '../../src/utility/keyring-smoke.ts';
 import { setupUtility } from '../../src/utility/server-entry.ts';
 
-/**
- * Utility-process unit tests.
- *
- * Don't fork an actual utilityProcess — Bun's test runner can't host one. The
- * `setupUtility(deps)` factory takes an injected parentPort + injected server
- * import + injected exit/setInterval, so we mock all of these and assert the
- * IPC + lifecycle branches.
- *
- * Full forked-utility behavior is covered by the US-013 M1 smoke test which
- * launches a real Electron BrowserWindow.
- */
-
 interface MockParentPort {
   on: ReturnType<typeof mock>;
   postMessage: ReturnType<typeof mock>;
-  /** Helper — fire a message into the registered handler. */
   fire: (msg: unknown) => void;
 }
 
@@ -63,10 +50,6 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
   });
 
   test('on init message: imports server, calls bootServer with M1 opt-outs, posts ready', async () => {
-    // `didGitInit` is part of the `UtilityReadyMessage` IPC contract (required
-    // field). Pin it to an explicit value on the fake so the assertion below
-    // locks the shape — deep equality between the asserted object and an
-    // implicit-undefined field can mask a production rename of the field.
     const fakeBooted = {
       port: 51234,
       destroy: mock(() => Promise.resolve()),
@@ -107,7 +90,6 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     expect(ready.apiOrigin).toBe('http://localhost:51234');
     expect(ready.didGitInit).toBe(false);
 
-    // Asserts the M1 opt-outs (D36)
     const callArgs = bootServer.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     expect(callArgs?.attachUiSibling).toBe(false);
     expect(callArgs?.idleShutdownMs).toBe(null);
@@ -174,13 +156,11 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       parentPollMs: 100,
     });
 
-    // Trigger the polled callback manually
     expect(env.intervals.length).toBeGreaterThan(0);
     const pollCb = env.intervals[0]?.cb;
     expect(pollCb).toBeDefined();
     pollCb?.();
 
-    // Allow async shutdown to settle
     await wait(10);
     expect(env.exit).toHaveBeenCalledWith(0);
     void handle;
@@ -218,9 +198,6 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
 
     expect(destroy).toHaveBeenCalledTimes(1);
     expect(env.exit).toHaveBeenCalledWith(0);
-    // stopParentPoll must actually stop the interval on shutdown — otherwise
-    // the parent-death poll keeps firing and can re-enter shutdown in tests
-    // where `exit` is mocked.
     expect(env.intervalCancel).toHaveBeenCalled();
   });
 
@@ -322,7 +299,6 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       writeSmokeResult,
     });
 
-    // Auto-smoke is async — give it a microtask window.
     await wait(5);
 
     expect(runSmoke).toHaveBeenCalledTimes(1);
@@ -332,7 +308,6 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     const parsed = JSON.parse(writtenContents) as KeyringSmokeResult;
     expect(parsed).toEqual(smokeResult);
     expect(writtenContents.endsWith('\n')).toBe(true);
-    // Exit must NOT have been called — EXIT flag was not set
     expect(env.exit).not.toHaveBeenCalled();
   });
 
@@ -372,8 +347,6 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     expect(runSmoke).toHaveBeenCalledTimes(1);
     expect(writeSmokeResult).toHaveBeenCalledTimes(1);
     expect(env.exit).toHaveBeenCalledWith(0);
-    // Message listener must NOT have been registered when EXIT=1 — the
-    // utility is going down after the smoke.
     expect(env.parentPort.on).not.toHaveBeenCalled();
   });
 
@@ -407,15 +380,12 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     await wait(5);
 
     expect(runSmoke).toHaveBeenCalledTimes(1);
-    // No OUT path → no file write
     expect(writeSmokeResult).not.toHaveBeenCalled();
-    // IPC result is still posted
     expect(env.parentPort.postMessage).toHaveBeenCalledWith({
       type: 'debug-keyring-smoke-result',
       correlationId: 'auto-boot',
       result: smokeResult,
     });
-    // Listener registered because EXIT not set — utility continues normal boot
     expect(env.parentPort.on).toHaveBeenCalled();
   });
 
@@ -478,12 +448,9 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
 
     await wait(5);
 
-    // Smoke ran and was attempted to write
     expect(runSmoke).toHaveBeenCalledTimes(1);
     expect(writeSmokeResult).toHaveBeenCalledTimes(1);
-    // No exit — the utility continues boot
     expect(env.exit).not.toHaveBeenCalled();
-    // Listener registered so the utility can accept init
     expect(env.parentPort.on).toHaveBeenCalled();
   });
 

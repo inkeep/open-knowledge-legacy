@@ -11,9 +11,6 @@ describe('fieldRegistry singleton', () => {
   });
 
   test('two callers see the same registry instance', async () => {
-    // Re-import the same module spec; ESM caching means the second import
-    // resolves to the already-loaded module, but the Symbol-keyed singleton
-    // would also dedupe across genuinely separate copies of the module.
     const reimport = await import('./field-registry.ts');
     expect(reimport.fieldRegistry).toBe(fieldRegistry);
   });
@@ -36,19 +33,19 @@ describe('getFieldMeta walker (descends innerType)', () => {
 
   test('descends through chained .optional().nullable().default()', () => {
     const inner = z.number();
-    fieldRegistry.add(inner, { scope: 'workspace', agentSettable: true });
+    fieldRegistry.add(inner, { scope: 'project', agentSettable: true });
     const wrapped = inner.optional().nullable().default(42);
-    expect(getFieldMeta(wrapped)).toEqual({ scope: 'workspace', agentSettable: true });
+    expect(getFieldMeta(wrapped)).toEqual({ scope: 'project', agentSettable: true });
   });
 
   test('descends through z.array(...).min(...).default(...)', () => {
     const arr = z.array(z.string()).min(1);
-    fieldRegistry.add(arr, { scope: 'either', agentSettable: true, defaultScope: 'workspace' });
+    fieldRegistry.add(arr, { scope: 'either', agentSettable: true, defaultScope: 'project' });
     const wrapped = arr.default(['a']);
     expect(getFieldMeta(wrapped)).toEqual({
       scope: 'either',
       agentSettable: true,
-      defaultScope: 'workspace',
+      defaultScope: 'project',
     });
   });
 
@@ -66,11 +63,6 @@ describe('getFieldMeta walker (descends innerType)', () => {
 });
 
 describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)', () => {
-  // Walks ConfigSchema's structural shape and asserts that every leaf field
-  // (scalar, array-leaf, enum) has a `fieldRegistry` entry. Catches the
-  // load-bearing declaration-order rule: `.register()` MUST come BEFORE
-  // `.default()` / `.optional()` / `.nullable()`. Only ONE `fieldRegistry`
-  // per process, so misregistration here is unrecoverable.
   function isObjectLike(schema: unknown): schema is { _zod: { def: { shape: unknown } } } {
     const def = (schema as { _zod?: { def?: { type?: string } } })._zod?.def;
     return def?.type === 'object' || def?.type === 'looseObject';
@@ -81,9 +73,7 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     while (cur) {
       const def = (cur as { _zod?: { def?: { type?: string; innerType?: unknown } } })._zod?.def;
       if (!def) return cur;
-      // Stop at object/looseObject — they're walkable, not leaves.
       if (def.type === 'object' || def.type === 'looseObject') return cur;
-      // Descend wrappers.
       if (def.innerType !== undefined) {
         cur = def.innerType;
         continue;
@@ -122,7 +112,7 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     }
   });
 
-  test('agentSettable allowlist is exactly the 5 expected paths', () => {
+  test('agentSettable allowlist is exactly the 3 expected paths', () => {
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
     const allowlisted = leaves
@@ -130,29 +120,17 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
       .map((l) => l.path.join('.'))
       .sort();
     expect(allowlisted).toEqual(
-      [
-        'content.exclude',
-        'content.include',
-        'folders',
-        'mcp.tools.read_document.historyDepth',
-        'mcp.tools.search.maxResults',
-      ].sort(),
+      ['folders', 'mcp.tools.read_document.historyDepth', 'mcp.tools.search.maxResults'].sort(),
     );
   });
 
-  test('workspace-strict fields cover content.* + preview.baseUrl', () => {
-    // `content.dir` / `content.include` / `content.exclude` are workspace-only
-    // per user direction 2026-04-29 — they define which files are part of *this*
-    // project's knowledge graph; a user-global override doesn't make sense.
-    // `preview.baseUrl` is workspace-only per spec §9.5.4 ❌ marker.
+  test('project-strict fields cover content.dir + preview.baseUrl + autoSync.enabled', () => {
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
-    const workspaceStrict = leaves
-      .filter((l) => getFieldMeta(l.schema)?.scope === 'workspace')
+    const projectStrict = leaves
+      .filter((l) => getFieldMeta(l.schema)?.scope === 'project')
       .map((l) => l.path.join('.'))
       .sort();
-    expect(workspaceStrict).toEqual(
-      ['content.dir', 'content.exclude', 'content.include', 'preview.baseUrl'].sort(),
-    );
+    expect(projectStrict).toEqual(['autoSync.enabled', 'content.dir', 'preview.baseUrl'].sort());
   });
 });

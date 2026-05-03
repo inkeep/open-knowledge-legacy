@@ -1,9 +1,3 @@
-/**
- * Tests for remark-prosemirror handler table (Tiers A/B/C).
- *
- * Exercises the mdast→PM handler mapping via parse + JSON inspection.
- * Uses POST-RENAME schema names per D16/D17: emphasis/strong/thematicBreak.
- */
 import { describe, expect, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import { sharedExtensions } from '../extensions/shared.ts';
@@ -16,7 +10,6 @@ interface PmMarkJson {
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
-// Helper: parse markdown and find first node of type in the JSONContent tree
 function findInJson(json: JSONContent, type: string): JSONContent | null {
   if (json.type === type) return json;
   for (const child of json.content ?? []) {
@@ -26,7 +19,6 @@ function findInJson(json: JSONContent, type: string): JSONContent | null {
   return null;
 }
 
-// Helper: find a mark on a text node
 function findMarkInJson(json: JSONContent, markType: string): PmMarkJson | null {
   if (json.marks) {
     const mark = json.marks.find((m) => m.type === markType) as PmMarkJson | undefined;
@@ -39,7 +31,6 @@ function findMarkInJson(json: JSONContent, markType: string): PmMarkJson | null 
   return null;
 }
 
-// Helper: find first jsxComponent PM node with the given componentName.
 function findJsxComponentInJson(json: JSONContent, componentName: string): JSONContent | null {
   if (json.type === 'jsxComponent' && json.attrs?.componentName === componentName) return json;
   for (const child of json.content ?? []) {
@@ -158,17 +149,6 @@ describe('Tier B fidelity: list markers', () => {
 });
 
 describe('Tier B fidelity: listItem PM-schema artifact stripping (R6d / US-011)', () => {
-  // PM `listItem` content schema is `paragraph block*`. When source mdast has
-  // a non-paragraph first child (e.g. `code`), `nodeType.createAndFill`
-  // synthesizes an empty paragraph so the PM doc validates. The PM→mdast
-  // handler must strip that synthetic paragraph so the listItem round-trips
-  // back to its original mdast shape — otherwise the empty paragraph emits
-  // as `""` between the marker and the first real block, producing
-  // `1. \n\n   ```...` which CommonMark refuses to interpret as list
-  // continuation, escaping the first block from the listItem on re-parse.
-  // Regression: CommonMark Lists section example index 23
-  // (`"1. ```\n   foo\n   ```\n\n   bar\n"`).
-
   test('listItem with code as first child round-trips byte-identically', () => {
     const input = '1. ```\n   foo\n   ```\n\n   bar\n';
     const r1 = mdManager.serialize(mdManager.parse(input));
@@ -194,21 +174,16 @@ describe('Tier B fidelity: listItem PM-schema artifact stripping (R6d / US-011)'
   });
 
   test('genuinely empty listItem (single empty para child) is preserved', () => {
-    // `1.\n` parses to a list with one empty listItem. The single-child
-    // empty paragraph is the listItem's own content, not a synthesized
-    // artifact, so the strip rule must NOT fire (children.length === 1).
     const input = '1.\n';
     const r1 = mdManager.serialize(mdManager.parse(input));
     const r2 = mdManager.serialize(mdManager.parse(r1));
     expect(r1).toBe(r2);
-    // Verify the listItem is preserved (with its emptiness)
     const json = mdManager.parse(input);
     const listItem = findInJson(json, 'listItem');
     expect(listItem).toBeDefined();
   });
 
   test('listItem with thematicBreak as first child round-trips', () => {
-    // Another non-paragraph block first child to confirm fix is general.
     const input = '1. ---\n\n   foo\n';
     const r1 = mdManager.serialize(mdManager.parse(input));
     const r2 = mdManager.serialize(mdManager.parse(r1));
@@ -302,22 +277,6 @@ describe('Tier A: passthrough', () => {
   });
 });
 
-// Bug B/C regression guard (2026-04-24): `handlers.wikiLinkEmbed` dispatches
-// `![[file.ext]]` to PM image (image ext) or PM text+link (non-image). The
-// `src`/`href` attr on those PM nodes comes from `resolveEmbed(target,
-// sourcePath)` which returns a **contentDir-relative** path (e.g.
-// `stories/X/IMG.PNG`). Under hash routing the browser's `location.pathname`
-// is `/`, so `<img src="stories/X/IMG.PNG">` resolves to
-// `http://localhost/stories/X/IMG.PNG` (correct path) only if the src starts
-// with `/`. Today the dispatch emits `src: 'stories/X/IMG.PNG'` (no leading
-// slash) which resolves correctly at root-level docs but breaks in subdir
-// docs where the current-page URL's directory is different. The fix is to
-// emit server-absolute URLs (`/stories/X/IMG.PNG`) so the browser always
-// resolves against `http://localhost/<contentDir-relative>` regardless of
-// the editor's hash-routed URL.
-//
-// These tests pin the contract: `handlers.wikiLinkEmbed` MUST emit
-// server-absolute src/href when `resolveEmbed` returns a non-null path.
 describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', () => {
   test('image wiki-embed emits server-absolute src when resolveEmbed provides contentDir-relative path', () => {
     const json = mdManager.parse('![[IMG.PNG]]\n', {
@@ -330,8 +289,6 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
     const node = findJsxComponentInJson(json, 'WikiEmbedImage');
     expect(node).not.toBeNull();
     const props = node?.attrs?.props as Record<string, unknown> | undefined;
-    // Server-absolute: the src must start with `/` so the browser resolves
-    // it against location.origin regardless of the editor's hash path.
     expect(props?.src).toMatch(/^\//);
     expect(props?.src).toBe('/stories/wiki-links-next/IMG.PNG');
   });
@@ -351,11 +308,6 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
   });
 
   test('video wiki-embed (MP4) emits server-absolute src on jsxComponent(WikiEmbedVideo)', () => {
-    // Pre-US-008 this test asserted a link-mark href because the video branch
-    // used the text+link-mark fallback. US-008 routes video extensions through
-    // the WikiEmbedVideo descriptor; the server-absolute path now lands on
-    // jsxComponent props.src instead. The contract is unchanged — `resolveEmbed`
-    // still produces a `/`-rooted URL for resolved embeds.
     const json = mdManager.parse('![[clip.mp4]]\n', {
       resolveEmbed: (target: string, _source: string) => {
         if (target === 'clip.mp4') return 'media/clip.mp4';
@@ -370,10 +322,6 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
   });
 
   test('unresolved embed (resolveEmbed returns null) falls back to bare target', () => {
-    // When the basename index doesn't know about the target, the handler
-    // falls back to the bare target string. This matches today's behavior
-    // for unresolved refs and is correct — the browser would 404 anyway,
-    // so the server-absolute contract applies only to resolved refs.
     const json = mdManager.parse('![[missing.png]]\n', {
       resolveEmbed: () => null,
       sourcePath: 'notes.md',
@@ -385,9 +333,6 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
   });
 
   test('image dispatch lands on WikiEmbedImage compat descriptor with absolute src', () => {
-    // The compat descriptor's componentName itself encodes the source-form
-    // identity (no separate sourceForm marker needed) — the dirty-path
-    // serializer dispatches via `descriptor.serialize` keyed off the name.
     const json = mdManager.parse('![[photo.png]]\n', {
       resolveEmbed: () => 'assets/photo.png',
       sourcePath: 'notes.md',
@@ -399,19 +344,11 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
     expect(props?.target).toBe('photo.png');
     expect(props?.anchor).toBeNull();
     expect(props?.alias).toBeNull();
-    // jsxComponent attrs that gate the dirty-path emit
     expect(node?.attrs?.kind).toBe('element');
     expect(node?.attrs?.sourceDirty).toBe(false);
   });
 });
 
-// handlers.wikiLinkEmbed for image extensions emits jsxComponent dispatched
-// to the WikiEmbedImage compat descriptor in block context. The compat
-// descriptor owns its own serialize that returns `wikiLinkEmbed` mdast, so
-// the round-trip stays byte-identical. Inline-position image embeds fall
-// through to the link-mark chip path — there is no PM `image` node carrying
-// wiki-embed metadata; image / video / audio share the same chip treatment
-// when not in block context.
 describe('handlers.wikiLinkEmbed — WikiEmbedImage dispatch (US-002)', () => {
   test('![[photo.png]] → jsxComponent(WikiEmbedImage) with target/alias/anchor on props', () => {
     const json = mdManager.parse('![[photo.png]]\n');
@@ -421,8 +358,6 @@ describe('handlers.wikiLinkEmbed — WikiEmbedImage dispatch (US-002)', () => {
     expect(props?.target).toBe('photo.png');
     expect(props?.alias).toBeNull();
     expect(props?.anchor).toBeNull();
-    // No image PM node anymore — the parser routes image-ext wiki-embeds
-    // exclusively through the descriptor.
     expect(findInJson(json, 'image')).toBeNull();
   });
 
@@ -456,8 +391,6 @@ describe('handlers.wikiLinkEmbed — WikiEmbedImage dispatch (US-002)', () => {
   });
 
   test('non-image extension (![[doc.pdf]]) keeps text+link-mark fallback (regression guard)', () => {
-    // PDF + opaque embeds stay on the wiki-link / link-mark path — no
-    // descriptor exists for them, so the parser MUST NOT emit jsxComponent.
     const json = mdManager.parse('![[doc.pdf]]\n');
     expect(findJsxComponentInJson(json, 'WikiEmbedImage')).toBeNull();
     const linkMark = findMarkInJson(json, 'link');
@@ -486,11 +419,6 @@ describe('handlers.wikiLinkEmbed — WikiEmbedImage dispatch (US-002)', () => {
   });
 
   test('inline-position ![[photo.png]] (mid-prose) → text+link-mark chip, no PM image node', () => {
-    // `text ![[photo.png]] more text` is NOT block context (the wiki-embed
-    // is one of three children in its paragraph), so it must NOT promote to
-    // jsxComponent and must NOT emit a PM `image` node either. The only
-    // surviving path for inline allowlisted-extension embeds is the link-mark
-    // chip — same treatment as inline `![[clip.mp4]]` / `![[song.mp3]]`.
     const json = mdManager.parse('text ![[photo.png]] more text\n');
     expect(findJsxComponentInJson(json, 'WikiEmbedImage')).toBeNull();
     expect(findInJson(json, 'image')).toBeNull();
@@ -506,10 +434,6 @@ describe('handlers.wikiLinkEmbed — WikiEmbedImage dispatch (US-002)', () => {
   });
 });
 
-// US-008 — handlers.wikiLinkEmbed for video/audio extensions emits jsxComponent
-// dispatched to WikiEmbedVideo / WikiEmbedAudio compat descriptors. Mirrors the
-// US-002 image dispatch shape: block-context standalone embeds promote to
-// jsxComponent; mid-prose embeds keep the legacy text+link-mark fallback.
 describe('handlers.wikiLinkEmbed — WikiEmbedVideo dispatch (US-008)', () => {
   test('![[clip.mp4]] → jsxComponent(WikiEmbedVideo) with target/alias/anchor on props', () => {
     const json = mdManager.parse('![[clip.mp4]]\n');
@@ -519,9 +443,6 @@ describe('handlers.wikiLinkEmbed — WikiEmbedVideo dispatch (US-008)', () => {
     expect(props?.target).toBe('clip.mp4');
     expect(props?.alias).toBeNull();
     expect(props?.anchor).toBeNull();
-    // The link-mark fallback path must not fire for image/video/audio
-    // extensions when the descriptor is registered — the parser routes them
-    // exclusively through jsxComponent.
     expect(findMarkInJson(json, 'link')).toBeNull();
   });
 

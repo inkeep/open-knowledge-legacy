@@ -1,7 +1,5 @@
 import type { Identity } from '../types/identity';
 
-// --- Constants ---
-
 export const AGENT_COLORS = [
   '#D97757', // claude
   '#1B1912', // cursor
@@ -12,7 +10,6 @@ export const AGENT_COLORS = [
   '#727CF3', // bot
 ] as const;
 
-/** Per-icon color palette — one entry per known agent client type. */
 export const AGENT_ICON_COLORS: Record<string, string> = {
   claude: '#D97757', // warm orange
   cursor: '#1B1912', // dark (Cursor brand)
@@ -23,7 +20,6 @@ export const AGENT_ICON_COLORS: Record<string, string> = {
   bot: '#727CF3', // indigo (generic agent fallback)
 };
 
-/** Dark-mode overrides for brands whose light-mode color is too dark to see on dark backgrounds. */
 export const AGENT_ICON_COLORS_DARK: Record<string, string> = {
   cursor: '#FFFFFF', // white (legible on dark bg)
   windsurf: '#FFFFFF', // same — both are dark-brand icons that need lifting
@@ -39,29 +35,12 @@ export const HUMAN_COLORS = [
   '#DBF3FB', // sky
 ] as const;
 
-/**
- * Deterministic hex color from a stable palette for a given seed string.
- * Shared between server (agent awareness) and app (TimelinePanel).
- *
- * Pass an explicit `palette` to use HUMAN_COLORS for human presence;
- * the default remains AGENT_COLORS so existing single-arg callers
- * (timeline panel, agent presence) are byte-equivalent.
- */
 export function colorFromSeed(seed: string, palette: readonly string[] = AGENT_COLORS): string {
   let hash = 0;
   for (const ch of seed) hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
   return palette[Math.abs(hash) % palette.length];
 }
 
-/**
- * Compute 2-character uppercase initials from a display name.
- *
- * Handles:
- * - Hyphenated Unix usernames: `miles-kt-inkeep` → `MK`
- * - Space-separated full names: `Miles Kaming-Thanassi` → `MK`
- * - Single words (first 2 letters): `Miles` → `MI`
- * - CamelCase: `MilesKT` → `MK`
- */
 export function computeInitials(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return '?';
@@ -77,7 +56,6 @@ export function computeInitials(name: string): string {
       .toUpperCase();
   }
 
-  // Single segment: detect camelCase boundaries (lowercase→uppercase transition)
   const word = segments[0];
   const initials: string[] = [word[0]];
   for (let i = 1; i < word.length && initials.length < 2; i++) {
@@ -92,23 +70,9 @@ export function computeInitials(name: string): string {
     return initials.join('').toUpperCase();
   }
 
-  // Fallback: first 2 characters of the single word
   return word.slice(0, 2).toUpperCase();
 }
 
-/**
- * Polish a `display_name` for human-readable surfaces (cursor labels, tooltips).
- * Single-word strings carrying separators (`-` or `_`) — typical of Unix-style
- * git config user.names like `miles-kt-inkeep` — are title-cased per segment
- * and joined with spaces, giving `Miles Kt Inkeep`. Strings already containing
- * a space, or single words with no separators, pass through unchanged so that
- * `Miles Kaming-Thanassi` keeps its hyphenated surname and `MilesKT` keeps its
- * camelCase shape (it's already capitalised).
- *
- * Used at the awareness-publish boundary; downstream consumers (HumanAvatar's
- * computeInitials, Tiptap collaboration-cursor's label, the bar's tooltip)
- * therefore see one consistent string rather than diverging polish per surface.
- */
 export function formatPresenceLabel(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return name;
@@ -119,17 +83,6 @@ export function formatPresenceLabel(name: string): string {
   return segments.map((seg) => seg.charAt(0).toUpperCase() + seg.slice(1).toLowerCase()).join(' ');
 }
 
-/**
- * Map known MCP `clientInfo.name` values to icon identifiers used by both
- * the presence bar (`AGENT_ICON_COLORS[icon]`) and the Timeline dot-color
- * derivation. Unknown clients map to `'bot'` so the fallback indigo color
- * is reached via the icon table, not via the colorFromSeed hash palette
- * (which can collide between e.g. `claude-code` and `cursor-vscode`).
- *
- * Kept in core so app (TimelinePanel) and server (api-extension +
- * agent-sessions) use the identical mapping — drift between surfaces is
- * how dot-color/badge-color become inconsistent for the same agent.
- */
 const ICON_MAP: Record<string, string> = {
   'claude-code': 'claude',
   'claude-ai': 'claude',
@@ -144,8 +97,6 @@ const ICON_MAP: Record<string, string> = {
 export function iconFromClientName(name?: string): string {
   return name ? (ICON_MAP[name] ?? 'bot') : 'bot';
 }
-
-// --- Color derivation ---
 
 function hexToHsl(hex: string): [number, number, number] {
   const r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -178,10 +129,6 @@ function hslToHex(h: number, s: number, l: number): string {
   return `#${f(0)}${f(8)}${f(4)}`;
 }
 
-/**
- * Derives a dark, readable foreground color from a pastel background color.
- * Preserves the hue, drops lightness to ~32%, sets saturation to 45%.
- */
 export function deriveIconColor(hex: string): string {
   const [h] = hexToHsl(hex);
   return hslToHex(h, 45, 32);
@@ -216,8 +163,6 @@ const ANIMALS = [
 const LS_NAME_KEY = 'ok-user-name-v3';
 const LS_COLOR_KEY = 'ok-user-color-v3';
 
-// --- Helpers ---
-
 function randomElement<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -230,13 +175,6 @@ export function generateRandomColor(): string {
   return randomElement(HUMAN_COLORS);
 }
 
-// --- Core ---
-
-/**
- * Safe localStorage getter — returns null on any access error (Safari private
- * browsing, iframe sandboxing, user-disabled storage). Without this guard, the
- * entire editor mount crashes in private browsing mode.
- */
 function safeLocalStorageGet(key: string): string | null {
   try {
     return localStorage.getItem(key);
@@ -245,14 +183,10 @@ function safeLocalStorageGet(key: string): string | null {
   }
 }
 
-/** Safe localStorage setter — silently no-ops on error. */
 function safeLocalStorageSet(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
-  } catch {
-    // Swallow — QuotaExceededError in private browsing, etc.
-    // Identity stays fresh-per-session, which is the correct graceful degradation.
-  }
+  } catch {}
 }
 
 export function getIdentity(): Identity {

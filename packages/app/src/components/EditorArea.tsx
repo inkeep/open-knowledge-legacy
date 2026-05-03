@@ -1,4 +1,4 @@
-import { PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { ListPlus, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { lazy, Suspense, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { AssetPreview } from '@/components/AssetPreview';
@@ -6,10 +6,8 @@ import { DocPanel, type PanelTab } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { EmptyEditorState } from '@/components/EmptyEditorState';
 import { FolderOverview } from '@/components/FolderOverview';
+import { PropertyProvider, useProperties } from '@/components/PropertyContext';
 
-// Lazy-load Settings — pulls ToggleGroup + the schema-driven form which add
-// ~330kB gzipped to the main bundle. Settings is opened on demand via Cmd-,
-// so the cold-mount cost is acceptable.
 const SettingsPane = lazy(() =>
   import('@/components/settings/SettingsPane').then((m) => ({ default: m.SettingsPane })),
 );
@@ -37,7 +35,15 @@ interface EditorAreaProps {
 export function EditorArea(props: EditorAreaProps) {
   return (
     <ProfilerBoundary name="editor-area">
-      <EditorAreaInner {...props} />
+      {/* PropertyProvider scopes the cross-tree property-panel signal bus
+          to the editor surface — both the toolbar (button → dispatcher)
+          and EditorActivityPool's PropertyPanel mounts (consumers) live
+          underneath. Replaces the prior `BEGIN_ADD_EVENT` window event,
+          whose global broadcast leaked across hidden Activity boundaries.
+          See PropertyContext.tsx for the design notes. */}
+      <PropertyProvider>
+        <EditorAreaInner {...props} />
+      </PropertyProvider>
     </ProfilerBoundary>
   );
 }
@@ -53,20 +59,8 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
     docPanelExpandSignal,
   } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
+  const { requestAddProperty } = useProperties();
   const stats = useDocumentStats(activeProvider, activeDocName);
-  // Shell-snap decoupling: `activeDocName` updates urgently across the tree
-  // (sidebar aria-current, header title, tab panels — all read the urgent
-  // value via `useDocumentContext`). The editor subtree, however, pays a
-  // heavy render cost on nav to mark-heavy / oversize docs — TipTap's
-  // create-view + per-mark reconciliation can block the main thread for
-  // 1-3s on docs above `BYTES_CACHE_THRESHOLD` (which refuse V2 cache
-  // admission, forcing a fresh `new Editor()` on every warm visit).
-  // Wrapping with `useDeferredValue` lets React commit the shell render
-  // first (aria-current + header snap to the new doc) and defer the
-  // editor-subtree re-render to a low-priority pass, letting the browser
-  // paint the updated shell before the editor mount cost begins. See
-  // `docs-open.e2e.ts` F0 for the regression test that pinned the budget
-  // at 250ms shell-snap.
   const deferredActiveDocName = useDeferredValue(activeDocName);
   const isNewDoc = activeTarget?.kind === 'missing';
   const showFooter = !!activeDocName && activeTarget?.kind !== 'folder';
@@ -76,11 +70,6 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
   const { layout: docPanelLayout, autoCollapse } = useDocPanelLayout();
   const isSheetMode = docPanelLayout === 'sheet';
   const [sheetOpen, setSheetOpen] = useState(false);
-  // Tracks whether the user manually collapsed the panel via the toggle button.
-  // When true, auto-expand on crossing the 1024px breakpoint upward is suppressed
-  // so the panel respects the user's last manual action.
-  // Reset when the user manually expands, or when entering auto-collapse range
-  // (so that leaving auto-collapse range later triggers a fresh expand).
   const userCollapsedRef = useRef(false);
 
   useEffect(() => {
@@ -94,34 +83,20 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
     }
   }, [autoCollapse, docPanelLayout, panelRef]);
 
-  // SPEC-24 FR-T10: expand-on-avatar-click. `docPanelExpandSignal` is a
-  // monotonic counter incremented by `DocumentContext.openActivityPanel`
-  // (called from `PresenceBar` avatar clicks and the mode-toggle button).
-  // When it increments, expand/open the panel in whichever layout mode
-  // is active. Initial 0 → 0 transition (mount) is harmless — calling
-  // `expand` when already expanded is a no-op in react-resizable-panels.
   useEffect(() => {
     if (docPanelExpandSignal === 0) return;
     if (isSheetMode) {
       setSheetOpen(true);
     } else {
-      // Panel mode — clear the user-collapsed sticky flag so the
-      // expand call isn't immediately fought by a later layout effect.
       userCollapsedRef.current = false;
       panelRef.current?.expand();
     }
   }, [docPanelExpandSignal, isSheetMode, panelRef]);
 
-  // Track the previously-active docName for DocumentErrorBoundary's
-  // "Back to previous document" affordance. Updated AFTER render (effect) so
-  // the *current* render still sees the prior value — during an error, the
-  // user sees "Back to <previous>" where <previous> is the last successfully
-  // navigated-to doc, not the doc that just errored.
   const previousDocNameRef = useRef<string | null>(null);
   const [previousDocName, setPreviousDocName] = useState<string | null>(null);
   useEffect(() => {
     if (activeDocName && activeDocName !== previousDocNameRef.current) {
-      // Capture prior ref value, then update ref + state for the next render.
       const prior = previousDocNameRef.current;
       previousDocNameRef.current = activeDocName;
       setPreviousDocName(prior);
@@ -149,13 +124,6 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
   }
 
   if (!activeProvider || !activeDocName) {
-    // On initial page load, the URL hash tells us a doc is about to open —
-    // render the skeleton instead of the "Select a document" empty state so
-    // the user doesn't see a flash of the OkBlob screen before
-    // `NavigationHandler`'s effect wires up the hash-driven nav. Once the
-    // provider lands, the normal editor tree below takes over. Guarded on
-    // `typeof window` so SSR / the DocumentContext bootstrap path doesn't
-    // reach the `window` reference.
     const hashDoc = typeof window !== 'undefined' ? docNameFromHash(window.location.hash) : null;
     if (hashDoc !== null) {
       return <EditorSkeleton />;
@@ -167,8 +135,30 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
 
   const showPanelOpen = isSheetMode ? !sheetOpen : isCollapsed;
 
+  function openAddPropertyForm() {
+    if (!activeDocName) return;
+    requestAddProperty(activeDocName);
+  }
+
   const toggleButton = (
-    <div className="absolute top-2 right-2 z-10">
+    <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+      {!isSourceMode && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Add properties"
+              onClick={openAddPropertyForm}
+              data-testid="add-properties-button"
+              className="text-muted-foreground"
+            >
+              <ListPlus className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="left">Add properties</TooltipContent>
+        </Tooltip>
+      )}
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -217,22 +207,11 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
           docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
         <div className="relative h-full">
           <EditorActivityPool
-            // Fall back to the urgent `activeDocName` when the deferred
-            // value is still null (initial load, before the first
-            // deferred-commit pass populates it). The outer guard at
-            // line 173 already short-circuits with skeleton/empty-state
-            // when `activeDocName` itself is null, so we can assert
-            // non-null here.
             activeDocName={deferredActiveDocName ?? activeDocName}
             isSourceMode={isSourceMode}
             editorPlaceholder={editorPlaceholder}
             previousDocName={previousDocName ?? undefined}
             onNavigateBack={(prev) => {
-              // Navigate via hash so the URL stays in sync with app state —
-              // NavigationHandler's hashchange listener will call
-              // openDocumentTransition(prev). If the hash is already at
-              // prev (rare — happens when back-nav is used after agent
-              // nav without URL update), fall back to direct transition.
               const nextHash = hashFromDocName(prev);
               if (window.location.hash === nextHash) {
                 openDocumentTransition(prev);
@@ -291,8 +270,6 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
   }
 
   return (
-    // Wrapper div takes flex-1 in the flex-col SidebarInset, giving ResizablePanelGroup
-    // (which uses h-full internally) a correctly-sized height context.
     <div className="flex min-h-0 flex-1">
       <ResizablePanelGroup orientation="horizontal">
         <ResizablePanel minSize="30%" defaultSize="75%">

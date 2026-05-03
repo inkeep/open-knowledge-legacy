@@ -1,26 +1,10 @@
-/**
- * AuthModal — GitHub sign-in dialog.
- *
- * Two modes:
- *   'device'  — Device Flow (default): shows user_code, polls for completion,
- *               2-minute timeout. Calls POST /api/local-op/auth/login (streaming JSONL).
- *   'pat'     — PAT fallback: text input, validated via POST /api/local-op/auth/pat.
- *
- * Variant props:
- *   identityPrompt — when true, shows Name + Email fields after sign-in for unset
- *                    git identity (FR38 re-auth variant).
- *   reauth        — when true, shows "Re-authenticate" heading instead of "Sign in".
- *
- * On success: calls onSuccess({ login, name, avatarUrl }) and closes.
- */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { type AuthTransport, httpAuthTransport } from '@/lib/transports/auth-transport';
 import { consumeAuthEventStream } from './auth-event-stream';
 import { Button } from './ui/button';
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
-
-// ── NDJSON event types from /api/local-op/auth/login ──────────────────────────
 
 interface DeviceVerificationEvent {
   type: 'verification';
@@ -44,14 +28,10 @@ interface DeviceErrorEvent {
 
 type DeviceEvent = DeviceVerificationEvent | DeviceCompleteEvent | DeviceErrorEvent;
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
 async function copyToClipboard(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
-  } catch {
-    /* ignore — clipboard not available */
-  }
+  } catch {}
 }
 
 interface AuthSuccessResult {
@@ -65,79 +45,67 @@ interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: (result: AuthSuccessResult) => void;
-  /** Show git identity fields (Name + Email) after sign-in. */
   identityPrompt?: boolean;
-  /** Show "Re-authenticate" heading. */
   reauth?: boolean;
+  transport?: AuthTransport;
 }
-
-// ── Device Flow panel ─────────────────────────────────────────────────────────
 
 interface DeviceFlowPanelProps {
   onSuccess: (result: AuthSuccessResult) => void;
   onCancel: () => void;
+  transport: AuthTransport;
 }
 
 const DEVICE_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
-function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
+function DeviceFlowPanel({ onSuccess, onCancel, transport }: DeviceFlowPanelProps) {
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState('https://github.com/login/device');
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
   const [timeLeft, setTimeLeft] = useState(DEVICE_TIMEOUT_MS);
-  const abortRef = useRef<AbortController | null>(null);
+  const cancelRef = useRef<(() => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  async function startDeviceFlow(ac: AbortController) {
+  async function startDeviceFlow() {
     setError(null);
     setPolling(true);
     try {
-      const res = await fetch('/api/local-op/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ json: true }),
-        signal: ac.signal,
-      });
-      if (!res.ok || !res.body) {
-        setError('Failed to start sign-in — try again');
-        setPolling(false);
-        return;
-      }
-
-      const terminated = await consumeAuthEventStream(res.body, (line): 'terminal' | 'continue' => {
-        try {
-          const event = JSON.parse(line) as DeviceEvent;
-          if (event.type === 'verification') {
-            setUserCode(event.user_code);
-            setVerificationUri(event.verification_uri);
-            setTimeLeft(event.expires_in * 1000);
-            void copyToClipboard(event.user_code).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
-            });
-          } else if (event.type === 'complete') {
-            setPolling(false);
-            onSuccess({
-              login: event.login,
-              name: event.name,
-              email: event.email,
-              avatarUrl: event.avatarUrl,
-            });
-            return 'terminal';
-          } else if (event.type === 'error') {
-            setError(event.message);
-            setPolling(false);
-            return 'terminal';
-          }
-        } catch {
-          /* ignore malformed line */
+      const handle = transport.start();
+      cancelRef.current = handle.cancel;
+      const iter = handle.events[Symbol.asyncIterator]();
+      let sawTerminal = false;
+      let result = await iter.next();
+      while (!result.done) {
+        const event = result.value;
+        if (event.type === 'verification') {
+          setUserCode(event.user_code);
+          setVerificationUri(event.verification_uri);
+          setTimeLeft(event.expires_in * 1000);
+          void copyToClipboard(event.user_code).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          });
+        } else if (event.type === 'complete') {
+          sawTerminal = true;
+          setPolling(false);
+          onSuccess({
+            login: event.login,
+            name: event.name,
+            email: event.email,
+            avatarUrl: event.avatarUrl,
+          });
+          break;
+        } else if (event.type === 'error') {
+          sawTerminal = true;
+          setError(event.message);
+          setPolling(false);
+          break;
         }
-        return 'continue';
-      });
-
-      if (!terminated) {
+        result = await iter.next();
+      }
+      if (!sawTerminal) {
         setError('Sign-in stream ended without confirmation — please try again');
         setPolling(false);
       }
@@ -151,17 +119,19 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: start device flow once on mount
   useEffect(() => {
-    const ac = new AbortController();
-    abortRef.current = ac;
-    void startDeviceFlow(ac);
-
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void startDeviceFlow();
+    });
     return () => {
-      ac.abort();
+      cancelled = true;
+      cancelRef.current?.();
+      cancelRef.current = null;
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
-  // Countdown timer
   useEffect(() => {
     if (!userCode) return;
     const start = Date.now();
@@ -241,8 +211,6 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
   );
 }
 
-// ── PAT panel ─────────────────────────────────────────────────────────────────
-
 interface PATpanelProps {
   onSuccess: (result: AuthSuccessResult) => void;
   onCancel: () => void;
@@ -254,8 +222,6 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Cancel any in-flight PAT validation when the panel unmounts so the stream
-  // reader doesn't keep running and calling setState on an unmounted component.
   useEffect(
     () => () => {
       abortRef.current?.abort();
@@ -301,9 +267,7 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
             setLoading(false);
             return 'terminal';
           }
-        } catch {
-          /* ignore */
-        }
+        } catch {}
         return 'continue';
       });
       if (!terminated) setError('No response — try again');
@@ -353,8 +317,6 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
   );
 }
 
-// ── Identity prompt ────────────────────────────────────────────────────────────
-
 interface IdentityPromptProps {
   login: string;
   onSave: (name: string, email: string) => void;
@@ -399,8 +361,6 @@ function IdentityPrompt({ login, onSave, onSkip }: IdentityPromptProps) {
   );
 }
 
-// ── Main modal ────────────────────────────────────────────────────────────────
-
 type AuthTab = 'device' | 'pat';
 type AuthStep = 'auth' | 'identity' | 'done';
 
@@ -410,12 +370,13 @@ export function AuthModal({
   onSuccess,
   identityPrompt,
   reauth,
+  transport,
 }: AuthModalProps) {
+  const resolvedTransport = transport ?? httpAuthTransport();
   const [tab, setTab] = useState<AuthTab>('device');
   const [step, setStep] = useState<AuthStep>('auth');
   const [authResult, setAuthResult] = useState<AuthSuccessResult | null>(null);
 
-  // Reset on open
   useEffect(() => {
     if (open) {
       setTab('device');
@@ -437,14 +398,11 @@ export function AuthModal({
   }
 
   function handleIdentitySave(name: string, email: string) {
-    // Persist git identity via config endpoint (best-effort)
     void fetch('/api/local-op/auth/status', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ setIdentity: { name, email } }),
-    }).catch(() => {
-      /* ignore */
-    });
+    }).catch(() => {});
 
     const result = { ...(authResult ?? { login: '' }), name, email };
     setStep('done');
@@ -496,7 +454,11 @@ export function AuthModal({
               </div>
 
               {tab === 'device' ? (
-                <DeviceFlowPanel onSuccess={handleAuthSuccess} onCancel={handleCancel} />
+                <DeviceFlowPanel
+                  onSuccess={handleAuthSuccess}
+                  onCancel={handleCancel}
+                  transport={resolvedTransport}
+                />
               ) : (
                 <PATPanel onSuccess={handleAuthSuccess} onCancel={handleCancel} />
               )}

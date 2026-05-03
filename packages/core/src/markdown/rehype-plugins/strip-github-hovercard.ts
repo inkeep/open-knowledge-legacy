@@ -1,13 +1,3 @@
-/**
- * rehype plugin: strip GitHub rendered-comment hovercard metadata.
- *
- * GitHub's rendered-comment views (issues, PRs, READMEs) decorate anchors
- * with `data-hovercard-*` attributes and `commit-link` / `user-mention`
- * / `team-mention` classes for in-product hovercards. These are GitHub-
- * specific UI metadata with no meaning in plain markdown; we strip them
- * while preserving the `href` and visible text content on each anchor.
- */
-
 import type { Element, Root } from 'hast';
 import type { Plugin } from 'unified';
 

@@ -44,14 +44,14 @@ describe('getLeafFieldMeta', () => {
     expect(meta).toEqual({
       scope: 'either',
       agentSettable: true,
-      defaultScope: 'workspace',
+      defaultScope: 'project',
     });
   });
 
-  test('returns metadata for the workspace-strict preview.baseUrl leaf', () => {
+  test('returns metadata for the project-strict preview.baseUrl leaf', () => {
     const meta = getLeafFieldMeta(ConfigSchema, ['preview', 'baseUrl']);
     expect(meta).toEqual({
-      scope: 'workspace',
+      scope: 'project',
       agentSettable: false,
     });
   });
@@ -71,7 +71,6 @@ describe('getLeafFieldMeta', () => {
   });
 
   test('returns undefined for a non-leaf intermediate (object container without registered metadata)', () => {
-    // `mcp.tools` is a container; its inner shape carries no fieldRegistry entry.
     const meta = getLeafFieldMeta(ConfigSchema, ['mcp', 'tools']);
     expect(meta).toBeUndefined();
   });

@@ -1,11 +1,3 @@
-/**
- * Invariant I6 — Multi-client preservation: content survives
- * Y.Doc state sync between two clients.
- *
- * Creates a source Y.Doc, syncs its state to a second doc, and
- * verifies the serialized output is equivalent on both sides.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
@@ -27,7 +19,6 @@ describe('I6 — multi-client preservation: state sync', () => {
   test('content synced to second client is preserved', () => {
     fc.assert(
       fc.property(block, (md) => {
-        // Source doc
         const doc1 = new Y.Doc();
         const frag1 = doc1.getXmlFragment('default');
         const json = mdManager.parse(md);
@@ -35,7 +26,6 @@ describe('I6 — multi-client preservation: state sync', () => {
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(doc1, frag1, pmNode, meta);
 
-        // Second client receives state from source
         const doc2 = new Y.Doc();
         Y.applyUpdate(doc2, Y.encodeStateAsUpdate(doc1));
 
@@ -54,7 +44,6 @@ describe('I6 — multi-client preservation: state sync', () => {
   test('concurrent edits on synced clients converge', () => {
     fc.assert(
       fc.property(paragraph, paragraph, (md1, md2) => {
-        // Both clients start from same state
         const doc1 = new Y.Doc();
         const frag1 = doc1.getXmlFragment('default');
         const json1 = mdManager.parse(md1);
@@ -64,17 +53,14 @@ describe('I6 — multi-client preservation: state sync', () => {
         const doc2 = new Y.Doc();
         Y.applyUpdate(doc2, Y.encodeStateAsUpdate(doc1));
 
-        // Client 2 makes an edit
         const frag2 = doc2.getXmlFragment('default');
         const json2 = mdManager.parse(md2);
         const pmNode2 = schema.nodeFromJSON(json2);
         updateYFragment(doc2, frag2, pmNode2, { mapping: new Map(), isOMark: new Map() });
 
-        // Bidirectional sync
         Y.applyUpdate(doc1, Y.encodeStateAsUpdate(doc2));
         Y.applyUpdate(doc2, Y.encodeStateAsUpdate(doc1));
 
-        // Both must converge
         const output1 = normalize(serializeDoc(doc1));
         const output2 = normalize(serializeDoc(doc2));
         expect(output1).toBe(output2);

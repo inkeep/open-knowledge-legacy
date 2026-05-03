@@ -1,29 +1,7 @@
-/**
- * Branch-routing tests for the WYSIWYG paste dispatcher (FR-3 / D6).
- *
- * The dispatcher is a priority-ordered series of guards:
- *   0. FR-17 Cmd+Shift+V escape hatch
- *   0. FR-10 cursor-in-codeBlock short-circuit
- *   A. vscode-editor-data → fenced code block
- *   B. text/x-gfm → MarkdownManager.parse
- *   C. data-pm-slice → PM native parseFromClipboard (return false)
- *   B. Ambiguous paste (plain + html both, plain is markdown) → markdown path (FR-13)
- *   D. Generic HTML → shared htmlToMdast pipeline
- *   E. text/plain only → markdown-first if threshold hit, else verbatim
- *
- * Each test arranges a DataTransfer + empty doc and asserts which branch
- * fired, via the dispatcher's return value and its side effects on the
- * fake view. We use a narrow fake EditorView since the real one requires
- * a full schema + document; the dispatcher only touches a small surface
- * (`state.selection`, `state.schema.nodes.codeBlock`, `state.schema.text`,
- * `state.tr.*`, `dispatch`).
- */
-
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import { createHandlePaste } from './handle-paste.ts';
 
-// Mock the shared pipeline so tests don't exercise the full rehype stack.
 mock.module('@inkeep/open-knowledge-core', () => {
   return {
     htmlToMdast: mock((_html: string) => ({ type: 'root', children: [] })),
@@ -31,7 +9,6 @@ mock.module('@inkeep/open-knowledge-core', () => {
   };
 });
 
-// Mock sonner to no-op toasts — we don't assert on them here.
 mock.module('sonner', () => ({ toast: { error: mock(() => {}) } }));
 
 function fakeDT(data: Record<string, string>): ClipboardEvent {
@@ -53,7 +30,6 @@ function fakeMdManager() {
   };
 }
 
-// Fake PM view: only the fields the dispatcher reads.
 // biome-ignore lint/suspicious/noExplicitAny: narrow fake view for unit test
 function fakeView(opts: { inCodeBlock?: boolean } = {}): any {
   const dispatch = mock(() => {});
@@ -62,7 +38,6 @@ function fakeView(opts: { inCodeBlock?: boolean } = {}): any {
       slice: (_f: number, _t: number) => 'CODE-SLICE',
     })),
   };
-  // Simulated $from $node chain: if inCodeBlock, one node at depth is named 'codeBlock'.
   const $from = {
     depth: 1,
     node: (_d: number) => ({ type: { name: opts.inCodeBlock ? 'codeBlock' : 'paragraph' } }),
@@ -125,7 +100,6 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
     const view = fakeView({ inCodeBlock: true });
     const evt = fakeDT({ 'text/plain': 'raw code', 'text/html': '<b>bold</b>' });
     expect(paste(view, evt)).toBe(true);
-    // Plain text was dispatched, not parsed as markdown or HTML.
     expect(view.state.tr.replaceSelectionWith).toHaveBeenCalled();
   });
 
@@ -153,7 +127,6 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
     });
     const view = fakeView();
     const evt = fakeDT({
-      // Newline + fence char would break out of the fence — dispatcher must reject.
       'vscode-editor-data': '{"mode":"ts\\n```evil"}',
       'text/plain': 'code',
     });
@@ -162,6 +135,20 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
       { language: '' },
       expect.anything(),
     );
+  });
+
+  test('Branch A: malformed vscode-editor-data JSON falls through to a later branch', () => {
+    const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
+      mdManager: fakeMdManager() as any,
+    });
+    const view = fakeView();
+    const evt = fakeDT({
+      'vscode-editor-data': '{not json',
+      'text/plain': 'fallback content',
+    });
+    expect(() => paste(view, evt)).not.toThrow();
+    expect(view.state.schema.nodes.codeBlock.create).not.toHaveBeenCalled();
   });
 
   test('Branch C: data-pm-slice fingerprint returns false (PM handles)', () => {
@@ -196,7 +183,6 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
       mdManager: md as any,
     });
     const view = fakeView();
-    // isMarkdown signal count ≥ threshold via heading + list + code.
     const markdownPlain = '# H\n\n- a\n- b\n\n```\ncode\n```\n';
     const evt = fakeDT({
       'text/plain': markdownPlain,
@@ -218,8 +204,6 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
       'text/html': '<p>rich <b>html</b></p>',
     });
     expect(paste(view, evt)).toBe(true);
-    // Branch D calls mdManager.parse with the markdown that htmlToMdast +
-    // mdastToMarkdown produced (the mocked stub returns '**bold**').
     expect(md.parse).toHaveBeenCalledWith('**bold**');
   });
 
@@ -246,7 +230,6 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
     const view = fakeView();
     const evt = fakeDT({ 'text/plain': 'hello world, plain prose' });
     expect(paste(view, evt)).toBe(true);
-    // Prose below threshold — no parse call, plain-text dispatch instead.
     expect(md.parse).not.toHaveBeenCalled();
     expect(view.state.tr.replaceSelectionWith).toHaveBeenCalled();
   });
@@ -261,6 +244,70 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
     const evt = fakeDT({ 'text/plain': '# H', 'text/html': '<h1>H</h1>' });
     Object.defineProperty(evt, 'shiftKey', { value: true, configurable: true });
     expect(paste(view, evt)).toBe(true);
+    expect(md.parse).not.toHaveBeenCalled();
+  });
+});
+
+describe('WYSIWYG paste dispatcher — markdown-first tiebreak ordering (D5/D13)', () => {
+  test('OK→OK <img/> JSX paste: markdown-first wins over Branch C data-pm-slice', () => {
+    const md = fakeMdManager();
+    const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
+      mdManager: md as any,
+    });
+    const view = fakeView();
+    const evt = fakeDT({
+      'text/plain': '<img src="x.png" />',
+      'text/html': '<div data-pm-slice="0 0 paragraph"><img src="x.png" /></div>',
+    });
+    expect(paste(view, evt)).toBe(true);
+    expect(md.parse).toHaveBeenCalledWith('<img src="x.png" />');
+  });
+
+  test('OK→OK <Callout> JSX paste: markdown-first wins over Branch C', () => {
+    const md = fakeMdManager();
+    const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
+      mdManager: md as any,
+    });
+    const view = fakeView();
+    const evt = fakeDT({
+      'text/plain': '<Callout type="note">body</Callout>',
+      'text/html':
+        '<div data-pm-slice="0 0 paragraph"><pre><code>&lt;Callout&gt;</code></pre></div>',
+    });
+    expect(paste(view, evt)).toBe(true);
+    expect(md.parse).toHaveBeenCalledWith('<Callout type="note">body</Callout>');
+  });
+
+  test('Cross-PM-editor: markdown-canonical text/plain routes through markdown path even with PM slice', () => {
+    const md = fakeMdManager();
+    const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
+      mdManager: md as any,
+    });
+    const view = fakeView();
+    const evt = fakeDT({
+      'text/plain': '# H\n\n- a\n- b\n',
+      'text/html': '<div data-pm-slice="0 0 paragraph"><h1>H</h1></div>',
+    });
+    expect(paste(view, evt)).toBe(true);
+    expect(md.parse).toHaveBeenCalledWith('# H\n\n- a\n- b\n');
+  });
+
+  test('Branch C still fires when text/plain is non-markdown prose (no false-positive on heuristic)', () => {
+    const md = fakeMdManager();
+    const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
+      mdManager: md as any,
+    });
+    const view = fakeView();
+    const evt = fakeDT({
+      'text/plain': 'plain prose without markdown signals',
+      'text/html':
+        '<div data-pm-slice="0 0 paragraph"><p>plain prose without markdown signals</p></div>',
+    });
+    expect(paste(view, evt)).toBe(false);
     expect(md.parse).not.toHaveBeenCalled();
   });
 });

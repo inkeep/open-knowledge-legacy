@@ -2,7 +2,7 @@
 title: Configuration
 description: Config schema, YAML hierarchy, environment variables, CLI flag overrides, and the in-app Settings pane.
 ---
-Open Knowledge uses hierarchical YAML configuration stored in `.open-knowledge/config.yml` files. Both config files are optional -- sensible defaults cover everything.
+Open Knowledge uses hierarchical YAML configuration stored in `.ok/config.yml` files. Both config files are optional -- sensible defaults cover everything.
 
 There are three ways to edit config:
 
@@ -15,16 +15,16 @@ All three share a single Zod schema and a single validation core, so a write tha
 ## Config hierarchy
 
 <Mermaid chart={`graph LR
-  A[Zod defaults] --> B["~/.open-knowledge/config.yml"]
-  B --> C["./.open-knowledge/config.yml"]
+  A[Zod defaults] --> B["~/.ok/config.yml"]
+  B --> C["./.ok/config.yml"]
   C --> D[Environment variables]
   D --> E[CLI flags]
 `} />
 
 Each layer overrides the previous, from left to right. The merge is a deep merge: leaf values override, but arrays replace (not concatenate). There is no walk-up-tree discovery -- the loader checks exactly two fixed paths:
 
-1. **User config** -- `~/.open-knowledge/config.yml`
-2. **Workspace config** -- `./.open-knowledge/config.yml` (relative to the working directory)
+1. **User config** -- `~/.ok/config.yml`
+2. **Workspace config** -- `./.ok/config.yml` (relative to the working directory)
 
 Every schema section uses Zod's `looseObject` mode: unknown keys are preserved on disk through round-trip writes rather than rejected at load time. This makes upgrades forgiving -- an existing file with a removed field (e.g., a leftover `sync.pushIntervalSeconds: 30`) loads cleanly, the engine ignores it, and `ok config migrate` can drop it later. Schema-shaped fields still validate strictly; loose-mode only relaxes the "no extra keys" check.
 
@@ -32,32 +32,30 @@ Every schema section uses Zod's `looseObject` mode: unknown keys are preserved o
 
 | Field                                 | Type                         | Default                   | Description                                                                                                                                                                                          |
 | ------------------------------------- | ---------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `content.dir`                         | `string`                     | `"."`                     | Content directory relative to project root                                                                                                                                                           |
-| `content.include`                     | `string[]`                   | `["**/*.md", "**/*.mdx"]` | Glob patterns for files to include in the document system (relative to `content.dir`). Must contain at least one pattern.                                                                            |
-| `content.exclude`                     | `string[]`                   | `[]`                      | Glob patterns to explicitly exclude, relative to `content.dir` (combined with .gitignore). See built-in skips below.                                                                                 |
+| `content.dir`                         | `string`                     | `"."`                     | Content directory relative to project root. Exclusions live in `.okignore` (root + nested) — see [Content filtering](/guides/content-filtering).                                                       |
 | `server.host`                         | `string`                     | `"localhost"`             | Server bind address                                                                                                                                                                                  |
 | `server.openOnAgentEdit`              | `boolean`                    | `false`                   | When `true`, `ok start` opens the `ok ui` URL in the default browser on the first agent write                                                                                                        |
 | `mcp.autoStart`                       | `boolean`                    | `true`                    | When `true`, `ok mcp` detach-spawns `ok start` as a sibling process if no live `server.lock` is found. Set `false` to force disk-only mode. The env var `OK_MCP_AUTOSTART=0` wins over this setting. |
 | `mcp.tools.search.maxResults`         | `number`                     | `50`                      | Max rows returned by the MCP `search` tool.                                                                                                                                                          |
 | `mcp.tools.read_document.historyDepth`| `number`                     | `5`                       | Number of shadow-repo history entries surfaced by the MCP `read_document` tool.                                                                                                                      |
 | `preview.baseUrl`                     | `string?`                    | (unset)                   | Override for the `previewUrl` emitted by MCP tools. Workspace-only — illegal at user scope. Takes effect when `ui.lock` is absent; the env var `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` wins over this setting. |
-| `folders[]`                           | `FolderRule[]`               | `[]`                      | Per-folder default frontmatter. Each entry is `{match: glob, frontmatter: {title?, description?, tags?}}`. Edit per-rule via the `set_folder_rule` MCP tool.                                          |
+| `folders[]`                           | `FolderRule[]`               | `[]`                      | Per-folder default frontmatter. Each entry is `{match: glob, frontmatter: {title?, description?, tags?}}`. Editable in the Settings pane's [Folders section](#folders-section), per-rule via the `set_folder_rule` MCP tool, or as a whole array via `set_config({patch: {folders: [...]}})`. Order matters: later rules override earlier scalars; tags concatenate and dedupe across all matching rules. |
 | `appearance.theme`                    | `"light" \| "dark" \| "system"`? | (unset)              | Editor theme. User-scope by default. When unset, the chrome FOUC script falls back to `localStorage` + system preference; the first explicit Settings-pane write canonicalizes the value into config.yml. |
 | `appearance.editorModeDefault`        | `"wysiwyg" \| "source"`?     | (unset)                   | Initial editor mode for newly opened documents. Same dual-track behavior as `appearance.theme`.                                                                                                       |
 | `github.oauthAppClientId`             | `string`                     | `"Ov23li..."`             | OAuth App client ID for Device Flow. Override for forks or custom OAuth Apps.                                                                                                                         |
 
 ## Built-in directory skips
 
-The following directories are always excluded from traversal regardless of `.gitignore` or `content.exclude` config. They are never user-authored content, and some (notably `node_modules` with pnpm) contain broken symlinks that would crash the file walker.
+The following directories are always excluded from traversal regardless of `.gitignore` or `.okignore` rules. They are never user-authored content, and some (notably `node_modules` with pnpm) contain broken symlinks that would crash the file walker.
 
 | Category | Directories |
 |----------|-------------|
 | Package managers / runtimes | `node_modules`, `.venv`, `venv`, `env`, `__pycache__`, `vendor` |
 | Build output | `dist`, `build`, `out`, `output`, `.next`, `.nuxt`, `.svelte-kit`, `.astro` |
 | Tool caches | `.turbo`, `.cache`, `.parcel-cache`, `coverage` |
-| VCS | `.git` |
+| VCS / project state | `.git`, `.ok` |
 
-These skips apply when the directory name appears as the first path segment. For example, `dist/` at the content root is skipped, and paths like `dist/foo/bar` are also skipped because `dist` is the first segment. Nested instances under non-skipped paths (e.g. `docs/dist/`) rely on `.gitignore` or `content.exclude` patterns.
+These skips apply when the directory name appears as the first path segment. For example, `dist/` at the content root is skipped, and paths like `dist/foo/bar` are also skipped because `dist` is the first segment. Nested instances under non-skipped paths (e.g. `docs/dist/`) rely on `.gitignore` or `.okignore` patterns.
 
 ## Example configs
 
@@ -65,7 +63,7 @@ These skips apply when the directory name appears as the first path segment. For
 <Tab value="User config">
 Apply a default editor theme + MCP search cap to all projects on this machine:
 
-```yaml title="~/.open-knowledge/config.yml"
+```yaml title="~/.ok/config.yml"
 appearance:
   theme: dark
 mcp:
@@ -75,14 +73,18 @@ mcp:
 ```
 </Tab>
 <Tab value="Workspace config">
-Point at a subdirectory and exclude drafts:
+Point at a subdirectory:
 
-```yaml title="./.open-knowledge/config.yml"
+```yaml title="./.ok/config.yml"
 content:
   dir: docs
-  exclude:
-    - "drafts/**"
-    - "archive/**"
+```
+
+Exclude drafts via `.okignore`:
+
+```text title=".okignore"
+drafts/
+archive/
 ```
 </Tab>
 </Tabs>
@@ -107,7 +109,7 @@ See [GitHub Sync](/guides/github-sync) for the engine's full behavior.
 | `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` | Overrides the `previewUrl` base emitted by every MCP tool. Wins over `ui.lock` discovery and `preview.baseUrl` config. Use for tunnels, CI, or cloud-deployed previews. |
 | `OPEN_KNOWLEDGE_GITHUB_CLIENT_ID` | `github.oauthAppClientId` — override the OAuth App client ID used for Device Flow                                                                                        |
 
-Precedence: **CLI flags > environment variables > workspace config > user config > Zod defaults**. A pre-existing live `server.lock` always takes precedence over `OK_MCP_AUTOSTART=0` — the env var only suppresses the spawn path, it doesn't prevent MCP from connecting to a server the user started manually.
+Precedence: **CLI flags > environment variables > project config > user config > Zod defaults**. A pre-existing live `server.lock` always takes precedence over `OK_MCP_AUTOSTART=0` — the env var only suppresses the spawn path, it doesn't prevent MCP from connecting to a server the user started manually.
 
 ## CLI flags
 
@@ -128,12 +130,12 @@ Open the Settings pane from anywhere in the editor:
 
 The pane has two sub-tabs:
 
-- **This project** — workspace-scope fields, persisted to `./.open-knowledge/config.yml`.
-- **User** — user-scope fields, persisted to `~/.open-knowledge/config.yml`.
+- **This project** — project-scope fields, persisted to `./.ok/config.yml`.
+- **User** — user-scope fields, persisted to `~/.ok/config.yml`.
 
 Either-scope fields appear in both tabs with a "modified at this scope" indicator showing where the current value lives. Edits auto-save per field — text inputs commit on blur or Enter; toggles and selects commit on change. Hover any modified field for a "Reset to default" affordance.
 
-Editing is real-time: the pane is bound to two Hocuspocus Y.Text-only synthetic docs (`__config__/workspace` and `__user__/config.yml`) over the same WebSocket as the editor. External edits — from your IDE, an MCP tool, or another `ok start` instance — propagate via a chokidar file watcher into Y.Text and the open Settings pane refreshes within ~500ms. No reload needed.
+Editing is real-time: the pane is bound to two Hocuspocus Y.Text-only synthetic docs (`__config__/project` and `__user__/config.yml`) over the same WebSocket as the editor. External edits — from your IDE, an MCP tool, or another `ok start` instance — propagate via a chokidar file watcher into Y.Text and the open Settings pane refreshes within ~500ms. No reload needed.
 
 Validation runs in three places (defense-in-depth):
 
@@ -143,20 +145,32 @@ Validation runs in three places (defense-in-depth):
 
 Settings is unavailable in the Electron Navigator window — it has no project context to scope config to.
 
+### Folders section
+
+`folders[]` rules render as a dedicated section in the Settings pane (between Preview and MCP in the section list). Each row exposes the four editable keys — **Match** (the glob pattern), **Title**, **Description**, and **Tags** — alongside per-row controls:
+
+- **Add folder rule** appends an empty `{match: '', frontmatter: {}}` entry and focuses the new Match input. The row stays in error state (Zod requires `match` to be a non-empty glob) until you type a valid pattern; nothing lands on disk before that.
+- **Move up / Move down** reorder rules. Rule order is load-bearing — later rules override earlier scalars when their globs both match a doc, so reordering is a real edit, not a cosmetic one. Each move commits.
+- **Remove** (trash icon) drops the row and commits the new array.
+
+**Tags** uses a pill input: type a tag and press **Enter**, **comma**, or **Tab** to commit it as a Badge pill. **Backspace** on an empty input removes the last pill. Duplicates are silently deduped, and any uncommitted draft is auto-committed when the field loses focus. Click the × on any pill to remove it individually.
+
+Like scalar fields, per-row edits commit on blur or Enter — but the wire write is always the **whole `folders[]` array**, mirroring the all-or-nothing transactional semantics of the `set_folder_rule` MCP tool and `applyFolderRulesUpsert` core helper. Validation runs against the merged config; if any rule fails (e.g. an empty `match` slips through, or a sibling row is invalid for an unrelated reason), no rules land on disk and the offending **Match** field shows an inline validation error. Rejections from external writers (CLI, MCP, hand-edits to disk) also briefly flash the affected row in addition to showing the inline error.
+
 ## IDE intellisense
 
-`ok init` scaffolds a magic comment on line 1 of generated `.open-knowledge/config.yml`:
+`ok init` scaffolds a magic comment on line 1 of generated `.ok/config.yml`:
 
-```yaml title=".open-knowledge/config.yml"
+```yaml title=".ok/config.yml"
 # yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@0.2/dist/config-schema.json
-# Open Knowledge — workspace configuration
+# Open Knowledge — project configuration
 content:
-  include: ["**/*.md", "**/*.mdx"]
+  dir: .
 ```
 
 Any LSP-aware editor (VS Code, JetBrains, Helix, Zed, vim with `yaml-language-server`) picks this up and provides autocomplete, hover docs, and inline validation against the published JSON Schema. The URL is pinned to the installed CLI's MAJOR.MINOR version so your autocomplete stays locked to the schema you wrote against; re-run `ok init` after upgrading to bump the pin.
 
-The schema artifact is published to npm at `@inkeep/open-knowledge/dist/config-schema.json`, generated from the same Zod source the runtime validates with. A SchemaStore catalog entry (with a `fileMatch` of `**/.open-knowledge/config.{yml,yaml}`) is planned so editors that consult SchemaStore — most JetBrains IDEs by default — will auto-detect without needing the magic comment. Until that lands, the magic comment on line 1 is the primary intellisense mechanism.
+The schema artifact is published to npm at `@inkeep/open-knowledge/dist/config-schema.json`, generated from the same Zod source the runtime validates with. A SchemaStore catalog entry (with a `fileMatch` of `**/.ok/config.{yml,yaml}`) is planned so editors that consult SchemaStore — most JetBrains IDEs by default — will auto-detect without needing the magic comment. Until that lands, the magic comment on line 1 is the primary intellisense mechanism.
 
 For CI / pre-commit hooks, [`ok config validate`](/guides/cli-reference#config-validate) loads the merged config through the same Zod gate and exits non-zero with a `file:line:col` snippet on failure.
 
@@ -168,4 +182,4 @@ After editing config, run `preview` to verify the resolved content scope:
 npx @inkeep/open-knowledge preview
 ```
 
-This prints the file count, applied include/exclude patterns, and a sample of matched paths -- useful for confirming that `content.include` or `content.exclude` changes had the intended effect.
+This prints the file count and a sample of matched paths -- useful for confirming that `.okignore` changes had the intended effect.

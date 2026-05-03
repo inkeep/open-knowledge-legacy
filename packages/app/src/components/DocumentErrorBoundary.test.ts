@@ -1,13 +1,3 @@
-/**
- * DocumentErrorBoundary — unit tests for the pure `errorCopy` mapping.
- *
- * Component-level rendering behavior (fallback-on-throw, retry invalidate+reset
- * ordering, back-nav gating, resetKeys clearing) is exercised end-to-end by
- * Playwright in `tests/stress/docs-open.e2e.ts` (US-012, F5 + F6). This file
- * stays at the pure-function altitude that the rest of the repo uses for UI
- * helpers — no DOM, no React renderer, no @testing-library dependency added.
- */
-
 import { describe, expect, test } from 'bun:test';
 import {
   BridgeSetupError,

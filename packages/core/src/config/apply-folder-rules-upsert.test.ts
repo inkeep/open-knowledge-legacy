@@ -9,7 +9,7 @@ let testDir: string;
 
 beforeEach(() => {
   testDir = mkdtempSync(join(tmpdir(), 'ok-folder-upsert-'));
-  mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+  mkdirSync(join(testDir, '.ok'), { recursive: true });
 });
 
 afterEach(() => {
@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function configPath(): string {
-  return join(testDir, '.open-knowledge', 'config.yml');
+  return join(testDir, '.ok', 'config.yml');
 }
 
 function readConfig(): string {
@@ -153,14 +153,12 @@ describe('applyFolderRulesUpsert — rename via new_match', () => {
 
 describe('applyFolderRulesUpsert — transactional all-or-nothing', () => {
   test('invalid rule rejects the whole batch; no file written', async () => {
-    // No file exists yet
     expect(existsSync(configPath())).toBe(false);
 
     const result = await applyFolderRulesUpsert({
       cwd: testDir,
       rules: [
         { match: 'specs/**', frontmatter: { title: 'Specs' } },
-        // Empty match string violates `match: z.string().min(1)`
         { match: '', frontmatter: { title: 'Invalid' } },
       ],
     });
@@ -168,7 +166,6 @@ describe('applyFolderRulesUpsert — transactional all-or-nothing', () => {
     if (result.ok) throw new Error('expected failure');
     if (!isKnownConfigError(result.error)) throw new Error('expected known error');
     expect(result.error.code).toBe('SCHEMA_INVALID');
-    // Critically: no file written because validation runs against the merged result
     expect(existsSync(configPath())).toBe(false);
   });
 
@@ -192,13 +189,12 @@ describe('applyFolderRulesUpsert — transactional all-or-nothing', () => {
       ],
     });
     expect(result.ok).toBe(false);
-    // File on disk unchanged byte-for-byte
     expect(readConfig()).toBe(before);
   });
 });
 
 describe('applyFolderRulesUpsert — scope', () => {
-  test('user scope writes to homedirOverride/.open-knowledge/config.yml', async () => {
+  test('user scope writes to homedirOverride/.ok/config.yml', async () => {
     const home = mkdtempSync(join(tmpdir(), 'ok-folder-upsert-home-'));
     try {
       const result = await applyFolderRulesUpsert({
@@ -211,8 +207,7 @@ describe('applyFolderRulesUpsert — scope', () => {
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected success');
-      expect(result.path).toBe(join(home, '.open-knowledge', 'config.yml'));
-      // workspace config not written
+      expect(result.path).toBe(join(home, '.ok', 'config.yml'));
       expect(existsSync(configPath())).toBe(false);
     } finally {
       if (existsSync(home)) rmSync(home, { recursive: true, force: true });

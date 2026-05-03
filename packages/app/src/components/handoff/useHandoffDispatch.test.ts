@@ -1,19 +1,3 @@
-/**
- * Unit tests for `useHandoffDispatch` — exercises the pure `runHandoffDispatch`
- * helper with recording doubles. Matches the repo convention (no
- * `@testing-library/react` / `happy-dom`; Playwright covers live UI flows).
- *
- * Covers US-009 acceptance criteria:
- *   - Success outcome renders success toast, records `outcome:'ok'`
- *   - Failure outcome renders error toast + retry action, records
- *     `outcome:'error'` with the failure reason
- *   - Retry action re-invokes dispatch with the same `(target, input)` pair
- *   - Both paths call `recordHandoff` exactly once per attempt (retry ⇒ +1)
- *   - `composePrompt(docContext)` is applied before dispatch
- *   - `host` telemetry field reflects `isElectronHost()`
- *   - Default deps wire production bindings without error
- */
-
 import { describe, expect, mock, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import type { HandoffOutcome, HandoffPayload, HandoffTarget } from '@inkeep/open-knowledge-core';
@@ -62,7 +46,7 @@ function buildDeps(
   overrides: Partial<HandoffDispatchDeps> = {},
 ): HandoffDispatchDeps & { toast: RecordingToast } {
   const toast = recordingToast();
-  return {
+  const defaults: HandoffDispatchDeps = {
     dispatchHandoff: mock(async (_payload: HandoffPayload) => ({ ok: true }) as HandoffOutcome),
     recordHandoff: mock(async (_line) => {}),
     toast,
@@ -76,8 +60,9 @@ function buildDeps(
           : target === 'codex'
             ? 'Codex'
             : 'Cursor',
-    ...overrides,
+    ensureCoworkSkillInstalled: mock(async () => ({ kind: 'already-installed' }) as const),
   };
+  return { ...defaults, ...overrides, toast };
 }
 
 describe('useHandoffDispatch module surface', () => {
@@ -112,8 +97,6 @@ describe('successToastMessage / errorToastMessage — exact copy', () => {
   });
 
   test('error copy on final attempt omits the "try again?" question and names a retry delay', async () => {
-    // Review M5: bounded retry cap. The final-attempt copy must be distinct so
-    // the user is not trapped in a loop of identical "try again?" toasts.
     const { errorToastMessage, MAX_DISPATCH_ATTEMPTS } = await import('./useHandoffDispatch');
     expect(errorToastMessage('Cursor', MAX_DISPATCH_ATTEMPTS)).toBe(
       "Couldn't reach Cursor — please try again later.",
@@ -257,7 +240,6 @@ describe('runHandoffDispatch — failure path', () => {
   test('retry action re-invokes dispatchHandoff with the same payload', async () => {
     const { runHandoffDispatch } = await import('./useHandoffDispatch');
     const dispatch = mock(async (_p: HandoffPayload) => ({ ok: true }) as HandoffOutcome);
-    // First call returns failure; subsequent retries return success.
     let firstCall = true;
     (
       dispatch as unknown as { mockImplementation: (fn: typeof dispatch) => void }
@@ -276,13 +258,10 @@ describe('runHandoffDispatch — failure path', () => {
     expect(first.ok).toBe(false);
     expect(deps.recordHandoff).toHaveBeenCalledTimes(1);
 
-    // Invoke the retry onClick synchronously — it schedules a fresh dispatch.
     const action = deps.toast.errorCalls[0]?.action;
     expect(action).toBeDefined();
     action?.onClick();
 
-    // The retry is fire-and-forget (`void runHandoffDispatch(...)`). Yield so
-    // the second attempt's await-chain completes before assertions.
     await wait(0);
 
     expect(dispatch).toHaveBeenCalledTimes(2);
@@ -291,17 +270,11 @@ describe('runHandoffDispatch — failure path', () => {
       .calls[1]?.[0] as HandoffPayload;
     expect(secondPayload).toEqual(firstPayload);
 
-    // Retry's own telemetry line lands.
     expect(deps.recordHandoff).toHaveBeenCalledTimes(2);
-    // Retry succeeded → a fresh success toast appears.
     expect(deps.toast.successCalls).toEqual(['Opened in Cursor.']);
   });
 
   test('third consecutive failure drops the Retry action (Review M5 bounded retry)', async () => {
-    // The retry chain is capped at MAX_DISPATCH_ATTEMPTS (=3). First failure:
-    // "Retry" button + "try again?" copy. Second failure: "Try one more time"
-    // button + "Still couldn't reach" copy. Third failure: distinct
-    // "please try again later" copy, NO button — user cannot loop further.
     const { runHandoffDispatch } = await import('./useHandoffDispatch');
     const dispatch = mock(
       async (_p: HandoffPayload) => ({ ok: false, reason: 'dispatch-error' }) as HandoffOutcome,
@@ -309,13 +282,11 @@ describe('runHandoffDispatch — failure path', () => {
     const deps = buildDeps({ dispatchHandoff: dispatch });
     const input = sampleInput();
 
-    // Attempt 1 — initial dispatch.
     await runHandoffDispatch('cursor', input, deps);
     expect(deps.toast.errorCalls).toHaveLength(1);
     expect(deps.toast.errorCalls[0]?.message).toBe("Couldn't reach Cursor — try again?");
     expect(deps.toast.errorCalls[0]?.action?.label).toBe('Retry');
 
-    // Attempt 2 — click Retry.
     const firstAction = deps.toast.errorCalls[0]?.action;
     expect(firstAction).toBeDefined();
     firstAction?.onClick();
@@ -326,7 +297,6 @@ describe('runHandoffDispatch — failure path', () => {
     );
     expect(deps.toast.errorCalls[1]?.action?.label).toBe('Try one more time');
 
-    // Attempt 3 — click Try one more time.
     const secondAction = deps.toast.errorCalls[1]?.action;
     expect(secondAction).toBeDefined();
     secondAction?.onClick();
@@ -335,11 +305,8 @@ describe('runHandoffDispatch — failure path', () => {
     expect(deps.toast.errorCalls[2]?.message).toBe(
       "Couldn't reach Cursor — please try again later.",
     );
-    // CAP ENFORCED — no Retry action on the final toast. The chain terminates
-    // here; there is no button the user can click to fire a fourth attempt.
     expect(deps.toast.errorCalls[2]?.action).toBeUndefined();
 
-    // Three attempts, three telemetry lines.
     expect(deps.recordHandoff).toHaveBeenCalledTimes(3);
     expect(dispatch).toHaveBeenCalledTimes(3);
   });
@@ -381,6 +348,121 @@ describe('defaultHandoffDispatchDeps — production wiring', () => {
     expect(deps.now()).toBeInstanceOf(Date);
     expect(typeof deps.isElectronHost()).toBe('boolean');
     expect(deps.getDisplayName('claude-cowork')).toBe('Claude Cowork');
+    expect(typeof deps.ensureCoworkSkillInstalled).toBe('function');
+  });
+});
+
+describe('runHandoffDispatch — Cowork install gate', () => {
+  test('first click + bridge ran: shows install toast and skips URL dispatch', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps({
+      ensureCoworkSkillInstalled: mock(
+        async () => ({ kind: 'installed-now', path: '/tmp/openknowledge.skill' }) as const,
+      ),
+    });
+
+    const outcome = await runHandoffDispatch('claude-cowork', sampleInput(), deps);
+
+    expect(outcome).toEqual({ ok: true });
+    expect(deps.dispatchHandoff).not.toHaveBeenCalled();
+    expect(deps.recordHandoff).not.toHaveBeenCalled();
+    expect(deps.toast.successCalls).toEqual([
+      'Open Knowledge skill saved. Upload it in Claude Desktop, then click Cowork again.',
+    ]);
+  });
+
+  test('install-failed: surfaces error toast and returns dispatch-error outcome', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps({
+      ensureCoworkSkillInstalled: mock(
+        async () =>
+          ({
+            kind: 'install-failed',
+            reason: 'open-failed',
+            message: 'Claude Desktop not found',
+          }) as const,
+      ),
+    });
+
+    const outcome = await runHandoffDispatch('claude-cowork', sampleInput(), deps);
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('dispatch-error');
+      expect(outcome.detail).toContain('install-failed');
+    }
+    expect(deps.dispatchHandoff).not.toHaveBeenCalled();
+    expect(deps.toast.errorCalls[0]?.message).toBe(
+      "Couldn't install Open Knowledge skill — Claude Desktop not found",
+    );
+  });
+
+  test('already-installed: falls through to URL dispatch (default test path)', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps(); // default ensureCoworkSkillInstalled → already-installed
+
+    await runHandoffDispatch('claude-cowork', sampleInput(), deps);
+
+    expect(deps.dispatchHandoff).toHaveBeenCalledTimes(1);
+    expect(deps.toast.successCalls).toEqual(['Opened in Claude Cowork.']);
+  });
+
+  test('host-unsupported (web): falls through to URL dispatch unchanged', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps({
+      isElectronHost: () => false,
+      ensureCoworkSkillInstalled: mock(async () => ({ kind: 'host-unsupported' }) as const),
+    });
+
+    await runHandoffDispatch('claude-cowork', sampleInput(), deps);
+
+    expect(deps.dispatchHandoff).toHaveBeenCalledTimes(1);
+    expect(deps.toast.successCalls).toEqual(['Opened in Claude Cowork.']);
+  });
+
+  test('non-Cowork target: install gate is never consulted', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const ensureSpy = mock(async () => ({ kind: 'already-installed' }) as const);
+    const deps = buildDeps({ ensureCoworkSkillInstalled: ensureSpy });
+
+    await runHandoffDispatch('codex', sampleInput(), deps);
+    await runHandoffDispatch('claude-code', sampleInput(), deps);
+    await runHandoffDispatch('cursor', sampleInput(), deps);
+
+    expect(ensureSpy).not.toHaveBeenCalled();
+  });
+
+  test('retry attempt skips the install gate (only first attempt invokes it)', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const ensureSpy = mock(async () => ({ kind: 'already-installed' }) as const);
+    const deps = buildDeps({ ensureCoworkSkillInstalled: ensureSpy });
+
+    await runHandoffDispatch('claude-cowork', sampleInput(), deps, 2);
+
+    expect(ensureSpy).not.toHaveBeenCalled();
+    expect(deps.dispatchHandoff).toHaveBeenCalledTimes(1);
+  });
+
+  test('install gate throws: surfaces error toast + dispatch-error outcome (no unhandled rejection)', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps({
+      ensureCoworkSkillInstalled: mock(async () => {
+        throw new Error('IPC channel closed');
+      }),
+    });
+
+    const outcome = await runHandoffDispatch('claude-cowork', sampleInput(), deps);
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('dispatch-error');
+      expect(outcome.detail).toContain('install-error');
+      expect(outcome.detail).toContain('IPC channel closed');
+    }
+    expect(deps.dispatchHandoff).not.toHaveBeenCalled();
+    expect(deps.toast.errorCalls[0]?.message).toBe(
+      "Couldn't install Open Knowledge skill — IPC channel closed",
+    );
   });
 });
 
@@ -419,18 +501,12 @@ describe('buildHandoffInput — shared surface helper (US-011)', () => {
       docName: 'specs/foo/SPEC',
       workspace: { contentDir: 'C:\\repo', pathSeparator: '\\' },
     });
-    // `docContext.relativePath` stays POSIX-form (matches the content-directory
-    // convention + the MCP `read_document` contract). Only `docPath` uses
-    // backslashes because that's the raw OS-native path the target agent's
-    // URL scheme expects for `file=`/`path=`.
     expect(input?.docContext.relativePath).toBe('specs/foo/SPEC.md');
     expect(input?.projectDir).toBe('C:\\repo');
     expect(input?.docPath).toBe('C:\\repo\\specs\\foo\\SPEC.md');
   });
 
   test('empty-string docName is treated as no active doc (null return)', async () => {
-    // The `!args.docName` guard covers empty-string as well as null. Surfaces
-    // sometimes carry an empty-string sentinel before the hash resolves.
     const { buildHandoffInput } = await import('./useHandoffDispatch');
     expect(
       buildHandoffInput({

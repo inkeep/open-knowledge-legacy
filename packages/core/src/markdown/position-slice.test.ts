@@ -1,9 +1,3 @@
-/**
- * Tests for position-slice delimiter recovery walker + escapeMark tagging.
- *
- * Each test verifies that the walker correctly attaches source-form
- * metadata to mdast node.data by slicing the original source.
- */
 import { describe, expect, test } from 'bun:test';
 import type { Nodes, Root } from 'mdast';
 import remarkGfm from 'remark-gfm';
@@ -13,22 +7,15 @@ import { visit } from 'unist-util-visit';
 import { VFile } from 'vfile';
 import { positionSlicePlugin } from './position-slice.ts';
 
-// Tests access node.data.* for fields added via module augmentation
-// (sourceDelimiter, sourceFenceChar, escapedChars, etc.). Use an any-permissive
-// local alias so .data access on union-discriminated nodes doesn't have to be
-// narrowed per test.
 type AnyNode = Nodes & { data?: Record<string, unknown> };
 
-/** Parse markdown through remark-parse + remark-gfm + position-slice walker */
 function parseMdast(source: string): Root {
   const processor = unified().use(remarkParse).use(remarkGfm).use(positionSlicePlugin);
   const tree = processor.parse(source);
-  // Run the transformer (positionSlicePlugin) — it needs the VFile with source
   processor.runSync(tree, new VFile({ value: source }));
   return tree;
 }
 
-/** Find first node of a given type */
 function findNode<T extends AnyNode = AnyNode>(tree: Root, type: string): T {
   let found: AnyNode | null = null;
   visit(tree, type, (node) => {
@@ -37,7 +24,6 @@ function findNode<T extends AnyNode = AnyNode>(tree: Root, type: string): T {
   return found as unknown as T;
 }
 
-/** Find all nodes of a given type */
 function findNodes<T extends AnyNode = AnyNode>(tree: Root, type: string): T[] {
   const nodes: AnyNode[] = [];
   visit(tree, type, (node) => {
@@ -235,7 +221,6 @@ describe('position-slice: escapeMark tagging (D20)', () => {
   test('backslash-escaped # → data.escapedChars', () => {
     const tree = parseMdast('text \\# more\n');
     const textNodes = findNodes(tree, 'text');
-    // Find the text node that contains #
     const escaped = textNodes.find((n) => {
       const e = n.data?.escapedChars as unknown[] | undefined;
       return !!e && e.length > 0;
@@ -269,18 +254,12 @@ describe('position-slice: escapeMark tagging (D20)', () => {
   });
 
   test('non-ambiguous escape (\\foo) has no escapedChars', () => {
-    // \f is not in CommonMark §2.4 escapable set — backslash preserved literally
-    // Actually mdast may or may not consume this; the walker only tags structurally-ambiguous escapes
     const tree = parseMdast('text \\q more\n');
     const textNodes = findNodes(tree, 'text');
-    // \\q is not a valid escape — mdast preserves literal backslash
-    // so the raw source matches value; no escapedChars needed
     const hasEscaped = textNodes.some((n) => {
       const e = n.data?.escapedChars as unknown[] | undefined;
       return !!e && e.length > 0;
     });
-    // This assertion is about the char 'q' not being in the escapable set
-    // If mdast preserves the backslash literally, raw === value, no tag
     expect(hasEscaped).toBe(false);
   });
 });
@@ -291,13 +270,9 @@ describe('position-slice: fallback behavior', () => {
   });
 
   test('walker does not crash on source with no position data', () => {
-    // If we create a tree manually without positions, walker should skip gracefully
     const processor = unified().use(remarkParse).use(positionSlicePlugin);
-    // Parse a minimal document
     const tree = processor.parse('hello\n');
-    // Remove position from root
     (tree as { position?: unknown }).position = undefined;
-    // Run should not throw
     expect(() => processor.runSync(tree, new VFile({ value: 'hello\n' }))).not.toThrow();
   });
 });

@@ -210,8 +210,6 @@ describe('suggestLinks', () => {
 
       conn = await hocuspocus.openDirectConnection('notes');
       const doc = getDoc(conn);
-      // Seed via applyAgentMarkdownWrite so both XmlFragment and Y.Text are populated
-      // (suggest-links reads live state; agent-write path is the post-precedent-#12 template).
       doc.transact(() => {
         applyAgentMarkdownWrite(doc, 'Project Alpha only in live state.\n', 'replace');
       }, AGENT_WRITE_ORIGIN);
