@@ -20,14 +20,11 @@ export default {
     'docs/content/guides/component-blocks.mdx': ['files'],
     'docs/content/guides/assets-and-embeds.mdx': ['files'],
   },
-  ignoreBinaries: ['printf'],
   workspaces: {
     'packages/app': {
       entry: [
         'src/**/*.test.{ts,tsx}',
         'tests/**/*.{test,e2e}.ts',
-        'tests/integration/idb-preload.ts',
-        'tests/perf/profile.ts',
         'tests/perf/lib/*.ts',
       ],
       project: 'src/**',

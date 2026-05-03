@@ -43,6 +43,27 @@ describe('asset reference extraction', () => {
     ]);
   });
 
+  test('ignores asset-looking references in fenced code, inline code, and comments', () => {
+    expect(
+      extractLocalAssetHrefs(
+        [
+          '![Real](./real.png)',
+          '',
+          '```md',
+          '![Example](./code.png)',
+          '![[code-wiki.jpg]]',
+          '```',
+          'Inline `![Code](./inline.png)` text',
+          '<!-- ![Comment](./comment.png) -->',
+          '<!--',
+          '<img src="./comment-block.jpeg" />',
+          '-->',
+          '<img src="./real-html.jpeg" />',
+        ].join('\n'),
+      ),
+    ).toEqual(['./real.png', './real-html.jpeg']);
+  });
+
   test('resolves only existing local assets inside contentDir', () =>
     withFixture((dir) => {
       mkdirSync(join(dir, 'docs'));

@@ -1,3 +1,4 @@
+import { mediaKindForSidebarAssetExtension } from '@inkeep/open-knowledge-core';
 import { useEffect, useState } from 'react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { ConnectingBanner } from '@/components/ConnectingBanner';
@@ -32,8 +33,8 @@ function NavigationHandler() {
     function onHashChange() {
       const assetPath = assetPathFromHash(window.location.hash);
       if (assetPath) {
-        const lower = assetPath.toLowerCase();
-        const mediaKind = lower.endsWith('.mp4') ? 'video' : 'image';
+        const assetExt = assetPath.split('.').pop() ?? '';
+        const mediaKind = mediaKindForSidebarAssetExtension(assetExt) ?? 'image';
         mark('ok/nav/hash-change', { docName: null, kind: 'asset' });
         openTargetTransition({
           kind: 'asset',

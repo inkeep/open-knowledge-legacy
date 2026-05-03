@@ -8,6 +8,10 @@ Object.assign(mimes, {
   flac: 'audio/flac',
 });
 
+export function assetContentTypeForPath(path: string): string | null {
+  return mimes[extname(path).slice(1).toLowerCase()] ?? null;
+}
+
 export interface AssetServeFilter {
   isExcluded(relativePath: string): boolean;
 }
