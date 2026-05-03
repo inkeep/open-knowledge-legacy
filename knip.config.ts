@@ -22,11 +22,7 @@ export default {
   },
   workspaces: {
     'packages/app': {
-      entry: [
-        'src/**/*.test.{ts,tsx}',
-        'tests/**/*.{test,e2e}.ts',
-        'tests/perf/lib/*.ts',
-      ],
+      entry: ['src/**/*.test.{ts,tsx}', 'tests/**/*.{test,e2e}.ts', 'tests/perf/lib/*.ts'],
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',
