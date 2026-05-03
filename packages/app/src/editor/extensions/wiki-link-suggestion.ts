@@ -133,7 +133,7 @@ export function wikiLinkMatcher(config: {
 export async function fetchPages(): Promise<PageItem[]> {
   const r = await fetch('/api/pages');
   if (!r.ok) throw new Error(`/api/pages responded with ${r.status}`);
-  const data = (await r.json()) as { pages?: Array<{ docName: string; title: string }> };
+  const data: { pages?: Array<{ docName: string; title: string }> } = await r.json();
   const pages: PageItem[] = Array.isArray(data.pages)
     ? data.pages.map((page) => ({ kind: 'page', docName: page.docName, title: page.title }))
     : [];
@@ -164,7 +164,7 @@ export async function fetchPages(): Promise<PageItem[]> {
 export async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
   const r = await fetch(`/api/page-headings?docName=${encodeURIComponent(docName)}`);
   if (!r.ok) throw new Error(`/api/page-headings responded with ${r.status}`);
-  const data = (await r.json()) as { ok: boolean; headings?: HeadingEntry[] };
+  const data: { ok: boolean; headings?: HeadingEntry[] } = await r.json();
   return data.ok && Array.isArray(data.headings) ? data.headings : [];
 }
 

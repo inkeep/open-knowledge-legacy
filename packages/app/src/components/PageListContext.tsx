@@ -80,7 +80,7 @@ async function loadPages(): Promise<PageSummary[]> {
   if (!r.ok) {
     throw new Error(`/api/pages responded with ${r.status}`);
   }
-  const data = (await r.json()) as { ok?: boolean; pages?: PageSummary[] };
+  const data: { ok?: boolean; pages?: PageSummary[] } = await r.json();
   if (Array.isArray(data.pages)) {
     return data.pages;
   }
@@ -92,7 +92,7 @@ async function loadReferencedAssetPaths(): Promise<string[]> {
   if (!r.ok) {
     throw new Error(`/api/documents responded with ${r.status}`);
   }
-  const data = (await r.json()) as { ok?: boolean; documents?: DocumentListEntry[] };
+  const data: { ok?: boolean; documents?: DocumentListEntry[] } = await r.json();
   if (!Array.isArray(data.documents)) return [];
   return data.documents
     .filter((entry): entry is DocumentListEntry & { kind: 'asset'; path: string } => {

@@ -60,12 +60,12 @@ import {
   iconFromClientName,
 } from './agent-sessions.ts';
 import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
+import { isAllowedApiOrigin } from './api-origin.ts';
 import {
   collectReferencedAssets,
   mediaKindForAssetPath,
   toContentRelativePath,
 } from './asset-references.ts';
-import { isAllowedApiOrigin } from './api-origin.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
   createInstalledAgentsProbe,
