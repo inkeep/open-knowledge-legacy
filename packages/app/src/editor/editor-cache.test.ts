@@ -239,7 +239,7 @@ describe('CACHE_ENABLED constant', () => {
 });
 
 describe('MAX_CACHE constant', () => {
-  test('is 10 — matches SPEC §10 D3 coupling to MAX_POOL', () => {
+  test('is 10 — coupling to MAX_POOL', () => {
     expect(MAX_CACHE).toBe(10);
   });
 });
@@ -252,7 +252,7 @@ describe('TipTap cache — lifecycle', () => {
     __resetCacheForTests();
   });
 
-  test('mount: cache-miss calls factory and stores entry (US-001 AC 2)', () => {
+  test('mount: cache-miss calls factory and stores entry', () => {
     const h = makeTiptapHarness('doc-a');
     expect(__getCacheSize('tiptap')).toBe(0);
 
@@ -271,7 +271,7 @@ describe('TipTap cache — lifecycle', () => {
     expect(entry.activeMountKey).toBe(h.docName);
   });
 
-  test('mount: cache-hit reparents without constructing a new editor (US-001 AC 3)', () => {
+  test('mount: cache-hit reparents without constructing a new editor', () => {
     const h = makeTiptapHarness('doc-a');
     const first = mountTiptapEditor({
       docName: h.docName,
@@ -293,7 +293,7 @@ describe('TipTap cache — lifecycle', () => {
     expect(h.container.children).not.toContain(h.editorDom);
   });
 
-  test('mount: cache-hit restores scrollTop captured at park (US-001 AC 6)', () => {
+  test('mount: cache-hit restores scrollTop captured at park', () => {
     const h = makeTiptapHarness('doc-a');
     const entry = mountTiptapEditor({
       docName: h.docName,
@@ -313,7 +313,7 @@ describe('TipTap cache — lifecycle', () => {
     expect(newContainer.scrollTop).toBe(1234);
   });
 
-  test('mount: cache-hit restores focus ONLY when editor owned focus at park time (Major #11)', () => {
+  test('mount: cache-hit restores focus ONLY when editor owned focus at park time', () => {
     const h = makeTiptapHarness('doc-a');
     const entry = mountTiptapEditor({
       docName: h.docName,
@@ -345,7 +345,7 @@ describe('TipTap cache — lifecycle', () => {
     expect(h.spies.focusCalls).toBeGreaterThan(beforeB);
   });
 
-  test('park: detaches DOM from container but does NOT destroy (US-001 AC 4)', () => {
+  test('park: detaches DOM from container but does NOT destroy', () => {
     const h = makeTiptapHarness('doc-a');
     const entry = mountTiptapEditor({
       docName: h.docName,
@@ -375,7 +375,7 @@ describe('TipTap cache — lifecycle', () => {
     expect(entry.activeMountKey).toBeNull();
   });
 
-  test('evict: calls destroy on editor + provider + ydoc (US-001 AC 5)', () => {
+  test('evict: calls destroy on editor + provider + ydoc', () => {
     const h = makeTiptapHarness('doc-a');
     mountTiptapEditor({
       docName: h.docName,
@@ -403,7 +403,7 @@ describe('TipTap cache — lifecycle', () => {
   });
 });
 
-describe('TipTap cache — mount-park-mount round-trip (US-001 AC 9)', () => {
+describe('TipTap cache — mount-park-mount round-trip', () => {
   beforeEach(() => __resetCacheForTests());
   afterEach(() => __resetCacheForTests());
 
@@ -438,7 +438,7 @@ describe('TipTap cache — mount-park-mount round-trip (US-001 AC 9)', () => {
     expect(re.ytext.toString()).toBe('hello from round-trip — post-reparent');
   });
 
-  test('5 park-mount cycles work without regression (US-001 AC 9)', () => {
+  test('5 park-mount cycles work without regression', () => {
     const h = makeTiptapHarness('doc-a');
     const entry = mountTiptapEditor({
       docName: h.docName,
@@ -557,7 +557,7 @@ describe('TipTap cache — LRU eviction at MAX_CACHE capacity', () => {
   });
 });
 
-describe('TipTap cache — __uncached / kill-switch path (US-001 AC 7)', () => {
+describe('TipTap cache — __uncached / kill-switch path', () => {
   beforeEach(() => __resetCacheForTests());
   afterEach(() => __resetCacheForTests());
 
@@ -1027,8 +1027,8 @@ describe('Module-level cache survives simulated remounts', () => {
   });
 });
 
-describe('US-002 constants', () => {
-  test('VIEW_COUNT_CACHE_THRESHOLD = 50 (matches SPEC §6 FR3 + grey-zone curve)', () => {
+describe('size-gate constants', () => {
+  test('VIEW_COUNT_CACHE_THRESHOLD = 50', () => {
     expect(VIEW_COUNT_CACHE_THRESHOLD).toBe(50);
   });
   test('BYTES_CACHE_THRESHOLD = 500_000 (matches LARGE_DOC_CHAR_THRESHOLD)', () => {
@@ -1265,6 +1265,73 @@ describe('setActivityMountList — connect/disconnect transitions', () => {
   });
 });
 
+describe('subscribePoolEviction — onEvict propagation', () => {
+  beforeEach(() => __resetCacheForTests());
+  afterEach(() => __resetCacheForTests());
+
+  test('pool eviction destroys both TipTap and CM cache entries for the same doc', () => {
+    let captured: ((docName: string) => void) | null = null;
+    const fakePool = {
+      entries: new Map<string, { provider: HocuspocusProvider }>(),
+      onEvict: (cb: (docName: string) => void) => {
+        captured = cb;
+        return () => {
+          captured = null;
+        };
+      },
+    };
+    const unsubscribe = subscribePoolEviction(fakePool);
+    try {
+      const tip = makeTiptapHarness('doc-shared');
+      const cm = makeCmHarness('doc-shared');
+      mountTiptapEditor({
+        docName: tip.docName,
+        container: tip.container as unknown as HTMLElement,
+        factory: tip.factory as unknown as (el: HTMLElement) => ReturnType<typeof tip.factory>,
+      });
+      mountCmEditor({
+        docName: cm.docName,
+        container: cm.container as unknown as HTMLElement,
+        factory: cm.factory as unknown as (el: HTMLElement) => ReturnType<typeof cm.factory>,
+      });
+      expect(__peekTiptap('doc-shared')).toBeDefined();
+      expect(__peekCm('doc-shared')).toBeDefined();
+      expect(captured).not.toBeNull();
+
+      captured?.('doc-shared');
+
+      expect(__peekTiptap('doc-shared')).toBeUndefined();
+      expect(__peekCm('doc-shared')).toBeUndefined();
+      expect(tip.spies.destroyCalls).toBe(1);
+      expect(cm.spies.destroyCalls).toBe(1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test('eviction for unknown docName is a safe no-op (race-tolerant)', () => {
+    let captured: ((docName: string) => void) | null = null;
+    const fakePool = {
+      entries: new Map<string, { provider: HocuspocusProvider }>(),
+      onEvict: (cb: (docName: string) => void) => {
+        captured = cb;
+        return () => {
+          captured = null;
+        };
+      },
+    };
+    const unsubscribe = subscribePoolEviction(fakePool);
+    try {
+      expect(captured).not.toBeNull();
+      expect(__peekTiptap('never-mounted')).toBeUndefined();
+      expect(__peekCm('never-mounted')).toBeUndefined();
+      expect(() => captured?.('never-mounted')).not.toThrow();
+    } finally {
+      unsubscribe();
+    }
+  });
+});
+
 describe('LRU eviction respects activity-mount list (never evicts active doc)', () => {
   beforeEach(() => __resetCacheForTests());
   afterEach(() => __resetCacheForTests());
@@ -1318,7 +1385,7 @@ describe('LRU eviction respects activity-mount list (never evicts active doc)', 
   });
 });
 
-describe('US-002 telemetry marks', () => {
+describe('telemetry marks', () => {
   beforeEach(() => {
     __resetCacheForTests();
     try {
@@ -1383,7 +1450,7 @@ describe('US-002 telemetry marks', () => {
     expect(disconnects.length).toBeGreaterThanOrEqual(1);
   });
 
-  test('connect telemetry is mutually exclusive: reject emits connect-failed only (review Pass-1 Minor #3)', async () => {
+  test('connect telemetry is mutually exclusive: reject emits connect-failed only (no preceding connect)', async () => {
     const rejectingProvider = {
       document: new Y.Doc(),
       destroy: mock(() => {}),
@@ -1418,7 +1485,7 @@ describe('US-002 telemetry marks', () => {
     expect(connects.length).toBe(0);
   });
 
-  test('US-012 FR13: mount with sizeStats emits ok/cold/editor-mount-stats', () => {
+  test('mount with sizeStats emits ok/cold/editor-mount-stats', () => {
     const h = makeTiptapHarness('doc-stats');
     mountTiptapEditor({
       docName: h.docName,
@@ -1430,7 +1497,7 @@ describe('US-002 telemetry marks', () => {
     expect(stats.length).toBeGreaterThanOrEqual(1);
   });
 
-  test('US-012 FR13: cache hit emits stats with cacheHit=true', () => {
+  test('cache hit emits stats with cacheHit=true', () => {
     const h = makeTiptapHarness('doc-hit');
     mountTiptapEditor({
       docName: h.docName,
