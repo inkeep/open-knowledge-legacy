@@ -19,9 +19,7 @@ import {
   Trash2,
   UnfoldVertical,
 } from 'lucide-react';
-// @ts-expect-error -- no types
 import { __iconNode as botIcon } from 'lucide-react/dist/esm/icons/bot';
-// @ts-expect-error -- no types
 import { __iconNode as link2Icon } from 'lucide-react/dist/esm/icons/link-2';
 import { useTheme } from 'next-themes';
 import {
@@ -112,17 +110,14 @@ const AGENT_DECORATION_ICON_ID = 'ok-file-tree-agent-decoration';
 type IconNode = [string, Record<string, string>][];
 
 function iconNodeToSvg(iconNode: IconNode): string {
-  return (
-    iconNode
-      // remove React key
-      .map(([tag, { key, ...attrs }]) => {
-        const attrString = Object.entries(attrs)
-          .map(([k, v]) => `${k}="${v}"`)
-          .join(' ');
-        return `<${tag} ${attrString} />`;
-      })
-      .join('')
-  );
+  return iconNode
+    .map(([tag, { key, ...attrs }]) => {
+      const attrString = Object.entries(attrs)
+        .map(([k, v]) => `${k}="${v}"`)
+        .join(' ');
+      return `<${tag} ${attrString} />`;
+    })
+    .join('');
 }
 
 function createLucideSpriteSymbol(id: string, iconNode: IconNode): string {
@@ -134,6 +129,12 @@ const FILE_TREE_DECORATION_SPRITE_SHEET = `<svg data-icon-sprite aria-hidden="tr
   ${createLucideSpriteSymbol(LINK_DECORATION_ICON_ID, link2Icon)}
   ${createLucideSpriteSymbol(AGENT_DECORATION_ICON_ID, botIcon)}
 </svg>`;
+
+const FILE_TREE_UNSAFE_CSS = `
+  [data-item-selected='true'] [data-icon-token='markdown'] {
+    color: var(--trees-selected-fg);
+  }
+`;
 
 function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
   return {
@@ -158,6 +159,8 @@ function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
     '--trees-border-radius-override': '0.375rem',
     '--trees-selected-fg': 'var(--color-primary)',
     '--truncate-marker-fade-in-duration': '0s', // render ellipsis without delay
+    '--trees-file-icon-color-markdown': 'light-dark(var(--color-gray-400), var(--color-gray-500))',
+    '--trees-fg-muted': 'light-dark(var(--color-gray-400), var(--color-gray-500))',
   } as CSSProperties;
 }
 
@@ -195,26 +198,12 @@ interface PendingCreate {
   renamePath: string;
 }
 
-/**
- * Platform-specific label for the file-manager reveal action. Mirrors VS Code's copy.
- * Linux verb asymmetry (Open vs Reveal) is intentional — no stable Linux file-manager
- * brand to "Reveal in"; a normalizing fix to "Reveal in Files" would be incorrect on
- * most distros.
- */
 function revealInFileManagerLabel(platform: 'darwin' | 'win32' | 'linux'): string {
   if (platform === 'darwin') return 'Reveal in Finder';
   if (platform === 'win32') return 'Reveal in File Explorer';
   return 'Open Containing Folder';
 }
 
-/**
- * File-tree menu row that opens the OS file manager with the target file/folder
- * selected. Hidden entirely on the web variant (no useful no-op without a host
- * filesystem) — the disabled-with-hint pattern used by `OpenInAgentContextSubmenu`
- * doesn't apply here because reveal has no cross-host fallback. When present but
- * the workspace metadata hasn't resolved yet, renders disabled with a "No workspace"
- * affordance mirroring the handoff submenu's pattern.
- */
 function RevealInFileManagerMenuItem({
   item,
   workspace,
@@ -443,12 +432,9 @@ export interface FileTreeHandle {
   collapseAll(): void;
 }
 
-/**
- * Must be mounted inside a `SidebarProvider` — `useSidebar()` throws otherwise.
- * Today only `FileSidebar` mounts it, which is always inside the provider.
- */
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
-  const { activeDocName, activeTarget, closeDocument, prewarm } = useDocumentContext();
+  const { activeDocName, activeTarget, closeDocument, closeAndClearForRename, prewarm } =
+    useDocumentContext();
   const { notifySidebarFileSelected } = useSidebar();
   const { resolvedTheme } = useTheme();
   function navigateToWithPulse(targetPath: string) {
@@ -509,6 +495,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       set: 'complete',
       spriteSheet: FILE_TREE_DECORATION_SPRITE_SHEET,
     },
+    unsafeCSS: FILE_TREE_UNSAFE_CSS,
     composition: {
       contextMenu: {
         enabled: true,
@@ -557,7 +544,6 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const folderTreePaths = collectTreeFolderPathsFromDocuments(documents);
   const folderTreePathsRef = useRef(folderTreePaths);
 
-  // Keep parents visible without forcing the selected folder itself open.
   const activeAncestorTreePaths = selectedFolderPath
     ? computeTreeAncestorPaths(folderPathToTreeDirectoryPath(selectedFolderPath)).slice(0, -1)
     : computeTreeAncestorPaths(activeTreePath ?? activeNavigationPath);
@@ -687,13 +673,16 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     });
   }, [model]);
 
-  const applyRenamedDocuments = (renamed: RenamedDocMapping[]) => {
+  const applyRenamedDocuments = async (renamed: RenamedDocMapping[]) => {
     const currentActiveDocName = activeDocNameRef.current;
     const nextActiveDocName = remapActiveDocName(currentActiveDocName, renamed);
 
-    for (const entry of renamed) {
-      closeDocument(entry.fromDocName);
-    }
+    await Promise.all(
+      renamed.flatMap((entry) => [
+        closeAndClearForRename(entry.fromDocName),
+        closeAndClearForRename(entry.toDocName),
+      ]),
+    );
 
     setDocuments((current) => {
       const next = applyRenameToDocuments(current, renamed);
@@ -757,19 +746,19 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         return;
       }
 
-      const endpoint = event.isFolder ? '/api/rename-path' : '/api/rename';
       const payload = event.isFolder
         ? {
-            kind: 'folder',
+            kind: 'folder' as const,
             fromPath: treeDirectoryPathToFolderPath(sourceTreePath),
             toPath: treeDirectoryPathToFolderPath(destinationTreePath),
           }
         : {
-            docName: treeFilePathToDocName(sourceTreePath),
-            newDocName: treeFilePathToDocName(destinationTreePath),
+            kind: 'file' as const,
+            fromPath: treeFilePathToDocName(sourceTreePath),
+            toPath: treeFilePathToDocName(destinationTreePath),
           };
 
-      const res = await fetch(endpoint, {
+      const res = await fetch('/api/rename-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -786,7 +775,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         return;
       }
 
-      applyRenamedDocuments(Array.isArray(data.renamed) ? data.renamed : []);
+      await applyRenamedDocuments(Array.isArray(data.renamed) ? data.renamed : []);
       pendingCreateRef.current = null;
       setBusyPath(null);
     } catch (err) {
@@ -816,19 +805,19 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       let renamed: RenamedDocMapping[] = [];
       for (const operation of operations) {
         const isFolder = operation.sourcePath.endsWith('/');
-        const endpoint = isFolder ? '/api/rename-path' : '/api/rename';
         const payload = isFolder
           ? {
-              kind: 'folder',
+              kind: 'folder' as const,
               fromPath: treeDirectoryPathToFolderPath(operation.sourcePath),
               toPath: treeDirectoryPathToFolderPath(operation.destinationTreePath),
             }
           : {
-              docName: treeFilePathToDocName(operation.sourcePath),
-              newDocName: treeFilePathToDocName(operation.destinationTreePath),
+              kind: 'file' as const,
+              fromPath: treeFilePathToDocName(operation.sourcePath),
+              toPath: treeFilePathToDocName(operation.destinationTreePath),
             };
 
-        const res = await fetch(endpoint, {
+        const res = await fetch('/api/rename-path', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -846,7 +835,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         renamed = renamed.concat(Array.isArray(data.renamed) ? data.renamed : []);
       }
 
-      applyRenamedDocuments(renamed);
+      await applyRenamedDocuments(renamed);
       setBusyPath(null);
     } catch (err) {
       console.warn('[FileTree] move failed:', err);
@@ -914,7 +903,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       if (suppressSelectionRef.current) return;
       const selected = selectedPaths[0];
       if (!selected) return;
-      navigateToWithPulse(treePathToAppPath(selected));
+      const appPath = treePathToAppPath(selected);
+      const isFolder = selected.endsWith('/');
+      if (!isFolder && !documentsRef.current.some((d) => d.docName === appPath)) {
+        console.debug('[FileTree] Dropped selection for unknown docName:', appPath);
+        return;
+      }
+      navigateToWithPulse(appPath);
     };
     handleRenameRef.current = handleTreeRename;
     handleDropCompleteRef.current = handleDropComplete;

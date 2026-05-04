@@ -12,9 +12,7 @@ export function EmptyEditorState() {
   const [documentCount, setDocumentCount] = useState<number | null>(null);
   const [seedStatus, setSeedStatus] = useState<SeedStatus>('loading');
   const [celebrateSignal, setCelebrateSignal] = useState(0);
-  // Sticky once true — fetch failures after first success keep the prior count.
   const documentCountResolvedRef = useRef(false);
-  // Cleared on unmount so a late burst doesn't fire on a stale component.
   const celebrateTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
@@ -32,7 +30,6 @@ export function EmptyEditorState() {
             setDocumentCount(data.documents.length);
             documentCountResolvedRef.current = true;
           } else if (!documentCountResolvedRef.current) {
-            // Fallback on initial fetch failure — safer than pitching onboarding blind.
             setDocumentCount(1);
             documentCountResolvedRef.current = true;
           }
@@ -78,11 +75,9 @@ export function EmptyEditorState() {
   }, []);
 
   function handleSeedApplied() {
-    // Delayed so the dialog close + toast settle before attention shifts to the blob.
     clearTimeout(celebrateTimerRef.current);
     celebrateTimerRef.current = setTimeout(() => setCelebrateSignal((prev) => prev + 1), 250);
     setSeedStatus('seeded');
-    // Apply also creates log.md — refetch so the empty-state copy switches branches in sync.
     fetch('/api/documents')
       .then(async (res) => {
         const data = (await res.json().catch(() => null)) as {
@@ -93,13 +88,10 @@ export function EmptyEditorState() {
           setDocumentCount(data.documents.length);
         }
       })
-      .catch(() => {
-        /* best-effort — celebration is the priority */
-      });
+      .catch(() => {});
   }
 
   const showCta = seedStatus === 'has-work';
-  // Gate the copy until we know which branch to render — avoids flashing the wrong text.
   const messageReady = documentCount !== null && seedStatus !== 'loading';
   const isOnboarding = documentCount === 0;
 

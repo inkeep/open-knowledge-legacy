@@ -7,11 +7,11 @@ import { resolve } from 'node:path';
 import type { Scheduler } from '@inkeep/open-knowledge-core';
 import {
   acquireServerLock,
+  ConfigSchema,
   readUiLock,
   type UiLockMetadata,
   updateServerLockPort,
 } from '@inkeep/open-knowledge-server';
-import { ConfigSchema } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
 import {
   closeHttpServers,
@@ -160,12 +160,16 @@ describe('startUiServer', () => {
   });
 
   test('unknown path returns 404 when no static assets present (tmp dir has no dist)', async () => {
-    // startUiServer looks in ../../app/dist — in the worktree this DOES exist,
-    // so we can't assert 404 absolutely. Instead assert the path is handled
-    // (either 404 or SPA fallback 200) without crashing.
     handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
     const { status } = await get(handle.port, '/does-not-exist');
     expect([200, 404]).toContain(status);
+  });
+
+  test('GET / serves the SPA shell (rewrites to /index.html)', async () => {
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const root = await get(handle.port, '/');
+    const indexHtml = await get(handle.port, '/index.html');
+    expect(root.status).toBe(indexHtml.status);
   });
 
   test('release() removes the ui.lock', async () => {
@@ -177,18 +181,11 @@ describe('startUiServer', () => {
     expect(existsSync(lockPath)).toBe(false);
     expect(readUiLock(lockDir)).toBeNull();
 
-    // Keep afterEach happy — server is still up, just lock removed.
     if (handle) await closeHttpServers(handle.httpServers);
     handle = null;
   });
 
   test('D-033: two-socket loopback — second bind via 127.0.0.1 fails loud with EADDRINUSE', async () => {
-    // Default mode (host undefined) binds BOTH [::1] and 127.0.0.1. A second
-    // bind to the same port on either family must fail — proving the pre-
-    // D-033 silent cross-family collision (one process on [::1]:3000 + another
-    // on 127.0.0.1:3000) can no longer happen. Verified empirically 2026-04-16
-    // that `::` with ipv6Only:false does NOT provide this property on macOS;
-    // only explicit two-socket binding does.
     const h = await startUiServer({ config: config(), cwd: tmpDir, port: 0 });
     handle = h;
     expect(h.port).toBeGreaterThan(0);
@@ -202,7 +199,6 @@ describe('startUiServer', () => {
         done();
       });
       collider.listen(h.port, '127.0.0.1', () => {
-        // If listen succeeds, the IPv4 loopback side isn't bound.
         collider.close(() => done());
       });
     });
@@ -228,7 +224,6 @@ describe('startUiServer', () => {
 
   test('D-033: two-socket loopback serves both families end-to-end', async () => {
     handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0 });
-    // Both families should answer on the same port.
     const v4 = await fetch(`http://127.0.0.1:${handle.port}/api/config`);
     expect(v4.status).toBe(200);
     const v6 = await fetch(`http://[::1]:${handle.port}/api/config`);
@@ -236,9 +231,6 @@ describe('startUiServer', () => {
   });
 
   test('D-033 / G4: two projects with kernel-allocated port 0 get distinct ports', async () => {
-    // Two `ok ui` instances in different contentDirs must each acquire a
-    // unique kernel-allocated port. This is the mechanical property the
-    // pre-D-033 default (hardcoded 3000) did not provide.
     const otherTmpDir = await mkdtemp(resolve(tmpdir(), 'ok-ui-cmd-test-'));
     handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0 });
     const secondHandle = await startUiServer({
@@ -250,7 +242,6 @@ describe('startUiServer', () => {
       expect(handle.port).toBeGreaterThan(0);
       expect(secondHandle.port).toBeGreaterThan(0);
       expect(handle.port).not.toBe(secondHandle.port);
-      // Both reachable end-to-end.
       const a = await fetch(`http://localhost:${handle.port}/api/config`);
       const b = await fetch(`http://localhost:${secondHandle.port}/api/config`);
       expect(a.status).toBe(200);
@@ -263,10 +254,6 @@ describe('startUiServer', () => {
   });
 
   test('GET /api/pages is proxied to the collab server when server.lock is live', async () => {
-    // Stand up a surrogate collab server that answers /api/pages with a known
-    // JSON body. The real ok start / Hocuspocus HTTP stack isn't needed for
-    // this contract — we only care that the UI forwards upstream and pipes
-    // the response back verbatim.
     const upstream = createHttpServer((req, res) => {
       if (req.url === '/api/pages') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -279,7 +266,6 @@ describe('startUiServer', () => {
     await new Promise<void>((done) => upstream.listen(0, 'localhost', () => done()));
     const upstreamPort = (upstream.address() as { port: number }).port;
 
-    // Pretend ok start wrote its lock at that port.
     acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
     updateServerLockPort(lockDir, upstreamPort);
 
@@ -354,8 +340,6 @@ describe('startUiServer', () => {
   });
 
   test('/api/* proxy returns 502 when upstream connection fails', async () => {
-    // Point server.lock at a port nothing listens on — simulates the collab
-    // server crashing between lock write and our proxy attempt.
     const probe = createHttpServer();
     await new Promise<void>((done) => probe.listen(0, 'localhost', () => done()));
     const deadPort = (probe.address() as { port: number }).port;
@@ -376,14 +360,12 @@ describe('startUiServer', () => {
         config: config(),
         cwd: tmpDir,
         port: 0,
-        // Reserved IP that cannot bind — forces listen() to reject.
         host: '240.0.0.1',
       });
     } catch (err) {
       caught = err;
     }
     expect(caught).toBeDefined();
-    // Lock acquired pre-listen must be released on bind failure.
     expect(readUiLock(lockDir)).toBeNull();
   });
 
@@ -393,6 +375,57 @@ describe('startUiServer', () => {
     handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
     const { status } = await get(handle.port, '/api/config');
     expect(status).toBe(200);
+  });
+
+  test('asset serve: missing asset-extension URL returns 404 (not SPA index.html)', async () => {
+    const fs = await import('node:fs');
+    const seedFile = resolve(tmpDir, 'doc.md');
+    fs.writeFileSync(seedFile, '# seed', 'utf-8');
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { status, headers } = await get(handle.port, '/missing.m4v');
+    expect(status).toBe(404);
+    expect(headers.get('content-type') ?? '').not.toMatch(/^text\/html/);
+  });
+
+  test('asset serve: existing inline-renderable asset gets Content-Disposition: inline', async () => {
+    const fs = await import('node:fs');
+    const seedDoc = resolve(tmpDir, 'doc.md');
+    fs.writeFileSync(seedDoc, '# seed', 'utf-8');
+    const seedAsset = resolve(tmpDir, 'photo.png');
+    fs.writeFileSync(seedAsset, 'fake-png', 'binary');
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { status, headers } = await get(handle.port, '/photo.png');
+    expect(status).toBe(200);
+    expect(headers.get('content-disposition')).toBe('inline');
+    expect(headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  test('asset serve: scripted-document extension is not served from contentDir', async () => {
+    const fs = await import('node:fs');
+    const seedDoc = resolve(tmpDir, 'doc.md');
+    fs.writeFileSync(seedDoc, '# seed', 'utf-8');
+    const seedHtml = resolve(tmpDir, 'evil.html');
+    fs.writeFileSync(seedHtml, '<script>alert(1)</script>', 'utf-8');
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { body } = await get(handle.port, '/evil.html');
+    expect(body).not.toContain('<script>alert(1)</script>');
+  });
+
+  test('asset serve: non-inline admitted asset gets Content-Disposition: attachment', async () => {
+    const fs = await import('node:fs');
+    const seedDoc = resolve(tmpDir, 'doc.md');
+    fs.writeFileSync(seedDoc, '# seed', 'utf-8');
+    const seedZip = resolve(tmpDir, 'archive.zip');
+    fs.writeFileSync(seedZip, 'fake-zip-bytes', 'binary');
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { status, headers } = await get(handle.port, '/archive.zip');
+    expect(status).toBe(200);
+    expect(headers.get('content-disposition')).toBe('attachment');
+    expect(headers.get('x-content-type-options')).toBe('nosniff');
   });
 });
 
@@ -432,17 +465,11 @@ describe('startUiServer — D-025 12h safety-net', () => {
     const lockPath = resolve(lockDir, 'ui.lock');
     expect(existsSync(lockPath)).toBe(true);
 
-    // Advance past the safety-net deadline — the timer's callback runs
-    // synchronously inside advanceTime, including releaseUiLock and
-    // httpServer.close() (close() returns immediately; the actual socket
-    // close completes async).
     scheduler.advanceTime(60_000);
     expect(onSafetyNetFired).toBe(1);
     expect(existsSync(lockPath)).toBe(false);
     expect(readUiLock(lockDir)).toBeNull();
 
-    // Wait for the close to complete on the event loop — fetch should fail
-    // (or get ECONNREFUSED) once the listener is gone.
     if (handle) await closeHttpServers(handle.httpServers);
     let connectError: unknown = null;
     try {
@@ -473,8 +500,6 @@ describe('startUiServer — D-025 12h safety-net', () => {
     handle.release();
     expect(scheduler.pendingCount()).toBe(0);
 
-    // Even if we advance well past the deadline, the cancelled callback
-    // never fires.
     scheduler.advanceTime(60_000 * 100);
     expect(onSafetyNetFired).toBe(0);
   });
@@ -494,7 +519,6 @@ describe('startUiServer — D-025 12h safety-net', () => {
 
     handle.detachSafetyNet();
     expect(scheduler.pendingCount()).toBe(0);
-    // Lock is still held — only the timer was cancelled.
     expect(existsSync(lockPath)).toBe(true);
   });
 
@@ -504,11 +528,9 @@ describe('startUiServer — D-025 12h safety-net', () => {
 
     handle.release();
     expect(existsSync(lockPath)).toBe(false);
-    // Second call must not throw and must not affect anything else.
     handle.release();
     expect(existsSync(lockPath)).toBe(false);
 
-    // Keep afterEach happy — server still up, just lock gone.
     if (handle) await closeHttpServers(handle.httpServers);
     handle = null;
   });
@@ -561,7 +583,6 @@ describe('resolveUiLockCollision', () => {
   });
 
   test('different port + live upstream → proxy mode forwards correctly', async () => {
-    // Stand up a real upstream so the proxy has something to forward to.
     const upstream = createHttpServer((_req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('upstream ok');
@@ -591,7 +612,6 @@ describe('resolveUiLockCollision', () => {
   });
 
   test('proxy returns 502 when upstream dies', async () => {
-    // Probe an ephemeral port and close so upstreamPort points at nothing.
     const probe = createHttpServer();
     await new Promise<void>((done) => probe.listen(0, 'localhost', () => done()));
     const deadPort = (probe.address() as { port: number }).port;

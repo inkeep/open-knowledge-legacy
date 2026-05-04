@@ -34,9 +34,7 @@ describe('mark', () => {
   afterEach(() => {
     try {
       performance.clearMeasures();
-    } catch {
-      // ignore in envs where clearMeasures throws
-    }
+    } catch {}
   });
 
   test('creates a performance entry with the given name', () => {

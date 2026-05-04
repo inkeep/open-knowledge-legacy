@@ -28,11 +28,8 @@ interface DiffViewProps {
   oldContent: string;
   newContent: string;
   layout: DiffLayout;
-  /** When true, renders a conflict-resolution editor with per-hunk Accept/Reject. */
   conflictMode?: boolean;
-  /** Called with the merged document when all hunks are resolved. */
   onResolve?: (content: string) => void;
-  /** Called when the user aborts the merge. */
   onAbort?: () => void;
 }
 
@@ -49,8 +46,6 @@ export function DiffView({
   const { resolvedTheme } = useTheme();
   const onResolveRef = useRef(onResolve);
   const onAbortRef = useRef(onAbort);
-  // Tracks unresolved hunk count in conflictMode so the "Save resolution"
-  // button can gate on it. null = pre-init (no view yet).
   const [chunksRemaining, setChunksRemaining] = useState<number | null>(null);
   useEffect(() => {
     onResolveRef.current = onResolve;
@@ -64,15 +59,12 @@ export function DiffView({
     const readOnly = [EditorView.editable.of(false), EditorState.readOnly.of(true)];
     const sharedExtensions = [basicSetup, markdown(), ...readOnly, theme, EditorView.lineWrapping];
 
-    // Clear any previous view
     if (viewRef.current) {
       viewRef.current.destroy();
       viewRef.current = null;
     }
 
     if (conflictMode) {
-      // Conflict mode: unified diff with per-hunk Accept/Reject buttons.
-      // editable=false prevents typing; readOnly is NOT set so merge ops can mutate the doc.
       const conflictExtensions = [
         basicSetup,
         markdown(),
@@ -87,10 +79,6 @@ export function DiffView({
           collapseUnchanged: { margin: 3, minSize: 4 },
         }),
         EditorView.updateListener.of((update) => {
-          // @codemirror/merge's acceptChunk dispatches effects-only (no doc
-          // change), so we cannot gate on update.docChanged. Re-read chunks
-          // on every update and let the explicit "Save resolution" button
-          // drive completion.
           const result = getChunks(update.state);
           setChunksRemaining(result ? result.chunks.length : 0);
         }),
@@ -101,7 +89,6 @@ export function DiffView({
         parent: containerRef.current,
       });
       viewRef.current = view;
-      // Seed initial hunk count (updateListener only fires on subsequent updates).
       const initial = getChunks(view.state);
       setChunksRemaining(initial ? initial.chunks.length : 0);
     } else if (layout === 'split') {

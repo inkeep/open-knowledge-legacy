@@ -1,35 +1,24 @@
+import { toWikiLinkSlug } from '@inkeep/open-knowledge-core';
 import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react';
-import { setPageListCache } from '@/editor/page-list-cache';
+import { buildPagesBySlugIndex, setPageListCache } from '@/editor/page-list-cache';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { deriveKnownFolderPaths } from './navigation-targets';
 
 export interface PageMeta {
   size: number;
   modified: string;
-  /**
-   * On-disk extension — `.md` or `.mdx`. Surfaced by `/api/pages` so
-   * the editor header can render `foo.mdx` vs `foo.md` faithfully
-   * instead of hard-coding `.md`. Optional for backward compat.
-   */
   docExt?: string;
 }
 
 interface PageListContextValue {
-  /** Set of known docNames (filename without .md extension). */
   pages: Set<string>;
-  /** Display titles returned by `/api/pages`, keyed by docName. */
+  pagesBySlug: ReadonlyMap<string, string>;
   pageTitles: ReadonlyMap<string, string>;
-  /** File metadata (size, modified) returned by `/api/pages`, keyed by docName. */
   pageMeta: ReadonlyMap<string, PageMeta>;
-  /** Set of known folder paths derived from the current document list. */
   folderPaths: Set<string>;
-  /** True while the page list is being fetched from the server. */
   loading: boolean;
-  /** Error message from the most recent fetch failure, or null on success. */
   error: string | null;
-  /** Re-fetch the page list from the server. Call after creating a new page. */
   refetch: () => void;
-  /** Optimistically mark a page as present before watcher/index propagation settles. */
   addPage: (docName: string) => void;
 }
 
@@ -175,18 +164,25 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   const pageTitles = mergePageTitles(serverPageTitles, optimisticPages);
   const pageMeta: ReadonlyMap<string, PageMeta> = serverPageMeta;
   const folderPaths = deriveKnownFolderPaths(pages);
+  const pagesBySlug = buildPagesBySlugIndex(pages, toWikiLinkSlug);
 
-  // Publish to the page-list-cache side-channel so plain-DOM chip consumers
-  // (V2 internal-link.ts / wiki-link.ts NodeView) can read live resolution
-  // state without React context. `setPageListCache` absorbs no-op calls via
-  // Set-content equality — safe to call every render.
   useEffect(() => {
-    setPageListCache({ pages, folderPaths });
-  }, [pages, folderPaths]);
+    setPageListCache({ pages, folderPaths, pagesBySlug });
+  }, [pages, folderPaths, pagesBySlug]);
 
   return (
     <PageListContext
-      value={{ pages, pageTitles, pageMeta, folderPaths, loading, error, refetch, addPage }}
+      value={{
+        pages,
+        pagesBySlug,
+        pageTitles,
+        pageMeta,
+        folderPaths,
+        loading,
+        error,
+        refetch,
+        addPage,
+      }}
     >
       {children}
     </PageListContext>

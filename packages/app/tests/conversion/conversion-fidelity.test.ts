@@ -1,16 +1,3 @@
-/**
- * Conversion fidelity tests.
- *
- * Verifies that every supported markdown construct survives the format
- * conversions in the stack:
- *   1. Markdown round-trip: serialize(parse(md))
- *   2. Tree round-trip: pmJSON → nodeFromJSON → updateYFragment → yXmlFragmentToProsemirrorJSON → pmJSON
- *   3. Disk round-trip: XmlFragment → persistence → disk → onLoadDocument → XmlFragment
- *   4. Agent-as-file-editor: agent writes file → disk → CRDT → all surfaces
- *
- * Documents which constructs are stable vs which normalize.
- */
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -32,15 +19,11 @@ import {
   testReset,
 } from '../integration/test-harness';
 
-// ─── Helpers ───
-
-/** Markdown round-trip: serialize(parse(md)) */
 function mdRoundTrip(md: string): string {
   const json = mdManager.parse(md);
   return mdManager.serialize(json);
 }
 
-/** Tree round-trip: JSON → node → updateYFragment → yXmlFragmentToProsemirrorJSON → JSON */
 function treeRoundTrip(md: string): string {
   const doc = new Y.Doc();
   const fragment = doc.getXmlFragment('default');
@@ -53,8 +36,6 @@ function treeRoundTrip(md: string): string {
   doc.destroy();
   return result;
 }
-
-// ─── Test fixtures: every supported markdown construct ───
 
 const CONSTRUCTS: Array<{ name: string; input: string; stable?: boolean; note?: string }> = [
   {
@@ -172,8 +153,6 @@ const CONSTRUCTS: Array<{ name: string; input: string; stable?: boolean; note?: 
   },
 ];
 
-// ─── 1. Markdown round-trip ───
-
 describe('markdown round-trip: serialize(parse(md))', () => {
   for (const { name, input, stable } of CONSTRUCTS) {
     test.concurrent(name, () => {
@@ -181,11 +160,8 @@ describe('markdown round-trip: serialize(parse(md))', () => {
       const normalized = stripTrailingWhitespace(input);
 
       if (stable) {
-        // Construct should be perfectly stable
         expect(output).toBe(normalized);
       } else {
-        // Construct may normalize but must preserve semantic content
-        // Extract meaningful text content (strip markdown syntax)
         const tokens = normalized.match(/[\w&<>]+/g) ?? [];
         for (const token of tokens) {
           expect(output).toContain(token);
@@ -195,15 +171,12 @@ describe('markdown round-trip: serialize(parse(md))', () => {
   }
 });
 
-// ─── 2. Tree round-trip ───
-
 describe('tree round-trip: pmJSON → updateYFragment → yXmlFragmentToProsemirrorJSON → serialize', () => {
   for (const { name, input } of CONSTRUCTS) {
     test.concurrent(name, () => {
       const output = stripTrailingWhitespace(treeRoundTrip(input));
       const normalized = stripTrailingWhitespace(input);
 
-      // Tree round-trip should preserve content (may normalize whitespace)
       const tokens = normalized.match(/[\w&<>]+/g) ?? [];
       for (const token of tokens) {
         expect(output).toContain(token);
@@ -211,14 +184,6 @@ describe('tree round-trip: pmJSON → updateYFragment → yXmlFragmentToProsemir
     });
   }
 });
-
-// Observer round-trip and full-stack chain blocks removed 2026-04-12.
-// Layer A (mdManager) === Layer B (Y.Doc observer path) on all 118 constructs
-// (fidelity-catalog probe, 2026-04-12). These chains tested a proven pass-through.
-// Remaining blocks (md round-trip, tree round-trip, disk round-trip, agent-as-file-editor)
-// exercise genuinely distinct code paths.
-
-// ─── 3. Disk round-trip (Tier 1 integration) ───
 
 describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocument → XmlFragment', () => {
   let server: TestServer;
@@ -238,7 +203,6 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
       await testReset(server.port);
       await wait(300);
 
-      // Connect client and write content via WYSIWYG (XmlFragment)
       const client = await createTestClient(server.port, 'test-doc');
       try {
         const json = mdManager.parse(input);
@@ -246,7 +210,6 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(client.doc, client.fragment, pmNode, meta);
 
-        // Wait for persistence to write to disk (strict: includes &<> fidelity chars)
         const tokens = stripTrailingWhitespace(input).match(/[\w&<>]+/g) ?? [];
         if (tokens.length > 0) {
           await pollUntil(
@@ -255,7 +218,6 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
           );
         }
 
-        // Verify disk content preserves the construct
         const diskContent = readTestDoc(server.contentDir);
         for (const token of tokens) {
           expect(diskContent).toContain(token);
@@ -264,20 +226,17 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
         await client.cleanup();
       }
 
-      // Now test reload: reset doc, write content to disk, reconnect client
       await testReset(server.port);
       await wait(300);
       writeFileSync(join(server.contentDir, 'test-doc.md'), input, 'utf-8');
 
       const client2 = await createTestClient(server.port, 'test-doc');
       try {
-        // Wait for onLoadDocument + Observer A to populate Y.Text (strict: includes &<> fidelity chars)
         const tokens = stripTrailingWhitespace(input).match(/[\w&<>]+/g) ?? [];
         if (tokens.length > 0) {
           await pollUntil(() => tokens.every((t) => client2.ytext.toString().includes(t)), 5000);
         }
 
-        // Verify content round-tripped through disk
         for (const token of tokens) {
           expect(client2.ytext.toString()).toContain(token);
         }
@@ -288,8 +247,6 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
     });
   }
 });
-
-// ─── 4. Agent-as-file-editor fidelity ───
 
 describe('agent-as-file-editor fidelity', () => {
   let server: TestServer;
@@ -331,16 +288,13 @@ describe('agent-as-file-editor fidelity', () => {
     await testReset(server.port);
     await wait(300);
 
-    // Write complex markdown to disk (simulating agent file edit)
     writeFileSync(join(server.contentDir, 'test-doc.md'), complexMd, 'utf-8');
 
-    // Connect client and wait for file watcher to propagate
     await wait(500);
     const client = await createTestClient(server.port, 'test-doc');
     try {
       await pollUntil(() => client.ytext.toString().includes('Agent File Edit'), 10_000);
 
-      // Verify all 3 surfaces have content
       expect(client.ytext.toString()).toContain('Section Two');
       expect(client.ytext.toString()).toContain('Bullet one');
       expect(serializeFragment(client.fragment)).toContain('Agent File Edit');
@@ -349,7 +303,6 @@ describe('agent-as-file-editor fidelity', () => {
 
       assertBridgeInvariant(client.ytext, client.fragment);
 
-      // User types in WYSIWYG (simulated via XmlFragment edit)
       const userJson = mdManager.parse('## User Section\n\nUser typed this.');
       const userNode = schema.nodeFromJSON(userJson);
       client.doc.transact(() => {
@@ -357,16 +310,12 @@ describe('agent-as-file-editor fidelity', () => {
         updateYFragment(client.doc, client.fragment, userNode, meta);
       });
 
-      // Poll until bridge converges after user XmlFragment edit
       await pollUntil(() => {
         const t = stripTrailingWhitespace(client.ytext.toString());
         const f = stripTrailingWhitespace(serializeFragment(client.fragment));
         return t === f && t.length > 0;
       }, 5000);
 
-      // Both agent and user content should coexist
-      // (updateYFragment replaces tree, but user content replaces agent content in this test)
-      // The key assertion: bridge invariant still holds
       assertBridgeInvariant(client.ytext, client.fragment);
     } finally {
       await client.cleanup();
@@ -379,23 +328,19 @@ describe('agent-as-file-editor fidelity', () => {
 
     const client = await createTestClient(server.port, 'test-doc');
     try {
-      // User types first (via Y.Text, simulating source mode)
       client.doc.transact(() => {
         client.ytext.insert(0, '# User Content\n\nTyped by user.');
       });
       await pollUntil(() => serializeFragment(client.fragment).includes('User Content'), 5000);
 
-      // Agent writes via API
       await agentWriteMd(server.port, '## Agent Content\n\nWritten by agent.');
       await pollUntil(() => client.ytext.toString().includes('Agent Content'), 5000);
 
-      // Both should coexist in Y.Text
       expect(client.ytext.toString()).toContain('User Content');
       expect(client.ytext.toString()).toContain('Agent Content');
 
       assertBridgeInvariant(client.ytext, client.fragment);
 
-      // Verify disk has both
       await pollUntil(() => {
         const disk = readTestDoc(server.contentDir);
         return disk.includes('User Content') && disk.includes('Agent Content');

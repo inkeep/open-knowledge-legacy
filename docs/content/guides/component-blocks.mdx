@@ -42,11 +42,15 @@ byte-identically on pristine save.
 GFM-style alert / admonition with five type variants and optional
 foldable chrome.
 
-**Props** (7): `type` (`note` \| `tip` \| `important` \| `warning` \|
-`caution`, default `note`), `title` (string), `icon` (namespaced lucide
-like `lucide:Lightbulb`), `color` (hex accent override), `collapsible`
-(boolean), `defaultOpen` (boolean, default `true` when collapsible),
-`children`.
+**Common props** (2): `type` (`note` \| `tip` \| `important` \|
+`warning` \| `caution`, default `note`), `title` (string).
+
+**Advanced props** (4, collapsed in PropPanel by default): `icon`
+(namespaced lucide like `lucide:Lightbulb`), `color` (hex accent
+override), `collapsible` (boolean), `defaultOpen` (boolean, default
+`true` when collapsible).
+
+Plus `children` (the body content).
 
 ```mdx title="Static Callout"
 <Callout type="warning">
@@ -104,17 +108,18 @@ notation.
 
 Lowercase HTML `<img>` canonical with click-to-zoom always on.
 
-**Common props** (4): `src` (required), `alt`, `width` (number),
-`height` (number).
+**Common props** (2): `src` (required), `alt`.
 
-**Advanced props** (8, collapsed in PropPanel by default): `srcset`,
-`sizes`, `loading` (`'eager'` \| `'lazy'`, default `'lazy'`), `title`
-(native HTML `title` tooltip), `decoding` (`'sync'` \| `'async'` \|
-`'auto'`, default `'auto'`), `fetchpriority` (`'high'` \| `'low'` \|
-`'auto'`, default `'auto'`), `crossorigin` (`'anonymous'` \|
-`'use-credentials'`), `referrerpolicy`. Attribute names are HTML-spec
-lowercase so emitted MDX matches the HTML spec exactly; React
-translates to camelCase at the JSX boundary.
+**Advanced props** (10, collapsed in PropPanel by default): `width`
+(number), `height` (number), `srcset`, `sizes`, `loading` (`'eager'`
+\| `'lazy'`, default `'lazy'`), `title` (native HTML `title` tooltip),
+`decoding` (`'sync'` \| `'async'` \| `'auto'`, default `'auto'`),
+`fetchpriority` (`'high'` \| `'low'` \| `'auto'`, default `'auto'`),
+`crossorigin` (`'anonymous'` \| `'use-credentials'`), `referrerpolicy`.
+Pixel `width` / `height` are layout-shift-prevention specialists —
+most authors lay out images via CSS or container width. Attribute
+names are HTML-spec lowercase so emitted MDX matches the HTML spec
+exactly; React translates to camelCase at the JSX boundary.
 
 ```mdx title="img with width + lazy load"
 <img
@@ -163,14 +168,16 @@ for embedded services: **no YouTube / Vimeo URL auto-promotion**, no
 iframe emission. Authors embedding service videos write a raw
 `<iframe>` in MDX directly.
 
-**Common props** (6): `src` (required), `controls` (default `true`),
-`autoplay`, `poster`, `width` (number), `height` (number).
+**Common props** (1): `src` (required).
 
-**Advanced props** (5, collapsed in PropPanel by default): `title`
-(tooltip), `muted`, `loop`, `playsinline`, `preload` (`'none'` \|
-`'metadata'` \| `'auto'`). Attribute names are HTML-spec lowercase
-(`autoplay`, `playsinline`); React maps to camelCase
-(`autoPlay`, `playsInline`) at the JSX boundary.
+**Advanced props** (10, collapsed in PropPanel by default): `controls`
+(default `true`), `autoplay`, `poster`, `width` (number), `height`
+(number), `title` (tooltip), `muted`, `loop`, `playsinline`, `preload`
+(`'none'` \| `'metadata'` \| `'auto'`). The fresh-insert form is a
+single `src` field; toggle `controls` / `autoplay` / etc. from
+Advanced if needed. Attribute names are HTML-spec lowercase
+(`autoplay`, `playsinline`); React maps to camelCase (`autoPlay`,
+`playsInline`) at the JSX boundary.
 
 ```mdx title="video with poster + autoplay"
 <video src="/clip.mp4" poster="/p.jpg" autoplay muted loop />
@@ -197,14 +204,14 @@ records prop type.
 
 HTML5 `<audio>` wrapper. Self-closing leaf (symmetric with `<video>`).
 
-**Common props** (3): `src` (required), `controls` (default `true`),
-`autoplay`. Set `controls={false}` for chrome-less playback (rare,
-mostly for hero loops).
+**Common props** (1): `src` (required).
 
-**Advanced props** (4, collapsed in PropPanel by default): `title`,
-`muted`, `loop`, `preload` (`'none'` \| `'metadata'` \| `'auto'`).
-Attribute names are HTML-spec lowercase; React maps `autoplay` to
-`autoPlay` at the JSX boundary.
+**Advanced props** (6, collapsed in PropPanel by default): `controls`
+(default `true`), `autoplay`, `title`, `muted`, `loop`, `preload`
+(`'none'` \| `'metadata'` \| `'auto'`). Set `controls={false}` for
+chrome-less playback (rare, mostly for hero loops). Attribute names
+are HTML-spec lowercase; React maps `autoplay` to `autoPlay` at the
+JSX boundary.
 
 ```mdx title="audio with preload hint"
 <audio src="/clip.mp3" autoplay loop preload="metadata" />
@@ -221,9 +228,13 @@ Standalone expand/collapse built on native HTML5 `<details>` /
 grouping via HTML5 `<details name="…">` (Chrome 120+, Safari 17.2+,
 Firefox 130+).
 
-**Props** (7): `title` (required), `defaultOpen`, `icon` (namespaced
-lucide), `description`, `id` (for deep-linking), `name` (exclusive-group
-identifier), and `children` (the body content).
+**Common props** (2): `title` (required), `defaultOpen` (boolean).
+
+**Advanced props** (4, collapsed in PropPanel by default): `icon`
+(namespaced lucide), `description` (subtitle), `id` (for deep-linking),
+`name` (exclusive-group identifier).
+
+Plus `children` (the body content).
 
 ```mdx title="Standalone accordion"
 <Accordion title="Advanced options" defaultOpen id="advanced">
@@ -260,6 +271,11 @@ Start typing to filter; pick an entry with the arrow keys and press
 Every entry inserts a fully-formed MDX block with sensible defaults.
 For components with editable props, the settings panel opens
 automatically so you can fill in required fields before you move on.
+
+When a media block (`img`, `video`, `audio`) is inserted without a
+source, it renders as an "Add an image" / "Add a video" / "Add audio"
+pill instead of a broken placeholder. Click the pill to reopen the
+settings panel — typing a URL replaces it with the rendered media.
 
 ## Editing props
 
@@ -415,5 +431,5 @@ editing remain out of scope.
   project.
 - [MCP integration](/guides/mcp-integration) — how agents author
   content.
-- [Configuration](/guides/configuration) — what `.open-knowledge/`
+- [Configuration](/guides/configuration) — what `.ok/`
   contains and how path filtering works.

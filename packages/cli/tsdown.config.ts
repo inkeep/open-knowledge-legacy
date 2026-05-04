@@ -1,5 +1,14 @@
 import { defineConfig } from 'tsdown';
 
+const dtsEmitFallbackNotice = '[rolldown-plugin-dts] Warning: Failed to emit declaration file';
+const originalWarn = console.warn;
+console.warn = (...args: unknown[]) => {
+  if (typeof args[0] === 'string' && args[0].startsWith(dtsEmitFallbackNotice)) {
+    return;
+  }
+  originalWarn(...args);
+};
+
 export default defineConfig({
   entry: { cli: 'src/cli.ts', index: 'src/index.ts' },
   unbundle: false,
@@ -7,14 +16,35 @@ export default defineConfig({
   dts: true,
   clean: true,
   minify: true,
+  inputOptions: (options) => {
+    options.onLog = (level, log, defaultHandler) => {
+      if (
+        log.code === 'EVAL' &&
+        typeof log.id === 'string' &&
+        log.id.includes('/@protobufjs/inquire/')
+      ) {
+        return;
+      }
+      if (
+        log.code === 'MISSING_EXPORT' &&
+        typeof log.id === 'string' &&
+        (log.id.endsWith('/src/commands/init.d.ts') || log.id.endsWith('/src/config/schema.d.ts'))
+      ) {
+        return;
+      }
+      if (
+        log.pluginCode === 'rolldown-plugin-dts' &&
+        typeof log.message === 'string' &&
+        log.message.includes('Failed to emit declaration file')
+      ) {
+        return;
+      }
+      defaultHandler(level, log);
+    };
+    return options;
+  },
   deps: {
-    // Native addons stay external — they ship .node binaries resolved at runtime
-    // and the desktop bundle places them under app.asar.unpacked/node_modules/.
     neverBundle: ['@parcel/watcher', '@napi-rs/keyring'],
-    // tsdown defaults to externalizing entries in `dependencies`, but the
-    // desktop install ships no node_modules/ next to dist/cli.mjs, so bare
-    // specifiers crash on resolve. Force-inline every pure-JS runtime dep.
-    // Keep this in sync with packages/cli/package.json `dependencies`.
     alwaysBundle: [
       /^@inquirer\/password(\/|$)/,
       /^@modelcontextprotocol\/sdk(\/|$)/,

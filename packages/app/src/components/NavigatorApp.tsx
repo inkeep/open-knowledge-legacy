@@ -1,18 +1,3 @@
-/**
- * Project Navigator — persistent-launcher UI shown when the desktop app
- * boots without a `lastOpenedProject`, OR when the user holds Option at
- * launch (D24 revised).
- *
- * Per spec §8.6 (D24 revised): three primary cards (Clone from GitHub,
- * Open folder on disk, Start fresh) above a Recent list. Every project
- * pick spawns a NEW editor window via `ok:project:open` IPC (D3 revised
- * — no switch-in-place in v0). Navigator window stays open.
- *
- * Web / CLI distribution never reaches this component — it only renders
- * when `window.okDesktop?.config.mode === 'navigator'` (gated in
- * `packages/app/src/main.tsx`).
- */
-
 import { FolderOpenIcon, Loader2Icon, PlusIcon } from 'lucide-react';
 import { type ComponentType, useEffect, useState } from 'react';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
@@ -20,14 +5,16 @@ import {
   resolveErrorMessage,
   runWithErrorStatePure as runWithErrorStatePureBase,
 } from '@/lib/error-state';
+import { ipcAuthQueryTransport } from '@/lib/transports/auth-query-transport';
+import { ipcAuthTransport } from '@/lib/transports/auth-transport';
+import { ipcCloneTransport } from '@/lib/transports/clone-transport';
+import { AuthModal } from './AuthModal';
+import { CloneDialog } from './CloneDialog';
 import { GithubIcon } from './icons/github';
 import { OkIcon } from './icons/ok';
 import { McpConsentDialog } from './McpConsentDialog';
 import { Badge } from './ui/badge';
 
-// Re-exports for tests — callers previously imported these directly from
-// NavigatorApp.tsx; keeping the surface here avoids churn in existing test
-// files and keeps the shared-helper move transparent.
 export { resolveErrorMessage };
 export const runWithErrorStatePure = (
   fn: () => Promise<void>,
@@ -41,12 +28,13 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [recents, setRecents] = useState<RecentProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
+  const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
 
   useEffect(() => {
     let cancelled = false;
-    // Promise-chain instead of try/catch/finally — React Compiler (BuildHIR)
-    // does not yet support `finally` clauses; `.finally(...)` on the Promise
-    // is equivalent and compiler-safe.
     bridge.project
       .listRecent()
       .then((result) => {
@@ -66,27 +54,10 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
     };
   }, [bridge]);
 
-  /**
-   * Wrap any bridge call in a visible error state. Without this the IPC
-   * rejection (utility failed to boot, bad folder, dialog rejected) lands as
-   * an unhandled promise rejection and the UI stays frozen in its pre-click
-   * state — no feedback, no retry path. Delegates to the pure
-   * `runWithErrorStatePure` helper so the rejection-handling logic can be
-   * unit-tested without React.
-   */
   const runWithErrorState = (fn: () => Promise<void>, fallback: string) =>
     runWithErrorStatePure(fn, fallback, setError);
 
-  const onClone = () =>
-    runWithErrorState(async () => {
-      // M4/M5 wires the full Device-Flow CloneDialog; for M1 we just open the
-      // folder picker so the user can pick a clone target — actual `git clone`
-      // delegation lands in M4 alongside the Device-Flow auth surface.
-      const target = await bridge.dialog.openFolder();
-      if (!target) return;
-      // TODO M4: pipe target + git URL into clone-from-github CloneDialog
-      await openProject(bridge, target);
-    }, 'Failed to clone from GitHub.');
+  const onClone = () => setCloneDialogOpen(true);
 
   const onOpenFolder = () =>
     runWithErrorState(async () => {
@@ -108,11 +79,6 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
     }, 'Failed to open project.');
 
   return (
-    // `overflow-hidden` on the outer flex column + `shrink-0` on everything
-    // fixed-height + `min-h-0 overflow-y-auto` on the Recent list pins the
-    // primary affordances (header + three cards + footer) on-screen at the
-    // default 720×520 Navigator window size. Only the Recent list can scroll,
-    // and only when a user has >~6 entries. Matches VS Code / Cursor Welcome.
     <div
       className={`flex h-screen w-screen flex-col overflow-hidden bg-primary-foreground dark:bg-background p-12 pb-2 text-foreground max-w-5xl space-y-10 mx-auto ${
         !loading && recents.length === 0 ? 'justify-center' : ''
@@ -194,6 +160,38 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           `mcpConsentStore` snapshot, renders nothing until main fires
           `ok:mcp-wiring:show`. Mounted identically in App.tsx (D-M6-R10). */}
       <McpConsentDialog />
+
+      <AuthModal
+        open={authModalOpen}
+        onOpenChange={(next) => {
+          setAuthModalOpen(next);
+          if (!next) setReturnToCloneAfterAuth(false);
+        }}
+        transport={ipcAuthTransport(bridge)}
+        identityPrompt={authInitialStep === 'identity'}
+        onSuccess={() => {
+          setAuthModalOpen(false);
+          if (returnToCloneAfterAuth) {
+            setReturnToCloneAfterAuth(false);
+            setCloneDialogOpen(true);
+          }
+        }}
+      />
+      <CloneDialog
+        open={cloneDialogOpen}
+        onOpenChange={setCloneDialogOpen}
+        transport={ipcCloneTransport(bridge)}
+        authQueryTransport={ipcAuthQueryTransport(bridge)}
+        onSignIn={() => {
+          setCloneDialogOpen(false);
+          setAuthInitialStep('auth');
+          setReturnToCloneAfterAuth(true);
+          setAuthModalOpen(true);
+        }}
+        onCloneComplete={({ dir }) => {
+          void runWithErrorState(() => openProject(bridge, dir), 'Failed to open cloned project.');
+        }}
+      />
     </div>
   );
 }

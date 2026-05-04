@@ -125,8 +125,6 @@ describe('parseContributors', () => {
     expect(parseContributors(body)).toEqual([]);
   });
 
-  // D23/D27 coverage — `summaries?: string[]` is additive; malformed values
-  // drop JUST the field (deliberate divergence from whole-entry-skip).
   test('legacy commit (no summaries field) parses with summaries undefined', () => {
     const body = '\nok-contributors: {"id":"agent-a","name":"Claude","docs":["foo.md"]}';
     const result = parseContributors(body);
@@ -203,7 +201,6 @@ describe('parseWriterId (D34 taxonomy)', () => {
     expect(p.isAgent).toBe(null);
   });
 
-  // Legacy ids → unknown (eligible for GC by US-018 allowlist sweep)
   test('legacy "human-<id>" → unknown (D34: human- prefix dropped)', () => {
     const p = parseWriterId('human-tim');
     expect(p.classification).toBe('unknown');
@@ -261,21 +258,17 @@ describe('getShadowRepoPath', () => {
     expect(getShadowRepoPath(tmp)).toBe(null);
   });
 
-  test('always resolves to <projectRoot>/.git/open-knowledge/', () => {
+  test('always resolves to <projectRoot>/.git/ok/', () => {
     const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/open-knowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.git/open-knowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/open-knowledge'));
+    mkdirSync(resolve(project, '.git/ok'), { recursive: true });
+    writeFileSync(resolve(project, '.git/ok/HEAD'), 'ref: refs/heads/main\n');
+    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/ok'));
   });
 
   test('never returns legacy .git/openknowledge/ path (single-mode layout)', () => {
     const project = resolve(tmp, 'project');
-    // Simulate old integrated-mode location — layout helper does NOT see it
     mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
     writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    // Legacy path is ignored — getShadowRepoPath reads through resolveShadowDir
-    // which always returns .git/open-knowledge/. The R9 rename shim in
-    // initShadowRepo handles the on-disk migration at server start.
     expect(getShadowRepoPath(project)).toBe(null);
   });
 
@@ -286,9 +279,9 @@ describe('getShadowRepoPath', () => {
     expect(getShadowRepoPath(project)).toBe(null);
   });
 
-  test('returns null when .git/open-knowledge exists but HEAD is missing', () => {
+  test('returns null when .git/ok exists but HEAD is missing', () => {
     const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/open-knowledge'), { recursive: true });
+    mkdirSync(resolve(project, '.git/ok'), { recursive: true });
     expect(getShadowRepoPath(project)).toBe(null);
   });
 });
@@ -329,9 +322,6 @@ describe('parseCheckpoint / formatCheckpointBodyLine (bridge-correctness SPEC §
   });
 
   test('backward-compat: pre-enrichment body without docName/size returns nulls', () => {
-    // Simulates a checkpoint commit written before the docName/size enrichment
-    // (bridge-correctness review iteration 5). The rescue read path's fallback
-    // branch handles this case via ls-tree.
     const legacyLine =
       'ok-checkpoint-v1: {"kind":"external-change-rescue","metadata":{"incomingDiskSha":"abc"}}';
     const body = `checkpoint: Legacy\n\n${legacyLine}`;
@@ -362,7 +352,6 @@ describe('parseCheckpoint / formatCheckpointBodyLine (bridge-correctness SPEC §
   });
 
   test('returns null when metadata shape does not match kind', () => {
-    // bridge-merge-loss expects lostSubstrings; missing it → null
     expect(
       parseCheckpoint('\nok-checkpoint-v1: {"kind":"bridge-merge-loss","metadata":{"other":"x"}}'),
     ).toBe(null);
@@ -384,8 +373,6 @@ describe('parseCheckpoint / formatCheckpointBodyLine (bridge-correctness SPEC §
     expect(checkpoint?.kind).toBe('bridge-merge-loss');
   });
 });
-
-// ─── US-015: parseOkActor / formatOkActor / formatWipSubject ─────────────────
 
 describe('formatWipSubject', () => {
   test('empty docs → wip: auto-save', () => {
@@ -496,7 +483,6 @@ describe('parseOkActor / formatOkActor (US-015, FR-8, D13)', () => {
     ].join('\n');
     const parsed = parseOkActor(body);
     expect(parsed?.display_name).toBe('Claude (abc1)');
-    // contributor parsing is unaffected
     const contributors = parseContributors(body);
     expect(contributors).toHaveLength(1);
     expect(contributors[0]?.id).toBe('agent-abc');
@@ -508,8 +494,6 @@ describe('parseOkActor / formatOkActor (US-015, FR-8, D13)', () => {
     expect(parsed?.color_seed).toBe('unknown');
   });
 });
-
-// ─── writer_id + summaries consolidation (ok-contributors retirement) ────────
 
 describe('OkActorEntry writer_id field + derivation back-compat', () => {
   test('formatOkActor emits writer_id inline', () => {
@@ -563,7 +547,6 @@ describe('OkActorEntry writer_id field + derivation back-compat', () => {
   });
 
   test('explicit writer_id in stored JSON wins over any derivation', () => {
-    // Even if fields look principal-shaped, explicit writer_id is authoritative.
     const line =
       'ok-actor: {"v":1,"writer_id":"custom-writer","principal":"principal-ignored","display_name":"X","docs":[]}';
     const parsed = parseOkActor(line);
@@ -758,8 +741,6 @@ describe('readContributors (dispatcher: prefers ok-actor, falls back to ok-contr
   });
 });
 
-// ─── US-015: Subject-prefix format helpers (D53, FR-13) ──────────────────────
-
 describe('Subject-prefix format helpers (D53, FR-13)', () => {
   test('formatReconcileSubject', () => {
     expect(formatReconcileSubject('notes.md')).toBe('reconcile: notes.md');
@@ -817,7 +798,6 @@ describe('Subject-prefix format helpers (D53, FR-13)', () => {
   });
 });
 
-// Agent-write-summaries FR14 — subject-line projection of `ContributorEntry.summaries`
 describe('composeCommitSubject (FR14 — change-notes in commit subject)', () => {
   test('zero summaries → base subject unchanged', () => {
     expect(composeCommitSubject('wip: notes.md', [])).toBe('wip: notes.md');

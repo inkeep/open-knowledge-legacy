@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { prependFrontmatter, stripFrontmatter } from './frontmatter';
+import { prependFrontmatter, stripFrontmatter, unwrapFrontmatterFences } from './frontmatter';
 
 describe('stripFrontmatter', () => {
   test('extracts frontmatter from standard YAML block', () => {
@@ -87,6 +87,35 @@ describe('prependFrontmatter', () => {
 
   test('returns body unchanged when frontmatter is empty', () => {
     expect(prependFrontmatter('', '# Body')).toBe('# Body');
+  });
+});
+
+describe('unwrapFrontmatterFences', () => {
+  test('strips leading and trailing --- fences with trailing newline', () => {
+    expect(unwrapFrontmatterFences('---\ntitle: Hello\n---\n')).toBe('title: Hello');
+  });
+
+  test('strips fences without trailing newline', () => {
+    expect(unwrapFrontmatterFences('---\ntitle: Hello\n---')).toBe('title: Hello');
+  });
+
+  test('handles CRLF line endings', () => {
+    expect(unwrapFrontmatterFences('---\r\ntitle: CRLF\r\n---\r\n')).toBe('title: CRLF');
+  });
+
+  test('returns empty string on empty input', () => {
+    expect(unwrapFrontmatterFences('')).toBe('');
+  });
+
+  test('handles empty FM block ---\\n---\\n', () => {
+    expect(unwrapFrontmatterFences('---\n---\n')).toBe('');
+  });
+
+  test('round-trip with stripFrontmatter — fenced FM produces parseable YAML body', () => {
+    const original = '---\ntitle: X\ntags: [a, b]\n---\n# Body';
+    const { frontmatter } = stripFrontmatter(original);
+    const body = unwrapFrontmatterFences(frontmatter);
+    expect(body).toBe('title: X\ntags: [a, b]');
   });
 });
 

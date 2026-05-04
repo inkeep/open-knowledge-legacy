@@ -1,11 +1,3 @@
-/**
- * Invariant I3 — Normalization canonicality: double round-trip equals
- * single round-trip. f(f(x)) === f(x).
- *
- * Even if the first round-trip normalizes (e.g., changes whitespace),
- * the result must be stable — a second pass must not change it further.
- */
-
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
 import { block, headingWithMarks, markdownDoc, paragraphWithMarks } from './arbitraries';

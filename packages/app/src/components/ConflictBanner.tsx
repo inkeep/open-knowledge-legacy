@@ -1,10 +1,3 @@
-/**
- * ConflictBanner — inline banner shown above the editor when sync conflicts exist.
- *
- * Reads conflict count from the sync-status hook (which re-fetches on CC1 signal).
- * Hidden when not in conflict state. Calls onOpenResolver when the user clicks
- * "Review and resolve".
- */
 import { AlertTriangle } from 'lucide-react';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { Button } from './ui/button';

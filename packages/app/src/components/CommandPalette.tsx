@@ -15,6 +15,7 @@ import {
   FolderPlus,
   LayoutGrid,
   Network,
+  Settings,
   Sparkles,
 } from 'lucide-react';
 import { useDeferredValue, useEffect, useState } from 'react';
@@ -54,6 +55,7 @@ import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '@/lib/desktop-labels';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
+import { SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 import { useWorkspace } from '@/lib/use-workspace';
 import { isMacOs } from '@/lib/utils.ts';
 import { buildHandoffInput, useHandoffDispatch } from './handoff/useHandoffDispatch';
@@ -286,6 +288,7 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
     matchesCommandQuery(SWITCH_PROJECT_LABEL_WITH_ELLIPSIS, deferredQuery, [
       'switch project navigator projects',
     ]);
+  const showSettings = matchesCommandQuery('Settings', deferredQuery, ['preferences config']);
   const showInstallClaudeDesktop = matchesCommandQuery(
     'Install for Claude Chat & Cowork (Desktop App)',
     deferredQuery,
@@ -315,6 +318,7 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
     showGraphCommand ||
     showProjectOpenFolder ||
     showProjectSwitch ||
+    showSettings ||
     showInstallClaudeDesktop ||
     showProjectRecents ||
     showAgentGroup;
@@ -467,6 +471,7 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
 
           {showProjectOpenFolder ||
           showProjectSwitch ||
+          showSettings ||
           showInstallClaudeDesktop ||
           showProjectRecents ? (
             <CommandGroup heading="Project">
@@ -498,6 +503,22 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
                   <LayoutGrid />
                   <span>{SWITCH_PROJECT_LABEL_WITH_ELLIPSIS}</span>
                   <CommandShortcut>⌘⇧N</CommandShortcut>
+                </CommandItem>
+              ) : null}
+              {showSettings ? (
+                <CommandItem
+                  value="settings preferences config"
+                  onSelect={() => {
+                    setOpen(false);
+                    if (window.location.hash !== SETTINGS_OPEN_HASH) {
+                      window.location.hash = SETTINGS_OPEN_HASH;
+                    }
+                  }}
+                  data-testid="command-palette-settings"
+                >
+                  <Settings />
+                  <span>Settings…</span>
+                  <CommandShortcut>⌘,</CommandShortcut>
                 </CommandItem>
               ) : null}
               {showInstallClaudeDesktop ? (

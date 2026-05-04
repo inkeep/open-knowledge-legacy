@@ -1,18 +1,3 @@
-/**
- * UI-level process lock — exclusive per-project UI process ownership.
- *
- * Thin adapter around `acquireProcessLock` in `process-lock.ts`. Only one
- * `ok ui` process may own a given contentDir at a time. The lock file at
- * `<lockDir>/ui.lock` contains JSON metadata used for stale detection and
- * for MCP tool preview-url discovery (see `preview-url.ts`).
- *
- * `lockDir` is `<contentDir>/.open-knowledge` by convention.
- *
- * Sibling of `server-lock.ts` (guards the Hocuspocus collab server) and
- * `shadow-lock.ts` (guards the shadow repo). All three share
- * `process-lock.ts` for the acquisition/release/port-update plumbing.
- */
-
 import {
   acquireProcessLock,
   type LockKind,
@@ -38,7 +23,6 @@ export function acquireUiLock(
     port: number;
     worktreeRoot: string;
     kind?: LockKind;
-    parentPid?: number;
     capabilities?: string[];
   },
 ): string {

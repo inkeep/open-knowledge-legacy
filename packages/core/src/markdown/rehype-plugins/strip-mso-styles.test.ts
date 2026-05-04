@@ -1,10 +1,3 @@
-/**
- * Tests for rehypeStripMsoStyles — drops Microsoft Word noise.
- * Fixture fixtures/word-sample.html contains a typical Word "Copy as HTML"
- * blob with xmlns:o/w/m namespaces, mso-* inline styles, and MsoNormal
- * classes on paragraphs.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

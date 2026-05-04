@@ -8,7 +8,6 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 
-/** Regex to capture list-item prefix: leading whitespace + marker + optional task marker. */
 const LIST_PREFIX_RE = /^(\s*(?:[-*+]|\d+[.)]) (?:\[[ x]\] )?)/;
 
 const delMark = Decoration.mark({ class: 'cm-del' });
@@ -16,7 +15,6 @@ const delMark = Decoration.mark({ class: 'cm-del' });
 const tableHeaderLine = Decoration.line({ class: 'cm-table-header' });
 const tableRowLine = Decoration.line({ class: 'cm-table-row' });
 
-/** Count leading ASCII spaces in a string. Tabs count as 4 visual columns. */
 function countLeadingIndent(text: string): number {
   let indent = 0;
   for (const ch of text) {
@@ -27,23 +25,35 @@ function countLeadingIndent(text: string): number {
   return indent;
 }
 
-/** Pure state-based decoration builder. Exported for unit tests — the ViewPlugin
- * wrapper passes `view.visibleRanges` (viewport-scoped); tests can pass the
- * whole-doc range to exercise every construct. No `view` dependency → works
- * in Bun's headless test env without a DOM. */
+function frontmatterRange(state: EditorState): { from: number; to: number } | null {
+  if (state.doc.lines < 2) return null;
+  const firstLine = state.doc.line(1);
+  if (firstLine.text !== '---') return null;
+  for (let i = 2; i <= state.doc.lines; i++) {
+    const line = state.doc.line(i);
+    if (line.text === '---') {
+      return { from: firstLine.from, to: line.to };
+    }
+  }
+  return null;
+}
+
 export function buildDecorationsForRanges(
   state: EditorState,
   ranges: readonly { from: number; to: number }[],
 ): DecorationSet {
   const decorations: Range<Decoration>[] = [];
   const tree = syntaxTree(state);
+  const fmRange = frontmatterRange(state);
+  const insideFrontmatter = (pos: number): boolean =>
+    fmRange !== null && pos >= fmRange.from && pos <= fmRange.to;
 
   for (const { from, to } of ranges) {
     tree.iterate({
       from,
       to,
       enter(node) {
-        // Strikethrough — apply .cm-del to content between ~~ delimiters
+        if (insideFrontmatter(node.from)) return;
         if (node.name === 'Strikethrough') {
           let contentFrom = node.from;
           let contentTo = node.to;
@@ -65,10 +75,6 @@ export function buildDecorationsForRanges(
           return false;
         }
 
-        // List hanging-indent — apply .cm-list-item to the first line of each ListItem.
-        // Do NOT `return false` here: nested lists have ListItem descendants, and
-        // inline content (Strikethrough, etc.) lives inside the item's Paragraph —
-        // both need their own handler fires.
         if (node.name === 'ListItem') {
           const line = state.doc.lineAt(node.from);
           const match = LIST_PREFIX_RE.exec(line.text);
@@ -81,13 +87,7 @@ export function buildDecorationsForRanges(
           return;
         }
 
-        // Fenced code — wrap-preserve-indent on content lines.
-        // The language token (CodeInfo) stays as plain source text; syntax
-        // highlighting for the language comes from the codeLanguages
-        // allowlist (packages/app/src/editor/markdown-code-languages.ts).
         if (node.name === 'FencedCode') {
-          // Code body lines — apply .cm-fenced-code-line with --line-indent.
-          // Skip the opening fence line and closing fence line.
           const startLine = state.doc.lineAt(node.from);
           const endLine = state.doc.lineAt(node.to);
           for (let lineNum = startLine.number + 1; lineNum < endLine.number; lineNum++) {
@@ -103,10 +103,6 @@ export function buildDecorationsForRanges(
           return false;
         }
 
-        // Tables — hanging indent only. Wrapped row continuation aligns under
-        // cell content (not under `|`). NO background, border, accent bar,
-        // cell bands, or font-size/line-height change — explicit scope
-        // boundary per spec §6.6 (compactness cut in the second amendment).
         if (node.name === 'TableHeader') {
           const line = state.doc.lineAt(node.from);
           decorations.push(tableHeaderLine.range(line.from));
@@ -118,10 +114,6 @@ export function buildDecorationsForRanges(
           return false;
         }
         if (node.name === 'TableDelimiter' && node.node.parent?.name === 'Table') {
-          // The `|---|---|` separator row — a TableDelimiter whose parent is
-          // Table directly (not TableHeader/TableRow). Inline `|` characters
-          // inside rows are also TableDelimiters but their parent is the row,
-          // so the parent check filters them out.
           const line = state.doc.lineAt(node.from);
           decorations.push(tableRowLine.range(line.from));
           return false;

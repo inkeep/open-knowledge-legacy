@@ -14,9 +14,25 @@ export interface AnchorLinkTarget {
   anchor: string;
 }
 
-export type ClassifiedLinkTarget = DocLinkTarget | ExternalLinkTarget | AnchorLinkTarget;
+export interface AssetLinkTarget {
+  kind: 'asset';
+  url: string;
+  ext: string;
+}
+
+export type ClassifiedLinkTarget =
+  | DocLinkTarget
+  | ExternalLinkTarget
+  | AnchorLinkTarget
+  | AssetLinkTarget;
 
 const URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+\-.]*:/;
+
+export function extractAssetExtension(href: string): string | null {
+  const pathOnly = href.split(/[?#]/)[0] ?? href;
+  const match = pathOnly.match(/\.([a-z0-9]+)$/i);
+  return match ? (match[1] ?? '').toLowerCase() : null;
+}
 
 function splitDocNameSegments(docName: string): string[] {
   return docName.split('/').filter(Boolean);
@@ -48,8 +64,13 @@ export function classifyMarkdownHref(
     };
   }
 
-  if (trimmed.startsWith('/') || isExternalHref(trimmed)) {
+  if (isExternalHref(trimmed) || trimmed.startsWith('/')) {
     return { kind: 'external', url: trimmed };
+  }
+
+  const ext = extractAssetExtension(trimmed);
+  if (ext && ext !== 'md' && ext !== 'mdx') {
+    return { kind: 'asset', url: trimmed, ext };
   }
 
   return null;
@@ -74,6 +95,40 @@ export function classifyWikiLinkTarget(
     docName: trimmed,
     anchor: anchor?.trim() || null,
   };
+}
+
+export function resolveAssetProjectPath(href: string, sourceDocName: string): string | null {
+  const trimmed = href.trim();
+  if (!trimmed) return null;
+
+  if (URI_SCHEME_RE.test(trimmed)) return null;
+  if (trimmed.startsWith('//')) return null;
+  if (trimmed.startsWith('#')) return null;
+
+  const hashIdx = trimmed.indexOf('#');
+  const pathPart = hashIdx >= 0 ? trimmed.slice(0, hashIdx) : trimmed;
+  const cleanPath = (pathPart.split('?')[0] ?? '').trim();
+  if (!cleanPath) return null;
+
+  const isServerAbsolute = cleanPath.startsWith('/');
+  const effectivePath = isServerAbsolute ? cleanPath.slice(1) : cleanPath;
+  const dirParts: string[] = isServerAbsolute
+    ? []
+    : sourceDocName.includes('/')
+      ? sourceDocName.split('/').slice(0, -1)
+      : [];
+
+  for (const seg of effectivePath.split('/')) {
+    if (seg === '..') {
+      if (dirParts.length === 0) return null;
+      dirParts.pop();
+    } else if (seg !== '.' && seg !== '') {
+      dirParts.push(seg);
+    }
+  }
+
+  if (dirParts.length === 0) return null;
+  return dirParts.join('/');
 }
 
 export function buildRelativeMarkdownHref(

@@ -1,4 +1,4 @@
-import { Columns2, FolderOpen, GitFork, Pin, PinOff, Rows2, Save } from 'lucide-react';
+import { FolderOpen, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -21,8 +21,6 @@ import { emitDocumentsChanged } from '@/lib/documents-events';
 import { useWorkspace } from '@/lib/use-workspace';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { useSyncStatus } from '@/presence/use-sync-status';
-import type { DiffLayout } from './DiffView';
-import type { PanelTab } from './DocPanel';
 import type { EditorMode } from './EditorPane';
 import { HelpPopover } from './HelpPopover';
 import { OpenInAgentMenu } from './handoff/OpenInAgentMenu';
@@ -71,13 +69,9 @@ interface EditorHeaderProps {
   onModeChange: (mode: EditorModeValue) => void;
   onSaveVersion: () => void;
   saving: boolean;
-  activeTab: PanelTab;
-  diffLayout: DiffLayout;
-  onDiffLayoutChange: (layout: DiffLayout) => void;
   onSignIn?: () => void;
   onSetIdentity?: () => void;
   onOpenConflictResolver?: () => void;
-  onOpenClone?: () => void;
 }
 
 export function EditorHeader({
@@ -85,32 +79,21 @@ export function EditorHeader({
   onModeChange,
   onSaveVersion,
   saving,
-  activeTab,
-  diffLayout,
-  onDiffLayoutChange,
   onSignIn,
   onSetIdentity,
   onOpenConflictResolver,
-  onOpenClone,
 }: EditorHeaderProps) {
-  const { activeDocName, activeProvider, activeTarget, closeDocument, pinnedDoc, pin, unpin } =
+  const { activeDocName, activeProvider, activeTarget, closeAndClearForRename } =
     useDocumentContext();
   const { pageMeta } = usePageList();
   const { state: sidebarState } = useSidebar();
   const workspace = useWorkspace();
   const syncStatus = useSyncStatus(activeProvider);
-  // Build the handoff input once per render — the menu's trigger disables when
-  // `input === null` (no active doc, or workspace fetch still pending on web
-  // host). Surfaces own input construction so AC9's single-dispatch contract
-  // is preserved: `dispatchHandoff` is called only from `useHandoffDispatch`.
   const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
   const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
   const sourceDisabled = !activeDocName || !isConnected;
   const isFolderTarget = activeTarget?.kind === 'folder';
   const isNewDoc = activeTarget?.kind === 'missing';
-  // Extension for the active doc — pulled from PageListContext so the header
-  // renders `foo.mdx` vs `foo.md` faithfully instead of hard-coding `.md`.
-  // Falls back to `.md` for optimistic / pre-fetch states.
   const activeDocExt = (activeDocName && pageMeta.get(activeDocName)?.docExt) || '.md';
   const displayName = isFolderTarget
     ? `${activeTarget.folderPath}/`
@@ -120,40 +103,20 @@ export function EditorHeader({
 
   const index = activeDocName?.lastIndexOf('/') ?? -1;
 
-  // Split doc path into prefix (truncatable) and filename (prioritized).
-  // e.g. "reports/some-report/REPORT" → prefix="reports/some-report/" filename="REPORT"
   const pathPrefix =
     activeDocName && index !== -1 ? `${activeDocName.substring(0, index + 1)}` : '';
   const fileBaseName = activeDocName ? activeDocName.substring(index + 1) : '';
-  const isPinned = pinnedDoc !== null;
 
-  function togglePin() {
-    if (!activeDocName) return;
-    if (isPinned) unpin();
-    else pin(activeDocName);
-  }
-  // --- Inline rename state ---
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isRenameLoading, setIsRenameLoading] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const commitInProgressRef = useRef(false);
-  // Set by cancelRename/reset-effect to block the blur→commitRename race
-  // (unmounting a focused Input fires blur; this prevents commit-after-cancel).
   const cancelRequestedRef = useRef(false);
-  // Captures activeDocName at rename entry to prevent wrong-doc rename
-  // if the user navigates mid-rename and blur fires with the new doc's closure.
   const renameDocRef = useRef<string | null>(null);
-  // Last normalized value the server (or network) rejected. Blocks re-POST of
-  // the same value on every outside-click blur; the user must edit the input
-  // (which clears this ref in onChange) to retry.
   const lastFailedValueRef = useRef<string | null>(null);
 
-  // Exit rename mode when the active doc changes (e.g. navigation).
-  // cancelRequestedRef suppresses the blur→commitRename race on unmount, and
-  // is also checked post-await in commitRename to skip side effects if the user
-  // navigated while a rename was in flight.
   // biome-ignore lint/correctness/useExhaustiveDependencies: activeDocName is a trigger-only dep — the effect body only needs to re-run on change, not to read its value.
   useEffect(() => {
     cancelRequestedRef.current = true;
@@ -163,7 +126,6 @@ export function EditorHeader({
     setRenameError(null);
   }, [activeDocName]);
 
-  // Auto-focus and select when entering rename mode
   useEffect(() => {
     if (isRenaming) {
       const timer = setTimeout(() => {
@@ -204,8 +166,6 @@ export function EditorHeader({
     }
     if (commitInProgressRef.current) return;
 
-    // Use the doc name captured at rename entry to prevent wrong-doc rename
-    // if activeDocName changed due to navigation mid-rename.
     const docName = renameDocRef.current;
     if (!docName) {
       cancelRename();
@@ -216,17 +176,13 @@ export function EditorHeader({
     const segments = docName.split('/');
     const currentName = segments[segments.length - 1];
 
-    // No-op: name unchanged
     if (normalized === currentName) {
       cancelRename();
       return;
     }
 
-    // The server already rejected this exact value — don't re-POST on every
-    // outside click. User must edit the input to clear lastFailedValueRef.
     if (normalized === lastFailedValueRef.current) return;
 
-    // Validation
     if (!isValidNodeName(normalized)) {
       setRenameError('Name can’t be empty, ".", "..", or contain / or \\');
       return;
@@ -242,16 +198,12 @@ export function EditorHeader({
     setRenameError(null);
 
     try {
-      const res = await fetch('/api/rename', {
+      const res = await fetch('/api/rename-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docName: docName, newDocName }),
+        body: JSON.stringify({ kind: 'file', fromPath: docName, toPath: newDocName }),
       });
 
-      // Post-await cancel check: if the user navigated while the fetch was in
-      // flight, the reset-effect already set cancelRequestedRef. Skip all side
-      // effects (close/emit/hash-navigate) so we don't force the user away from
-      // the doc they navigated to.
       if (cancelRequestedRef.current) {
         setIsRenameLoading(false);
         commitInProgressRef.current = false;
@@ -300,7 +252,12 @@ export function EditorHeader({
       const renamed = raw.renamed;
       const nextActiveDocName = remapActiveDocName(docName, renamed);
 
-      for (const entry of renamed) closeDocument(entry.fromDocName);
+      await Promise.all(
+        renamed.flatMap((entry) => [
+          closeAndClearForRename(entry.fromDocName),
+          closeAndClearForRename(entry.toDocName),
+        ]),
+      );
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
 
       setIsRenaming(false);
@@ -407,36 +364,6 @@ export function EditorHeader({
         ) : (
           <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
         )}
-        {activeDocName && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 shrink-0 text-muted-foreground"
-                onClick={togglePin}
-                aria-label={
-                  isPinned
-                    ? 'Unpin — resume following agent'
-                    : 'Pin this doc — stop following agent'
-                }
-                aria-pressed={isPinned}
-                data-pinned={isPinned ? 'true' : 'false'}
-              >
-                {isPinned ? (
-                  <Pin className="size-4 text-foreground" fill="currentColor" />
-                ) : (
-                  <PinOff className="size-4" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {isPinned
-                ? 'Pinned — click to resume following agent navigation'
-                : 'Pin to stay on this doc — browser won’t auto-navigate to the agent’s current focus'}
-            </TooltipContent>
-          </Tooltip>
-        )}
         {isNewDoc && <Badge variant="dashed">New file</Badge>}
       </div>
 
@@ -495,62 +422,7 @@ export function EditorHeader({
         </ToggleGroup>
       )}
 
-      {activeTab === 'timeline' && (
-        <div className="flex items-center gap-2 shrink-0">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <ToggleGroup
-                type="single"
-                value={diffLayout}
-                onValueChange={(v) => {
-                  if (v) onDiffLayoutChange(v as DiffLayout);
-                }}
-                aria-label="Diff layout"
-                variant="segmented"
-                size="sm"
-                spacing={1}
-                className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
-              >
-                <ToggleGroupItem
-                  value="unified"
-                  aria-label="Unified diff"
-                  className="gap-1 text-xs px-2"
-                >
-                  <Rows2 className="size-3.5" />
-                  <span className="hidden md:inline">Unified</span>
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="split"
-                  aria-label="Split diff"
-                  className="gap-1 text-xs px-2"
-                >
-                  <Columns2 className="size-3.5" />
-                  <span className="hidden md:inline">Split</span>
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </TooltipTrigger>
-            <TooltipContent>Layout for expanded Timeline diffs</TooltipContent>
-          </Tooltip>
-        </div>
-      )}
-
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
-        {onOpenClone && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Clone from GitHub"
-                onClick={onOpenClone}
-                className="text-muted-foreground"
-              >
-                <GitFork className="size-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Clone from GitHub…</TooltipContent>
-          </Tooltip>
-        )}
         {activeDocName && (
           <Tooltip>
             <TooltipTrigger asChild>

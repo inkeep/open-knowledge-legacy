@@ -2,7 +2,6 @@
 title: Agent Write Path
 description: How external agents write into the CRDT via markdown, and how the server-authoritative bridge keeps WYSIWYG and source mode views in sync.
 ---
-
 External agents (Claude Code, Cowork, Cursor, etc.) write into the Y.Doc via HTTP APIs. The system provides two write endpoints; the server-authoritative cross-CRDT bridge then propagates the write to both `Y.XmlFragment` (TipTap) and `Y.Text` (CodeMirror) so the result is visible in either editor mode without any client-side merge.
 
 ## Write endpoints
@@ -57,6 +56,20 @@ Paired-write origins (`AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORI
 
 Client-side keystroke protection is not needed on the bridge layer because the client observer does not write the derived CRDT under precedent #14.
 
+## Frontmatter write (CRDT-direct via `bindFrontmatterDoc`)
+
+Frontmatter lives in the YAML region of `Y.Text('source')` — the same CRDT text the body editor and source-mode editor bind to. There is no separate `Y.Map('metadata')` for FM (a per-key map was the predecessor's design and was removed in the realtime-frontmatter-entries spec). Edits to *different* keys land at non-overlapping byte ranges and merge cleanly through Y.Text's character-level CRDT; same-key concurrent value edits collapse to last-writer-wins on the overlapping bytes.
+
+The browser property panel writes through `bindFrontmatterDoc(provider)` (in `@inkeep/open-knowledge-core/bridge`) — no HTTP round-trip. The binding exposes `patch(patch)` (JSON Merge Patch — `key: value` sets/creates, `key: null` deletes), `rename(oldKey, newKey)` (preserves source position so `title` → `titles` doesn't reorder), and `reorder(orderedKeys)` (drag-to-reorder commit). Each write parses the YAML region into a yaml@2 `Document`, edits at the `Pair` level, re-stringifies, and replaces the Y.Text byte range in one `doc.transact(fn, FORM_WRITE_ORIGIN)` block. `FORM_WRITE_ORIGIN` is non-paired (single-root writer — touches only `Y.Text`); Observer B fires normally and exits via the already-in-sync gate when the body half is unchanged.
+
+L1 validation runs at the binding boundary against `FrontmatterPatchSchema` and `FrontmatterValueSchema` (Zod) before any Y.Text mutation; on failure the binding returns `Result.err({ code: 'SCHEMA_INVALID', issues })` and leaves the doc untouched. The binding additionally enforces a 64 KB cap on the FM region and rejects the reserved key `'frontmatter'`.
+
+There is no L3 server-side validation hook. The Y.Text region IS the source of truth — including malformed bytes — so defense moves to (a) the binding's L1 commit gate against UI-driven malformed input and (b) the panel's last-valid render against transient invalid bytes from source-mode typing or disk drift. Disk persistence writes `ytext.toString()` verbatim; malformed YAML round-trips through disk unchanged.
+
+There is no MCP surface for frontmatter editing today. `edit_document` (`POST /api/agent-patch`) rejects FM-intersecting patches with HTTP 400; the redirect message tells callers to use `write_document` with `position: "replace"` and a payload that includes the new YAML block.
+
+**Telemetry.** Counter `ok.frontmatter.edit_surface_total` labels writes by source (`mcp-write`, `file-watcher`, `source-mode`) so adoption is queryable. Form writes do not emit a server-side counter — the originating client is responsible for any client-side span.
+
 ## Mode toggle (no merge)
 
 The WYSIWYG/source mode toggle is a UI visibility flip, not a serialize-and-merge operation. `EditorActivityPool` mounts both `TiptapEditor` and `SourceEditor` concurrently per active document and uses `display:none` to swap between them. Each editor stays bound to its Y type (`Y.XmlFragment('default')` for TipTap via `Collaboration`; `Y.Text('source')` for CodeMirror via `y-codemirror.next`) for the lifetime of the mount.
@@ -77,11 +90,19 @@ ok-contributors: {"v":1,"id":"agent-abc","name":"Claude","colorSeed":"...","docs
 
 The `summaries` field is flat (per-contributor, not per-doc) and omitted entirely when no summaries were recorded — legacy commits and summary-less writes are byte-identical to pre-feature behavior. The JSON line stays at `v: 1`; the field is purely additive (precedent #9).
 
-**Truncation single-source-of-truth.** `normalizeSummary` in `packages/server/src/agent-write-summary.ts` is the only place summary text is validated and truncated. The five API handlers (`/api/agent-write`, `/api/agent-write-md`, `/api/agent-patch`, `/api/rename`, `/api/rollback`) each call it at the request boundary before threading the normalized value into `recordContributor`. The cap is 80 characters (79 visible + U+2026 `…`); the Zod schemas on MCP tool inputs cap at 200 as a separate transport-safety bound.
+**Truncation single-source-of-truth.** `normalizeSummary` in `packages/server/src/agent-write-summary.ts` is the only place summary text is validated and truncated. The mutating API handlers (`/api/agent-write`, `/api/agent-write-md`, `/api/agent-patch`, `/api/rename-path`, `/api/rollback`) each call it at the request boundary before threading the normalized value into `recordContributor`. The cap is 80 characters (79 visible + U+2026 `…`); the Zod schemas on MCP tool inputs cap at 200 as a separate transport-safety bound.
 
-**Attribution guard for rename and rollback.** `handleRename` and `handleRollback` only call `extractAgentIdentity` + `recordContributor` when the request body carries an explicit `agentId` field. The in-editor Restore button (`EditorPane.tsx`) posts with no identity and therefore stays anonymous on the timeline — the "positive externality" of MCP-driven rename/rollback attribution does not leak to human-driven UI calls. This is a LOCKED behavior contract.
+**Identity boundary for agent writes vs rename/rollback.** Agent-write handlers (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch`, `handleAgentUndo`) call `extractAgentIdentity(body)` at entry per precedent #24 — body `agentId` resolves to an `agent-<id>` writer. Rename and rollback handlers (`handleRenamePath`, `handleRollback`) instead route through `extractActorIdentity(body, getPrincipal)` in `packages/server/src/extract-actor-identity.ts`, which adds a fallback for human-driven UI calls:
 
-**Default summaries.** When no summary is provided, MCP-driven `rename_document` and `rollback_to_version` substitute a server-generated default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) through the same `normalizeSummary` path. `write_document` and `edit_document` have no default — an absent summary means an absent bullet.
+1. Body has `agentId` → `agent-<id>` contributor (same as `extractAgentIdentity`); `actor.principalId` is also populated from `getPrincipal()` when a principal is loaded so the agent-on-behalf-of-principal audit trail mirrors `buildAgentActor` for non-rename writes.
+2. No `agentId`, server has a loaded principal → `principal-<uuid>` contributor with the principal's display name. UI drag-rename in FileTree and the in-editor Restore button hit this branch — both post with no identity, both attribute to the loaded principal.
+3. No `agentId`, no principal → no contributor entry (anonymous). When principal load fails at server start, rename and rollback rows stay anonymous rather than inventing identity.
+
+**Trust boundary.** `extractActorIdentity` does NOT read `body.principalId` — the HTTP body is unauthenticated and a body-supplied principal could be spoofed. The server's `getPrincipal()` (loaded from `<contentDir>/.ok/principal.json` at boot) is the only source of principal identity for HTTP handlers.
+
+**Side-effect carve-out.** When a rename rewrites inbound wiki-links and markdown links across N linking docs, those linking docs do NOT receive an actor contributor entry — they flow through the existing `defaultWriter` (anonymous) path. The renamed doc itself records the actor via `recordContributor`; the cascading rewrites stay mechanical. Applies symmetrically to agent-driven and principal-driven renames.
+
+**Default summaries.** When no summary is provided, MCP-driven `rename_document`, `rename_folder`, and `rollback_to_version` substitute a server-generated default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) through the same `normalizeSummary` path. The folder rename's default applies to every affected-doc contributor entry — users who want per-doc nuance should supply their own summary. `write_document` and `edit_document` have no default — an absent summary means an absent bullet.
 
 **Parser tolerance.** `parseContributors` in `packages/core/src/shadow-repo-layout.ts` accepts both legacy (no `summaries` field) and new commits. A malformed `summaries` value drops just that field while preserving the contributor entry — a deliberate divergence from the whole-entry-skip policy applied to other optional fields, because decorative loss beats attribution loss.
 

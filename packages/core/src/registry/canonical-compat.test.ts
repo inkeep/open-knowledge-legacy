@@ -1,18 +1,3 @@
-/**
- * Canonical / compat split — architecture-locking unit tests.
- *
- * Covers:
- *  - T2: identity `translateProps` on all v1 compat descriptors.
- *  - T4: slash menu (via `getRegisteredDescriptors` filter contract).
- *  - T7: registry build is consistent — every compat's `rendersAs` resolves
- *        to a registered canonical descriptor.
- *
- * Round-trip tests for the source-form preservation property live in
- * `packages/app/tests/fidelity/invariant-i13.test.ts` (PBT) and `invariant-
- * i19.test.ts` (HTML5 details ↔ Accordion structural equivalence). The
- * pristine path is covered by I12.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { builtInComponents, createRegistry } from './index.ts';
 import type { CompatMeta, JsxComponentMeta } from './types.ts';
@@ -31,19 +16,21 @@ describe('canonical/compat split — registry shape', () => {
 
   test('exactly 5 canonical descriptors (5-pack foundation)', () => {
     expect(canonicalDescriptors.length).toBe(5);
-    // Media canonicals are lowercase HTML-tag names (img/video/audio); non-
-    // media stays capitalized because HTML has no primitive rich enough to
-    // converge with (Callout) or only a structural subset (Accordion vs
-    // <details>).
     expect(canonicalDescriptors.map((m) => m.name).sort()).toEqual(
       ['Accordion', 'Callout', 'audio', 'img', 'video'].sort(),
     );
   });
 
-  test('exactly 3 compat descriptors (v1 source-form preservation set)', () => {
-    expect(compatDescriptors.length).toBe(3);
+  test('compat descriptor set covers v1 source-form preservation + WikiEmbed convergence', () => {
     expect(compatDescriptors.map((m) => m.name).sort()).toEqual(
-      ['CommonMarkImage', 'GFMCallout', 'HtmlDetailsAccordion'].sort(),
+      [
+        'CommonMarkImage',
+        'GFMCallout',
+        'HtmlDetailsAccordion',
+        'WikiEmbedAudio',
+        'WikiEmbedImage',
+        'WikiEmbedVideo',
+      ].sort(),
     );
   });
 
@@ -64,13 +51,11 @@ describe('compat descriptors — contract invariants', () => {
     }
   });
 
-  test('every compat declares identity `translateProps` for v1 (T2)', () => {
-    // v1's compat fixtures all share canonical's prop-name spelling — identity
-    // remap. Future compats whose source spelling differs (e.g., a Mintlify
-    // Note → Callout integration) would supply non-identity remaps; this
-    // test stays as a v1 stub and the contract widens additively.
+  test('v1 compats (Callout/CommonMarkImage/Details) declare identity `translateProps` (T2)', () => {
+    const v1Names = new Set(['GFMCallout', 'CommonMarkImage', 'HtmlDetailsAccordion']);
     const probe = { type: 'note', title: 'X', src: 'foo.png', alt: 'A', collapsible: true };
     for (const meta of compatDescriptors) {
+      if (!v1Names.has(meta.name)) continue;
       expect(meta.translateProps(probe)).toEqual(probe);
     }
   });

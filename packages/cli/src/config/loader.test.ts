@@ -1,12 +1,22 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import { OK_DIR } from '../constants.ts';
-import { createProjectConfigResolver, loadConfig } from './loader';
 
 let testDir: string;
+let fakeHome: string;
+
+await mock.module('node:os', () => {
+  const actual = require('node:os');
+  return {
+    ...actual,
+    homedir: () => fakeHome,
+  };
+});
+
+const { OK_DIR } = await import('../constants.ts');
+const { createProjectConfigResolver, loadConfig } = await import('./loader');
 
 beforeEach(() => {
   testDir = resolve(
@@ -14,13 +24,13 @@ beforeEach(() => {
     `ok-config-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   mkdirSync(testDir, { recursive: true });
+  fakeHome = resolve(testDir, '__home__');
 });
 
 afterEach(() => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
-/** Helper: write a workspace config.yml inside testDir */
 function writeWorkspaceConfig(yaml: string) {
   const configDir = resolve(testDir, OK_DIR);
   mkdirSync(configDir, { recursive: true });
@@ -34,37 +44,28 @@ function writeWorkspaceConfigAt(dir: string, yaml: string) {
 }
 
 describe('loadConfig', () => {
-  // ── Defaults ────────────────────────────────────────────────────────
-
   test('no config files → all defaults resolve', () => {
     const { config, sources } = loadConfig(testDir);
 
-    // sources
     expect(sources).toHaveLength(0);
 
-    // content globs
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
-    expect(config.content.exclude).toEqual([]);
+    expect(config.content.dir).toBe('.');
 
-    // server — default 0 means kernel-allocated port
-    expect(config.server.port).toBe(0);
     expect(config.server.host).toBe('localhost');
+    expect(config.server.openOnAgentEdit).toBe(false);
 
-    // persistence
-    expect(config.persistence.debounceMs).toBe(2000);
-    expect(config.persistence.maxDebounceMs).toBe(10000);
-
-    // mcp auto-spawn enabled by default
     expect(config.mcp.autoStart).toBe(true);
+
+    expect(config.appearance.theme).toBeUndefined();
+    expect(config.appearance.editorModeDefault).toBeUndefined();
   });
 
   test('empty YAML file → all defaults resolve', () => {
     writeWorkspaceConfig('');
     const { config } = loadConfig(testDir);
 
-    expect(config.server.port).toBe(0);
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
-    expect(config.persistence.debounceMs).toBe(2000);
+    expect(config.server.host).toBe('localhost');
+    expect(config.content.dir).toBe('.');
     expect(config.mcp.autoStart).toBe(true);
   });
 
@@ -72,25 +73,23 @@ describe('loadConfig', () => {
     writeWorkspaceConfig(`
 # This is a fully commented config
 # content:
-#   include:
-#     - "**/*.md"
+#   dir: .
 # server:
-#   port: 3000
-# persistence:
-#   debounceMs: 2000
+#   host: localhost
 `);
     const { config, sources } = loadConfig(testDir);
 
-    // Comments-only YAML parses to null, so no source is recorded
     expect(sources).toHaveLength(0);
-    expect(config.server.port).toBe(0);
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
+    expect(config.server.host).toBe('localhost');
+    expect(config.content.dir).toBe('.');
   });
 
-  test('explicit server.port: 3000 in config.yml → 3000 (backward compat)', () => {
-    writeWorkspaceConfig('server:\n  port: 3000\n');
+  test('stale dropped fields (sync.*, persistence.debounceMs, server.port) load via loose-mode (D34)', () => {
+    writeWorkspaceConfig(
+      'sync:\n  pushIntervalSeconds: 30\npersistence:\n  debounceMs: 2000\nserver:\n  port: 3000\n  host: example.dev\n',
+    );
     const { config } = loadConfig(testDir);
-    expect(config.server.port).toBe(3000);
+    expect(config.server.host).toBe('example.dev');
   });
 
   test('mcp.autoStart: false disables auto-spawn', () => {
@@ -99,112 +98,178 @@ describe('loadConfig', () => {
     expect(config.mcp.autoStart).toBe(false);
   });
 
-  // ── Workspace overrides ─────────────────────────────────────────────
-
-  test('workspace config overrides a single field, other defaults preserved', () => {
-    writeWorkspaceConfig('server:\n  port: 5000\n');
+  test('project config overrides a single field, other defaults preserved', () => {
+    writeWorkspaceConfig('server:\n  host: 0.0.0.0\n');
 
     const { config, sources } = loadConfig(testDir);
 
     expect(sources).toHaveLength(1);
-    expect(config.server.port).toBe(5000);
-    // sibling default preserved
-    expect(config.server.host).toBe('localhost');
-    // other sections untouched
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
-    expect(config.persistence.debounceMs).toBe(2000);
+    expect(config.server.host).toBe('0.0.0.0');
+    expect(config.server.openOnAgentEdit).toBe(false);
+    expect(config.content.dir).toBe('.');
   });
 
-  test('workspace config overrides multiple sections at once', () => {
+  test('project config overrides multiple sections at once', () => {
     writeWorkspaceConfig(`
 server:
-  port: 8080
   host: 0.0.0.0
-persistence:
-  debounceMs: 5000
+  openOnAgentEdit: true
+mcp:
+  autoStart: false
 `);
     const { config } = loadConfig(testDir);
 
-    expect(config.server.port).toBe(8080);
     expect(config.server.host).toBe('0.0.0.0');
-    expect(config.persistence.debounceMs).toBe(5000);
-    // sibling default preserved within section
-    expect(config.persistence.maxDebounceMs).toBe(10000);
+    expect(config.server.openOnAgentEdit).toBe(true);
+    expect(config.mcp.autoStart).toBe(false);
+    expect(config.mcp.tools.search.maxResults).toBe(50);
   });
 
-  test('custom content include/exclude patterns', () => {
-    writeWorkspaceConfig(`
-content:
+  test('content.include in project config rejects with REMOVED_KEY error directing to .okignore', () => {
+    writeWorkspaceConfig(`content:
   include:
     - "**/*.md"
-    - "**/*.mdx"
+`);
+    let caught: Error | undefined;
+    try {
+      loadConfig(testDir);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    const expectedPath = resolve(testDir, OK_DIR, 'config.yml');
+    expect(caught?.message).toMatch(
+      new RegExp(`${expectedPath.replace(/[/\\.]/g, '\\$&')}:\\d+:\\d+`),
+    );
+    expect(caught?.message).toContain('content.include');
+    expect(caught?.message).toContain('content.dir');
+    expect(caught?.message).toContain('.okignore');
+    expect(caught?.message).toContain('exclude-only');
+  });
+
+  test('content.exclude in project config rejects with REMOVED_KEY error', () => {
+    writeWorkspaceConfig(`content:
   exclude:
     - "**/drafts/**"
 `);
-    const { config } = loadConfig(testDir);
+    let caught: Error | undefined;
+    try {
+      loadConfig(testDir);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    const expectedPath = resolve(testDir, OK_DIR, 'config.yml');
+    expect(caught?.message).toMatch(
+      new RegExp(`${expectedPath.replace(/[/\\.]/g, '\\$&')}:\\d+:\\d+`),
+    );
+    expect(caught?.message).toContain('content.exclude');
+    expect(caught?.message).toContain('.okignore');
+    expect(caught?.message).toContain('1:1 migration');
+  });
 
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
-    expect(config.content.exclude).toEqual(['**/drafts/**']);
+  test('content.include AND content.exclude together emit BOTH REMOVED_KEY errors in one pass', () => {
+    writeWorkspaceConfig(`content:
+  include:
+    - "**/*.md"
+  exclude:
+    - "**/drafts/**"
+`);
+    let caught: Error | undefined;
+    try {
+      loadConfig(testDir);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    expect(caught?.message).toContain('content.include');
+    expect(caught?.message).toContain('content.exclude');
+    expect(caught?.message).toContain('content.dir');
+    expect(caught?.message).toContain('1:1 migration');
   });
 
   test('partial section override preserves sibling defaults within that section', () => {
-    writeWorkspaceConfig('persistence:\n  maxDebounceMs: 30000\n');
+    writeWorkspaceConfig('mcp:\n  tools:\n    search:\n      maxResults: 25\n');
 
     const { config } = loadConfig(testDir);
 
-    expect(config.persistence.maxDebounceMs).toBe(30000);
-    expect(config.persistence.debounceMs).toBe(2000); // sibling preserved
+    expect(config.mcp.tools.search.maxResults).toBe(25);
+    expect(config.mcp.tools.read_document.historyDepth).toBe(5); // sibling preserved
   });
 
-  // ── Validation ──────────────────────────────────────────────────────
-
-  test('invalid value type throws descriptive error', () => {
-    writeWorkspaceConfig('server:\n  port: not-a-number\n');
+  test('invalid host type throws descriptive error', () => {
+    writeWorkspaceConfig('server:\n  host: 12345\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 
-  test('port out of range throws', () => {
-    writeWorkspaceConfig('server:\n  port: 99999\n');
+  test('appearance.theme outside the enum throws', () => {
+    writeWorkspaceConfig('appearance:\n  theme: midnight\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 
-  test('negative persistence value throws', () => {
-    writeWorkspaceConfig('persistence:\n  debounceMs: -1\n');
+  test('negative mcp.tools.search.maxResults throws', () => {
+    writeWorkspaceConfig('mcp:\n  tools:\n    search:\n      maxResults: -1\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
-
-  test('empty include array throws', () => {
-    writeWorkspaceConfig('content:\n  include: []\n');
-    expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
-  });
-
-  // ── Edge cases ──────────────────────────────────────────────────────
 
   test('unknown top-level keys are silently ignored (forward-compat)', () => {
     writeWorkspaceConfig('future_feature:\n  enabled: true\n');
     const { config } = loadConfig(testDir);
 
-    // Still resolves defaults — no crash
-    expect(config.server.port).toBe(0);
+    expect(config.server.host).toBe('localhost');
   });
 
   test('unknown nested keys within known sections are silently ignored', () => {
-    writeWorkspaceConfig('server:\n  port: 4000\n  unknownKey: hello\n');
+    writeWorkspaceConfig('server:\n  host: 0.0.0.0\n  unknownKey: hello\n');
     const { config } = loadConfig(testDir);
 
-    expect(config.server.port).toBe(4000);
+    expect(config.server.host).toBe('0.0.0.0');
   });
 
   test('malformed YAML does not crash — returns defaults', () => {
-    writeWorkspaceConfig('server:\n  port: [invalid yaml');
-    // Malformed YAML is caught by the loader and warned, falls back to defaults
+    writeWorkspaceConfig('server:\n  host: [invalid yaml');
     const { config } = loadConfig(testDir);
-    expect(config.server.port).toBe(0);
+    expect(config.server.host).toBe('localhost');
+  });
+
+  test('schema-invalid project config emits file:line:col in error message', () => {
+    const yaml = `mcp:
+  tools:
+    search:
+      maxResults: "fifty"
+`;
+    writeWorkspaceConfig(yaml);
+    let caught: Error | undefined;
+    try {
+      loadConfig(testDir);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    const expectedPath = resolve(testDir, OK_DIR, 'config.yml');
+    expect(caught?.message).toContain(`${expectedPath}:4:`);
+    expect(caught?.message).toContain('mcp.tools.search.maxResults');
+  });
+
+  test('source-located error renders code snippet with caret marker', () => {
+    writeWorkspaceConfig('mcp:\n  tools:\n    search:\n      maxResults: -5\n');
+    let caught: Error | undefined;
+    try {
+      loadConfig(testDir);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    expect(caught?.message).toContain('^');
+  });
+
+  test('user-global config is sidelined on schema-invalid (cold-start recovery)', () => {
+    expect(() => loadConfig(testDir)).not.toThrow();
   });
 });
 
 describe('createProjectConfigResolver', () => {
-  test('loads different workspace configs per cwd', async () => {
+  test('loads different project configs per cwd', async () => {
     const projectA = resolve(testDir, 'project-a');
     const projectB = resolve(testDir, 'project-b');
     mkdirSync(projectA, { recursive: true });
@@ -228,7 +293,7 @@ describe('createProjectConfigResolver', () => {
   });
 
   test('applies process env overrides on top of per-cwd config', async () => {
-    writeWorkspaceConfig('server:\n  host: localhost\n  port: 3000\n');
+    writeWorkspaceConfig('server:\n  host: localhost\n');
     const startupConfig = loadConfig(testDir).config;
     const resolveConfig = createProjectConfigResolver({
       startupCwd: testDir,
@@ -236,12 +301,11 @@ describe('createProjectConfigResolver', () => {
       env: {
         ...process.env,
         HOST: '0.0.0.0',
-        PORT: '4545',
       },
     });
 
     await expect(resolveConfig()).resolves.toMatchObject({
-      server: { host: '0.0.0.0', port: 4545 },
+      server: { host: '0.0.0.0' },
     });
   });
 

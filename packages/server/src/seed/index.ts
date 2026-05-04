@@ -1,14 +1,3 @@
-/**
- * Public entry point for the `ok seed` shared module.
- *
- * Consumed by:
- *   - `packages/cli/src/commands/seed.ts` — Commander CLI wrapper
- *   - `packages/desktop/src/main/ipc/seed.ts` — Electron IPC handler
- *   - `packages/server/src/index.ts` — re-exported for external workspace consumers
- *
- * See specs/2026-04-23-ok-seed-scaffold/SPEC.md for the full design.
- */
-
 export { applySeed } from './apply.ts';
 export { planSeed } from './plan.ts';
 export {

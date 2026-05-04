@@ -1,23 +1,3 @@
-/**
- * US-007: auto-updater unit + integration tests.
- *
- * Drives the full `startAutoUpdater(...)` event flow via a fake
- * `UpdaterLike` (event-stub pattern per evidence/electron-updater-api.md
- * §4 approach 3) + fake `ipcMain` + fake `WebContents` sink + injected
- * clock. No Electron runtime needed — tests run under `bun test`.
- *
- * Coverage map (AC9, AC18):
- *   - 6 events wired + dispatch shape (channel names, payloads)
- *   - 13 ERR_UPDATER_* / HTTP_ERROR_* codes route to classified log
- *   - Bare Error (no .code) routes to unclassified log
- *   - Successful check updates lastSuccessfulCheckAt + resets stuckHintShown
- *   - Stuck-hint fires once per installation; resets on success; re-arms
- *   - First-launch post-update (Toast B) once per version transition
- *   - Periodic check singleton via injectable clock
- *   - Relaunch-now IPC calls quitAndInstall
- *   - Dev-mode guard skips first-launch check but keeps handlers wired
- */
-
 import { describe, expect, mock, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import {
@@ -35,14 +15,9 @@ import {
 import { type AppState, emptyState } from '../../src/main/state-store.ts';
 import type { SendableWebContents } from '../../src/shared/ipc-send.ts';
 
-/** Narrow window-like shape used in tests — mirrors the production `getPrimaryWindow` return type. */
 interface SendTarget {
   webContents: SendableWebContents;
 }
-
-// ————————————————————————————————————————————————————————
-// Fakes
-// ————————————————————————————————————————————————————————
 
 class FakeUpdater extends EventEmitter implements UpdaterLike {
   autoDownload = false;
@@ -103,11 +78,8 @@ function makeFakeWindow(captured: CapturedSend[]): SendTarget {
 interface FakeClock {
   setInterval: ReturnType<typeof mock>;
   clearInterval: ReturnType<typeof mock>;
-  /** Most recently registered interval callback — fire it to simulate tick. */
   lastCallback: (() => void) | null;
-  /** Most recently returned interval handle. */
   lastHandle: unknown;
-  /** ms the last setInterval call was configured for. */
   lastMs: number | null;
 }
 
@@ -207,10 +179,6 @@ function makeRig(
   return { rig, handle };
 }
 
-// ————————————————————————————————————————————————————————
-// Constants used across tests
-// ————————————————————————————————————————————————————————
-
 const CLASSIFIED_CODES: readonly string[] = [
   'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND',
   'ERR_UPDATER_LATEST_VERSION_NOT_FOUND',
@@ -228,10 +196,6 @@ const CLASSIFIED_CODES: readonly string[] = [
   'HTTP_ERROR_500',
 ];
 
-// ————————————————————————————————————————————————————————
-// Invariant: configuration is locked at startup
-// ————————————————————————————————————————————————————————
-
 describe('startAutoUpdater — initial configuration (parent §8.10 LOCKED)', () => {
   test('sets autoDownload=true, autoInstallOnAppQuit=true, channel=latest', () => {
     const { rig } = makeRig();
@@ -239,14 +203,6 @@ describe('startAutoUpdater — initial configuration (parent §8.10 LOCKED)', ()
     expect(rig.updater.autoInstallOnAppQuit).toBe(true);
     expect(rig.updater.channel).toBe('latest');
   });
-
-  // Tier-2 smoke plumbing regression (evidence/electron-updater-api.md §4
-  // approach 2). Added when manual `bun run dev` revealed that
-  // `OK_UPDATER_FEED_URL` was documented in the PR body but never actually
-  // wired into main — feedUrl would be set but setFeedURL was never called,
-  // and `forceDevUpdateConfig` was never flipped so the check gate blocked
-  // network access anyway. These tests lock in the full Tier-2 contract so
-  // a future refactor can't silently break the manual smoke.
 
   test('feedUrl opt → updater.setFeedURL(url) called before first check', () => {
     const { rig } = makeRig({ feedUrl: 'http://127.0.0.1:54321' } as Partial<AppState> & {
@@ -281,22 +237,16 @@ describe('startAutoUpdater — initial configuration (parent §8.10 LOCKED)', ()
 
   test('explicitly locks allowPrerelease=false + allowDowngrade=false (Finding #6)', () => {
     const { rig } = makeRig();
-    // FakeUpdater starts with both true so the lock-down is observable.
     expect(rig.updater.allowPrerelease).toBe(false);
     expect(rig.updater.allowDowngrade).toBe(false);
   });
 });
-
-// ————————————————————————————————————————————————————————
-// Finding #2: persist-before-emit ordering
-// ————————————————————————————————————————————————————————
 
 describe('persist-before-emit ordering (Finding #2)', () => {
   test('update-downloaded: writeState failure → NO Toast A dispatch', () => {
     const { rig, handle } = makeRig();
     handle.destroy(); // detach and re-wire with throwing writeState
 
-    // Wire a fresh instance with writeState that always throws.
     const updater = new FakeUpdater();
     const ipc = makeFakeIpc();
     const clock = makeFakeClock();
@@ -327,14 +277,11 @@ describe('persist-before-emit ordering (Finding #2)', () => {
     });
 
     updater.emit('update-downloaded', { version: '0.3.2' });
-    // Gate did not arm → no toast dispatched
     expect(captured.filter((c) => c.channel === 'ok:update:downloaded')).toHaveLength(0);
     expect(dispatches).not.toContain('update-downloaded-toast-a' as DispatchKind);
     expect(state.versionPendingInstall).toBeNull();
     expect(logger.error).toHaveBeenCalled();
-    // A re-fire must get another shot (state still unarmed).
     expect(state.versionPendingInstall).toBeNull();
-    // rig unused here — pin compile-time reference so TS doesn't complain about unused binding.
     void rig;
   });
 
@@ -375,10 +322,6 @@ describe('persist-before-emit ordering (Finding #2)', () => {
   });
 });
 
-// ————————————————————————————————————————————————————————
-// AC2: 6 events subscribed, 3 events NOT subscribed
-// ————————————————————————————————————————————————————————
-
 describe('event subscription surface (AC2)', () => {
   test('registers listeners for the six AC2 events', () => {
     const { rig } = makeRig();
@@ -397,10 +340,6 @@ describe('event subscription surface (AC2)', () => {
     expect(rig.updater.listenerCount('appimage-filename-updated')).toBe(0);
   });
 });
-
-// ————————————————————————————————————————————————————————
-// AC6: Toast A dispatch + once-per-pending-version gate
-// ————————————————————————————————————————————————————————
 
 describe('update-downloaded → Toast A (AC6)', () => {
   test('first dispatch for a new version fires ok:update:downloaded + records versionPendingInstall', () => {
@@ -438,15 +377,9 @@ describe('update-downloaded → Toast A (AC6)', () => {
     const toastA = rig.captured.filter((c) => c.channel === 'ok:update:downloaded');
     expect(toastA).toHaveLength(0);
     expect(rig.state.versionPendingInstall).toBeNull();
-    // Review Pass 1 Finding #4: empty-version branch emits its own
-    // DispatchKind so tests can observe the malformed-payload path.
     expect(rig.dispatches).toContain('update-downloaded-empty-version' as DispatchKind);
   });
 });
-
-// ————————————————————————————————————————————————————————
-// AC3 + D5: error classification — silent log, no dispatch
-// ————————————————————————————————————————————————————————
 
 describe('error routing (AC3, D5)', () => {
   test.each(CLASSIFIED_CODES)('classified err.code %s → bracket log, no IPC dispatch', (code) => {
@@ -454,10 +387,6 @@ describe('error routing (AC3, D5)', () => {
     const err = Object.assign(new Error(`failure ${code}`), { code });
     rig.updater.emit('error', err);
     expect(rig.captured.some((c) => c.channel.startsWith('ok:update:error'))).toBe(false);
-    // ERR_CHECKSUM_MISMATCH in the table doesn't start with ERR_UPDATER_ or
-    // HTTP_ERROR_ — the SPEC treats it as classified via an observed code
-    // prefix but the module's `isClassifiedUpdaterError` is strict. Accept
-    // the pragmatic outcome: strict prefix → unclassified, otherwise → classified.
     const isClassified = code.startsWith('ERR_UPDATER_') || code.startsWith('HTTP_ERROR_');
     expect(
       rig.dispatches.includes(
@@ -498,10 +427,6 @@ describe('error routing (AC3, D5)', () => {
   });
 });
 
-// ————————————————————————————————————————————————————————
-// AC17, D12: stuck-hint gate
-// ————————————————————————————————————————————————————————
-
 describe('stuck-hint logic (AC17, D12)', () => {
   test('update-not-available updates lastSuccessfulCheckAt', () => {
     const { rig } = makeRig();
@@ -529,7 +454,6 @@ describe('stuck-hint logic (AC17, D12)', () => {
     });
     rig.now = new Date();
 
-    // First error — fires stuck-hint.
     rig.updater.emit('error', new Error('network'));
     const hint = rig.captured.filter((c) => c.channel === 'ok:update:stuck-hint');
     expect(hint).toHaveLength(1);
@@ -537,7 +461,6 @@ describe('stuck-hint logic (AC17, D12)', () => {
     expect(rig.state.stuckHintShown).toBe(true);
     expect(rig.dispatches).toContain('stuck-hint-toast-c' as DispatchKind);
 
-    // Second error — must NOT fire a second stuck-hint.
     rig.updater.emit('error', new Error('network again'));
     const hint2 = rig.captured.filter((c) => c.channel === 'ok:update:stuck-hint');
     expect(hint2).toHaveLength(1);
@@ -572,7 +495,6 @@ describe('stuck-hint logic (AC17, D12)', () => {
     expect(rig.state.stuckHintShown).toBe(false);
     expect(rig.state.lastSuccessfulCheckAt).toBe(rig.now.toISOString());
 
-    // Simulate another 8-day silent window → error fires again.
     rig.state.lastSuccessfulCheckAt = new Date(
       rig.now.getTime() - 8 * 24 * 60 * 60 * 1000,
     ).toISOString();
@@ -595,10 +517,6 @@ describe('stuck-hint logic (AC17, D12)', () => {
     expect(STUCK_HINT_THRESHOLD_MS).toBe(7 * 24 * 60 * 60 * 1000);
   });
 });
-
-// ————————————————————————————————————————————————————————
-// AC7 + D9: first-launch post-update detection (Toast B)
-// ————————————————————————————————————————————————————————
 
 describe('first-launch post-update (Toast B — AC7, D9)', () => {
   test('lastSeenVersion differs from current → dispatch whats-new + update state', () => {
@@ -643,15 +561,9 @@ describe('first-launch post-update (Toast B — AC7, D9)', () => {
   });
 });
 
-// ————————————————————————————————————————————————————————
-// AC10, D10: periodic check singleton
-// ————————————————————————————————————————————————————————
-
 describe('periodic check singleton (AC10, D10)', () => {
   test('registers exactly one interval after the first launch check resolves', async () => {
     const { rig } = makeRig();
-    // The module awaits checkForUpdates().then(startPeriodicChecks).
-    // Yield the event loop so that the then-callback fires.
     await rig.updater.checkForUpdates();
     await Promise.resolve();
     await Promise.resolve();
@@ -683,18 +595,6 @@ describe('periodic check singleton (AC10, D10)', () => {
     expect(UPDATE_CHECK_INTERVAL_MS).toBe(60 * 60 * 1000);
   });
 
-  /**
-   * Regression for cloud-review Major finding (2026-04-22, commit 3edc7eab).
-   *
-   * `startAutoUpdater` kicks off with `updater.checkForUpdates()` and in its
-   * .catch() still calls `startPeriodicChecks()` so a transient first-launch
-   * failure (network down at boot, 404 on the manifest) doesn't leave the
-   * user stuck without auto-update for the entire session. Without this
-   * test, a refactor that early-returns on the catch path — or deletes the
-   * .catch entirely and falls through to the default rejection handler —
-   * would silently break the recovery guarantee and only be caught by real
-   * users on flaky networks.
-   */
   test('first-launch check rejection still registers the periodic interval', async () => {
     const updater = new FakeUpdater();
     const ipc = makeFakeIpc();
@@ -725,7 +625,6 @@ describe('periodic check singleton (AC10, D10)', () => {
       now: () => new Date(),
       logger,
     });
-    // Let both the rejected promise + the chained .catch() run.
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -735,10 +634,6 @@ describe('periodic check singleton (AC10, D10)', () => {
     expect(logger.debug).toHaveBeenCalled();
   });
 });
-
-// ————————————————————————————————————————————————————————
-// AC18: ok:update:relaunch-now IPC handler
-// ————————————————————————————————————————————————————————
 
 describe('ok:update:relaunch-now IPC handler (AC18)', () => {
   test('registers the handler on startup', () => {
@@ -767,10 +662,6 @@ describe('ok:update:relaunch-now IPC handler (AC18)', () => {
     expect(rig.ipc.handlers.has('ok:update:relaunch-now')).toBe(false);
   });
 });
-
-// ————————————————————————————————————————————————————————
-// AC10 + dev-mode guard
-// ————————————————————————————————————————————————————————
 
 describe('dev-mode guard (isPackaged=false)', () => {
   test('skips first-launch checkForUpdates when isPackaged=false and forceDevBypass=false', async () => {
@@ -813,16 +704,11 @@ describe('dev-mode guard (isPackaged=false)', () => {
 
   test('event handlers stay wired in dev-mode so unit tests can drive them', () => {
     const { rig } = makeRig({ isPackaged: false });
-    // Emit update-downloaded — handler must still fire the Toast A dispatch.
     rig.updater.emit('update-downloaded', { version: '0.3.2' });
     const toastA = rig.captured.filter((c) => c.channel === 'ok:update:downloaded');
     expect(toastA).toHaveLength(1);
   });
 });
-
-// ————————————————————————————————————————————————————————
-// download-progress: log only, no UI
-// ————————————————————————————————————————————————————————
 
 describe('download-progress (log-only, no UI surface)', () => {
   test('emits debug log without IPC dispatch or state write', () => {
@@ -834,10 +720,6 @@ describe('download-progress (log-only, no UI surface)', () => {
     expect(rig.logger.debug).toHaveBeenCalled();
   });
 });
-
-// ————————————————————————————————————————————————————————
-// destroy() teardown
-// ————————————————————————————————————————————————————————
 
 describe('destroy() teardown', () => {
   test('detaches all 6 event listeners', () => {
@@ -860,16 +742,6 @@ describe('destroy() teardown', () => {
   });
 });
 
-// ————————————————————————————————————————————————————————
-// Single-window dispatch (Finding #1 regression guard — D24 multi-window fix)
-//
-// Under D24 ("every project pick spawns a new editor window"), fanning out
-// update events to `BrowserWindow.getAllWindows()` produced N visible
-// toasts with N independent "Relaunch now" buttons. The module now targets
-// a single primary window via `getPrimaryWindow()`. These tests lock the
-// new contract and catch any regression back to fan-out semantics.
-// ————————————————————————————————————————————————————————
-
 describe('single-window dispatch (Finding #1 guard)', () => {
   test('update-downloaded sends to exactly one target even when primary changes between dispatches', () => {
     const updater = new FakeUpdater();
@@ -879,7 +751,6 @@ describe('single-window dispatch (Finding #1 guard)', () => {
     const capturedB: CapturedSend[] = [];
     const windowA = makeFakeWindow(capturedA);
     const windowB = makeFakeWindow(capturedB);
-    // Simulate "user focuses window B between two downloaded events"
     let primary: SendTarget = windowA;
     let state: AppState = emptyState();
     startAutoUpdater({
@@ -902,7 +773,6 @@ describe('single-window dispatch (Finding #1 guard)', () => {
 
     primary = windowB;
     updater.emit('update-downloaded', { version: '0.3.4' });
-    // windowA still has the first toast only; windowB receives the second.
     expect(capturedA.filter((c) => c.channel === 'ok:update:downloaded')).toHaveLength(1);
     expect(capturedB.filter((c) => c.channel === 'ok:update:downloaded')).toHaveLength(1);
   });
@@ -928,22 +798,9 @@ describe('single-window dispatch (Finding #1 guard)', () => {
       });
       updater.emit('update-downloaded', { version: '0.3.3' });
     }).not.toThrow();
-    // Even though no window received the toast, the state gate must still
-    // arm so the event doesn't re-fire repeatedly once a window opens.
     expect(state.versionPendingInstall).toBe('0.3.3');
   });
 });
-
-// ————————————————————————————————————————————————————————
-// Review Pass 4 Critical #1: markCheckSucceeded routes through persistSafely
-//
-// The peer sites all gate on persistSafely; this site used to bypass it and
-// `writeState` throws on disk-save failure (see main/index.ts's rollback
-// pattern — the throw is how persistSafely's catch registers the failure).
-// An uncaught throw inside `update-available` / `update-not-available`
-// propagates out of electron-updater's `emit()` and breaks the check
-// pipeline before `autoDownload` can trigger.
-// ————————————————————————————————————————————————————————
 
 describe('markCheckSucceeded routes through persistSafely (Critical #1)', () => {
   test('update-available: writeState throws → caught, no rethrow', () => {
@@ -973,13 +830,8 @@ describe('markCheckSucceeded routes through persistSafely (Critical #1)', () => 
       now: () => new Date(),
       logger,
     });
-    // Emitting update-available MUST NOT propagate the writeState throw
-    // out to the caller. electron-updater's emit is synchronous — a
-    // throwing listener breaks the check pipeline.
     expect(() => updater.emit('update-available', { version: '0.3.2' })).not.toThrow();
-    // persistSafely logged the failure at error level.
     expect(logger.error).toHaveBeenCalled();
-    // lastSuccessfulCheckAt stays null — the write failed.
     expect(state.lastSuccessfulCheckAt).toBeNull();
   });
 
@@ -1014,10 +866,6 @@ describe('markCheckSucceeded routes through persistSafely (Critical #1)', () => 
   });
 });
 
-// ————————————————————————————————————————————————————————
-// Review Pass 4 Major #1: Toast B persist-before-emit + renderer-mount race
-// ————————————————————————————————————————————————————————
-
 describe('Toast B persist-before-emit + whenRendererReady (Major #1)', () => {
   test('persist failure on lastSeenVersion advance → no Toast B broadcast', () => {
     const updater = new FakeUpdater();
@@ -1045,11 +893,8 @@ describe('Toast B persist-before-emit + whenRendererReady (Major #1)', () => {
         debug: mock(() => {}),
       },
     });
-    // Persist failed → no Toast B.
     const whatsNew = captured.filter((c) => c.channel === 'ok:update:whats-new');
     expect(whatsNew).toHaveLength(0);
-    // lastSeenVersion stays stale since the writeState rollback pattern
-    // (on the production main/index.ts side) reverts on failure.
     expect(state.lastSeenVersion).toBe('0.3.0');
   });
 
@@ -1077,12 +922,10 @@ describe('Toast B persist-before-emit + whenRendererReady (Major #1)', () => {
       clock,
       now: () => new Date(),
     });
-    // State advances immediately (persist-before-emit), but broadcast is queued.
     expect(state.lastSeenVersion).toBe('0.3.1');
     const beforeFire = captured.filter((c) => c.channel === 'ok:update:whats-new');
     expect(beforeFire).toHaveLength(0);
     expect(deferredFn).not.toBeNull();
-    // Simulate did-finish-load firing.
     deferredFn?.();
     const afterFire = captured.filter((c) => c.channel === 'ok:update:whats-new');
     expect(afterFire).toHaveLength(1);
@@ -1113,18 +956,12 @@ describe('Toast B persist-before-emit + whenRendererReady (Major #1)', () => {
   });
 });
 
-// ————————————————————————————————————————————————————————
-// Review Pass 4 Major #2: relaunch-now idempotent under double-invoke
-// ————————————————————————————————————————————————————————
-
 describe('relaunch-now idempotency (Major #2)', () => {
   test('second invocation sees cleared versionPendingInstall → no second quitAndInstall', () => {
     const { rig } = makeRig({ versionPendingInstall: '0.3.2' });
     rig.ipc.invoke('ok:update:relaunch-now');
-    // Simulate rapid double-click — sonner does not debounce action buttons.
     rig.ipc.invoke('ok:update:relaunch-now');
     expect(rig.updater.quitAndInstall).toHaveBeenCalledTimes(1);
-    // State is cleared after first invocation.
     expect(rig.state.versionPendingInstall).toBeNull();
   });
 
@@ -1156,14 +993,9 @@ describe('relaunch-now idempotency (Major #2)', () => {
     });
     ipc.invoke('ok:update:relaunch-now');
     expect(updater.quitAndInstall).not.toHaveBeenCalled();
-    // State stays pending since persist failed — user can click again.
     expect(state.versionPendingInstall).toBe('0.3.2');
   });
 });
-
-// ————————————————————————————————————————————————————————
-// Review Pass 4 Major #5: bootAutoUpdater catch-path coverage
-// ————————————————————————————————————————————————————————
 
 describe('bootAutoUpdater catch-path (Major #5)', () => {
   test('dynamic-import failure → returns null + logs error, no throw', async () => {
@@ -1176,7 +1008,6 @@ describe('bootAutoUpdater catch-path (Major #5)', () => {
     const captured: CapturedSend[] = [];
     const primaryWindow = makeFakeWindow(captured);
     const state: AppState = emptyState();
-    // Simulate the node_modules/electron-updater corruption path.
     const handle = await bootAutoUpdater(
       () => Promise.reject(new Error('Cannot find module electron-updater')),
       {
@@ -1193,7 +1024,6 @@ describe('bootAutoUpdater catch-path (Major #5)', () => {
     );
     expect(handle).toBeNull();
     expect(logger.error).toHaveBeenCalled();
-    // Error log includes the failure message for triage.
     const errorCall = logger.error.mock.calls[0];
     expect(errorCall?.[1]).toMatchObject({
       message: expect.stringContaining('Cannot find module'),
@@ -1222,7 +1052,6 @@ describe('bootAutoUpdater catch-path (Major #5)', () => {
     expect(handle).not.toBeNull();
     expect(typeof handle?.destroy).toBe('function');
     handle?.destroy();
-    // Clean teardown — no throw.
     expect(clock.clearInterval).toHaveBeenCalled();
   });
 
@@ -1233,9 +1062,6 @@ describe('bootAutoUpdater catch-path (Major #5)', () => {
       error: mock(() => {}),
       debug: mock(() => {}),
     };
-    // A fake updater whose `.on(...)` throws simulates an API-shape drift
-    // inside startAutoUpdater's wire-up (future electron-updater major
-    // version bumps that rename event contracts).
     const hostileUpdater = {
       autoDownload: false,
       autoInstallOnAppQuit: false,
@@ -1264,21 +1090,9 @@ describe('bootAutoUpdater catch-path (Major #5)', () => {
     expect(logger.error).toHaveBeenCalled();
   });
 
-  // Regression: electron-updater's `autoUpdater` export is installed via
-  // `Object.defineProperty(exports, 'autoUpdater', { get: ... })` — a dynamic
-  // getter that Node's CJS → ESM interop exposes under `.default`, NOT on the
-  // module namespace root. The original bootAutoUpdater destructured
-  // `{ autoUpdater }` off the top level, got `undefined`, and the subsequent
-  // `updater.autoDownload = true` threw "Cannot set properties of undefined".
-  // In dev this looked like a caught error; in packaged builds it meant zero
-  // auto-updates ever. Fix: `resolveAutoUpdater` checks `.default.autoUpdater`
-  // first and falls back to the top-level for flat test mocks.
-
   test('resolveAutoUpdater handles .default.autoUpdater shape (real CJS-from-ESM)', async () => {
     const fakeUpdater = new FakeUpdater();
     const handle = await bootAutoUpdater(
-      // Mirror the real electron-updater ESM namespace: autoUpdater is only
-      // reachable via `.default`, NOT on the top-level module namespace.
       () => Promise.resolve({ default: { autoUpdater: fakeUpdater } }),
       {
         ipcMain: makeFakeIpc(),
@@ -1292,8 +1106,6 @@ describe('bootAutoUpdater catch-path (Major #5)', () => {
       },
     );
     expect(handle).not.toBeNull();
-    // The fake received the configuration lock-down — proves the boot path
-    // actually called `startAutoUpdater` rather than catching silently.
     expect(fakeUpdater.autoDownload).toBe(true);
     expect(fakeUpdater.autoInstallOnAppQuit).toBe(true);
     expect(fakeUpdater.channel).toBe('latest');
@@ -1325,8 +1137,6 @@ describe('bootAutoUpdater catch-path (Major #5)', () => {
       debug: mock(() => {}),
     };
     const handle = await bootAutoUpdater(
-      // A degenerate module that has neither shape — simulates a future
-      // major-version rename of `autoUpdater` without anyone updating our code.
       () => Promise.resolve({ default: {} }) as unknown as Promise<{ autoUpdater: UpdaterLike }>,
       {
         ipcMain: makeFakeIpc(),

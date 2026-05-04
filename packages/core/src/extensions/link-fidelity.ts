@@ -1,13 +1,3 @@
-/**
- * Link mark override for source-text fidelity.
- *
- * Extends @tiptap/extension-link (preserving autolink, linkOnPaste,
- * and click handling plugins) and adds fidelity attributes for link
- * style (inline, full, collapsed, shortcut) and reference label.
- *
- * Markdown parsing/serialization is handled by the unified pipeline (packages/core/src/markdown/).
- */
-
 import Link from '@tiptap/extension-link';
 
 export const LinkFidelity = Link.extend({
@@ -44,6 +34,10 @@ export const LinkFidelity = Link.extend({
       ...this.parent?.(),
       linkStyle: { default: 'inline', rendered: false },
       refLabel: { default: null, rendered: false },
+      sourceForm: { default: null, rendered: false },
+      target: { default: null, rendered: false },
+      anchor: { default: null, rendered: false },
+      alias: { default: null, rendered: false },
     };
   },
 });

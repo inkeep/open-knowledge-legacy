@@ -9,8 +9,6 @@ import {
   HUMAN_COLORS,
 } from './identity';
 
-// --- Stub browser globals for bun test environment ---
-
 const storage = new Map<string, string>();
 const localStorageStub = {
   getItem: (key: string) => storage.get(key) ?? null,
@@ -75,11 +73,9 @@ describe('colorFromSeed', () => {
   });
 
   test('HUMAN_COLORS and AGENT_COLORS produce different values for the same seed', () => {
-    // They have disjoint palette contents so this must be true
     const seed = 'test-seed';
     const human = colorFromSeed(seed, HUMAN_COLORS);
     const agent = colorFromSeed(seed, AGENT_COLORS);
-    // HUMAN_COLORS and AGENT_COLORS are disjoint palettes
     expect((HUMAN_COLORS as readonly string[]).includes(agent)).toBe(false);
     expect((AGENT_COLORS as readonly string[]).includes(human)).toBe(false);
   });

@@ -1,32 +1,9 @@
-/**
- * S1 reproduction — cold-load a large markdown doc and measure TTI.
- *
- * Fresh browser context → goto `#/<BIG_DOC>` → wait for ProseMirror to have
- * meaningful text content visible. The driver captures long tasks, LCP, and
- * layout+style totals via CDP tracing; we additionally install a
- * `PerformanceObserver` for `longtask` so the scenario-side metrics carry
- * the browser's own long-task accounting for cross-check.
- *
- * Pre-fix baseline (AC12): coldLoadMs ≥ 10000 on PROJECT.md (workhorse doc).
- * Post-fix target (AC20):  coldLoadMs < 5000 OR documented as
- * architecturally-bounded in `evidence/s1-diagnosis.md`.
- *
- * The big doc is parameterized via OK_PERF_BIG_DOC so the scenario can be
- * re-targeted without editing code (e.g. `OK_PERF_BIG_DOC=CLAUDE bun run
- * perf:profile --scenario=cold-load-big-doc`).
- */
-
 import { defineScenario } from '../lib/scenario';
 
 const BIG_DOC = process.env.OK_PERF_BIG_DOC ?? 'PROJECT';
 
-// ProseMirror textContent threshold that counts as "doc visible". PROJECT.md
-// is multi-MB — rendering even the first few blocks exceeds this. README.md
-// (5 KB) also clears it trivially, so the threshold is not doc-specific.
 const PM_READY_CHARS = 500;
 
-// Upper bound on our wait. Pre-fix S1 is ~20s on PROJECT; 90s gives slow
-// hardware headroom without hanging the scenario indefinitely.
 const PM_READY_TIMEOUT_MS = 90_000;
 
 interface LongTaskRecord {
@@ -43,8 +20,6 @@ export default defineScenario({
   async run(ctx) {
     const { page, opts } = ctx;
 
-    // Install a PerformanceObserver before navigation so `buffered: true`
-    // back-fills any long tasks that landed before the script runs.
     await page.addInitScript(() => {
       const store: { startTime: number; duration: number; name: string }[] = [];
       (globalThis as unknown as { __okScenLongTasks: typeof store }).__okScenLongTasks = store;
@@ -55,9 +30,7 @@ export default defineScenario({
           }
         });
         obs.observe({ type: 'longtask', buffered: true });
-      } catch {
-        // longtask API unsupported — not fatal.
-      }
+      } catch {}
     });
 
     const url = `${opts.target}/#/${encodeURIComponent(BIG_DOC)}`;
@@ -99,9 +72,6 @@ export default defineScenario({
     ctx.recordMetric('observedLongTaskCount', longTasks.length);
     ctx.recordMetric('observedLongestTaskMs', Math.round(longestTaskMs));
 
-    // Sample editor text length as a sanity check — if it is tiny the doc
-    // wasn't PROJECT (or whatever was configured) and the coldLoad number
-    // will be uninterpretable.
     if (rendered) {
       const pmLen = await page.evaluate(() => {
         const el = document.querySelector('.ProseMirror');

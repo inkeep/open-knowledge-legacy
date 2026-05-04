@@ -1,25 +1,11 @@
-/**
- * Unit tests for the WYSIWYG clipboard text serializer.
- *
- * The HTML serializer (`createClipboardHtmlSerializer`) requires a real
- * DOM (DOMParser + document.createDocumentFragment) which bun-test does
- * not provide. Those paths are covered by the paste-fidelity E2E suite
- * (`packages/app/tests/stress/paste-fidelity.e2e.ts`).
- *
- * Here we cover the text path:
- *   - `createClipboardTextSerializer` returns a function that produces
- *     canonical markdown from a slice via `MarkdownManager.serialize`.
- *   - A failing `MarkdownManager.serialize` falls through to the PM-
- *     default `textBetween` path (FR-11 error-path discipline).
- */
-
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
+import type { Fragment } from '@tiptap/pm/model';
 import { Schema } from '@tiptap/pm/model';
+import type { EditorView } from '@tiptap/pm/view';
 
-import { createClipboardTextSerializer } from './serialize.ts';
+import { createClipboardHtmlSerializer, createClipboardTextSerializer } from './serialize.ts';
 
-// Minimal schema that lets us synthesise a `doc > paragraph > text` tree.
 const schema = new Schema({
   nodes: {
     doc: { content: 'block+' },
@@ -38,9 +24,6 @@ function makeSlice(text: string) {
   return doc.slice(0, doc.content.size);
 }
 
-// The serializer normalizes the slice to a synthetic top-level doc JSON
-// via `schema.topNodeType.createAndFill` + `.toJSON()`. Our fake manager
-// receives that JSON shape and reaches into `doc > paragraph > text`.
 function fakeMdManager() {
   return {
     serialize: mock((doc: JSONContent) => {
@@ -84,7 +67,6 @@ describe('createClipboardTextSerializer', () => {
     // biome-ignore lint/suspicious/noExplicitAny: fake md manager shape
     const serializer = createClipboardTextSerializer({ mdManager: md as any });
     const text = serializer(makeSlice('hello world'), fakeView());
-    // textBetween yields the literal text; the serializer fell through.
     expect(text).toContain('hello world');
   });
 
@@ -95,5 +77,99 @@ describe('createClipboardTextSerializer', () => {
     const emptyDoc = schema.node('doc', null, [schema.node('paragraph')]);
     const slice = emptyDoc.slice(0, emptyDoc.content.size);
     expect(() => serializer(slice, fakeView())).not.toThrow();
+  });
+});
+
+describe('createClipboardHtmlSerializer — walker→markdown tier dispatch', () => {
+  function emptyFragment(): Fragment {
+    return { firstChild: null } as unknown as Fragment;
+  }
+
+  function sentinelTarget(): DocumentFragment {
+    return {} as DocumentFragment;
+  }
+
+  let warnCalls: string[];
+  let innerOrigWarn: typeof console.warn;
+  beforeEach(() => {
+    warnCalls = [];
+    innerOrigWarn = console.warn;
+    console.warn = (msg: unknown) => {
+      warnCalls.push(typeof msg === 'string' ? msg : String(msg));
+    };
+  });
+  afterEach(() => {
+    console.warn = innerOrigWarn;
+  });
+
+  test('view attached + active selection + walker throws → catch fires + markdown tier returns target', () => {
+    const view = {
+      state: {
+        selection: {
+          from: 0,
+          to: 5,
+          content: () => {
+            throw new Error('walker-boom');
+          },
+        },
+      },
+    } as unknown as EditorView;
+
+    const md = fakeMdManager();
+    const handle = createClipboardHtmlSerializer({
+      // biome-ignore lint/suspicious/noExplicitAny: fake md manager shape
+      mdManager: md as any,
+    });
+    handle.setView(view);
+
+    const target = sentinelTarget();
+    const result = handle.serializer.serializeFragment(emptyFragment(), undefined, target);
+
+    const failEvent = warnCalls.find((w) => w.includes('clipboard-serialize-failed'));
+    expect(failEvent).toBeDefined();
+    expect(failEvent).toContain('walker:walker-boom');
+
+    expect(result).toBe(target);
+  });
+
+  test('no view attached → walker tier skipped → markdown tier returns target', () => {
+    const md = fakeMdManager();
+    const handle = createClipboardHtmlSerializer({
+      // biome-ignore lint/suspicious/noExplicitAny: fake md manager shape
+      mdManager: md as any,
+    });
+
+    const target = sentinelTarget();
+    const result = handle.serializer.serializeFragment(emptyFragment(), undefined, target);
+
+    expect(warnCalls.find((w) => w.includes('walker:'))).toBeUndefined();
+    expect(result).toBe(target);
+  });
+
+  test('collapsed selection (from === to) → walker tier skipped → markdown tier returns target', () => {
+    const view = {
+      state: {
+        selection: {
+          from: 0,
+          to: 0,
+          content: () => {
+            throw new Error('should-not-be-called');
+          },
+        },
+      },
+    } as unknown as EditorView;
+
+    const md = fakeMdManager();
+    const handle = createClipboardHtmlSerializer({
+      // biome-ignore lint/suspicious/noExplicitAny: fake md manager shape
+      mdManager: md as any,
+    });
+    handle.setView(view);
+
+    const target = sentinelTarget();
+    const result = handle.serializer.serializeFragment(emptyFragment(), undefined, target);
+
+    expect(warnCalls.find((w) => w.includes('walker:'))).toBeUndefined();
+    expect(result).toBe(target);
   });
 });

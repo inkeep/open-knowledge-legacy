@@ -3,14 +3,6 @@ import type { LoggerOptions, Logger as PinoLoggerInstance, TransportSingleOption
 import pino from 'pino';
 import pinoPretty from 'pino-pretty';
 
-/**
- * Pino mixin that injects OTel trace context into log records.
- * When an active span exists, adds trace_id, span_id, and trace_flags.
- * When no span is active, returns an empty object (no trace fields).
- *
- * This enables trace↔log correlation in Grafana: clicking a log line with
- * trace_id jumps to the full trace in Tempo, and vice-versa.
- */
 function otelMixin(): Record<string, unknown> {
   const span = trace.getSpan(context.active());
   if (!span) return {};
@@ -22,13 +14,6 @@ function otelMixin(): Record<string, unknown> {
   };
 }
 
-/**
- * Determines whether log output should be colorized.
- *
- * Checks in order:
- * 1. NO_COLOR env var (standard: https://no-color.org/) — if set to any non-empty value, disables colors
- * 2. Falls back to process.stdout.isTTY (colors enabled for interactive terminals)
- */
 function shouldColorize(): boolean {
   if (process.env.NO_COLOR && process.env.NO_COLOR !== '') {
     return false;
@@ -36,28 +21,11 @@ function shouldColorize(): boolean {
   return process.stdout.isTTY ?? false;
 }
 
-/**
- * Configuration options for PinoLogger
- */
 export interface PinoLoggerConfig {
-  /** Pino logger options (merged with defaults) */
   options?: LoggerOptions;
-  /**
-   * Pino transport configurations.
-   *
-   * NOTE: Pino transports use Node.js worker threads internally. Under Bun,
-   * the default pretty-print stream (no transports) is the safe path.
-   * Only add transports if you've verified they work in your runtime.
-   */
   transportConfigs?: TransportSingleOptions[];
 }
 
-/**
- * Pino logger wrapper with pretty-printing and optional transport support.
- *
- * Default behaviour (no transports): uses pino-pretty as a direct writable
- * stream, which works in both Node.js and Bun without worker threads.
- */
 export class PinoLogger {
   private name: string;
   private transportConfigs: TransportSingleOptions[] = [];
@@ -84,7 +52,6 @@ export class PinoLogger {
     this.pinoInstance = this.buildInstance();
   }
 
-  /** Build or rebuild the pino instance from current config. */
   private buildInstance(): PinoLoggerInstance {
     if (this.transportConfigs.length > 0) {
       return pino(this.options, pino.transport({ targets: this.transportConfigs }));
@@ -98,13 +65,11 @@ export class PinoLogger {
       });
       return pino(this.options, prettyStream);
     } catch (err) {
-      // Fall back to standard JSON output if pino-pretty fails
       console.warn('[PinoLogger] pino-pretty failed, falling back to JSON:', err);
       return pino(this.options);
     }
   }
 
-  /** Recreate the pino instance (e.g. after adding/removing transports). */
   private recreateInstance(): void {
     if (typeof this.pinoInstance.flush === 'function') {
       this.pinoInstance.flush();
@@ -112,13 +77,11 @@ export class PinoLogger {
     this.pinoInstance = this.buildInstance();
   }
 
-  /** Add a transport and rebuild. */
   addTransport(transportConfig: TransportSingleOptions): void {
     this.transportConfigs.push(transportConfig);
     this.recreateInstance();
   }
 
-  /** Remove a transport by index and rebuild. */
   removeTransport(index: number): void {
     if (index >= 0 && index < this.transportConfigs.length) {
       this.transportConfigs.splice(index, 1);
@@ -126,23 +89,18 @@ export class PinoLogger {
     }
   }
 
-  /** Get current transport configs (shallow copy). */
   getTransports(): TransportSingleOptions[] {
     return [...this.transportConfigs];
   }
 
-  /** Merge new options and rebuild. */
   updateOptions(options: Partial<LoggerOptions>): void {
     this.options = { ...this.options, ...options };
     this.recreateInstance();
   }
 
-  /** Access the underlying pino instance for advanced usage. */
   getPinoInstance(): PinoLoggerInstance {
     return this.pinoInstance;
   }
-
-  // ---- Logging methods ------------------------------------------------
 
   error(data: unknown, message: string): void {
     this.pinoInstance.error(data, message);
@@ -161,19 +119,12 @@ export class PinoLogger {
   }
 }
 
-/**
- * Logger factory configuration
- */
 export interface LoggerFactoryConfig {
   defaultLogger?: PinoLogger;
   loggerFactory?: (name: string) => PinoLogger;
-  /** Pino config passed to auto-created PinoLogger instances */
   pinoConfig?: PinoLoggerConfig;
 }
 
-/**
- * Global logger factory singleton — caches named logger instances.
- */
 class LoggerFactory {
   private config: LoggerFactoryConfig = {};
   private loggers = new Map<string, PinoLogger>();
@@ -206,26 +157,16 @@ class LoggerFactory {
   }
 }
 
-/** Singleton factory instance */
 export const loggerFactory = new LoggerFactory();
 
-/** Convenience: get a named logger from the global factory. */
 export function getLogger(name: string): PinoLogger {
   return loggerFactory.getLogger(name);
 }
 
-// ---- Test helpers --------------------------------------------------------
-
-/** A pre-silenced logger for use in tests — no output, no env-var dependency. */
 export function createTestLogger(name = 'test'): PinoLogger {
   return new PinoLogger(name, { options: { level: 'silent' } });
 }
 
-/**
- * Configure the global factory to use silent loggers for all `getLogger()` calls.
- * Call in a `beforeAll` / `beforeEach` block; pair with `loggerFactory.reset()`
- * in teardown if you need to restore production behaviour.
- */
 export function installTestLoggers(): void {
   loggerFactory.configure({
     pinoConfig: { options: { level: 'silent' } },

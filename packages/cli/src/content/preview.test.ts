@@ -26,29 +26,20 @@ describe('previewContent', () => {
     mkdirSync(join(testDir, 'docs'));
     writeFileSync(join(testDir, 'docs', 'c.md'), '# C');
 
-    const result = previewContent({
-      projectDir: testDir,
-      contentDir: testDir,
-      include: ['**/*.md'],
-      exclude: [],
-    });
+    const result = previewContent({ projectDir: testDir, contentDir: testDir });
 
     expect(result.totalCount).toBe(3);
     expect(result.sample.length).toBe(3);
     expect(result.warnings).toEqual([]);
   });
 
-  it('respects exclude patterns', () => {
+  it('respects .okignore patterns', () => {
     writeFileSync(join(testDir, 'keep.md'), '# Keep');
+    writeFileSync(join(testDir, '.okignore'), 'vendored/\n');
     mkdirSync(join(testDir, 'vendored'));
     writeFileSync(join(testDir, 'vendored', 'drop.md'), '# Drop');
 
-    const result = previewContent({
-      projectDir: testDir,
-      contentDir: testDir,
-      include: ['**/*.md'],
-      exclude: ['vendored/**'],
-    });
+    const result = previewContent({ projectDir: testDir, contentDir: testDir });
 
     expect(result.totalCount).toBe(1);
     expect(result.sample).toEqual(['keep.md']);
@@ -60,12 +51,7 @@ describe('previewContent', () => {
     mkdirSync(join(testDir, 'ignored'));
     writeFileSync(join(testDir, 'ignored', 'hidden.md'), '# Hidden');
 
-    const result = previewContent({
-      projectDir: testDir,
-      contentDir: testDir,
-      include: ['**/*.md'],
-      exclude: [],
-    });
+    const result = previewContent({ projectDir: testDir, contentDir: testDir });
 
     expect(result.totalCount).toBe(1);
     expect(result.sample).toEqual(['visible.md']);
@@ -74,12 +60,7 @@ describe('previewContent', () => {
   it('returns warning and zero count when contentDir does not exist', () => {
     const missing = join(testDir, 'nonexistent');
 
-    const result = previewContent({
-      projectDir: testDir,
-      contentDir: missing,
-      include: ['**/*.md'],
-      exclude: [],
-    });
+    const result = previewContent({ projectDir: testDir, contentDir: missing });
 
     expect(result.totalCount).toBe(0);
     expect(result.sample).toEqual([]);
@@ -95,8 +76,6 @@ describe('previewContent', () => {
     const result = previewContent({
       projectDir: testDir,
       contentDir: testDir,
-      include: ['**/*.md'],
-      exclude: [],
       sampleCap: 5,
     });
 
@@ -109,62 +88,42 @@ describe('previewContent', () => {
       writeFileSync(join(testDir, `file-${i}.md`), `# ${i}`);
     }
 
-    const result = previewContent({
-      projectDir: testDir,
-      contentDir: testDir,
-      include: ['**/*.md'],
-      exclude: [],
-    });
+    const result = previewContent({ projectDir: testDir, contentDir: testDir });
 
     expect(result.totalCount).toBe(10);
     expect(result.sample.length).toBe(5);
   });
 
-  it('respects nested .gitignore (D8: .open-knowledge/cache/ excluded)', () => {
+  it('skips .ok/ entirely (BUILTIN_SKIP_DIRS coverage)', () => {
     const okDir = join(testDir, OK_DIR);
     mkdirSync(okDir, { recursive: true });
-    writeFileSync(join(okDir, '.gitignore'), 'cache/\n');
     writeFileSync(join(okDir, 'AGENTS.md'), '# Agents');
     mkdirSync(join(okDir, 'cache'));
     writeFileSync(join(okDir, 'cache', 'cached.md'), '# Cached');
+    writeFileSync(join(testDir, 'real.md'), '# Real');
 
-    const result = previewContent({
-      projectDir: testDir,
-      contentDir: testDir,
-      include: ['**/*.md'],
-      exclude: [],
-    });
+    const result = previewContent({ projectDir: testDir, contentDir: testDir });
 
     expect(result.totalCount).toBe(1);
-    expect(result.sample).toEqual([`${OK_DIR}/AGENTS.md`]);
+    expect(result.sample).toEqual(['real.md']);
   });
 
   it('returns zero count for empty directory (no .md files)', () => {
     mkdirSync(join(testDir, 'empty-sub'));
 
-    const result = previewContent({
-      projectDir: testDir,
-      contentDir: testDir,
-      include: ['**/*.md'],
-      exclude: [],
-    });
+    const result = previewContent({ projectDir: testDir, contentDir: testDir });
 
     expect(result.totalCount).toBe(0);
     expect(result.sample).toEqual([]);
     expect(result.warnings).toEqual([]);
   });
 
-  it('ignores non-.md files', () => {
+  it('ignores files outside the asset allowlist and the supported-doc extensions', () => {
     writeFileSync(join(testDir, 'readme.md'), '# Readme');
     writeFileSync(join(testDir, 'script.ts'), 'export {}');
-    writeFileSync(join(testDir, 'data.json'), '{}');
+    writeFileSync(join(testDir, 'arbitrary.xyz'), 'data');
 
-    const result = previewContent({
-      projectDir: testDir,
-      contentDir: testDir,
-      include: ['**/*.md'],
-      exclude: [],
-    });
+    const result = previewContent({ projectDir: testDir, contentDir: testDir });
 
     expect(result.totalCount).toBe(1);
     expect(result.sample).toEqual(['readme.md']);
@@ -178,12 +137,7 @@ describe('previewContent', () => {
     symlinkSync(join(testDir, 'real.md'), join(testDir, 'link.md'));
     symlinkSync(join(testDir, 'real-dir'), join(testDir, 'link-dir'));
 
-    const result = previewContent({
-      projectDir: testDir,
-      contentDir: testDir,
-      include: ['**/*.md'],
-      exclude: [],
-    });
+    const result = previewContent({ projectDir: testDir, contentDir: testDir });
 
     expect(result.totalCount).toBe(4);
     expect(result.warnings).toEqual([]);
@@ -193,12 +147,7 @@ describe('previewContent', () => {
     writeFileSync(join(testDir, 'real.md'), '# Real');
     symlinkSync(join(testDir, 'nonexistent.md'), join(testDir, 'broken-link.md'));
 
-    const result = previewContent({
-      projectDir: testDir,
-      contentDir: testDir,
-      include: ['**/*.md'],
-      exclude: [],
-    });
+    const result = previewContent({ projectDir: testDir, contentDir: testDir });
 
     expect(result.totalCount).toBe(1);
     expect(result.warnings.length).toBe(1);

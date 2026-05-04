@@ -1,18 +1,3 @@
-/**
- * Tests for D7 / US-005: jsxComponent and jsxInline promoted to first-class
- * MDX mdast types (`mdxJsxFlowElement` / `mdxJsxTextElement`).
- *
- * Before US-005 the PM→mdast handlers emitted `{type:'html',value:raw}`
- * passthroughs. After US-005 they emit proper mdast-util-mdx-jsx types with
- * `data.sourceRaw` for verbatim serialization, and matching to-markdown
- * handlers read sourceRaw to emit bit-exact equivalent output.
- *
- * Invariants asserted:
- *   1. PM→mdast emits mdxJsxFlowElement / mdxJsxTextElement (not html).
- *   2. Markdown serialization is bit-exact equivalent to the pre-US-005 output.
- *   3. Round-trip (PM → mdast → markdown → re-parse → mdast → PM) is stable.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { fromProseMirror } from '@handlewithcare/remark-prosemirror';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
@@ -58,7 +43,6 @@ describe('jsxComponent mdast promotion (US-005 / D7)', () => {
   test('PM→mdast emits mdxJsxFlowElement (not html)', () => {
     const pm = mdManager.parse('<MyBlock a="1">\n  body\n</MyBlock>\n');
     const tree = pmToMdast(pm);
-    // The jsxComponent PM node converts to mdxJsxFlowElement at the top level.
     const jsx = tree.children.find((c) => c.type === 'mdxJsxFlowElement') as
       | MdxJsxFlowElement
       | undefined;

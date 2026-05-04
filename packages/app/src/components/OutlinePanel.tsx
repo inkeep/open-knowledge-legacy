@@ -16,13 +16,6 @@ import { useActiveHeading } from '@/hooks/useActiveHeading';
 import { ProfilerBoundary } from '@/lib/perf';
 import { cn } from '@/lib/utils';
 
-/**
- * Debounce window for Y.Doc update → page-headings invalidation. Matches the
- * `TYPING_DEFER_MS` convention from precedent #11 — a 300 ms trailing-edge
- * window coalesces bursts of keystrokes into a single fetch while still
- * updating the outline fast enough to feel live. Matches the 300 ms debounce
- * `stories/wiki-links-next/STORY.md` §S4.TQ3 lands on for similar reasons.
- */
 const OUTLINE_INVALIDATE_DEBOUNCE_MS = 300;
 
 interface HeadingEntry {
@@ -45,48 +38,9 @@ async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
   return data.headings ?? [];
 }
 
-// Each button is py-1.5 (6px × 2) + text-sm line-height (20px) = 32px tall.
-// These values must stay in sync with the button className below.
 const ITEM_H = 32;
-const PAD_TOP = 6; // py-1.5
-const PAD_BOT = 6; // py-1.5
-// Horizontal px per nesting level (1-based)
-const LEVEL_W = 8;
-
-function lineX(level: number): number {
-  // +0.5 centres a 1px stroke on a pixel column (crisp rendering)
-  return (level - 1) * LEVEL_W + 0.5;
-}
-
-/**
- * Single SVG path that runs
- * vertically within each heading's text region, then draws a diagonal
- * to the next heading's x-position via `L x top` between items.
- *
- *   |  H1                 ← vertical at x=0
- *    \                    ← diagonal (L to H2 top)
- *     |  H2               ← vertical at x=8
- *     |  H2               ← vertical at x=8
- *    /                    ← diagonal (L to H1 top)
- *   |  H1                 ← vertical at x=0
- */
-function buildLinePath(headings: HeadingEntry[]): string {
-  if (headings.length === 0) return '';
-  const parts: string[] = [];
-
-  for (let i = 0; i < headings.length; i++) {
-    const x = lineX(headings[i].level);
-    const top = i * ITEM_H + PAD_TOP;
-    const bot = i * ITEM_H + ITEM_H - PAD_BOT;
-
-    // Move on first item; subsequent items arrive via an L that draws the
-    // diagonal (or straight line when same depth) from the previous bottom.
-    parts.push(`${i === 0 ? 'M' : 'L'}${x} ${top}`);
-    parts.push(`L${x} ${bot}`);
-  }
-
-  return parts.join(' ');
-}
+const LEVEL_W = 12;
+const MARKER_SIZE = 6;
 
 export interface OutlineNavDetail {
   index: number;
@@ -128,23 +82,9 @@ function OutlinePanelInner({
     queryKey: ['page-headings', docName],
     queryFn: () => fetchHeadings(docName),
     enabled: !loading && pages.has(docName),
-    // The Y.Doc `update` subscription below is authoritative for freshness —
-    // background refetch on window-focus/reconnect would add wasted fetches
-    // for data already guaranteed-current. Per TkDodo (TanStack Query
-    // maintainer) guidance for subscription-source-authoritative queries:
-    // https://tkdodo.eu/blog/using-web-sockets-with-react-query
     staleTime: Number.POSITIVE_INFINITY,
   });
 
-  // Precise-trigger invalidation (US-006, spec §6 D9 LOCKED). The active doc's
-  // Y.Doc `update` event fires on every mutation — local typing, remote peer
-  // edits arriving via WebSocket, and agent writes — so the outline stays
-  // fresh without polling. We gate on `activeDocName === docName` because
-  // `OutlinePanel` may briefly render for a doc that isn't the active one
-  // during a navigation transition; in that case the initial query fetch is
-  // sufficient and there's no point subscribing to a provider for a different
-  // doc. `DocPanel` in practice only mounts one `OutlinePanel` at a time, but
-  // the guard keeps this robust under future layout changes.
   useEffect(() => {
     if (!activeProvider || activeDocName !== docName) return;
     const doc = activeProvider.document;
@@ -179,22 +119,9 @@ function OutlinePanelInner({
     window.dispatchEvent(new CustomEvent(OUTLINE_NAV_EVENT, { detail }));
   }
 
-  const maxLevel = headings.reduce((m, h) => Math.max(m, h.level), 1);
-  const svgW = (maxLevel - 1) * LEVEL_W + 1;
-  const svgH = headings.length * ITEM_H;
-  const linePath = buildLinePath(headings);
-
-  // The SVG path doubles as a CSS mask so the animated thumb is clipped to
-  // the path shape — primary color travels along the diagonal connectors too.
-  const maskUrl = linePath
-    ? `url("data:image/svg+xml,${encodeURIComponent(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}"><path d="${linePath}" stroke="black" stroke-width="2" fill="none" /></svg>`,
-      )}")`
-    : undefined;
-
-  // Thumb covers the text region of the active item (excluding py-1.5 padding).
-  const thumbTop = activeIndex >= 0 ? activeIndex * ITEM_H + PAD_TOP : 0;
-  const thumbHeight = activeIndex >= 0 ? ITEM_H - PAD_TOP - PAD_BOT : 0;
+  const activeLevel = activeIndex >= 0 ? headings[activeIndex].level : 1;
+  const markerX = (activeLevel - 1) * LEVEL_W + (LEVEL_W - MARKER_SIZE) / 2;
+  const markerY = activeIndex * ITEM_H + (ITEM_H - MARKER_SIZE) / 2;
 
   return (
     <Panel className={className}>
@@ -211,38 +138,17 @@ function OutlinePanelInner({
           <PanelEmpty className="px-2">No headings yet.</PanelEmpty>
         ) : (
           <nav aria-label="Document outline" className="relative">
-            {/* Gray base path */}
-            <svg
-              width={svgW}
-              height={svgH}
-              className="pointer-events-none absolute left-0 top-0"
-              aria-hidden="true"
-            >
-              <path d={linePath} fill="none" strokeWidth="1" style={{ stroke: 'var(--border)' }} />
-            </svg>
-            {/* Animated primary thumb — path used as CSS mask so the colored
-                block is clipped to the path shape; translateY is GPU-composited. */}
-            {maskUrl && (
+            {activeIndex >= 0 && (
               <div
-                className="pointer-events-none absolute left-0 top-0"
+                aria-hidden="true"
+                className="pointer-events-none absolute left-0 top-0 rounded-full bg-primary motion-safe:[transition:transform_0.25s_var(--ease-out-strong)]"
                 style={{
-                  width: svgW,
-                  height: svgH,
-                  maskImage: maskUrl,
-                  WebkitMaskImage: maskUrl,
+                  width: MARKER_SIZE,
+                  height: MARKER_SIZE,
+                  transform: `translate(${markerX}px, ${markerY}px)`,
                 }}
-              >
-                <div
-                  className="w-full motion-safe:[transition:transform_0.25s_var(--ease-out-strong),height_0.1s_var(--ease-out-strong)]"
-                  style={{
-                    transform: `translateY(${thumbTop}px)`,
-                    height: thumbHeight,
-                    backgroundColor: 'var(--primary)',
-                  }}
-                />
-              </div>
+              />
             )}
-            {/* Buttons sit on top of the SVG; paddingLeft aligns text with line */}
             {headings.map((heading, index) => {
               const isActive = heading.slug === activeSlug;
               return (
@@ -258,7 +164,7 @@ function OutlinePanelInner({
                       ? 'font-medium text-primary'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
-                  style={{ paddingLeft: `${(heading.level - 1) * LEVEL_W + 16}px` }}
+                  style={{ paddingLeft: `${(heading.level - 1) * LEVEL_W + 20}px` }}
                   title={heading.text}
                 >
                   {heading.text}

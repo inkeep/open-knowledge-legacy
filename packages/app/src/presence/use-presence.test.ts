@@ -39,7 +39,6 @@ describe('dedupeHumansByPrincipalId', () => {
     const input = [makeHuman(20, 'pid-1', 'Bob'), makeHuman(10, 'pid-1', 'Alice')];
     const result = dedupeHumansByPrincipalId(input);
     expect(result.length).toBe(1);
-    // clientId 10 is lower — that entry's name wins
     expect(result[0].clientId).toBe(10);
     expect(result[0].user.name).toBe('Alice');
   });
@@ -70,7 +69,6 @@ describe('dedupeHumansByPrincipalId', () => {
   test('mixed: eligible and ineligible entries coexist correctly', () => {
     const input = [makeHuman(1, 'pid-A'), makeHuman(2, undefined), makeHuman(3, 'pid-A')];
     const result = dedupeHumansByPrincipalId(input);
-    // pid-A collapses to 1, the ineligible stays → 2 total
     expect(result.length).toBe(2);
     const eligible = result.find((h) => h.user.principalId === 'pid-A');
     const ineligible = result.find((h) => !h.user.principalId);
@@ -98,8 +96,6 @@ describe('dedupeHumansByPrincipalId', () => {
   });
 
   test('output order follows rep position (rep is first entry here)', () => {
-    // pid-B: entries at pos 0 (clientId 100) and pos 2 (clientId 200).
-    // Rep is clientId 100 (the lower one), which appears first → pid-B emitted at pos 0.
     const input = [makeHuman(100, 'pid-B'), makeHuman(10, 'pid-A'), makeHuman(200, 'pid-B')];
     const result = dedupeHumansByPrincipalId(input);
     expect(result[0].user.principalId).toBe('pid-B');
@@ -108,9 +104,6 @@ describe('dedupeHumansByPrincipalId', () => {
   });
 
   test('output order reflects rep position, not first-occurrence, when rep != first', () => {
-    // pid-B appears at positions 0 (clientId 200) and 2 (clientId 100).
-    // The rep is clientId 100 (lower), which sits at position 2.
-    // Output order therefore puts A (pos 1) before B (pos 2).
     const input = [makeHuman(200, 'pid-B'), makeHuman(10, 'pid-A'), makeHuman(100, 'pid-B')];
     const result = dedupeHumansByPrincipalId(input);
     expect(result.length).toBe(2);
@@ -147,9 +140,6 @@ describe('participantsEqual', () => {
   });
 
   test('returns false when only tabCount differs — guards against stale tooltip on TTL tick', () => {
-    // This is the exact regression the spec called out: if participantsEqual
-    // didn't compare tabCount, the 1 Hz TTL tick would short-circuit setState
-    // and the tooltip count would go stale when a tab connects/disconnects.
     const a = [makeParticipantHuman(1, 1)];
     const b = [makeParticipantHuman(1, 2)];
     expect(participantsEqual(a, b)).toBe(false);

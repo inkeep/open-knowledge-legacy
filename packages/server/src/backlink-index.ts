@@ -11,17 +11,12 @@ import {
   resolveInternalHref,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 
-// Line-oriented variant: excludes \n since lines are pre-split.
-// cf. packages/core/src/extensions/wiki-link.ts WIKI_LINK_PATTERN (no \n exclusion).
-// Sticky flag ('y') enables position-based matching via lastIndex.
 const WIKI_LINK_RE = /\[\[([^\n#[\]|]+)(?:#([^\n[\]|]+))?(?:\|([^\n[\]]+))?\]\]/y;
 
-// Inline link form: [text](href) with an optional CommonMark title.
-// Sticky flag for position-based matching. Does NOT match reference-style [text][ref].
 const MD_LINK_RE =
   /\[([^\]\n]*)\]\((<[^>\n]+>|[^)\s\n]+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\)/y;
 
@@ -217,9 +212,6 @@ function readInlineCode(line: string, start: number): { text: string; nextIndex:
   if (runLength === 0) return null;
   const openEnd = start + runLength;
 
-  // CommonMark §6.1: the closing backtick string must be exactly the same length
-  // as the opening string and must not be preceded or followed by a backtick.
-  // indexOf() would match inside a longer run, so we scan for exact-length runs.
   let i = openEnd;
   while (i < line.length) {
     if (line[i] !== '`') {
@@ -240,9 +232,6 @@ function readWikiLink(
   line: string,
   start: number,
 ): { target: string; alias: string | null; anchor: string | null; nextIndex: number } | null {
-  // Uses sticky flag for position-based matching via lastIndex.
-  // core's parseWikiLink expects the string to start with '[[' (^ anchor) and
-  // cannot be used here where start may be mid-line.
   WIKI_LINK_RE.lastIndex = start;
   const match = WIKI_LINK_RE.exec(line);
   if (!match) return null;
@@ -362,13 +351,6 @@ function extractExternalWikiLinksFromLine(line: string): {
   return { text: flatText, occurrences };
 }
 
-/**
- * Resolve an href (from a markdown inline link) relative to a source docName.
- * Returns the resolved docName (no `.md` extension, no leading `./`) or null if
- * the href is external or escapes the content directory root.
- *
- * Resolution is pure string arithmetic — no filesystem access.
- */
 export function resolveMarkdownHref(href: string, sourceDocName: string): string | null {
   return resolveInternalHref(href, sourceDocName)?.docName ?? null;
 }
@@ -415,7 +397,6 @@ function extractMarkdownLinksFromLine(
       }
     }
 
-    // Skip wiki-links so they're not double-counted as markdown links
     if (line[idx] === '[' && line[idx + 1] === '[') {
       const wikiLink = readWikiLink(line, idx);
       if (wikiLink) {
@@ -439,7 +420,6 @@ function extractMarkdownLinksFromLine(
             end: start + mdLink.text.length,
           });
         } else {
-          // External link — add text to flat buffer without recording
           flatText += mdLink.text;
         }
         idx = mdLink.nextIndex;
@@ -764,7 +744,7 @@ export class BacklinkIndex {
   }
 
   private cachePath(branch = this.activeBranch): string {
-    return resolve(this.projectDir, '.open-knowledge', 'cache', branch, 'backlinks.json');
+    return resolve(this.projectDir, '.ok', 'cache', branch, 'backlinks.json');
   }
 
   updateDocument(
@@ -773,7 +753,7 @@ export class BacklinkIndex {
     externalLinks: ExtractedExternalLink[] = [],
     branch = this.activeBranch,
   ): void {
-    if (isSystemDoc(docName)) return;
+    if (isSystemDoc(docName) || isConfigDoc(docName)) return;
     const state = this.getState(branch);
     const priorTargets = state.forward.get(docName) ?? new Set<string>();
     const priorExternalTargets = state.externalForward.get(docName) ?? new Map();
@@ -838,7 +818,6 @@ export class BacklinkIndex {
       const mdLinks = extractMarkdownLinksFromMarkdown(body, docName);
       const wikiExternalLinks = extractExternalWikiLinksFromMarkdown(body);
       const mdExternalLinks = extractExternalMarkdownLinksFromMarkdown(body, docName);
-      // Merge: wiki links take precedence for duplicate targets (they have richer snippet context)
       const seen = new Set(wikiLinks.map((l) => l.target));
       const merged = [...wikiLinks, ...mdLinks.filter((l) => !seen.has(l.target))];
       const externalSeen = new Set(wikiExternalLinks.map((l) => l.url));
@@ -854,7 +833,7 @@ export class BacklinkIndex {
   }
 
   deleteDocument(docName: string, branch = this.activeBranch): void {
-    if (isSystemDoc(docName)) return;
+    if (isSystemDoc(docName) || isConfigDoc(docName)) return;
     const state = this.getState(branch);
     const targets = state.forward.get(docName) ?? new Set<string>();
     const externalTargets = state.externalForward.get(docName) ?? new Map();
@@ -893,10 +872,6 @@ export class BacklinkIndex {
       .sort((a, b) => a.source.localeCompare(b.source));
   }
 
-  /**
-   * O(1) backlink count without materializing the entry list — cheap primitive
-   * for bulk/listing UIs that need connection density but not sources/snippets.
-   */
   getBacklinkCount(target: string, branch = this.activeBranch): number {
     const state = this.getState(branch);
     return state.backward.get(target)?.size ?? 0;
@@ -1176,9 +1151,6 @@ export class BacklinkIndex {
     if (!existsSync(this.contentDir)) return [];
     const docs: string[] = [];
     this.rebuildFileList(this.contentDir, docs);
-    // Deduplicate: when both foo.md and foo.mdx exist, stripDocExtension maps
-    // both to "foo". The extension-precedence winner is resolved later via
-    // getDocExtension() when building the on-disk path.
     const unique = Array.from(new Set(docs));
     return unique.sort((a, b) => a.localeCompare(b));
   }

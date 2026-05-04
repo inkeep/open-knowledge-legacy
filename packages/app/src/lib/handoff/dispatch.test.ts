@@ -1,22 +1,3 @@
-/**
- * Unit tests for the single outbound dispatch entry point.
- *
- * Covered surfaces:
- *   (a) Happy paths — each of the four `HandoffTarget` values is routed to the
- *       right primitive with the right URL shape and deps forwarding.
- *   (b) Exhaustiveness — the `_exhaustive: never` line fires at runtime when a
- *       caller passes an invalid target (simulates the future case where
- *       someone adds a union member and forgets the switch case — TypeScript
- *       would catch this at compile time; the runtime assertion is
- *       belt-and-suspenders).
- *   (c) Cursor host gate — web host (no `okDesktop`, no injected spawnCursor)
- *       returns `web-host-cursor-unsupported` cleanly.
- *   (d) AC9 assertion — grep of `packages/app/src/components/` must not
- *       reference `dispatchHandoff`, `dispatchCursor`, or `openExternal`
- *       outside the `lib/handoff/` module. Deferred to US-011 which introduces
- *       the component surfaces; covered there.
- */
-
 import { describe, expect, mock, test } from 'bun:test';
 import type { HandoffPayload, HandoffTarget } from '@inkeep/open-knowledge-core';
 import { dispatchHandoff } from './dispatch.ts';
@@ -67,7 +48,6 @@ describe('dispatchHandoff — codex', () => {
     const url = (openExternal.mock.calls[0] as readonly string[])[0];
     expect(url).toMatch(/^codex:\/\/new\?prompt=/);
     expect(url).toContain('path=');
-    // Codex does NOT thread docPath — only the project path
     expect(url).not.toContain('file=');
   });
 });
@@ -103,15 +83,12 @@ describe('dispatchHandoff — cursor', () => {
       openExternalDeps,
       cursorDeps: { spawnCursor, sleep },
     });
-    // Step 2's openExternal must use the top-level deps since cursorDeps.openExternalDeps was not set
     expect(openExternal).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('dispatchHandoff — runtime exhaustiveness guard', () => {
   test('unknown target (cast to HandoffTarget) produces invalid-payload at runtime', async () => {
-    // Simulate a future union-member addition that forgot a switch case.
-    // TypeScript would normally catch this at compile time via `_exhaustive: never`.
     const payload = {
       ...BASE_PAYLOAD,
       target: 'zed' as HandoffTarget,

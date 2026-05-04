@@ -1,12 +1,20 @@
-import { ALLOWED_IMAGE_MIME_TYPES } from '@inkeep/open-knowledge-core';
+import {
+  AUDIO_EXTENSIONS,
+  DEFAULT_DEDUP_UI,
+  DEFAULT_EMIT_FORMAT,
+  extensionOf,
+  IMAGE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
+  WIKI_EMBED_EXTENSIONS,
+} from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { toast } from 'sonner';
-import { getCurrentDocName, setCurrentDocName } from './current-doc-name.ts';
-import { uploadFile } from './upload-file.ts';
-
-export { setCurrentDocName };
+import { getEditorDocName } from '../extensions/doc-context.ts';
+import { buildUnresolvedWikiLinkAttrs } from '../extensions/wiki-link-helpers.ts';
+import { getDescriptor } from '../registry/index.ts';
+import { focusInsertedComponent } from '../slash-command/component-items.tsx';
 
 const uploadPluginKey = new PluginKey<UploadPluginState>('imageUpload');
 
@@ -15,13 +23,13 @@ interface UploadPluginState {
   uploads: Map<string, number>;
 }
 
-function createSkeletonWidget(): HTMLElement {
+function createSkeletonWidget(file?: File): HTMLElement {
   const el = document.createElement('div');
   el.className =
     'image-upload-skeleton w-full h-40 rounded-md bg-muted animate-pulse motion-reduce:animate-none my-2';
   el.setAttribute('data-upload-widget', 'loading');
   el.setAttribute('role', 'status');
-  el.setAttribute('aria-label', 'Uploading image...');
+  el.setAttribute('aria-label', file?.name ? `Uploading ${file.name}…` : 'Uploading file…');
   return el;
 }
 
@@ -93,11 +101,101 @@ function basename(path: string): string {
   return idx === -1 ? path : path.slice(idx + 1);
 }
 
+function splitSegments(p: string): string[] {
+  return p.split('/').filter((s) => s !== '');
+}
+
 export function shortestImageRef(assetPath: string, mdPath: string): string {
-  if (parentDir(assetPath) === parentDir(mdPath)) {
-    return basename(assetPath);
+  const assetDir = parentDir(assetPath);
+  const mdDir = parentDir(mdPath);
+  const assetName = basename(assetPath);
+  if (assetDir === mdDir) return assetName;
+
+  const fromParts = splitSegments(mdDir);
+  const toParts = splitSegments(assetDir);
+  let common = 0;
+  while (
+    common < fromParts.length &&
+    common < toParts.length &&
+    fromParts[common] === toParts[common]
+  ) {
+    common++;
   }
-  return `/${assetPath}`;
+  const ups = fromParts.length - common;
+  const downs = toParts.slice(common);
+  if (ups === 0) {
+    return `./${[...downs, assetName].join('/')}`;
+  }
+  return [...new Array(ups).fill('..'), ...downs, assetName].join('/');
+}
+
+function docNameFromEditor(editor: Editor): string | null {
+  return getEditorDocName(editor);
+}
+
+interface InsertShape {
+  kind: 'wikiembed' | 'jsx-img' | 'jsx-video' | 'jsx-audio' | 'markdown-link' | 'wiki-link';
+  ext: string;
+}
+
+export function buildMediaJsxNodeData(
+  kind: 'jsx-img' | 'jsx-video' | 'jsx-audio',
+  resolvedSrc: string,
+): {
+  type: 'jsxComponent';
+  attrs: {
+    componentName: 'img' | 'video' | 'audio';
+    kind: 'element';
+    attributes: never[];
+    sourceRaw: '';
+    sourceDirty: true;
+    props: Record<string, unknown>;
+  };
+} {
+  const componentName = kind === 'jsx-img' ? 'img' : kind === 'jsx-video' ? 'video' : 'audio';
+  const props: Record<string, unknown> =
+    kind === 'jsx-img' ? { src: resolvedSrc, alt: '' } : { src: resolvedSrc, controls: true };
+  return {
+    type: 'jsxComponent',
+    attrs: {
+      componentName,
+      kind: 'element',
+      attributes: [],
+      sourceRaw: '',
+      sourceDirty: true,
+      props,
+    },
+  };
+}
+
+export function pickInsertShape(filename: string): InsertShape {
+  const ext = extensionOf(filename);
+  if (ext === 'md' || ext === 'mdx') {
+    return { kind: 'wiki-link', ext };
+  }
+  if (IMAGE_EXTENSIONS.has(ext)) {
+    return { kind: 'jsx-img', ext };
+  }
+  if (VIDEO_EXTENSIONS.has(ext)) {
+    return { kind: 'jsx-video', ext };
+  }
+  if (AUDIO_EXTENSIONS.has(ext)) {
+    return { kind: 'jsx-audio', ext };
+  }
+  if (WIKI_EMBED_EXTENSIONS.has(ext)) {
+    if (DEFAULT_EMIT_FORMAT === 'wikiembed') return { kind: 'wikiembed', ext };
+    return { kind: 'markdown-link', ext };
+  }
+  return { kind: 'markdown-link', ext };
+}
+
+interface UploadResponseBody {
+  ok?: boolean;
+  src?: string;
+  path?: string;
+  deduped?: boolean;
+  error?: string;
+  message?: string;
 }
 
 export async function uploadAndInsert(
@@ -105,13 +203,15 @@ export async function uploadAndInsert(
   editor: Editor,
   insertPos: number,
 ): Promise<void> {
-  if (!getCurrentDocName()) {
+  const docName = docNameFromEditor(editor);
+  const parentDocName = docName ? `${docName}.md` : '';
+  if (!parentDocName) {
     toast.error('Cannot upload: no document is open');
     return;
   }
   const uploadId = crypto.randomUUID();
 
-  const skeletonWidget = createSkeletonWidget();
+  const skeletonWidget = createSkeletonWidget(file);
   editor.view.dispatch(
     editor.state.tr.setMeta(uploadPluginKey, {
       type: 'add',
@@ -121,33 +221,117 @@ export async function uploadAndInsert(
     }),
   );
 
-  let url: string;
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('parentDocName', parentDocName);
+
+  let res: Response;
   try {
-    const result = await uploadFile(file, ALLOWED_IMAGE_MIME_TYPES);
-    url = result.url;
-  } catch (uploadError) {
-    const message = uploadError instanceof Error ? uploadError.message : String(uploadError);
-    console.error('[uploadAndInsert] Upload error:', message);
+    res = await fetch('/api/upload', { method: 'POST', body: formData });
+  } catch (networkError) {
+    console.error('[uploadAndInsert] Network error:', networkError);
+    showError(editor, uploadId);
+    return;
+  }
+
+  let body: UploadResponseBody = {};
+  try {
+    body = (await res.json()) as UploadResponseBody;
+  } catch {}
+
+  if (!res.ok) {
+    const message = body.message ?? body.error ?? `Upload failed (${res.status})`;
+    console.error('[uploadAndInsert] Server error:', message);
     showError(editor, uploadId, message);
     return;
   }
 
-  const alt = file.name.replace(/\.[^.]+$/, '');
+  if (typeof body.src !== 'string') {
+    console.error('[uploadAndInsert] Response missing src:', body);
+    showError(editor, uploadId);
+    return;
+  }
+
+  const src = body.src;
+  const deduped = body.deduped === true;
+  const parentDocDir = parentDir(parentDocName);
+  const assetContentPath =
+    typeof body.path === 'string' && body.path.length > 0
+      ? body.path
+      : parentDocDir
+        ? `${parentDocDir}/${src}`
+        : src;
+
+  if (deduped && DEFAULT_DEDUP_UI !== 'silent') {
+    toast.info(`Already at ${assetContentPath} — reusing.`);
+  }
+
+  const shape = pickInsertShape(file.name);
 
   const { state } = editor;
   const pluginState = uploadPluginKey.getState(state);
   const mappedPos = pluginState?.uploads.get(uploadId) ?? insertPos;
 
-  const imageNode = state.schema.nodes.image;
-  if (!imageNode) {
-    console.error('[uploadAndInsert] Image node type not found in schema');
-    showError(editor, uploadId);
+  const tr = state.tr.setMeta(uploadPluginKey, { type: 'remove', id: uploadId });
+
+  const relPath = shortestImageRef(assetContentPath, parentDocName);
+
+  const resolvedSrc = `/${assetContentPath}`;
+
+  if (shape.kind === 'jsx-img' || shape.kind === 'jsx-video' || shape.kind === 'jsx-audio') {
+    const jsxNode = state.schema.nodes.jsxComponent;
+    if (!jsxNode) {
+      console.error('[uploadAndInsert] jsxComponent node missing from schema');
+      showError(editor, uploadId);
+      return;
+    }
+    const childData = buildMediaJsxNodeData(shape.kind, resolvedSrc);
+    const componentName = childData.attrs.componentName;
+
+    editor
+      .chain()
+      .command(({ tr: chainTr }) => {
+        chainTr.setMeta(uploadPluginKey, { type: 'remove', id: uploadId });
+        return true;
+      })
+      .focus()
+      .insertContentAt(mappedPos, childData)
+      .run();
+    focusInsertedComponent(editor, mappedPos, getDescriptor(componentName));
     return;
   }
 
-  const tr = state.tr
-    .setMeta(uploadPluginKey, { type: 'remove', id: uploadId })
-    .insert(mappedPos, imageNode.create({ src: url, alt }));
+  if (shape.kind === 'wikiembed') {
+    const node = state.schema.nodes.wikiLinkEmbed;
+    if (!node) {
+      console.error('[uploadAndInsert] wikiLinkEmbed node missing from schema');
+      showError(editor, uploadId);
+      return;
+    }
+    tr.insert(mappedPos, node.create({ target: src, alias: null, anchor: null, resolvedSrc }));
+  } else if (shape.kind === 'wiki-link') {
+    const wikiLinkNode = state.schema.nodes.wikiLink;
+    if (!wikiLinkNode) {
+      console.error('[uploadAndInsert] wikiLink node missing from schema');
+      showError(editor, uploadId);
+      return;
+    }
+    const basename = file.name.replace(/\.(md|mdx)$/i, '');
+    const attrs = buildUnresolvedWikiLinkAttrs(basename);
+    if (!attrs) {
+      tr.insert(mappedPos, state.schema.text(file.name));
+    } else {
+      tr.insert(mappedPos, wikiLinkNode.create(attrs));
+    }
+  } else {
+    const linkMark = state.schema.marks.link;
+    if (linkMark) {
+      const text = state.schema.text(file.name, [linkMark.create({ href: relPath })]);
+      tr.insert(mappedPos, text);
+    } else {
+      tr.insert(mappedPos, state.schema.text(file.name));
+    }
+  }
 
   editor.view.dispatch(tr);
 }

@@ -1,15 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
 import { type EditorModeValue, useEditorMode } from '@/editor/use-editor-mode';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
+import { useConfigContext } from '@/lib/config-provider';
 import { AuthModal } from './AuthModal';
-import { CloneDialog } from './CloneDialog';
+import { AutoSyncOnboardingDialog } from './AutoSyncOnboardingDialog';
 import { ConflictBanner } from './ConflictBanner';
 import { ConflictResolver } from './ConflictResolver';
-import type { DiffLayout } from './DiffView';
 import { type PanelTab, TABS } from './DocPanel';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
@@ -17,29 +17,26 @@ import { EditorHeader } from './EditorHeader';
 export type EditorMode = EditorModeValue;
 
 export function EditorPane() {
-  // Persisted preference (localStorage). Read once at mount via
-  // `useEditorMode`'s `useState` initializer and seeded into session-local
-  // `editorMode`. Open tabs are independent for their lifetime;
-  // the persisted value applies at load (refresh / new tab / new window).
   const [persistedMode, setPersistedMode] = useEditorMode();
   const [editorMode, setEditorMode] = useState<EditorMode>(persistedMode);
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
-  const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
-  const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
-  const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
   const [activeTab, setActiveTab] = useState<PanelTab>(TABS[0].id);
   const [saving, setSaving] = useState(false);
-  const optInToastShownRef = useRef(false);
+  const [autoSyncOnboardingDismissed, setAutoSyncOnboardingDismissed] = useState(false);
 
   const syncStatus = useGitSyncStatus();
+  const { projectConfig } = useConfigContext();
 
   const { activeDocName } = useDocumentContext();
 
-  // R7: rawMdxFallback click → switch to source mode so user can fix the broken MDX.
-  // The pending navigation store preserves the target offset until the source
-  // chunk finishes loading for the active doc.
+  const showAutoSyncOnboarding =
+    !autoSyncOnboardingDismissed &&
+    syncStatus?.hasRemote === true &&
+    projectConfig !== null &&
+    projectConfig.autoSync?.enabled === undefined;
+
   useEffect(() => {
     function onRawMdxNav(e: Event) {
       const detail = (e as CustomEvent<RawMdxNavDetail>).detail;
@@ -52,27 +49,8 @@ export function EditorPane() {
     return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
   }, [activeDocName]);
 
-  // Opt-in prompt: show a dismissible toast the first time we detect
-  // a remote exists but sync is dormant (not yet enabled).
-  useEffect(() => {
-    if (!optInToastShownRef.current && syncStatus?.state === 'dormant' && syncStatus.hasRemote) {
-      optInToastShownRef.current = true;
-      toast.info('This project has a GitHub remote.', {
-        description: 'Sign in to enable automatic sync with your team.',
-        duration: 8000,
-        action: {
-          label: 'Sign in',
-          onClick: () => setAuthModalOpen(true),
-        },
-      });
-    }
-  }, [syncStatus?.state, syncStatus?.hasRemote]);
-
   function handleModeChange(mode: EditorModeValue) {
     setEditorMode(mode);
-    // User-initiated change — persist globally. Tool-driven flips (e.g.
-    // RAW_MDX_NAV_EVENT → source) are session-only and deliberately do NOT
-    // call setPersistedMode (see §7.5).
     setPersistedMode(mode);
   }
 
@@ -105,9 +83,6 @@ export function EditorPane() {
         onModeChange={handleModeChange}
         onSaveVersion={handleSaveVersion}
         saving={saving}
-        activeTab={activeTab}
-        diffLayout={diffLayout}
-        onDiffLayoutChange={setDiffLayout}
         onSignIn={() => {
           setAuthInitialStep('auth');
           setAuthModalOpen(true);
@@ -117,39 +92,20 @@ export function EditorPane() {
           setAuthModalOpen(true);
         }}
         onOpenConflictResolver={() => setConflictResolverOpen(true)}
-        onOpenClone={() => setCloneDialogOpen(true)}
       />
-      <EditorArea
-        editorMode={editorMode}
-        diffLayout={diffLayout}
-        activeTab={activeTab}
-        onActiveTabChange={setActiveTab}
-      />
+      <EditorArea editorMode={editorMode} activeTab={activeTab} onActiveTabChange={setActiveTab} />
       <ConflictResolver open={conflictResolverOpen} onOpenChange={setConflictResolverOpen} />
       <AuthModal
         open={authModalOpen}
-        onOpenChange={(next) => {
-          setAuthModalOpen(next);
-          if (!next) setReturnToCloneAfterAuth(false);
-        }}
+        onOpenChange={setAuthModalOpen}
         identityPrompt={authInitialStep === 'identity'}
         onSuccess={() => {
           setAuthModalOpen(false);
-          if (returnToCloneAfterAuth) {
-            setReturnToCloneAfterAuth(false);
-            setCloneDialogOpen(true);
-          }
         }}
       />
-      <CloneDialog
-        open={cloneDialogOpen}
-        onOpenChange={setCloneDialogOpen}
-        onSignIn={() => {
-          setCloneDialogOpen(false);
-          setAuthInitialStep('auth');
-          setReturnToCloneAfterAuth(true);
-          setAuthModalOpen(true);
-        }}
+      <AutoSyncOnboardingDialog
+        open={showAutoSyncOnboarding}
+        onResolved={() => setAutoSyncOnboardingDismissed(true)}
       />
       {/*
         Agent Activity Panel now lives inside DocPanel as the `'agent'` mode

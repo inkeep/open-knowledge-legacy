@@ -1,19 +1,3 @@
-/**
- * Unit tests for Cursor's two-step dispatcher.
- *
- * Covered surfaces:
- *   (a) Web-host short-circuit (E4 DIRECTED): no spawn, no URL fired — returns
- *       `web-host-cursor-unsupported` cleanly as defense-in-depth.
- *   (b) Electron happy path: spawnCursor called with projectDir; settle delay
- *       scaled by isCursorRunning probe (warm=1000ms, cold=1500ms); then
- *       openExternal fires the cursor:// prompt URL exactly once.
- *   (c) Electron failure paths: spawn returns each `{ok:false, reason}` variant
- *       → mapped to the right HandoffOutcome failure reason with descriptive
- *       detail.
- *   (d) Settle-delay semantics: injected `sleep` receives the expected delay
- *       based on isCursorRunning probe outcome.
- */
-
 import { describe, expect, mock, test } from 'bun:test';
 import type { HandoffPayload } from '@inkeep/open-knowledge-core';
 import { CURSOR_SETTLE_MS_COLD, CURSOR_SETTLE_MS_WARM, dispatchCursor } from './cursor-two-step.ts';
@@ -27,8 +11,6 @@ const PAYLOAD: HandoffPayload = {
 
 describe('dispatchCursor — web host short-circuit', () => {
   test('returns web-host-cursor-unsupported without calling spawnCursor or openExternal', async () => {
-    // Explicitly no `spawnCursor` dep; `window.okDesktop` is also undefined in
-    // the Bun test env, so the fallback resolves to undefined too.
     const result = await dispatchCursor(PAYLOAD);
     expect(result).toEqual({ ok: false, reason: 'web-host-cursor-unsupported' });
   });
@@ -50,7 +32,6 @@ describe('dispatchCursor — Electron happy path', () => {
     expect(spawnCursor).toHaveBeenCalledTimes(1);
     expect(spawnCursor).toHaveBeenCalledWith(PAYLOAD.projectDir);
     expect(sleep).toHaveBeenCalledTimes(1);
-    // No isCursorRunning probe → cold-start default (1500ms)
     expect(sleep).toHaveBeenCalledWith(CURSOR_SETTLE_MS_COLD);
     expect(openExternal).toHaveBeenCalledTimes(1);
     const firedUrl = (openExternal.mock.calls[0] as readonly string[])[0];

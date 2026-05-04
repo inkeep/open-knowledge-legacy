@@ -1,10 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   dispatchCC1Stateless,
   parseCC1BranchSwitched,
+  parseCC1ConfigValidationRejected,
   parseCC1DerivedView,
   parseCC1DiskAck,
 } from './cc1';
@@ -131,7 +133,6 @@ describe('parseCC1BranchSwitched', () => {
 });
 
 describe('parseCC1DiskAck', () => {
-  // Helper: minimal valid base64 of a 4-byte payload.
   const validBase64 = Buffer.from(new Uint8Array([0xde, 0xad, 0xbe, 0xef])).toString('base64');
 
   test('parses a valid disk-ack and decodes sv to Uint8Array', () => {
@@ -150,13 +151,6 @@ describe('parseCC1DiskAck', () => {
     expect(Array.from(result.sv)).toEqual([0xde, 0xad, 0xbe, 0xef]);
   });
 
-  // Contract test: the module docstring promises "null on parse failure,
-  // never throws — the stateless listener sees a steady stream of payloads
-  // and must skip ones it doesn't recognize without surfacing exceptions
-  // to React." atob() throws on invalid base64; this test locks the
-  // try/catch in parseCC1DiskAck — a future refactor that drops the
-  // catch (e.g., relying on Zod's z.string().base64() check) breaks the
-  // test BEFORE the React error boundary surface notices.
   test('returns null on malformed base64 in sv (does NOT throw)', () => {
     const malformed = JSON.stringify({
       v: CC1_CONTRACT_VERSION,
@@ -251,7 +245,6 @@ describe('parseCC1DiskAck', () => {
 });
 
 describe('dispatchCC1Stateless', () => {
-  // Helper: minimal valid base64 of a 4-byte payload.
   const validBase64 = Buffer.from(new Uint8Array([0xde, 0xad, 0xbe, 0xef])).toString('base64');
 
   test('routes server-info to onServerInfo', () => {
@@ -319,8 +312,6 @@ describe('dispatchCC1Stateless', () => {
   });
 
   test('omitted handler is a no-op (no throw, no consumer fires)', () => {
-    // Harness pattern: subscribe to disk-ack but not branch-switched.
-    // A branch-switched payload should silently drop without throwing.
     let diskAckFired = false;
     expect(() => {
       dispatchCC1Stateless(
@@ -337,8 +328,6 @@ describe('dispatchCC1Stateless', () => {
   });
 
   test('parsers are mutually exclusive — disk-ack payload does NOT fire onDerivedView', () => {
-    // disk-ack and derived-view both have a `ch` field; the schema's
-    // ch-literal pinning makes them mutually exclusive.
     let diskAckFired = false;
     let derivedFired = false;
     dispatchCC1Stateless(
@@ -356,5 +345,66 @@ describe('dispatchCC1Stateless', () => {
     );
     expect(diskAckFired).toBe(true);
     expect(derivedFired).toBe(false);
+  });
+});
+
+describe('parseCC1ConfigValidationRejected', () => {
+  test('exports the channel literal', () => {
+    expect(CC1_CHANNEL_CONFIG_VALIDATION_REJECTED).toBe('config-validation-rejected');
+  });
+
+  test('parses a YAML_PARSE rejection payload', () => {
+    const payload = {
+      v: CC1_CONTRACT_VERSION,
+      ch: CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
+      seq: 5,
+      docName: '__config__/project',
+      error: { code: 'YAML_PARSE', detail: 'unexpected token at line 12' },
+    };
+    expect(parseCC1ConfigValidationRejected(JSON.stringify(payload))).toMatchObject({
+      ch: 'config-validation-rejected',
+      docName: '__config__/project',
+      error: { code: 'YAML_PARSE' },
+    });
+  });
+
+  test('parses a SCHEMA_INVALID rejection with structured issues', () => {
+    const payload = {
+      v: CC1_CONTRACT_VERSION,
+      ch: CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
+      seq: 6,
+      docName: '__user__/config.yml',
+      error: {
+        code: 'SCHEMA_INVALID',
+        issues: [
+          {
+            path: ['mcp', 'tools', 'search', 'maxResults'],
+            message: 'Expected number',
+            issueCode: 'invalid_type',
+          },
+        ],
+      },
+    };
+    const result = parseCC1ConfigValidationRejected(JSON.stringify(payload));
+    expect(result?.error.code).toBe('SCHEMA_INVALID');
+  });
+
+  test('returns null for malformed JSON', () => {
+    expect(parseCC1ConfigValidationRejected('{')).toBeNull();
+  });
+
+  test('dispatchCC1Stateless routes config-validation-rejected to its handler', () => {
+    const handler = mock(() => {});
+    dispatchCC1Stateless(
+      JSON.stringify({
+        v: CC1_CONTRACT_VERSION,
+        ch: CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
+        seq: 1,
+        docName: '__config__/project',
+        error: { code: 'YAML_PARSE', detail: 'broken' },
+      }),
+      { onConfigValidationRejected: handler },
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

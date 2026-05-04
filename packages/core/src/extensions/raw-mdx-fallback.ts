@@ -1,19 +1,5 @@
 import { Node } from '@tiptap/core';
 
-/**
- * rawMdxFallback — block-level PM node holding raw markdown source when
- * parsing fails for a specific block region.
- *
- * Shape: content-based (`atom: false, content: 'text*'`), not atom. This
- * preserves Y.XmlElement identity under char-level edits in source mode,
- * provides finer undo granularity, and matches the jsxInline pattern (R3).
- * See SPEC §9 R5 + evidence/P3-source-trace.md.
- *
- * NodeView renders with `contenteditable: 'false'` — WYSIWYG cannot edit the
- * inner text; edits route through source mode. Visual chrome (dashed border,
- * badge, tooltip) ships in US-009 (RawMdxFallbackChrome.tsx); this is the
- * minimal functional NodeView satisfying R5 + R7 structural requirements.
- */
 export const RawMdxFallback = Node.create({
   name: 'rawMdxFallback',
   group: 'block',
@@ -32,16 +18,15 @@ export const RawMdxFallback = Node.create({
   },
 
   parseHTML() {
+    const getAttrs = (node: HTMLElement | string) => {
+      if (typeof node === 'string') return false;
+      return {
+        reason: node.getAttribute('data-reason') || '',
+      };
+    };
     return [
-      {
-        tag: 'div[data-raw-mdx-fallback]',
-        getAttrs: (node) => {
-          if (typeof node === 'string') return false;
-          return {
-            reason: node.getAttribute('data-reason') || '',
-          };
-        },
-      },
+      { tag: 'div[data-raw-mdx-fallback]', getAttrs },
+      { tag: 'pre[data-raw-mdx-fallback]', getAttrs },
     ];
   },
 
@@ -73,10 +58,6 @@ export const RawMdxFallback = Node.create({
 
       const contentDOM = document.createElement('pre');
       contentDOM.classList.add('raw-mdx-fallback-content');
-      // Defensive depth: if the wrapper's contenteditable attr is ever removed
-      // or changed (CSS override, devtools, future refactor), the inner pre
-      // still blocks WYSIWYG edits. contenteditable only affects user input —
-      // ProseMirror's programmatic text writes are unaffected.
       contentDOM.setAttribute('contenteditable', 'false');
       dom.appendChild(contentDOM);
 

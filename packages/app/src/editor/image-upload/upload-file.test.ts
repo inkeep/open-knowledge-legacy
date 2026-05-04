@@ -1,12 +1,3 @@
-/**
- * Unit tests for `uploadFile` — the MIME-prefix routing helper that POSTs a
- * File to the appropriate media-upload endpoint and returns the resolved URL.
- *
- * Uses dependency-injection (the optional `deps` arg) to pass mock fetch +
- * docName directly. No `globalThis.fetch =` mutation — the prior pattern
- * proved flaky on Linux Bun (CI surfaced "string-rejection" before the first
- * test ran on commit `1f69f274`). DI tests are platform-stable.
- */
 import { describe, expect, test } from 'bun:test';
 import { uploadFile } from './upload-file.ts';
 
@@ -40,9 +31,14 @@ function jsonResponse(status: number, body: unknown): Response {
 const TEST_DOC_NAME = 'docs/guide';
 
 describe('uploadFile', () => {
-  test('image MIME routes to /api/upload-image with multipart form data', async () => {
+  test('image upload posts to /api/upload with multipart form data', async () => {
     const { fetch, calls } = captureFetch(() =>
-      jsonResponse(200, { ok: true, src: 'screenshot.png' }),
+      jsonResponse(200, {
+        ok: true,
+        src: 'screenshot.png',
+        path: 'docs/screenshot.png',
+        deduped: false,
+      }),
     );
     const file = new File(['fake-png'], 'screenshot.png', { type: 'image/png' });
 
@@ -50,7 +46,7 @@ describe('uploadFile', () => {
 
     expect(calls).toHaveLength(1);
     const call = calls[0];
-    expect(call?.url).toBe('/api/upload-image');
+    expect(call?.url).toBe('/api/upload');
     expect(call?.init?.method).toBe('POST');
     expect(call?.init?.body).toBeInstanceOf(FormData);
     const fd = call?.init?.body as FormData;
@@ -60,28 +56,49 @@ describe('uploadFile', () => {
     expect((sentFile as File).name).toBe('screenshot.png');
   });
 
-  test('video MIME routes to /api/upload-video', async () => {
-    const { fetch, calls } = captureFetch(() => jsonResponse(200, { ok: true, src: 'demo.mp4' }));
+  test('video upload posts to /api/upload (no per-MIME route)', async () => {
+    const { fetch, calls } = captureFetch(() =>
+      jsonResponse(200, { ok: true, src: 'demo.mp4', path: 'demo.mp4', deduped: false }),
+    );
     const file = new File(['fake-mp4'], 'demo.mp4', { type: 'video/mp4' });
 
     await uploadFile(file, ['video/mp4'], { fetch, docName: TEST_DOC_NAME });
 
-    expect(calls[0]?.url).toBe('/api/upload-video');
+    expect(calls[0]?.url).toBe('/api/upload');
   });
 
-  test('audio MIME routes to /api/upload-audio', async () => {
-    const { fetch, calls } = captureFetch(() => jsonResponse(200, { ok: true, src: 'song.mp3' }));
+  test('audio upload posts to /api/upload (no per-MIME route)', async () => {
+    const { fetch, calls } = captureFetch(() =>
+      jsonResponse(200, { ok: true, src: 'song.mp3', path: 'song.mp3', deduped: false }),
+    );
     const file = new File(['fake-mp3'], 'song.mp3', { type: 'audio/mpeg' });
 
     await uploadFile(file, ['audio/mpeg'], { fetch, docName: TEST_DOC_NAME });
 
-    expect(calls[0]?.url).toBe('/api/upload-audio');
+    expect(calls[0]?.url).toBe('/api/upload');
   });
 
-  test('returns { url } from the server src field on success', async () => {
-    // Stub mirrors the server-absolute URL shape returned by the upload
-    // endpoints (see `api-extension.test.ts:151` for the canonical form).
-    const { fetch } = captureFetch(() => jsonResponse(200, { ok: true, src: '/docs/photo-1.png' }));
+  test('upload uses /api/upload regardless of MIME prefix (server is sole policy point)', async () => {
+    const { fetch, calls } = captureFetch(() =>
+      jsonResponse(200, { ok: true, src: 'doc.pdf', path: 'doc.pdf', deduped: false }),
+    );
+    const file = new File(['x'], 'doc.pdf', { type: 'application/pdf' });
+
+    await uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe('/api/upload');
+  });
+
+  test('returns server-absolute { url } from the server path field on success', async () => {
+    const { fetch } = captureFetch(() =>
+      jsonResponse(200, {
+        ok: true,
+        src: 'photo-1.png',
+        path: 'docs/photo-1.png',
+        deduped: false,
+      }),
+    );
     const file = new File(['x'], 'photo.png', { type: 'image/png' });
 
     const result = await uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME });
@@ -89,23 +106,24 @@ describe('uploadFile', () => {
     expect(result).toEqual({ url: '/docs/photo-1.png' });
   });
 
-  test('unknown MIME prefix throws without making any fetch call', async () => {
-    const { fetch, calls } = captureFetch(() => jsonResponse(200, { ok: true, src: 'unused' }));
-    const file = new File(['x'], 'x.pdf', { type: 'application/pdf' });
+  test('falls back to src when path is omitted; still server-absolute', async () => {
+    const { fetch } = captureFetch(() => jsonResponse(200, { ok: true, src: 'photo.png' }));
+    const file = new File(['x'], 'photo.png', { type: 'image/png' });
 
-    await expect(
-      uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME }),
-    ).rejects.toThrow(/application\/pdf.*image\/, video\/, audio\//);
-    expect(calls).toHaveLength(0);
+    const result = await uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME });
+
+    expect(result).toEqual({ url: '/photo.png' });
   });
 
-  test('error message includes the accept hint for caller-side context', async () => {
-    const { fetch } = captureFetch(() => jsonResponse(200, { ok: true, src: 'unused' }));
-    const file = new File(['x'], 'x.bin', { type: 'application/octet-stream' });
+  test('preserves an already-server-absolute path without double-slashing', async () => {
+    const { fetch } = captureFetch(() =>
+      jsonResponse(200, { ok: true, src: 'photo.png', path: '/docs/photo.png' }),
+    );
+    const file = new File(['x'], 'photo.png', { type: 'image/png' });
 
-    await expect(
-      uploadFile(file, ['video/mp4', 'video/webm'], { fetch, docName: TEST_DOC_NAME }),
-    ).rejects.toThrow(/accept hint: video\/mp4, video\/webm/);
+    const result = await uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME });
+
+    expect(result).toEqual({ url: '/docs/photo.png' });
   });
 
   test('HTTP error response surfaces server-supplied error message', async () => {
@@ -140,7 +158,9 @@ describe('uploadFile', () => {
   });
 
   test('throws when no document is open', async () => {
-    const { fetch, calls } = captureFetch(() => jsonResponse(200, { ok: true, src: 'unused' }));
+    const { fetch, calls } = captureFetch(() =>
+      jsonResponse(200, { ok: true, src: 'unused', path: 'unused', deduped: false }),
+    );
     const file = new File(['x'], 'x.png', { type: 'image/png' });
 
     await expect(uploadFile(file, ['image/png'], { fetch, docName: null })).rejects.toThrow(
@@ -149,12 +169,12 @@ describe('uploadFile', () => {
     expect(calls).toHaveLength(0);
   });
 
-  test('response missing src field throws', async () => {
+  test('response missing path and src throws', async () => {
     const { fetch } = captureFetch(() => jsonResponse(200, { ok: true }));
     const file = new File(['x'], 'x.png', { type: 'image/png' });
 
     await expect(
       uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME }),
-    ).rejects.toThrow(/src/);
+    ).rejects.toThrow(/path.*src/);
   });
 });

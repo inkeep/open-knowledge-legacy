@@ -1,34 +1,8 @@
-/**
- * S3 reproduction — mode toggle on a large doc.
- *
- * Workflow:
- *   1. Cold-load BIG_DOC (default PROJECT.md) in Visual mode.
- *   2. Click "Markdown source" — wait until the CodeMirror view is visible.
- *   3. Click "Visual editor" — measure wall-clock until the ProseMirror view
- *      is visible again with the big doc's content. The Source→Visual leg
- *      is the one that reproduces the 1.4s style+layout hitch (browser's
- *      deferred recalc on `display:none → visible` for 25K-node DOM).
- *
- * Pre-fix baseline (AC14): modeToggleLayoutMs ≥ 300. This metric is derived
- * from the scenario-wide `trace.layoutMs + trace.styleMs` aggregate by the
- * baseline-capture step (US-005) — the scenario's own `metrics.modeToggleMs`
- * records wall-clock of the Source→Visual click-to-ready pipeline (the
- * user-facing symptom). A minimal pre-ready breather keeps initial-load
- * layout out of the trace proper, making `trace.layoutMs + trace.styleMs`
- * a reasonable approximation of toggle-only layout cost.
- *
- * Post-fix target (AC22): either modeToggleLayoutMs < 300 OR documented as
- * architecturally-bounded in `evidence/s3-diagnosis.md`.
- */
-
 import { markerFor } from '../lib/doc-markers';
 import { defineScenario } from '../lib/scenario';
 
 const BIG_DOC = process.env.OK_PERF_BIG_DOC ?? 'PROJECT';
 const WAIT_CONTENT_MS = 90_000;
-// Fallback content threshold when BIG_DOC has no registered marker in
-// `lib/doc-markers.ts` — the toggle scenarios require a non-trivial doc,
-// so 500 chars is the minimum "meaningful" bar.
 const FALLBACK_PM_CHARS = 500;
 
 export default defineScenario({
@@ -39,7 +13,6 @@ export default defineScenario({
   async run(ctx) {
     const { page, opts } = ctx;
 
-    // ─── Step 1: cold-load the big doc in Visual mode. ──────────────────
     await page.goto(`${opts.target}/#/${encodeURIComponent(BIG_DOC)}`, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
@@ -75,12 +48,8 @@ export default defineScenario({
       return;
     }
 
-    // Breathe — let any initial-load layout drain before the toggle leg.
-    // 500ms is generous relative to the observer-B baseline-settle bound;
-    // the subsequent toggle's layout cost dominates the trace aggregate.
     await page.waitForTimeout(500);
 
-    // ─── Step 2: Visual → Source. ───────────────────────────────────────
     const sourceToggle = page.getByRole('radio', { name: 'Markdown source' });
     const visualToggle = page.getByRole('radio', { name: 'Visual editor' });
 
@@ -105,10 +74,8 @@ export default defineScenario({
     }
     const toSourceMs = Date.now() - toSourceAt;
 
-    // Breathe again — isolate the Source→Visual leg.
     await page.waitForTimeout(250);
 
-    // ─── Step 3: Source → Visual (the AC-targeted leg). ─────────────────
     await visualToggle.waitFor({ state: 'visible', timeout: 10_000 });
     const toVisualAt = Date.now();
     await visualToggle.click({ timeout: 10_000 });

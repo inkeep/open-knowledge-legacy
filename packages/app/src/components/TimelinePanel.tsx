@@ -1,31 +1,3 @@
-/**
- * TimelinePanel — document edit history content for the DocPanel timeline tab.
- *
- * Fetches GET /api/history on mount, polls every 10s while mounted.
- * Checkpoint entries are always visible; WIP entries between checkpoints
- * are collapsed behind a "Show N auto-saves" expander.
- * Current (pre-checkpoint) WIP entries are expanded by default at top.
- *
- * Per-row UX (shape parity with AgentActivityPanel's burst rows):
- *   - Click anywhere on a row except the Restore icon → toggle inline expand.
- *     Expanded rows render <ActivityPanelDiffView> below the header showing
- *     the diff between that commit and the live Y.Text. Multi-expand is
- *     supported; the displayed diff is a snapshot at expand time. Expansion
- *     state is lifted to TimelineContent (Set<sha>), so a successful restore
- *     can collapse every row in one place — no per-row signal counter, no
- *     late-mount no-op effects.
- *   - The per-row Restore icon (lucide Undo2, ghost variant, hover-destructive
- *     on the icon) sits in the row header and is always visible — both
- *     collapsed and expanded states. Click → shadcn Dialog confirmation →
- *     POST /api/rollback. Cancel aborts the in-flight fetch via
- *     AbortController so a mid-confirm cancel is honored. On success the row
- *     collapses and any other expanded rows from this mount also collapse —
- *     their cached `current` baseline is now stale.
- *   - The diff renderer is loaded lazily under React.Suspense so the
- *     react-diff-view bundle + CSS only land in the editor route once a user
- *     actually expands a Timeline entry — matching the AgentActivityPanel
- *     burst-row precedent.
- */
 import {
   AGENT_ICON_COLORS,
   AGENT_ICON_COLORS_DARK,
@@ -39,11 +11,13 @@ import {
   ArrowDownToLine,
   ChevronDown,
   ChevronRight,
+  Columns2,
   Diamond,
   FileArchive,
   GitBranch,
   HardDrive,
   Loader2,
+  Rows2,
   Sparkles,
   Undo2,
   User,
@@ -68,6 +42,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { LruStringCache } from '@/lib/lru-string-cache';
 import {
@@ -80,14 +55,11 @@ const LazyActivityPanelDiffView = lazy(async () => {
   return { default: mod.ActivityPanelDiffView };
 });
 
-// ─── Public props ────────────────────────────────────────────────────────────
-
 interface TimelineContentProps {
   docName: string;
   diffLayout: DiffLayout;
+  onDiffLayoutChange: (layout: DiffLayout) => void;
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString);
@@ -124,12 +96,10 @@ function shortSha(sha: string): string {
   return sha.slice(0, 7);
 }
 
-/** Map internal author names to user-friendly display names. Uses structured contributors when available. */
 function displayAuthor(entry: TimelineEntry): string {
   if (entry.type === 'upstream') return 'Upstream sync';
   if (entry.contributors.length === 1) return entry.contributors[0].name;
   if (entry.contributors.length > 1) return entry.contributors.map((c) => c.name).join(', ');
-  // Pre-attribution fallback
   if (entry.author === 'openknowledge-server' || entry.author === 'server') return 'Auto-save';
   return entry.author;
 }
@@ -144,7 +114,6 @@ function AgentBrandIcon({ icon, ...props }: { icon?: string } & SVGProps<SVGSVGE
   return <Sparkles strokeWidth={1.5} {...(props as LucideProps)} />;
 }
 
-/** Icon for a timeline entry contributor. Brand icons for agents, lucide icons for system writers. */
 function ContributorIcon({ entry, isDark }: { entry: TimelineEntry; isDark: boolean }) {
   const iconClass = 'size-3.5 shrink-0 text-muted-foreground';
 
@@ -159,24 +128,20 @@ function ContributorIcon({ entry, isDark }: { entry: TimelineEntry; isDark: bool
       : AGENT_ICON_COLORS[icon];
     const color = brandColor ?? colorFromSeed(seed);
 
-    // Known agent brand → brand icon with brand color (dark override when available)
     if (icon !== 'bot') {
       return (
         <AgentBrandIcon icon={icon} width={14} height={14} className="shrink-0" style={{ color }} />
       );
     }
 
-    // Classified system writers
     if (c.name === 'File System') return <HardDrive className={iconClass} />;
     if (c.name === 'Open Knowledge (service)' || c.name === 'Git (upstream)') {
       return <ArrowDownToLine className={iconClass} />;
     }
 
-    // Human or unknown contributor
     return <User className={iconClass} />;
   }
 
-  // Pre-attribution fallback
   if (
     entry.authorEmail.includes('agent') ||
     entry.author.includes('agent') ||
@@ -190,23 +155,6 @@ function ContributorIcon({ entry, isDark }: { entry: TimelineEntry; isDark: bool
   }
   return <User className={iconClass} />;
 }
-
-// ─── "Current version" pinned row ────────────────────────────────────────────
-
-function CurrentVersionRow() {
-  return (
-    <div className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5">
-      <div className="flex items-center justify-center w-3.5 h-3.5">
-        <span className="inline-block size-2 rounded-full bg-emerald-500 shrink-0" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-foreground">Current version</p>
-      </div>
-    </div>
-  );
-}
-
-// ─── WIP Group component ──────────────────────────────────────────────────────
 
 interface WipGroupProps {
   entries: TimelineEntry[];
@@ -240,7 +188,7 @@ function WipGroup({
       <button
         type="button"
         aria-expanded={expanded}
-        className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors text-left"
+        className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors text-left"
         onClick={() => setExpanded((e) => !e)}
       >
         {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
@@ -266,8 +214,6 @@ function WipGroup({
   );
 }
 
-// ─── Checkpoint kind → label + icon (bridge-correctness SPEC §6 R7c) ────────
-
 type CheckpointVariant = 'save' | 'bridge-merge-loss' | 'external-change-rescue';
 
 export function checkpointVariant(entry: TimelineEntry): CheckpointVariant {
@@ -292,15 +238,6 @@ function formatBytes(n: number): string {
   return `${Math.round(n / 104857.6) / 10} MB`;
 }
 
-/**
- * Classify an entry for Restore-affordance copy.
- *
- * `version` — a Save Version checkpoint (user-triggered named snapshot).
- * `auto-save` — bridge-merge or external-change rescue checkpoints.
- * `wip` — per-writer mid-burst commits between checkpoints; restoring lands
- *   the doc on an unnamed intermediate state, which deserves more explicit
- *   tooltip + dialog wording than a Save Version row.
- */
 type RestoreSemantic = 'version' | 'auto-save' | 'wip';
 
 function restoreSemantic(entry: TimelineEntry): RestoreSemantic {
@@ -328,20 +265,6 @@ function restoreDialogTitle(entry: TimelineEntry): string {
   return RESTORE_DIALOG_TITLE[restoreSemantic(entry)];
 }
 
-// ─── Summary bullets (spec D16 + D25) ─────────────────────────────────────────
-//
-// Agent-provided summaries render as a collapsible bullet list under the author
-// line. First bullet inline, further bullets behind a "Show N more" expander
-// matching the existing WipGroup pattern.
-// The doc-list line ALWAYS renders alongside (D16 — it stays ground truth;
-// bullets enrich, they don't replace).
-
-/**
- * Flatten summaries across contributors (D23 flat shape) preserving insertion
- * order. Multi-contributor commits coalesce into one flat list — per-bullet
- * contributor identity is deliberately deferred (NG4 / D26). Exported so the
- * test suite can lock the flatten invariant without touching React.
- */
 export function allSummariesFor(entry: TimelineEntry): string[] {
   const out: string[] = [];
   for (const c of entry.contributors) {
@@ -355,36 +278,8 @@ interface SummaryBulletsProps {
   summaries: string[];
 }
 
-/**
- * Collapsible bullet renderer. Default is collapsed so coalesced-heavy rows
- * don't dominate the panel. The expander is a real `<button>` — this works
- * because EntryRow is a `<div role="button">` (nested `<button>` inside a
- * `<button>` is invalid HTML; see EntryRow comment). The expander's
- * onClick stops propagation so the row's onSelect doesn't also fire.
- *
- * Markup shape: a SINGLE `<ul>` containing the always-visible first bullet
- * AND the expanded rest (conditionally rendered) — screen-reader list
- * navigation (VoiceOver rotor, JAWS list mode, NVDA) treats every bullet as
- * part of the same list instead of seeing the first as a free-floating
- * paragraph. The expander lives OUTSIDE the `<ul>` because `<button>` is not
- * a valid `<ul>` child per HTML spec.
- *
- * Keys combine the bullet's positional index with its text. The contributor
- * accumulator explicitly permits duplicate summaries within a debounce window
- * (`contributor-tracker.ts:87-91` — "No dedup: an agent may legitimately log
- * the same summary twice"), so a text-only key would collide on duplicates
- * and trigger React's "two children with the same key" warning + subtly wrong
- * reconciliation. The list is append-only with no reorder within a row, so a
- * positional component is safe.
- */
 function SummaryBullets({ summaries }: SummaryBulletsProps) {
   const [expanded, setExpanded] = useState(false);
-  // `useId` is React 19's idiomatic source for associating the expander
-  // `<button aria-controls>` with its `<ul>` — each row instance gets its own
-  // unique id, so multiple TimelinePanel rows mounted on one page don't
-  // collide. NVDA and JAWS use this association to announce which region
-  // just grew/shrank when the user activates "Show N more"; without it the
-  // user only hears "expanded" with no cue about what changed.
   const listId = useId();
   if (summaries.length === 0) return null;
   const [first, ...rest] = summaries;
@@ -423,8 +318,6 @@ function SummaryBullets({ summaries }: SummaryBulletsProps) {
   );
 }
 
-// ─── Inline diff panel ───────────────────────────────────────────────────────
-
 interface EntryDiffPanelProps {
   sha: string;
   docName: string;
@@ -433,14 +326,6 @@ interface EntryDiffPanelProps {
   panelId: string;
 }
 
-/**
- * Renders only when its parent expanded the row. Splitting this out from
- * EntryRow keeps the `useTimelineEntryDiff` subscription off collapsed rows
- * — no `useDocumentContext` subscription, no effect on activeProvider
- * churn. The lazy-loaded diff renderer also lives inside this gated subtree
- * so the react-diff-view bundle never lands for users who don't expand
- * Timeline rows.
- */
 function EntryDiffPanel({ sha, docName, cache, diffLayout, panelId }: EntryDiffPanelProps) {
   const result = useTimelineEntryDiff(sha, docName, cache);
 
@@ -470,8 +355,6 @@ function EntryDiffPanel({ sha, docName, cache, diffLayout, panelId }: EntryDiffP
     </div>
   );
 }
-
-// ─── Entry row ────────────────────────────────────────────────────────────────
 
 interface EntryRowProps {
   entry: TimelineEntry;
@@ -505,8 +388,6 @@ function EntryRow({
   const abortRef = useRef<AbortController | null>(null);
   const diffPanelId = useId();
 
-  // Aborting an in-flight restore on unmount avoids state writes on a
-  // disposed component if the response lands after the user navigated away.
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
@@ -514,8 +395,6 @@ function EntryRow({
   const handleActivate = () => onToggleExpanded(entry.sha);
 
   function handleCancelDialog() {
-    // Cancel honors the user's intent: any in-flight rollback is aborted so
-    // the document is not silently rewritten after they "Cancel".
     abortRef.current?.abort();
     abortRef.current = null;
     setRestoring(false);
@@ -564,9 +443,7 @@ function EntryRow({
       try {
         const body = (await res.json()) as { error?: string };
         if (body.error) detail = body.error;
-      } catch {
-        // non-JSON body; keep status detail
-      }
+      } catch {}
       console.error('[timeline] rollback failed', {
         docName,
         sha: entry.sha,
@@ -614,8 +491,8 @@ function EntryRow({
           aria-controls={expanded ? diffPanelId : undefined}
           data-testid="timeline-entry-expand"
           className={[
-            'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            expanded ? 'bg-muted' : 'hover:bg-muted/50',
+            'group flex w-full items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            expanded ? 'bg-muted' : 'hover:bg-muted/80',
           ].join(' ')}
           onClick={handleActivate}
           onKeyDown={(e) => {
@@ -745,9 +622,7 @@ function EntryRow({
   );
 }
 
-// ─── Main content (no Sheet wrapper) ─────────────────────────────────────────
-
-export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
+export function TimelineContent({ docName, diffLayout, onDiffLayoutChange }: TimelineContentProps) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
   const [entries, setEntries] = useState<TimelineEntry[]>([]);
@@ -757,9 +632,6 @@ export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
   const [cache] = useState(() => new LruStringCache(HISTORICAL_CONTENT_CACHE_LIMIT));
   const [expandedShas, setExpandedShas] = useState<Set<string>>(() => new Set());
 
-  // Reset expansion + cache on doc nav. The parent intentionally does not key
-  // <TimelineContent> on docName (it would force a re-mount on every nav and
-  // throw away the polling timer), so we clear locally.
   // biome-ignore lint/correctness/useExhaustiveDependencies: cache is a stable useState-initialized instance — including it in deps would not change behavior but reads as a noisier signal of "this effect depends on the cache" when in fact it depends only on the active doc.
   useEffect(() => {
     setExpandedShas(new Set());
@@ -819,8 +691,6 @@ export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
     };
   }, [docName]);
 
-  // ── Group entries ──────────────────────────────────────────────────────────
-
   const groups: Array<
     | { kind: 'checkpoint'; entry: TimelineEntry }
     | { kind: 'wip-group'; entries: TimelineEntry[]; isPreCheckpoint: boolean }
@@ -855,8 +725,40 @@ export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
 
   const hasNoCheckpoints = !entries.some((e) => e.type === 'checkpoint');
 
+  const hasEntries = !loading && !error && entries.length > 0;
+
   return (
     <div className="flex h-full flex-col">
+      {hasEntries && (
+        <div className="flex items-center justify-end gap-1 px-2 py-1.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToggleGroup
+                type="single"
+                value={diffLayout}
+                onValueChange={(v) => {
+                  if (v) onDiffLayoutChange(v as DiffLayout);
+                }}
+                aria-label="Diff layout"
+                variant="segmented"
+                size="sm"
+                spacing={1}
+                className="bg-muted dark:bg-background p-0.5 rounded-md shrink-0"
+              >
+                <ToggleGroupItem value="unified" aria-label="Unified diff" className="size-6 px-0">
+                  <Rows2 className="size-3.5" />
+                </ToggleGroupItem>
+                <ToggleGroupItem value="split" aria-label="Split diff" className="size-6 px-0">
+                  <Columns2 className="size-3.5" />
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </TooltipTrigger>
+            <TooltipContent>
+              {diffLayout === 'unified' ? 'Unified diff' : 'Split diff'}
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      )}
       {/* Scrollable entry list */}
       <div className="flex-1 overflow-y-auto subtle-scrollbar">
         {/* Loading skeleton */}
@@ -868,7 +770,7 @@ export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
             aria-label="Loading timeline history"
           >
             {[1, 2, 3].map((i) => (
-              <div key={i} className="flex items-start gap-3 rounded-lg px-3 py-2.5">
+              <div key={i} className="flex items-start gap-2.5 rounded-lg px-3 py-2.5">
                 <Skeleton className="size-3.5 rounded mt-0.5 shrink-0" />
                 <div className="flex-1 space-y-1.5">
                   <Skeleton className="h-3 w-28" />
@@ -896,7 +798,6 @@ export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
         {/* Flat list when no checkpoints */}
         {!loading && !error && hasNoCheckpoints && entries.length > 0 && (
           <div className="flex flex-col gap-1 p-2">
-            <CurrentVersionRow />
             {entries.map((entry) => (
               <EntryRow
                 key={entry.sha}
@@ -916,7 +817,6 @@ export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
         {/* Grouped list with checkpoints */}
         {!loading && !error && !hasNoCheckpoints && (
           <div className="flex flex-col gap-1 p-2">
-            <CurrentVersionRow />
             {groups.map((group, idx) => {
               if (group.kind === 'checkpoint') {
                 return (

@@ -1,12 +1,3 @@
-/**
- * Tests for mdast→hast handlers (D7 / Q1 shapes + FR-20 escape correctness).
- *
- * Per-node unit tests cover the canonical HTML shape each promoted mdast
- * type renders to in the clipboard-copy path. The fuzz test ships with
- * 100 random adversarial payloads and asserts no unescaped `<script>`
- * substring survives the pipeline — the FR-20 security contract.
- */
-
 import { describe, expect, test } from 'bun:test';
 import type { MdxJsxFlowElement, MdxJsxTextElement } from 'mdast-util-mdx';
 import type { RawMdxFallbackMdast, WikiLinkMdast } from './mdast-augmentation.ts';
@@ -73,10 +64,6 @@ describe('wikiLink mdast→hast', () => {
   });
 
   test('label text content is entity-encoded for display', () => {
-    // target/anchor/alias are application-controlled identifiers in
-    // production (e.g. "Page Name") — the fuzz test below exercises
-    // adversarial raw-content types. Here we only assert that the
-    // visible label (inside the `<a>`) is entity-encoded correctly.
     const node: WikiLinkMdast = {
       type: 'wikiLink',
       value: '<script>',
@@ -84,7 +71,6 @@ describe('wikiLink mdast→hast', () => {
       children: [{ type: 'text', value: '<script>' }],
     };
     const out = html(wrap(node));
-    // The visible label text inside `<a>` gets hast-text-escaped.
     expect(out).toContain('>&#x3C;script></a>');
   });
 });
@@ -113,10 +99,6 @@ describe('mdxJsxFlowElement mdast→hast', () => {
       data: { sourceRaw: '<MyComponent prop="value"/>' },
     };
     const out = html(wrap(node));
-    // `<` is always escaped (required — otherwise it would start a tag).
-    // `>` and `"` are left as-is in text content per HTML5 rules:
-    //   - `>` is only syntactically special as the tag closer, unambiguous in text.
-    //   - `"` is only special inside an attribute value.
     expect(out).toContain('&#x3C;MyComponent');
     expect(out).not.toContain('<MyComponent');
   });
@@ -187,6 +169,42 @@ describe('lowercase HTML-primitive shortcut (img / video / audio)', () => {
     expect(out).toMatch(/<audio\b[^>]*\bcontrols(?=[\s/>])[^>]*>/);
     expect(out).toContain('</audio>');
     expect(out).not.toContain('<pre class="mdx-component">');
+  });
+
+  test('img flow element strips on* event handler attributes (FR-20 defense-in-depth)', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        { type: 'mdxJsxAttribute', name: 'onerror', value: 'alert(1)' },
+        { type: 'mdxJsxAttribute', name: 'onload', value: 'fetch("//evil")' },
+        { type: 'mdxJsxAttribute', name: 'onclick', value: 'doom()' },
+      ],
+      children: [],
+      data: { sourceRaw: '<img onerror="alert(1)" onload="fetch(...)" src="x.png" />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/<img\b[^>]*src="https:\/\/x\.example\/img\.png"[^>]*>/);
+    expect(out).not.toContain('onerror');
+    expect(out).not.toContain('onload');
+    expect(out).not.toContain('onclick');
+    expect(out).not.toContain('alert(1)');
+  });
+
+  test('img flow element preserves `on*`-prefixed safe attributes when length < 3 or non-handler', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        { type: 'mdxJsxAttribute', name: 'on', value: 'unusual' },
+      ],
+      children: [],
+      data: { sourceRaw: '<img src="x.png" on="unusual" />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/\bon="unusual"/);
   });
 
   test('inline <img> via mdxJsxTextElement also emits native <img> (not <span class="mdx-inline">)', () => {
@@ -287,7 +305,7 @@ describe('lowercase HTML-primitive shortcut (img / video / audio)', () => {
 });
 
 describe('mdxJsxTextElement mdast→hast', () => {
-  test('renders as <span class="mdx-inline">escaped</span>', () => {
+  test('renders as <span> carrying both the mdx-inline class and the data-jsx-inline marker', () => {
     const node: MdxJsxTextElement = {
       type: 'mdxJsxTextElement',
       name: null,
@@ -296,14 +314,15 @@ describe('mdxJsxTextElement mdast→hast', () => {
       data: { sourceRaw: '<Tag/>' },
     };
     const out = html(wrap(node));
-    expect(out).toContain('<span class="mdx-inline">');
+    expect(out).toContain('class="mdx-inline"');
+    expect(out).toContain('data-jsx-inline=""');
     expect(out).toContain('&#x3C;Tag/>');
     expect(out).not.toContain('<Tag/>');
   });
 });
 
 describe('rawMdxFallback mdast→hast', () => {
-  test('renders leading comment + pre/code', () => {
+  test('renders leading comment + pre/code with both class and data-raw-mdx-fallback markers', () => {
     const node: RawMdxFallbackMdast = {
       type: 'rawMdxFallback',
       value: '<A>\n</B>',
@@ -311,7 +330,9 @@ describe('rawMdxFallback mdast→hast', () => {
     };
     const out = html(wrap(node));
     expect(out).toContain('<!-- Parse error: mismatched tag -->');
-    expect(out).toContain('<pre class="mdx-fallback">');
+    expect(out).toContain('class="mdx-fallback"');
+    expect(out).toContain('data-raw-mdx-fallback=""');
+    expect(out).toContain('data-reason="mismatched tag"');
     expect(out).toContain('<code>');
     expect(out).toContain('&#x3C;A>');
     expect(out).toContain('&#x3C;/B>');
@@ -339,10 +360,6 @@ describe('rawMdxFallback mdast→hast', () => {
   });
 
   test('reason containing "-->" cannot close the comment prematurely', () => {
-    // rehype-stringify emits hast `comment.value` verbatim per HTML spec —
-    // if reason contained `-->` it would escape the comment and the raw
-    // source that follows would no longer be inside `<pre><code>`. The
-    // handler normalizes `--` to em-dash defensively.
     const node: RawMdxFallbackMdast = {
       type: 'rawMdxFallback',
       value: '<script>alert(1)</script>',
@@ -352,22 +369,15 @@ describe('rawMdxFallback mdast→hast', () => {
       },
     };
     const out = html(wrap(node));
-    // The `-->` sequence must not appear anywhere except as the closing
-    // delimiter of the comment itself.
     const commentCloses = out.match(/-->/g) ?? [];
     expect(commentCloses.length).toBe(1);
-    // The em-dash normalization is visible in the comment.
     expect(out).toContain('\u2014> escape attempt');
-    // Adversarial source still escapes properly inside <pre><code>.
     expect(out).not.toContain('<script>');
     expect(out).toContain('&#x3C;script>');
   });
 });
 
 describe('FR-20 adversarial fuzz — no unescaped <script> in any emitted HTML', () => {
-  // Pool of adversarial payload fragments inspired by the R18 fuzz corpus
-  // and OWASP XSS cheat sheet. We concatenate random subsets with random
-  // noise and emit 100 payloads through each custom-node type.
   const ADVERSARIAL_FRAGMENTS = [
     '<script>alert(1)</script>',
     '<img src=x onerror=alert(1)>',
@@ -382,7 +392,6 @@ describe('FR-20 adversarial fuzz — no unescaped <script> in any emitted HTML',
   ];
 
   function randomPayload(seed: number): string {
-    // Deterministic pseudo-random: LCG with a given seed.
     let s = seed;
     const rand = () => {
       s = (s * 1664525 + 1013904223) >>> 0;
@@ -446,10 +455,4 @@ describe('FR-20 adversarial fuzz — no unescaped <script> in any emitted HTML',
       expect(out).not.toContain('<iframe');
     }
   });
-
-  // Note: wikiLink's target/anchor/alias are application-controlled
-  // identifiers, not raw content carriers — the fuzz concern for FR-20
-  // is the three types that store arbitrary failed/unparsed MDX source
-  // (mdxJsxFlowElement, mdxJsxTextElement, rawMdxFallback). Those are
-  // the 100+ trial assertions above.
 });

@@ -30,15 +30,12 @@ export type WikiLinkSuggestionItem =
 
 interface ParsedQuery {
   mode: 'page' | 'anchor';
-  /** The page slug before `#` (only set in anchor mode). */
   pageTarget: string;
-  /** The text after `#` used to filter headings. */
   anchorQuery: string;
 }
 
 const MAX_ITEMS = 8;
 
-/** Split `query` on the first `#` with a non-empty left side. */
 export function parseQuery(query: string): ParsedQuery {
   const hashIdx = query.indexOf('#');
   if (hashIdx > 0) {
@@ -120,13 +117,6 @@ export function buildAnchorItems(
   }));
 }
 
-/**
- * Derive wiki-link attrs from a raw query for fallback insertion — used when
- * Enter is pressed with no item selected. Anchor mode inserts `{ target, anchor }`;
- * page mode falls back to unresolved link attrs (null if query is empty/unslugable).
- *
- * Pure function — exported for testability.
- */
 export function computeFallbackAttrs(
   query: string,
 ): { target: string; alias: string | null; anchor: string | null } | null {
@@ -137,11 +127,6 @@ export function computeFallbackAttrs(
   return buildUnresolvedWikiLinkAttrs(query);
 }
 
-/**
- * Custom `findSuggestionMatch` for `@tiptap/suggestion` — detects `[[` paired
- * delimiters using the same regex as the original ProseMirror plugin. The query
- * includes `#` so anchor mode (`page#heading`) works transparently.
- */
 export function wikiLinkMatcher(config: {
   $position: ResolvedPos;
 }): { range: { from: number; to: number }; query: string; text: string } | null {
@@ -175,14 +160,7 @@ export async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
   return data.ok && Array.isArray(data.headings) ? data.headings : [];
 }
 
-/**
- * Returns a `@tiptap/suggestion` plugin for wiki-link `[[` autocompletion.
- * Replaces the former hand-rolled ProseMirror Plugin with the same Suggestion
- * framework used by slash commands (PR #51), plus `onBeforeStart` and
- * `onBeforeUpdate` hooks for per-mode async loading labels.
- */
 export function configureWikiLinkSuggestion(editor: Editor) {
-  // Mutable closure state — reset in onExit for behavioral parity
   let cachedPages: PageItem[] = [];
   let pagesLoaded = false;
   let pagesFetching = false;
@@ -195,7 +173,6 @@ export function configureWikiLinkSuggestion(editor: Editor) {
     editor,
     pluginKey: wikiLinkSuggestionKey,
     char: '[[',
-    // null allows mid-word triggers — safe because [[ is an unambiguous delimiter (unlike single-char /)
     allowedPrefixes: null,
     findSuggestionMatch: wikiLinkMatcher,
 
@@ -221,7 +198,6 @@ export function configureWikiLinkSuggestion(editor: Editor) {
         return buildAnchorItems(pageTarget, headings, anchorQuery);
       }
 
-      // Page mode — two-flag dedupe (D9)
       if (!pagesLoaded && !pagesFetching) {
         pagesFetching = true;
         try {
@@ -256,9 +232,6 @@ export function configureWikiLinkSuggestion(editor: Editor) {
 
         editor.chain().focus().deleteRange(range).insertContent({ type: 'wikiLink', attrs }).run();
       } catch (err) {
-        // Silent failure is intentional — TipTap chains are atomic (single transaction),
-        // so partial state (deleteRange applied, insertContent not) cannot occur.
-        // User can retry with [[ if needed.
         console.error('[wiki-link-suggestion] command failed', { item, range }, err);
       }
     },
@@ -306,7 +279,6 @@ export function configureWikiLinkSuggestion(editor: Editor) {
         renderer.updateProps(computeMenuProps(currentProps, loadingOverride, onSelect));
       };
 
-      /** Fallback: insert a wiki-link from the raw query when no item is selected. */
       const fallbackInsert = () => {
         if (!currentProps) return;
         const { editor, range } = currentProps;
@@ -340,10 +312,6 @@ export function configureWikiLinkSuggestion(editor: Editor) {
             editor: props.editor,
           });
           result.popup.appendChild(renderer.element);
-          // startAutoUpdate after content is in popup — autoUpdate fires
-          // doPosition synchronously on setup. Popup remains visibility:hidden
-          // until reveal() is called in onStart (after items load) — this
-          // prevents the loading-state flash at the wrong position.
           posState.stopAutoUpdate = result.startAutoUpdate();
         },
 
@@ -361,10 +329,6 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           currentProps = props;
           selectedIndex = 0;
           rerender(null);
-          // Items have loaded — reveal the popup. reveal() triggers a
-          // doPosition pass that measures the populated content (so flip()
-          // correctly decides above/below), then unhides on resolution.
-          // No separate doPosition call needed — reveal() does it.
           reveal?.();
         },
 
@@ -407,16 +371,13 @@ export function configureWikiLinkSuggestion(editor: Editor) {
         },
 
         onExit() {
-          // Positioning cleanup first (stop autoUpdate → remove popup DOM)
           destroySuggestionPopup(posState);
           doPosition = null;
           reveal = null;
-          // React cleanup last — if destroy() throws, DOM is already clean
           renderer?.destroy();
           renderer = null;
           currentProps = null;
           selectedIndex = 0;
-          // Reset cache — each [[ session re-fetches for freshness
           cachedPages = [];
           cachedHeadings = new Map();
           fetchError = null;

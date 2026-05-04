@@ -25,13 +25,11 @@ test('buildCodexUrl single-encodes % in path', () => {
 
 test('buildCodexUrl single-encodes em-dash and unicode in prompt', () => {
   const url = buildCodexUrl(payload({ prompt: 'Read café — notes about the feature' }));
-  // é → %C3%A9; em-dash U+2014 → %E2%80%94; space → %20
   expect(url).toContain('prompt=Read%20caf%C3%A9%20%E2%80%94%20notes%20about%20the%20feature');
 });
 
 test('buildCodexUrl single-encodes literal & in path — DC8.5', () => {
   const url = buildCodexUrl(payload({ projectDir: '/Users/who/A & B' }));
-  // & → %26; exactly one literal & in the URL (the prompt→path separator)
   expect(url).toContain('&path=%2FUsers%2Fwho%2FA%20%26%20B');
   expect(url.split('&').length - 1).toBe(1);
 });

@@ -1,39 +1,11 @@
-/**
- * PropPanel — unit tests for the Advanced collapsible section, the
- * non-default-set count helper, the per-descriptor localStorage round-trip,
- * the autoFocus marker, and the upload affordance.
- *
- * Repo convention (see ActivityPanelBurstRow.test.tsx, use-editor-mode.test.ts):
- * no @testing-library/react, no happy-dom. Structural cases use
- * `renderToString`; storage helpers are unit-tested with localStorage fakes.
- *
- * Interactive cases (trigger click toggling open/closed; re-mount reading
- * persisted state through DOM lifecycle) are covered indirectly:
- *   - The Collapsible's `open`/`onOpenChange` wiring is structural; if the
- *     `onOpenChange` calls both setState and `persistAdvancedOpenState`, a
- *     remount reading via `readAdvancedOpenState` will reflect the change.
- *     Both halves are unit-tested below.
- *   - The Playwright suite at packages/app/tests/a11y/component-blocks.e2e.ts
- *     (A11Y01 Tab cycle, A11Y03 Esc close) exercises the panel end-to-end.
- */
-
 import { describe, expect, test } from 'bun:test';
-import type { PropDef } from '@inkeep/open-knowledge-core';
+import { builtInComponents, type PropDef } from '@inkeep/open-knowledge-core';
 import { renderToString } from 'react-dom/server';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
 
-const {
-  countAdvancedSet,
-  getAutoFocusedPropName,
-  PropPanel,
-  persistAdvancedOpenState,
-  readAdvancedOpenState,
-} = await import('./PropPanel.tsx');
-
-// ---------------------------------------------------------------------------
-// localStorage fake — the read/write helpers swallow throws and treat
-// undefined `localStorage` as "no storage". Replace the global per test.
-// ---------------------------------------------------------------------------
+const { countAdvancedSet, PropPanel, persistAdvancedOpenState, readAdvancedOpenState } =
+  await import('./PropPanel.tsx');
+const { getAutoFocusedPropName } = await import('../utils/editor-strings.ts');
 
 interface FakeStorage {
   store: Record<string, string>;
@@ -63,7 +35,6 @@ function makeFakeStorage(): FakeStorage {
 function withFakeStorage<T>(fn: (s: FakeStorage) => T): T {
   const fake = makeFakeStorage();
   const original = (globalThis as { localStorage?: Storage }).localStorage;
-  // Cast the shape — the helpers only call getItem / setItem.
   (globalThis as { localStorage?: unknown }).localStorage = fake as unknown as Storage;
   try {
     return fn(fake);
@@ -75,10 +46,6 @@ function withFakeStorage<T>(fn: (s: FakeStorage) => T): T {
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Descriptor fixtures — minimum surface PropPanel reads.
-// ---------------------------------------------------------------------------
 
 function NoopComponent() {
   return null;
@@ -96,10 +63,6 @@ function makeCanonicalDescriptor(name: string, props: PropDef[]): JsxComponentDe
     reactNodePropNames: new Set(),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Pure helpers
-// ---------------------------------------------------------------------------
 
 describe('countAdvancedSet', () => {
   test('returns 0 when no advanced props are set away from default', () => {
@@ -189,10 +152,6 @@ describe('localStorage round-trip', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Static markup — Advanced section presence + count badge
-// ---------------------------------------------------------------------------
-
 describe('PropPanel — Advanced collapsible section', () => {
   test('(a) descriptor with no advanced props renders no Collapsible', () => {
     const d = makeCanonicalDescriptor('NoAdvanced', [
@@ -216,7 +175,6 @@ describe('PropPanel — Advanced collapsible section', () => {
     );
     expect(html).toContain('data-prop-panel-advanced-trigger');
     expect(html).toContain('data-state="closed"');
-    // The trigger label is "Advanced".
     expect(html).toContain('Advanced');
   });
 
@@ -235,13 +193,11 @@ describe('PropPanel — Advanced collapsible section', () => {
       { name: 'title', type: 'string', advanced: true, required: false },
     ]);
 
-    // 0 set → no badge
     const htmlZero = withFakeStorage(() =>
       renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
     );
     expect(htmlZero).not.toContain('data-prop-panel-advanced-count');
 
-    // 2 set (loading away from default + srcset present)
     const htmlTwo = withFakeStorage(() =>
       renderToString(
         <PropPanel
@@ -294,9 +250,6 @@ describe('getAutoFocusedPropName', () => {
   });
 
   test('only matches PropDefString — number/enum/boolean autoFocus is not honored', () => {
-    // PropDefBoolean does not declare an autoFocus field per D3 LOCKED. The
-    // helper deliberately checks `type === 'string'` to avoid TS escape
-    // hatches accidentally surfacing a non-string focus target.
     const props: PropDef[] = [
       // biome-ignore lint/suspicious/noExplicitAny: synthetic shape — autoFocus only valid on string in the type
       { name: 'count', type: 'number', required: false, autoFocus: true } as any,
@@ -306,11 +259,6 @@ describe('getAutoFocusedPropName', () => {
   });
 
   test('skips advanced props — would be inside collapsed CollapsibleContent on mount', () => {
-    // Defensive guard: a prop with `advanced: true` lives inside the
-    // Collapsible (closed by default), so its `<Input>` is not visible on
-    // mount. Honoring `autoFocus` on it would tell the browser to focus a
-    // hidden element. The helper skips advanced props so the next
-    // common-tier autoFocus prop wins, or null if none.
     const props: PropDef[] = [
       { name: 'srcset', type: 'string', required: false, autoFocus: true, advanced: true },
       { name: 'src', type: 'string', required: true, autoFocus: true },
@@ -376,7 +324,6 @@ describe('PropPanel — autoFocus marker on string Input', () => {
     const html = withFakeStorage(() =>
       renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
     );
-    // Marker is rendered for the first matching prop only.
     const matches = html.match(/data-prop-autofocus=""/g) ?? [];
     expect(matches.length).toBe(1);
   });
@@ -393,15 +340,83 @@ describe('PropPanel — autoFocus marker on string Input', () => {
   });
 });
 
-// runUpload unit tests were removed — Bun on Linux fires its
-// unhandled-rejection observer for any rejected promise constructed in
-// the same `mock.module()` scope (regardless of rejection shape: string,
-// object, Error, throw-inside-async-body, Promise.reject with synchronous
-// .catch pre-attach, or process.on('unhandledRejection') absorbing
-// handler — all five tried, all five failed). The observer's event
-// bleeds into the next test file's `##[group]` boundary
-// (image-upload/upload-file.test.ts) and reports every test there as
-// failed, regardless of whether the await/then chain actually catches
-// the rejection. The function is 8 lines of standard try/catch + toast;
-// runtime exercise via the PropPanel UI provides equivalent coverage at
-// a layer Bun's observer doesn't intermediate.
+function findBuiltIn(name: string): JsxComponentDescriptor {
+  const meta = builtInComponents.find((m) => m.name === name);
+  if (!meta) throw new Error(`built-in not found: ${name}`);
+  return {
+    ...meta,
+    Component: NoopComponent,
+    reactNodePropNames: new Set(),
+  } as JsxComponentDescriptor;
+}
+
+describe('PropPanel — descriptor.props narrowing (real registry)', () => {
+  test('WikiEmbedImage renders only the alias control', () => {
+    const d = findBuiltIn('WikiEmbedImage');
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).toContain('id="prop-alias"');
+    expect(html).not.toContain('id="prop-src"');
+    expect(html).not.toContain('id="prop-alt"');
+    expect(html).not.toContain('id="prop-width"');
+    expect(html).not.toContain('id="prop-height"');
+    expect(html).not.toContain('id="prop-srcset"');
+    expect(html).not.toContain('id="prop-sizes"');
+    expect(html).not.toContain('id="prop-loading"');
+    expect(html).not.toContain('id="prop-title"');
+    expect(html).not.toContain('data-prop-panel-advanced-trigger');
+    const propIds = html.match(/id="prop-[^"]+"/g) ?? [];
+    expect(propIds.length).toBe(1);
+  });
+
+  test('WikiEmbedVideo renders only the alias control', () => {
+    const d = findBuiltIn('WikiEmbedVideo');
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).toContain('id="prop-alias"');
+    expect(html).not.toContain('id="prop-src"');
+    expect(html).not.toContain('id="prop-controls"');
+    expect(html).not.toContain('id="prop-poster"');
+    expect(html).not.toContain('data-prop-panel-advanced-trigger');
+    const propIds = html.match(/id="prop-[^"]+"/g) ?? [];
+    expect(propIds.length).toBe(1);
+  });
+
+  test('WikiEmbedAudio renders only the alias control', () => {
+    const d = findBuiltIn('WikiEmbedAudio');
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).toContain('id="prop-alias"');
+    expect(html).not.toContain('id="prop-src"');
+    expect(html).not.toContain('id="prop-controls"');
+    expect(html).not.toContain('data-prop-panel-advanced-trigger');
+    const propIds = html.match(/id="prop-[^"]+"/g) ?? [];
+    expect(propIds.length).toBe(1);
+  });
+
+  test('canonical img descriptor renders the full htmlImgProps surface', () => {
+    const d = findBuiltIn('img');
+    const html = withFakeStorage(() => {
+      persistAdvancedOpenState('img', true);
+      return renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />);
+    });
+    expect(html).toContain('id="prop-src"');
+    expect(html).toContain('id="prop-alt"');
+    expect(html).toContain('id="prop-width"');
+    expect(html).toContain('id="prop-height"');
+    expect(html).toContain('data-prop-panel-advanced-trigger');
+    expect(html).toContain('id="prop-srcset"');
+    expect(html).toContain('id="prop-sizes"');
+    expect(html).toContain('id="prop-loading"');
+    expect(html).toContain('id="prop-title"');
+    expect(html).toContain('id="prop-decoding"');
+    expect(html).toContain('id="prop-fetchpriority"');
+    expect(html).toContain('id="prop-crossorigin"');
+    expect(html).toContain('id="prop-referrerpolicy"');
+    const propIds = html.match(/id="prop-[^"]+"/g) ?? [];
+    expect(propIds.length).toBe(12);
+  });
+});

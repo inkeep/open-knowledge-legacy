@@ -15,10 +15,6 @@ import {
   resolveVsCodeConfigPath,
   resolveWindsurfConfigPath,
 } from './editors.ts';
-// `parseEditorFlag` removed by main PR #282 (#295) along with the `--editors`
-// CLI flag — `ok init` now installs for a canonical default set instead of
-// user-specified subsets. US-006's `writeUserMcpConfigs` exports are M6b-only
-// additions that survive on top of main's refactor.
 import {
   detectInstalledEditors,
   type EditorMcpResult,
@@ -37,6 +33,7 @@ describe('runInit', () => {
   let fakeHome: string;
   const originalPlatform = process.platform;
   const originalHome = process.env.HOME;
+  const originalArgv1 = process.argv[1];
 
   const claudeConfigPath = () => resolveClaudeCodeConfigPath({ home: fakeHome });
   const cursorConfigPath = () => resolveCursorConfigPath({ home: fakeHome });
@@ -45,6 +42,9 @@ describe('runInit', () => {
   const windsurfConfigPath = () => resolveWindsurfConfigPath({ home: fakeHome });
   const devRepoRoot = () => join(testDir, 'local-open-knowledge');
   const devCliEntryPath = () => join(devRepoRoot(), 'packages', 'cli', 'src', 'cli.ts');
+  const enableDevMcp = () => {
+    process.argv[1] = devCliEntryPath();
+  };
   const expectedDevMcpEntry = () => ({
     command: 'node',
     args: [join(devRepoRoot(), 'packages', 'cli', 'dist', 'cli.mjs'), 'mcp'],
@@ -59,19 +59,12 @@ describe('runInit', () => {
     runtimeArgs: [join(devRepoRoot(), 'packages', 'cli', 'dist', 'cli.mjs'), 'ui'],
     port: 3000,
   });
-  /**
-   * Stubbed installUserSkill used by every test unless overridden. Prevents
-   * the real `npx skills` subprocess from firing in the test suite, keeping
-   * runs hermetic + fast.
-   */
   const defaultInstallUserSkill = async () => 'installed' as const;
   const runInitForTest = async (options: Parameters<typeof runInit>[0] = {}) =>
     runInit({
       cwd: testDir,
       home: fakeHome,
       installUserSkill: defaultInstallUserSkill,
-      // Default to user scope so existing tests remain focused on user-scope
-      // behavior. New scope tests set scope explicitly.
       scope: 'user',
       ...options,
     });
@@ -99,20 +92,14 @@ describe('runInit', () => {
     } else {
       process.env.HOME = originalHome;
     }
+    process.argv[1] = originalArgv1;
     rmSync(testDir, { recursive: true, force: true });
   });
 
-  // -----------------------------------------------------------------------
-  // Original tests — backward compat (default editors: ['claude'])
-  // -----------------------------------------------------------------------
-
-  it('scaffolds .open-knowledge/ and writes a fresh global Claude config', async () => {
+  it('scaffolds .ok/ and writes a fresh global Claude config', async () => {
     const result = await runInitForTest();
 
     expect(result.contentCreated.length).toBeGreaterThan(0);
-    // Post-V0-24.2 scaffold: config-only, no content subdirs.
-    // Per SPEC 2026-04-22 (FR2): the internal .open-knowledge/AGENTS.md
-    // README is no longer scaffolded.
     expect(existsSync(join(testDir, OK_DIR, 'cache'))).toBe(true);
     expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(false);
     expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
@@ -121,7 +108,6 @@ describe('runInit', () => {
     expect(existsSync(join(testDir, OK_DIR, 'research'))).toBe(false);
     expect(existsSync(join(fakeHome, '.codeium'))).toBe(false);
 
-    // Backward-compat fields
     expect(result.mcpAction).toBe('written');
     const mcpPath = claudeConfigPath();
     expect(existsSync(mcpPath)).toBe(true);
@@ -133,7 +119,6 @@ describe('runInit', () => {
       args: ['@inkeep/open-knowledge', 'mcp'],
     });
 
-    // New editors array
     expect(result.editors).toHaveLength(1);
     expect(result.editors[0].editorId).toBe('claude');
     expect(result.editors[0].action).toBe('written');
@@ -168,7 +153,8 @@ describe('runInit', () => {
   });
 
   it('writes a local dev MCP entry when --dev-mcp is enabled', async () => {
-    const result = await runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+    enableDevMcp();
+    const result = await runInitForTest({ devMcp: true });
 
     expect(result.mcpAction).toBe('written');
 
@@ -251,7 +237,8 @@ describe('runInit', () => {
       ),
     );
 
-    const result = await runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+    enableDevMcp();
+    const result = await runInitForTest({ devMcp: true });
     expect(result.mcpAction).toBe('overwritten');
     expect(result.editors[0].action).toBe('overwritten');
 
@@ -265,7 +252,6 @@ describe('runInit', () => {
     expect(result.mcpAction).toBe('skipped-flag');
     expect(existsSync(claudeConfigPath())).toBe(false);
 
-    // But the .open-knowledge/ config scaffold IS created
     expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
   });
 
@@ -292,13 +278,8 @@ describe('runInit', () => {
     expect(result.mcpAction).toBe('failed');
     expect(result.mcpError).toMatch(/invalid JSON/i);
 
-    // Config scaffold should still have been created
     expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
   });
-
-  // -----------------------------------------------------------------------
-  // Multi-editor tests
-  // -----------------------------------------------------------------------
 
   describe('Cursor', () => {
     it('writes ~/.cursor/mcp.json with mcpServers key', async () => {
@@ -348,7 +329,6 @@ describe('runInit', () => {
       expect(existsSync(configPath)).toBe(true);
 
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      // VS Code uses 'servers' not 'mcpServers'
       expect(config.servers).toBeDefined();
       expect(config.mcpServers).toBeUndefined();
       expect(config.servers[result.editors[0].serverName]).toEqual({
@@ -381,10 +361,10 @@ describe('runInit', () => {
 
     it('writes the dev MCP env block to Codex TOML configs', async () => {
       mkdirSync(dirname(codexConfigPath()), { recursive: true });
+      enableDevMcp();
       const result = await runInitForTest({
         editors: ['codex'],
         devMcp: true,
-        cliEntryPath: devCliEntryPath(),
       });
 
       expect(result.editors).toHaveLength(1);
@@ -496,11 +476,7 @@ describe('runInit', () => {
       );
     });
 
-    // Cowork install hint — SPEC 2026-04-24-skill-dual-track-install FR5 / D12.
-    // When Claude Desktop's config dir exists, `ok init` appends a one-line
-    // hint pointing at the docs + the pinned-version .skill release asset.
     it('flags claudeDesktopDetected=true when Claude config dir exists', async () => {
-      // Create the config-dir parent that detectClaudeDesktopPresence probes.
       mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
 
       const result = await runInitForTest();
@@ -509,8 +485,6 @@ describe('runInit', () => {
     });
 
     it('flags claudeDesktopDetected=false when Claude config dir is absent', async () => {
-      // No Claude config dir created — fakeHome/.claude exists (from beforeEach)
-      // but not the Application Support/Claude dir.
       const result = await runInitForTest();
 
       expect(result.claudeDesktopDetected).toBe(false);
@@ -522,9 +496,6 @@ describe('runInit', () => {
       const result = await runInitForTest();
       const output = formatInitResult(result, testDir);
 
-      // Hint names the Desktop App + Chat & Cowork (distinguishes from
-      // Claude Code) and points at the `ok install-skill` command —
-      // users install the skill locally, no GitHub download in the loop.
       expect(output).toContain('Claude Desktop App detected.');
       expect(output).toContain('Claude Chat & Cowork');
       expect(output).toContain('ok install-skill');
@@ -614,7 +585,6 @@ describe('runInit', () => {
     });
 
     it('overwrites across all targeted editors', async () => {
-      // Pre-populate Claude and Cursor with old entries
       writeFileSync(
         claudeConfigPath(),
         JSON.stringify({
@@ -644,7 +614,6 @@ describe('runInit', () => {
     });
 
     it('partial failure — one editor fails, others succeed', async () => {
-      // Write invalid JSON to Cursor config
       mkdirSync(dirname(cursorConfigPath()), { recursive: true });
       writeFileSync(cursorConfigPath(), '{broken');
 
@@ -729,10 +698,6 @@ describe('runInit', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Claude Code launch.json scaffolding (US-009 / D-020 / D-031)
-  // -----------------------------------------------------------------------
-
   describe('launch.json scaffolding', () => {
     it('writes a fresh .claude/launch.json pointing at open-knowledge ui', async () => {
       const result = await runInitForTest();
@@ -783,7 +748,8 @@ describe('runInit', () => {
     });
 
     it('writes a local dev launch target when --dev-mcp is enabled', async () => {
-      const result = await runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+      enableDevMcp();
+      const result = await runInitForTest({ devMcp: true });
 
       expect(result.launchJson?.action).toBe('created');
 
@@ -840,7 +806,8 @@ describe('runInit', () => {
         ),
       );
 
-      const result = await runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+      enableDevMcp();
+      const result = await runInitForTest({ devMcp: true });
       expect(result.launchJson?.action).toBe('merged');
 
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
@@ -886,10 +853,6 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.claude', 'launch.json'))).toBe(false);
     });
   });
-
-  // -----------------------------------------------------------------------
-  // Zero project-root file writes (SPEC 2026-04-22 G1 / D2 / FR1)
-  // -----------------------------------------------------------------------
 
   describe('zero project-root file writes', () => {
     it('does not create root AGENTS.md when claude editor is selected', async () => {
@@ -941,10 +904,6 @@ describe('runInit', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Legacy-injection non-interference (SPEC 2026-04-22 FR8 / D3 / US-011 / QA-007)
-  // -----------------------------------------------------------------------
-
   describe('legacy-injection non-interference', () => {
     it('leaves pre-existing open-knowledge marker blocks byte-identical in CLAUDE.md and AGENTS.md', async () => {
       const legacyClaudeBody = [
@@ -977,18 +936,12 @@ describe('runInit', () => {
       const beforeClaude = readFileSync(claudePath, 'utf-8');
       const beforeAgents = readFileSync(agentsPath, 'utf-8');
 
-      // Run init with a no-op skill install so we don't shell out to `npx skills`.
       await runInitForTest({ installUserSkill: async () => 'skip-current' });
 
-      // Byte-identical pre/post — the new init code does NOT touch legacy injections.
       expect(readFileSync(claudePath, 'utf-8')).toBe(beforeClaude);
       expect(readFileSync(agentsPath, 'utf-8')).toBe(beforeAgents);
     });
   });
-
-  // -----------------------------------------------------------------------
-  // installUserSkill wiring (SPEC 2026-04-22 FR6 / US-008 / QA-002 / QA-004)
-  // -----------------------------------------------------------------------
 
   describe('installUserSkill wiring', () => {
     it('returns skillInstall = "installed" when the install succeeds', async () => {
@@ -1016,9 +969,7 @@ describe('runInit', () => {
         installUserSkill: async () => 'failed',
       });
       expect(result.skillInstall).toBe('failed');
-      // MCP config still written successfully
       expect(result.mcpAction).toBe('written');
-      // Manual-install hint surfaces in the summary
       const output = formatInitResult(result, testDir);
       expect(output).toContain('install failed');
       expect(output).toContain('npx skills');
@@ -1036,10 +987,6 @@ describe('runInit', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Content preview integration (US-002)
-  // -----------------------------------------------------------------------
-
   describe('content preview in init output', () => {
     it('renders Content block with file count and sample when preview succeeds', async () => {
       writeFileSync(join(testDir, 'readme.md'), '# Readme');
@@ -1051,15 +998,12 @@ describe('runInit', () => {
       const preview = previewContent({
         projectDir: testDir,
         contentDir: testDir,
-        include: ['**/*.md'],
-        exclude: [],
       });
       result.preview = preview;
 
       const output = formatInitResult(result, testDir);
       expect(output).toContain('Content:');
       expect(output).toContain(`Found ${preview.totalCount} markdown files`);
-      expect(output).toContain('Scope: include=');
       expect(output).toContain('Re-check anytime: open-knowledge preview');
     });
 
@@ -1079,8 +1023,6 @@ describe('runInit', () => {
         totalCount: 0,
         sample: [],
         contentDir: testDir,
-        include: ['**/*.md'],
-        exclude: [],
         warnings: [],
       };
 
@@ -1125,8 +1067,6 @@ describe('runInit', () => {
       const preview = previewContent({
         projectDir: testDir,
         contentDir,
-        include: config.content.include,
-        exclude: config.content.exclude,
       });
       result.preview = preview;
 
@@ -1139,18 +1079,8 @@ describe('runInit', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // US-005 — auto-git-init inside runInit
-  // -------------------------------------------------------------------------
-
   describe('ensureProjectGit wiring (US-005)', () => {
     it('fresh tmpdir (no .git/) → runInit creates .git/ and reports didGitInit=true', async () => {
-      // Use runInitForTest (defaultInstallUserSkill stub) — the real
-      // installUserSkill shells out to `npx skills@~1.5.0 add` which
-      // intermittently fails in CI sandboxes (subprocess returns nonzero
-      // with empty stderr; exit code null) and times out the 5s budget.
-      // The git-init wiring under test is independent of skill install,
-      // so the hermetic stub is the right scope.
       const result = await runInitForTest({ editors: ['claude'] });
 
       expect(result.didGitInit).toBe(true);
@@ -1158,7 +1088,6 @@ describe('runInit', () => {
       const head = readFileSync(join(testDir, '.git/HEAD'), 'utf-8');
       expect(head).toBe('ref: refs/heads/main\n');
 
-      // formatInitResult includes the disclosure line
       const output = formatInitResult(result, testDir);
       expect(output).toContain(`Initialized git repo at ${testDir}/.git/ (default branch: main)`);
     });
@@ -1169,7 +1098,6 @@ describe('runInit', () => {
       const result = await runInitForTest({ editors: ['claude'] });
 
       expect(result.didGitInit).toBe(false);
-      // formatInitResult omits the disclosure line
       const output = formatInitResult(result, testDir);
       expect(output).not.toContain('Initialized git repo at');
     });
@@ -1178,8 +1106,6 @@ describe('runInit', () => {
       const originalPath = process.env.PATH;
       process.env.PATH = '/nonexistent';
       try {
-        // Import the server error type lazily to keep the import surface minimal
-        // for other tests in this file.
         const { ProjectGitInitError } = await import('@inkeep/open-knowledge-server');
         await expect(runInitForTest({ editors: ['claude'] })).rejects.toBeInstanceOf(
           ProjectGitInitError,
@@ -1188,15 +1114,10 @@ describe('runInit', () => {
         process.env.PATH = originalPath;
       }
 
-      // Content scaffolding must NOT have fired when ensureProjectGit threw
       expect(existsSync(join(testDir, OK_DIR))).toBe(false);
       expect(existsSync(join(testDir, '.git'))).toBe(false);
     });
   });
-
-  // -----------------------------------------------------------------------
-  // MCP scope selection (mcp-scope-flag feature)
-  // -----------------------------------------------------------------------
 
   describe('mcp scope selection', () => {
     it('scope=user writes only user-level config (default runInitForTest behavior)', async () => {
@@ -1211,16 +1132,22 @@ describe('runInit', () => {
 
     it('scope=project writes only project-level config for Claude Code', async () => {
       const result = await runInitForTest({ editors: ['claude'], scope: 'project' });
-      // Only the project-scope result
       expect(result.editors).toHaveLength(1);
       expect(result.editors[0].editorId).toBe('claude');
       expect(result.editors[0].action).toBe('written');
       expect(result.editors[0].configScope).toBe('project');
       expect(result.editors[0].configPath).toBe(join(testDir, '.mcp.json'));
-      // User-level config should NOT be written
       expect(existsSync(claudeConfigPath())).toBe(false);
-      // Project-level config IS written
       expect(existsSync(join(testDir, '.mcp.json'))).toBe(true);
+      expect(result.projectSkills).toHaveLength(1);
+      expect(result.projectSkills[0]).toMatchObject({
+        editorId: 'claude',
+        action: 'written',
+        path: join(testDir, '.claude', 'skills', 'open-knowledge', 'SKILL.md'),
+      });
+      expect(existsSync(join(testDir, '.claude', 'skills', 'open-knowledge', 'SKILL.md'))).toBe(
+        true,
+      );
     });
 
     it('scope=project writes project-level configs for claude, cursor, vscode, codex', async () => {
@@ -1237,6 +1164,25 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(true);
       expect(existsSync(join(testDir, '.vscode', 'mcp.json'))).toBe(true);
       expect(existsSync(join(testDir, '.codex', 'config.toml'))).toBe(true);
+      expect(result.projectSkills).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            editorId: 'claude',
+            action: 'written',
+            path: join(testDir, '.claude', 'skills', 'open-knowledge', 'SKILL.md'),
+          }),
+          expect.objectContaining({
+            editorId: 'cursor',
+            action: 'written',
+            path: join(testDir, '.cursor', 'skills', 'open-knowledge', 'SKILL.md'),
+          }),
+          expect.objectContaining({ editorId: 'vscode', action: 'skipped-unsupported' }),
+          expect.objectContaining({ editorId: 'codex', action: 'skipped-unsupported' }),
+        ]),
+      );
+      expect(existsSync(join(testDir, '.cursor', 'skills', 'open-knowledge', 'SKILL.md'))).toBe(
+        true,
+      );
     });
 
     it('scope=project silently skips editors without projectConfigPath (windsurf, claude-desktop)', async () => {
@@ -1245,7 +1191,6 @@ describe('runInit', () => {
         editors: ['windsurf', 'claude-desktop'],
         scope: 'project',
       });
-      // No entries since neither has projectConfigPath
       expect(result.editors).toHaveLength(0);
     });
 
@@ -1260,11 +1205,13 @@ describe('runInit', () => {
       expect(projResult?.action).toBe('written');
       expect(existsSync(claudeConfigPath())).toBe(true);
       expect(existsSync(join(testDir, '.mcp.json'))).toBe(true);
+      expect(existsSync(join(testDir, '.claude', 'skills', 'open-knowledge', 'SKILL.md'))).toBe(
+        true,
+      );
     });
 
     it('scope=both suppresses project-config notice for paths just written', async () => {
       const result = await runInitForTest({ editors: ['claude'], scope: 'both' });
-      // Even though .mcp.json now exists, it was written by us so should NOT appear in legacyProjectConfigs
       expect(result.legacyProjectConfigs).toHaveLength(0);
       const output = formatInitResult(result, testDir);
       expect(output).not.toContain('Project MCP configs found:');
@@ -1274,6 +1221,8 @@ describe('runInit', () => {
       const result = await runInitForTest({ editors: ['claude'], scope: 'project' });
       const output = formatInitResult(result, testDir);
       expect(output).toContain('Claude Code (project)');
+      expect(output).toContain('Project-local skills:');
+      expect(output).toContain('.claude/skills/open-knowledge/SKILL.md');
     });
 
     it('--no-mcp skips all MCP writes regardless of scope', async () => {
@@ -1287,8 +1236,6 @@ describe('runInit', () => {
     it('scope=both "Next steps" deduplicates editor labels (no double-count)', async () => {
       const result = await runInitForTest({ editors: ['claude'], scope: 'both' });
       const output = formatInitResult(result, testDir);
-      // "Claude Code" should appear exactly once in the "Open your editor" line,
-      // even though result.editors has two entries (user-scope + project-scope).
       const nextStepsLine = output.split('\n').find((l) => l.includes('Open your editor'));
       expect(nextStepsLine).toBeDefined();
       const matches = nextStepsLine?.match(/Claude Code/g);
@@ -1296,10 +1243,6 @@ describe('runInit', () => {
     });
   });
 });
-
-// ---------------------------------------------------------------------------
-// resolveMcpScope — TTY / non-TTY branch coverage
-// ---------------------------------------------------------------------------
 
 describe('resolveMcpScope', () => {
   it('returns "user" when --scope user is passed, without calling promptFn', async () => {
@@ -1360,10 +1303,6 @@ describe('resolveMcpScope', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// initCommand -- Commander option validation
-// ---------------------------------------------------------------------------
-
 describe('initCommand', () => {
   it('rejects --scope with an invalid value (non-zero exit)', () => {
     const cmd = initCommand();
@@ -1371,10 +1310,6 @@ describe('initCommand', () => {
     expect(() => cmd.parse(['--scope', 'bogus'], { from: 'user' })).toThrow();
   });
 });
-
-// ---------------------------------------------------------------------------
-// detectInstalledEditors — US-013 / FR-3.1 / D-013
-// ---------------------------------------------------------------------------
 
 describe('detectInstalledEditors', () => {
   let testDir: string;
@@ -1487,13 +1422,10 @@ describe('detectInstalledEditors', () => {
     mkdirSync(dirname(vsCodeConfigPath()), { recursive: true });
     mkdirSync(dirname(codexConfigPath()), { recursive: true });
     const detected = detectInstalledEditors(testDir, fakeHome);
-    // Order comes from ALL_EDITOR_IDS = ['claude', 'claude-desktop', 'cursor', 'vscode', 'windsurf', 'codex']
     expect(detected).toEqual(['claude', 'claude-desktop', 'cursor', 'vscode', 'codex']);
   });
 
   it('returns empty list when the cwd itself does not exist (zero-detected edge case)', () => {
-    // Synthesizes the "zero detected" path where init should skip MCP wiring
-    // rather than inventing new editor config roots.
     const missingCwd = join(testDir, 'does-not-exist');
     const missingHome = join(testDir, 'also-not-here');
     const detected = detectInstalledEditors(missingCwd, missingHome);
@@ -1594,30 +1526,22 @@ describe('writeUserMcpConfigs', () => {
     });
   });
 
-  it('does NOT create .git, AGENTS.md, .open-knowledge, or launch.json under the fake HOME', async () => {
+  it('does NOT create .git, AGENTS.md, .ok, or launch.json under the fake HOME', async () => {
     await writeUserMcpConfigs({
       editors: ['claude', 'cursor', 'vscode'],
       cliPath: CLI_PATH,
       home: fakeHome,
     });
 
-    // None of runInit's project-scoped side effects should fire
     expect(existsSync(join(fakeHome, '.git'))).toBe(false);
     expect(existsSync(join(fakeHome, 'AGENTS.md'))).toBe(false);
     expect(existsSync(join(fakeHome, 'CLAUDE.md'))).toBe(false);
     expect(existsSync(join(fakeHome, '.claude', 'launch.json'))).toBe(false);
     expect(existsSync(join(fakeHome, OK_DIR))).toBe(false);
-    // Also verify no legacy project .mcp.json was scanned into existence
     expect(existsSync(join(fakeHome, '.mcp.json'))).toBe(false);
   });
 
-  it('unconditionally overwrites a differing existing entry (M6b always-write semantic)', async () => {
-    // Post-main-PR-#282 semantic (reconciled 2026-04-23): writeEditorMcpConfig
-    // dropped its `force` parameter and now always overwrites. `writeUserMcpConfigs`
-    // inherits that — the caller (mcp-wiring.ts confirmHandler) filters foreign
-    // customizations via `computeForce` + `readExistingMcpEntry` BEFORE this call,
-    // so every editor that reaches this function is one the caller decided to
-    // overwrite.
+  it('unconditionally overwrites a differing existing entry (always-write semantic)', async () => {
     const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
     mkdirSync(dirname(claudePath), { recursive: true });
     writeFileSync(
@@ -1645,11 +1569,6 @@ describe('writeUserMcpConfigs', () => {
   });
 
   it('caller controls which editors get overwritten by omitting them from the editors array', async () => {
-    // Regression gate for the reconciliation with main PR #282: the
-    // mcp-wiring.ts confirmHandler classifies existing entries via
-    // `readExistingMcpEntry` + `computeForce` and only passes MANAGED-SHAPE
-    // editors to writeUserMcpConfigs. This test proves the contract: if a
-    // foreign editor is not in `editors[]`, its config is left untouched.
     const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
     const cursorPath = resolveCursorConfigPath({ home: fakeHome });
     mkdirSync(dirname(claudePath), { recursive: true });
@@ -1672,8 +1591,6 @@ describe('writeUserMcpConfigs', () => {
       ),
     );
 
-    // Only claude is in `editors` — caller has decided cursor's custom entry
-    // should be preserved (via classification it didn't include here).
     const results = await writeUserMcpConfigs({
       editors: ['claude'],
       cliPath: CLI_PATH,
@@ -1689,7 +1606,6 @@ describe('writeUserMcpConfigs', () => {
       command: CLI_PATH,
       args: ['mcp'],
     });
-    // Cursor untouched — wasn't in the editors array.
     const cursorConfig = JSON.parse(readFileSync(cursorPath, 'utf-8'));
     expect(cursorConfig.mcpServers['open-knowledge']).toEqual({
       command: 'custom',
@@ -1727,11 +1643,6 @@ describe('writeUserMcpConfigs', () => {
   });
 
   it('reports "overwritten" even when the entry already matches cliPath shape (main PR #282 always-overwrite)', async () => {
-    // Post-rebase semantic (2026-04-23): `writeEditorMcpConfig` always
-    // overwrites existing entries — "skipped-existing" and "skipped-conflict"
-    // are gone. Re-running with the same cliPath is safe (byte-identical
-    // result), but the action value reflects "there was an existing entry
-    // that got re-written" not "the entry was idempotent."
     const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
     mkdirSync(dirname(claudePath), { recursive: true });
     writeFileSync(
@@ -1750,15 +1661,11 @@ describe('writeUserMcpConfigs', () => {
     });
 
     expect(results[0].action).toBe('overwritten');
-    // Idempotency check: the written entry is byte-identical to the prior.
     const config = JSON.parse(readFileSync(claudePath, 'utf-8'));
     expect(config.mcpServers['open-knowledge']).toEqual({ command: CLI_PATH, args: ['mcp'] });
   });
 
   it('reports action:failed for unsupported editors without throwing', async () => {
-    // Claude Desktop is unsupported on Linux — but resolveClaudeDesktopConfigPath
-    // throws synchronously. writeEditorMcpConfig catches that path-resolution
-    // throw and returns action:'failed' instead of bubbling.
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
 
     const results = await writeUserMcpConfigs({
@@ -1806,12 +1713,6 @@ describe('writeEditorMcpConfig (exported for Electron main)', () => {
   });
 
   it('is callable as a standalone export with a single target', () => {
-    // Post-rebase signature (2026-04-23): `writeEditorMcpConfig(target, cwd,
-    // installOptions, home?)` — the `force` 3rd arg was dropped when main
-    // refactored to always-overwrite semantics. The M6b call-site
-    // (writeUserMcpConfigs) passes `skipAvailabilityCheck: true` so the
-    // user-toggled editor isn't silently rejected by the new
-    // `isEditorTargetAvailable` guard.
     const result: EditorMcpResult = writeEditorMcpConfig(
       EDITOR_TARGETS.cursor,
       '',
@@ -1828,19 +1729,6 @@ describe('writeEditorMcpConfig (exported for Electron main)', () => {
   });
 });
 
-/**
- * Pass 0 Major #13 — direct unit coverage for `readExistingMcpEntry`.
- *
- * The function is the M6b consent-flow tolerance boundary: every reachable
- * fail mode (config absent, config unparseable, top-level not an object,
- * server entry not an object, configPath throws on platform mismatch) MUST
- * return `null`, never throw. A regression that makes any branch throw
- * crashes `confirmHandler`, leaves the marker absent, and creates an infinite
- * dialog re-fire loop on user machines with corrupted editor configs.
- *
- * The orchestration tests in `mcp-wiring.test.ts` stub this function, so
- * direct coverage here is the only guard against tolerance regressions.
- */
 describe('readExistingMcpEntry (Pass 0 Major #13)', () => {
   let fakeHome: string;
   let testDir: string;
@@ -1877,9 +1765,6 @@ describe('readExistingMcpEntry (Pass 0 Major #13)', () => {
   });
 
   it('returns null when configPath throws (platform-mismatched target)', () => {
-    // Claude Desktop's configPath only resolves on macOS / Windows. Switch to
-    // linux so the configPath helper throws — readExistingMcpEntry MUST
-    // catch + return null rather than propagate the throw.
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
     expect(readExistingMcpEntry(EDITOR_TARGETS['claude-desktop'], '', fakeHome)).toBeNull();
   });
@@ -1927,9 +1812,6 @@ describe('readExistingMcpEntry (Pass 0 Major #13)', () => {
   it('returns the parsed entry when TOML config (Codex) is well-formed', () => {
     const path = resolveCodexConfigPath({ home: fakeHome, env: {} });
     mkdirSync(dirname(path), { recursive: true });
-    // Codex's `mcp_servers."open-knowledge"` table — quoted key form so the
-    // TOML parser keeps the dash-bearing name as one identifier (per
-    // smol-toml grammar). Same shape Codex itself writes via `ok init`.
     writeFileSync(
       path,
       '[mcp_servers."open-knowledge"]\ncommand = "npx"\nargs = ["@inkeep/open-knowledge", "mcp"]\n',
@@ -1961,14 +1843,6 @@ describe('readExistingMcpEntry (Pass 0 Major #13)', () => {
   });
 
   it('returns the parsed entry when VS Code config uses servers key (not mcpServers)', () => {
-    // Regression gate for the `topLevelKey` abstraction: VS Code is the
-    // only EDITOR_TARGETS entry that uses 'servers' (editors.ts:EDITOR_TARGETS.vscode)
-    // instead of 'mcpServers' / 'mcp_servers'. Without this test, a future
-    // refactor that hard-codes 'mcpServers' (easy to do since 5/6 editors use
-    // it) would silently break M6b's VS Code detection — the dialog would
-    // classify the entry as absent, write a duplicate, and the consent flow
-    // would never surface the existing entry to the user for replacement.
-    // Reviewer-requested coverage (PR #289 inline thread).
     const path = resolveVsCodeConfigPath({ home: fakeHome });
     mkdirSync(dirname(path), { recursive: true });
     const entry = { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] };

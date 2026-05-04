@@ -18,7 +18,7 @@ let lockPath: string;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-server-lock-test-'));
-  lockDir = resolve(tmpDir, '.open-knowledge');
+  lockDir = resolve(tmpDir, '.ok');
   lockPath = resolve(lockDir, 'server.lock');
 });
 
@@ -67,7 +67,6 @@ describe('acquireServerLock', () => {
   });
 
   test('throws ServerLockCollisionError when lock owner is alive', () => {
-    // Seed lockDir via our own acquire then overwrite with a foreign-pid lock
     acquireServerLock(lockDir, { port: 0, worktreeRoot: '/seed' });
     const live: ServerLockMetadata = {
       pid: 1, // PID 1 (init/launchd) is always running on POSIX
@@ -146,7 +145,6 @@ describe('updateServerLockPort', () => {
   });
 
   test('no-op when lock file is missing', () => {
-    // Should not throw
     updateServerLockPort(lockDir, 5173);
     expect(existsSync(lockPath)).toBe(false);
   });
@@ -159,7 +157,6 @@ describe('updateServerLockPort', () => {
       startedAt: new Date().toISOString(),
       worktreeRoot: '/other',
     };
-    // Create dir + write foreign lock
     acquireServerLock(lockDir, { port: 0, worktreeRoot: '/me' });
     writeFileSync(lockPath, JSON.stringify(foreign), 'utf-8');
 
@@ -173,7 +170,6 @@ describe('updateServerLockPort', () => {
   test('ignores corrupt lock file', () => {
     acquireServerLock(lockDir, { port: 0, worktreeRoot: '/wt' });
     writeFileSync(lockPath, 'garbage', 'utf-8');
-    // Should not throw
     updateServerLockPort(lockDir, 5173);
     expect(readFileSync(lockPath, 'utf-8')).toBe('garbage');
   });
@@ -249,7 +245,6 @@ describe('releaseServerLock', () => {
   });
 
   test('refuses to remove a lock owned by a different pid', () => {
-    // Seed the dir then overwrite with a foreign-pid lock
     acquireServerLock(lockDir, { port: 0, worktreeRoot: '/me' });
     const foreign: ServerLockMetadata = {
       pid: 1,

@@ -1,10 +1,3 @@
-/**
- * Unified-list round-trip — R16(e).
- *
- * Verifies that the unified list extension (D15) preserves authoring
- * form for bullet markers (-, *, +), ordered delimiters (., )),
- * task items, and nested lists.
- */
 import { describe, expect, test } from 'bun:test';
 import { mdRoundTrip, normalize } from './helpers';
 

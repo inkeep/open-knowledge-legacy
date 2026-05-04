@@ -1,23 +1,3 @@
-/**
- * rehype plugin: strip Gmail clipboard HTML noise.
- *
- * Gmail's Copy operation wraps content in various `gmail_*` CSS classes
- * (`gmail_default`, `gmail_quote`, `gmail_extra`, `gmail_signature`,
- * `gmail_attr`) that have no semantic meaning outside Gmail's own view.
- * We unwrap or de-class those elements so rehype-remark can extract the
- * underlying prose structure.
- *
- * Handling:
- *   - `<div class="gmail_quote">...</div>` — preserve as a blockquote-like
- *     wrapper. Rather than lose the quote semantic, we rewrite the tagName
- *     to `blockquote` so rehype-remark converts it to mdast `blockquote`.
- *   - Other gmail_* classes — strip the class, keep the element. The
- *     element survives rehype-remark naturally (div passes through its
- *     children; other tags like p/span/a keep their existing semantics).
- *   - `<div dir="ltr">` wrappers with a single prose child — unwrap
- *     (Gmail sometimes nests trivially).
- */
-
 import type { Element, Root } from 'hast';
 import type { Plugin } from 'unified';
 
@@ -36,7 +16,6 @@ function walk(node: Root | Element): void {
     if ((child as Element).type === 'element') walk(child as Element);
   }
 
-  // In-place edits + unwrap of trivial ltr divs.
   let i = 0;
   while (i < node.children.length) {
     const child = node.children[i];
@@ -45,7 +24,6 @@ function walk(node: Root | Element): void {
       continue;
     }
     const el = child as Element;
-    // Rewrite gmail_quote div → blockquote so quote semantics reach mdast.
     if (el.tagName === 'div' && hasGmailClass(el, 'gmail_quote')) {
       el.tagName = 'blockquote';
       stripGmailClasses(el);
@@ -53,8 +31,6 @@ function walk(node: Root | Element): void {
       stripGmailClasses(el);
     }
 
-    // Unwrap <div dir="ltr"> when it's a single-prose-child wrapper with
-    // no non-trivial classes (Gmail quirk).
     if (isTrivialLtrDiv(el)) {
       node.children.splice(i, 1, ...el.children);
       continue;
@@ -85,7 +61,6 @@ function isTrivialLtrDiv(el: Element): boolean {
   if (el.properties?.dir !== 'ltr') return false;
   const cls = el.properties?.className;
   if (cls != null && !(Array.isArray(cls) && cls.length === 0)) return false;
-  // Must wrap at most one element child (plus possibly whitespace text).
   const elChildren = el.children.filter((c) => (c as Element).type === 'element');
   return elChildren.length <= 1;
 }

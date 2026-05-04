@@ -1,15 +1,3 @@
-/**
- * Unit tests for the R17 2-phase merged post-parse walker.
- *
- * These cover the per-node dispatch logic in isolation (not through the
- * full pipeline). The full-corpus byte-identity gate against the pre-merge
- * pipeline was a one-time ratchet per PRECEDENTS.md precedent #17 — the
- * validator (`evidence/r17-mdast-equivalence.{ts,md}` + `r17-run-diff.ts`)
- * was deleted after US-008 shipped green. The architectural record lives in
- * `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/pipeline-refactor-audit.md`
- * §R17.
- */
-
 import { describe, expect, test } from 'bun:test';
 import type { Root as MdastRoot } from 'mdast';
 import { VFile } from 'vfile';
@@ -48,8 +36,6 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
 
   test('pass 3: doc-start empty yaml → thematicBreak(s) with data.sourceRaw', () => {
     const src = '---\n\n---\n';
-    // Simulate what remarkParse + remarkFrontmatter produce for this input:
-    // a single empty yaml block spanning positions 0..8.
     const tree: MdastRoot = {
       type: 'root',
       children: [
@@ -59,14 +45,10 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
     };
     mergedPostParseWalkerPlugin()(tree, new VFile(src));
 
-    // Expect the yaml block to be replaced by two synthetic thematicBreak nodes
     expect(tree.children.length).toBe(2);
     expect(tree.children[0].type).toBe('thematicBreak');
     expect(tree.children[1].type).toBe('thematicBreak');
-    // First one gets position + data.sourceRaw from pass 4 (which overwrites
-    // pass 3's pre-set data.sourceRaw with the same value sliced from source).
     expect(tree.children[0].data?.sourceRaw).toBe('---');
-    // Second has no position → pass 4 early-exits, pass 3's pre-set data wins.
     expect(tree.children[1].data?.sourceRaw).toBe('---');
   });
 
@@ -106,7 +88,6 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
         {
           type: 'someFutureType',
           position: makePos(0, src.length),
-          // Nested unknown child that must NOT be visited (SKIP semantics)
           children: [{ type: 'unknownInner', position: makePos(2, 6) }],
         },
       ],
@@ -118,7 +99,6 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
     expect(child.type).toBe('rawMdxFallbackMdast');
     expect(child.originalType).toBe('someFutureType');
     expect(child.value).toBe('$$math$$');
-    // Replacement is a leaf — no children carried forward
     expect(child.children).toBeUndefined();
   });
 
@@ -171,9 +151,6 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
   });
 
   test('pass 2 interleaved with pass 5: unknown sibling stays replaced, autolink in sibling stays promoted', () => {
-    // A paragraph with three children: [text-with-autolink, unknown-type, text]
-    // Pass 2 must promote the first text's autolink. Pass 5 must replace the
-    // unknown child. Both effects must land in the same final tree.
     const src = 'See <https://a.com> and X and y';
     const tree = {
       type: 'root',
@@ -193,9 +170,6 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: test inspects mdast shape
     const para = tree.children[0] as any;
-    // After pass 2 on paragraph: first text splits into [text, link, text].
-    // Then descent visits the (now offset) unknown child and replaces it.
-    // Expected shape: [text 'See ', link, text ' and ', fallback, text ' and y']
     const types = para.children.map((c: { type: string }) => c.type);
     expect(types).toContain('link');
     expect(types).toContain('rawMdxFallbackMdast');
@@ -224,7 +198,6 @@ describe('mergedPostParseWalkerPlugin — Phase B dispatch', () => {
     } as MdastRoot;
     mergedPostParseWalkerPlugin()(tree, new VFile('hello\n---\n---\n'));
 
-    // yaml at position 1 is not replaced (pass 3 only fires on children[0])
     expect(tree.children[1].type).toBe('yaml');
   });
 });

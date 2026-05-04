@@ -1,22 +1,12 @@
-/**
- * SyncStatusBadge — displays the git sync engine state in the editor header.
- *
- * States: dormant (hidden) | idle/synced | fetching/pulling/pushing (syncing) |
- * conflict | offline | auth-error | disabled | available (sync off, remote present)
- *
- * Click opens a popover with last-sync details and action buttons.
- */
 import { AlertTriangle, Cloud, CloudOff, LogIn, RefreshCw, UserCog } from 'lucide-react';
-import { useState } from 'react';
-import { toast } from 'sonner';
+import { useEnableSyncWithConfirm } from '@/hooks/use-enable-sync-with-confirm';
 import type { GitSyncStatus } from '@/hooks/use-git-sync-status';
 import { useGitSyncStatusDetailed } from '@/hooks/use-git-sync-status';
+import { EnableSyncConfirmDialog } from './EnableSyncConfirmDialog';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Switch } from './ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 function formatRelative(iso: string | null): string {
   if (!iso) return 'never';
@@ -35,21 +25,6 @@ async function triggerSync(op: 'sync' | 'push' | 'pull'): Promise<void> {
   });
 }
 
-async function setSyncEnabled(enabled: boolean): Promise<void> {
-  const res = await fetch('/api/sync/set-enabled', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) {
-    // Surface as a thrown error so the caller can toast and avoid leaving
-    // the UI in a state where the switch flipped but the server didn't.
-    throw new Error(`set-enabled failed: HTTP ${res.status}`);
-  }
-}
-
-// ── inner: icon + color per state ────────────────────────────────────────────
-
 interface BadgeIconProps {
   status: GitSyncStatus;
 }
@@ -58,7 +33,6 @@ function BadgeIcon({ status }: BadgeIconProps) {
   const cls = 'size-3.5';
   switch (status.state) {
     case 'dormant':
-      // Available: remote exists but sync not yet enabled
       return <Cloud className={`${cls} text-muted-foreground`} />;
     case 'idle':
       if (status.ahead > 0 || status.behind > 0) {
@@ -76,7 +50,7 @@ function BadgeIcon({ status }: BadgeIconProps) {
     case 'auth-error':
       return <LogIn className={`${cls} text-destructive`} />;
     case 'disabled':
-      return <CloudOff className={`${cls} text-muted-foreground`} />;
+      return <AlertTriangle className={`${cls} text-amber-500`} />;
     default:
       return <Cloud className={`${cls} text-muted-foreground`} />;
   }
@@ -98,14 +72,10 @@ function badgeLabel(status: GitSyncStatus): string {
       return '';
     case 'auth-error':
       return '';
-    case 'disabled':
-      return '';
     default:
       return '';
   }
 }
-
-// ── popover content ───────────────────────────────────────────────────────────
 
 function stateLabel(state: GitSyncStatus['state']): string {
   switch (state) {
@@ -178,21 +148,9 @@ function PopoverBody({
   onOpenConflictResolver,
   onSetIdentity,
 }: PopoverBodyProps) {
-  const [toggling, setToggling] = useState(false);
   const enabled = status.syncEnabled;
-
-  async function handleToggle(next: boolean) {
-    setToggling(true);
-    try {
-      await setSyncEnabled(next);
-    } catch (e) {
-      // The switch animated but the server rejected the request — tell the
-      // user so they can retry instead of thinking sync silently flipped.
-      console.error('[sync] toggle failed', e);
-      toast.error(`Failed to ${next ? 'enable' : 'disable'} sync — try again`);
-    }
-    setToggling(false);
-  }
+  const { toggling, confirmOpen, setConfirmOpen, onToggleRequest, onConfirm } =
+    useEnableSyncWithConfirm();
 
   return (
     <div className="flex flex-col gap-2">
@@ -204,10 +162,16 @@ function PopoverBody({
         <Switch
           checked={enabled}
           disabled={toggling}
-          onCheckedChange={(next) => void handleToggle(next)}
+          onCheckedChange={onToggleRequest}
           aria-label={enabled ? 'Disable sync' : 'Enable sync'}
         />
       </div>
+      <EnableSyncConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        isSubmitting={toggling}
+        onConfirm={() => void onConfirm()}
+      />
 
       {status.error && <p className="text-xs text-destructive">{status.error}</p>}
       {status.pausedReason && (
@@ -287,14 +251,9 @@ function PopoverBody({
   );
 }
 
-// ── public component ──────────────────────────────────────────────────────────
-
 interface SyncStatusBadgeProps {
-  /** Called when "Sign in" is clicked in the auth-error popover or enable-sync prompt. */
   onSignIn?: () => void;
-  /** Called when "Review conflicts" is clicked in the conflict popover. */
   onOpenConflictResolver?: () => void;
-  /** Called when "Set identity" is clicked in the identity-unresolved nudge. */
   onSetIdentity?: () => void;
 }
 
@@ -305,10 +264,6 @@ export function SyncStatusBadge({
 }: SyncStatusBadgeProps = {}) {
   const { status, fetchError } = useGitSyncStatusDetailed();
 
-  // Surface a lightweight connectivity warning when the server has been
-  // reachable before (we have a prior status) but the last refresh failed.
-  // Before first successful fetch we stay hidden so the badge doesn't flash
-  // on every reload.
   if (!status) {
     if (fetchError) {
       return (
@@ -335,8 +290,9 @@ export function SyncStatusBadge({
     return null;
   }
 
-  // Hide when dormant with no remote (truly no git remote)
   if (status.state === 'dormant' && !status.hasRemote) return null;
+
+  if (status.state === 'disabled' && !status.pausedReason) return null;
 
   const label = badgeLabel(status);
   const showIdentityDot = Boolean(status.identityUnresolved);

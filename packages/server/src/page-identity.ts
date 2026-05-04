@@ -115,14 +115,6 @@ export function extractPageAliases(content: string): string[] {
   return [];
 }
 
-/**
- * Extract a human-readable title from a markdown file's content.
- *
- * Priority:
- *  1. `title:` field in YAML frontmatter (between leading `---` delimiters)
- *  2. First `# heading` line in the file body
- *  3. filename (without extension, as provided by the caller)
- */
 export function extractPageTitle(content: string, filename: string): string {
   const { frontmatter, body } = stripFrontmatter(content);
   const title = extractFrontmatterScalar(frontmatter, 'title');
@@ -142,11 +134,6 @@ export interface FrontmatterMetadata {
   tags: string[] | undefined;
 }
 
-/**
- * Parse frontmatter metadata fields relevant to graph display.
- * Accepts the raw YAML string (with or without `---` delimiters).
- * Uses regex-based extraction — no yaml dependency.
- */
 export function parseFrontmatterMetadata(rawYaml: string): FrontmatterMetadata {
   if (!rawYaml?.trim()) {
     return { cluster: undefined, category: undefined, tags: undefined };

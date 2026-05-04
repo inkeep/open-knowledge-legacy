@@ -229,6 +229,26 @@
   }
 
   --animate-sidebar-push-pulse: sidebar-push-pulse 700ms ease-out;
+
+  /* Settings field flash — red briefly to signal a non-pane writer
+     (CLI/MCP/hand-edit) caused L3 validation rejection.
+     Outline-only so the field input itself is untouched. */
+  @keyframes settings-flash {
+    0% {
+      outline: 2px solid hsl(var(--destructive) / 0);
+      outline-offset: 2px;
+    }
+    20% {
+      outline: 2px solid hsl(var(--destructive) / 0.7);
+      outline-offset: 2px;
+    }
+    100% {
+      outline: 2px solid hsl(var(--destructive) / 0);
+      outline-offset: 2px;
+    }
+  }
+
+  --animate-settings-flash: settings-flash 600ms ease-out;
 }
 
 /* Push-mode pulse hint — plays once when an in-sidebar action (file pick,
@@ -241,6 +261,62 @@
 @media (prefers-reduced-motion: reduce) {
   [data-slot="sidebar-inset"][data-push-pulse] {
     animation: none;
+  }
+  .animate-settings-flash {
+    animation: none;
+  }
+}
+
+/* Radix Collapsible content height + opacity. Height drives the reflow of
+   surrounding content; opacity hides children early so the eye never lingers
+   on partially-laid-out widgets. Closing easing front-loaded (ease-in) so the
+   fade leads the height collapse — content reads as "gone" before the gap
+   finishes closing. */
+@keyframes collapsible-down {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+}
+@keyframes collapsible-up {
+  from {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+/* Reduced-motion override — keep the opacity crossfade as a comprehension
+   aid (the panel still appears/disappears) but pin the height so the
+   layout-triggering animation doesn't fire. Matches the rest of this
+   file's reduced-motion discipline. */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes collapsible-down {
+    from {
+      height: var(--radix-collapsible-content-height);
+      opacity: 0;
+    }
+    to {
+      height: var(--radix-collapsible-content-height);
+      opacity: 1;
+    }
+  }
+  @keyframes collapsible-up {
+    from {
+      height: var(--radix-collapsible-content-height);
+      opacity: 1;
+    }
+    to {
+      height: var(--radix-collapsible-content-height);
+      opacity: 0;
+    }
   }
 }
 
@@ -676,6 +752,25 @@
     [content-start] minmax(0, min(var(--content-max-width), 100%))
     [content-end] minmax(var(--margin-right-width, var(--margin-width)), 1fr)
     [full-end];
+}
+
+/* Same content-column grid as .tiptap-editor — applied to siblings (e.g., the
+   property panel) so they horizontally align with the editor body. Variables
+   redeclared here so this class doesn't depend on living inside .tiptap-editor. */
+.editor-content-aligned {
+  --content-max-width: 1024px;
+  --margin-width: 4rem;
+  display: grid;
+  width: 100%;
+  grid-template-columns:
+    [full-start] minmax(var(--margin-left-width, var(--margin-width)), 1fr)
+    [content-start] minmax(0, min(var(--content-max-width), 100%))
+    [content-end] minmax(var(--margin-right-width, var(--margin-width)), 1fr)
+    [full-end];
+}
+
+.editor-content-aligned > * {
+  grid-column: content;
 }
 
 /* Content-column children. The `.tiptap-editor` wrapper is a 3-column named
@@ -1703,11 +1798,11 @@ button:active:not(:disabled) {
   margin-bottom: 0;
 }
 
-/* Collapsible variant — native <details>/<summary> with styled chevron.
- * The open/close animation is deferred: details-content animation requires
- * either ::details-content (broader 2024+ support) or a React transition;
- * native open-state is already smooth enough for v1. Chevron rotates via
- * CSS transform on `[open]`, honoring prefers-reduced-motion. */
+/* Collapsible variant — native <details>/<summary> with a real <svg> chevron.
+ * The chevron is a lucide ChevronRight rendered as an actual DOM child of
+ * <summary>, so cloneNode(true) (used by the clipboard live-DOM walker) can
+ * carry it across to the pasted-HTML output in destination apps. CSS rotates
+ * it on the `[open]` attribute, honoring prefers-reduced-motion. */
 .callout-collapsible > summary {
   cursor: pointer;
   list-style: none;
@@ -1721,25 +1816,19 @@ button:active:not(:disabled) {
   display: none;
 }
 
-.callout-collapsible > summary::before {
-  content: "";
-  display: inline-block;
-  width: 0;
-  height: 0;
-  border-top: 5px solid transparent;
-  border-bottom: 5px solid transparent;
-  border-left: 6px solid var(--callout-type-color);
+.callout-chevron {
   flex: none;
+  color: var(--callout-type-color);
   transform: rotate(0deg);
-  transform-origin: 25% 50%;
+  transform-origin: 50% 50%;
 }
 
-.callout-collapsible[open] > summary::before {
+.callout-collapsible[open] > summary > .callout-chevron {
   transform: rotate(90deg);
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .callout-collapsible > summary::before {
+  .callout-chevron {
     transition: transform 180ms var(--ease-out-strong);
   }
 }
@@ -1796,26 +1885,20 @@ button:active:not(:disabled) {
   display: none;
 }
 
-.accordion > summary::before {
-  content: "";
-  display: inline-block;
-  width: 0;
-  height: 0;
-  border-top: 5px solid transparent;
-  border-bottom: 5px solid transparent;
-  border-left: 6px solid var(--muted-foreground);
+.accordion-chevron {
   flex: none;
+  color: var(--muted-foreground);
+  margin-top: 0.25rem;
   transform: rotate(0deg);
-  transform-origin: 25% 50%;
-  margin-top: 0.375rem;
+  transform-origin: 50% 50%;
 }
 
-.accordion[open] > summary::before {
+.accordion[open] > summary > .accordion-chevron {
   transform: rotate(90deg);
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .accordion > summary::before {
+  .accordion-chevron {
     transition: transform 180ms var(--ease-out-strong);
   }
 }

@@ -54,7 +54,6 @@ describe('AgentFocusBroadcaster', () => {
       writeKind: 'write',
       ts: 200,
     });
-    // Upsert claude-1 — claude-2 must survive
     broadcaster.setFocus('claude-1', {
       agentName: 'Claude',
       currentDoc: 'a2.md',
@@ -107,7 +106,6 @@ describe('AgentFocusBroadcaster', () => {
 
   test('graceful no-op when __system__ document is missing', () => {
     const noopBroadcaster = new AgentFocusBroadcaster(makeMockHocuspocus(null));
-    // Should not throw
     noopBroadcaster.setFocus('claude-1', {
       agentName: 'Claude',
       currentDoc: 'foo.md',
@@ -136,7 +134,27 @@ describe('AgentFocusBroadcaster', () => {
     expect(map['claude-2']).toBeDefined();
     expect(map['claude-1'].currentDoc).toBe('a.md');
     expect(map['claude-2'].currentDoc).toBe('b.md');
-    // The map is the canonical location for per-agent state — no flat/nested collisions.
     expect(Object.keys(map).length).toBe(2);
+  });
+
+  test('principal-prefixed agentId is filtered at the broadcaster boundary', () => {
+    broadcaster.setFocus('principal-deadbeef', {
+      agentName: 'Local User',
+      currentDoc: 'a.md',
+      writeKind: 'edit',
+      ts: 100,
+    });
+    expect(broadcaster.getFocusMap()).toEqual({});
+
+    broadcaster.clearFocus('principal-deadbeef');
+    expect(broadcaster.getFocusMap()).toEqual({});
+
+    broadcaster.setFocus('agent-real', {
+      agentName: 'Claude',
+      currentDoc: 'b.md',
+      writeKind: 'write',
+      ts: 200,
+    });
+    expect(Object.keys(broadcaster.getFocusMap())).toEqual(['agent-real']);
   });
 });

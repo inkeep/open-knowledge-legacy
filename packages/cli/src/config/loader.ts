@@ -1,35 +1,27 @@
-/**
- * Hierarchical YAML config loader.
- *
- * Priority (lowest → highest):
- *   Zod defaults → ~/.open-knowledge/config.yml → ./.open-knowledge/config.yml
- *
- * ENV and CLI flag overrides are applied in cli.ts after loading.
- *
- * Deep merge: workspace leaf values override user leaf values.
- * Arrays are replaced, not concatenated.
- */
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { parse as parseYaml } from 'yaml';
+import {
+  type ConfigIssue,
+  type ConfigIssueSource,
+  type ConfigValidationError,
+  humanFormat,
+  locateIssue,
+} from '@inkeep/open-knowledge-core';
+import { readConfigSafely } from '@inkeep/open-knowledge-core/server';
+import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
+import { type Document, parseDocument } from 'yaml';
 import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 import { isObject } from '../utils/is-object.ts';
 import { normalizeCwd } from '../utils/normalize-cwd.ts';
-import { type Config, ConfigSchema } from './schema.ts';
 
 export interface LoadConfigResult {
   config: Config;
   sources: string[];
 }
 
-/** Short TTL for per-cwd config resolution in long-lived MCP sessions. */
 const DEFAULT_CONFIG_CACHE_MS = 1000;
 
-/**
- * Deep merge two objects. Leaf values in `override` replace `base`.
- * Arrays are replaced, not concatenated.
- */
 function deepMerge(
   base: Record<string, unknown>,
   override: Record<string, unknown>,
@@ -47,75 +39,162 @@ function deepMerge(
   return result;
 }
 
-function loadYamlFile(filePath: string): Record<string, unknown> | null {
-  if (!existsSync(filePath)) return null;
+interface LoadedYamlFile {
+  value: Record<string, unknown> | null;
+  path: string;
+  source: string | null;
+  doc: Document | null;
+}
+
+function loadYamlFile(filePath: string): LoadedYamlFile {
+  if (!existsSync(filePath)) {
+    return { value: null, path: filePath, source: null, doc: null };
+  }
+  let raw: string;
   try {
-    const raw = readFileSync(filePath, 'utf-8');
-    const parsed = parseYaml(raw);
-    if (isObject(parsed)) {
-      return parsed;
-    }
-    return null;
+    raw = readFileSync(filePath, 'utf-8');
   } catch (err) {
     console.warn(
-      `[config] Failed to parse ${filePath}: ${err instanceof Error ? err.message : err}`,
+      `[config] Failed to read ${filePath}: ${err instanceof Error ? err.message : err}`,
     );
-    return null;
+    return { value: null, path: filePath, source: null, doc: null };
   }
+  const doc = parseDocument(raw);
+  if (doc.errors.length > 0) {
+    console.warn(
+      `[config] Failed to parse ${filePath}: ${doc.errors.map((e) => e.message).join('; ')}`,
+    );
+    return { value: null, path: filePath, source: raw, doc: null };
+  }
+  const parsed = doc.toJSON();
+  if (isObject(parsed)) {
+    return { value: parsed, path: filePath, source: raw, doc };
+  }
+  return { value: null, path: filePath, source: raw, doc };
+}
+
+const REMOVED_CONTENT_KEYS = ['include', 'exclude'] as const;
+
+function redirectForKey(key: 'include' | 'exclude'): string {
+  const stripHint =
+    'Run `ok config migrate` to strip the obsolete key from config.yml automatically, or remove it by hand.';
+  if (key === 'exclude') {
+    return [
+      'Move these patterns to .okignore at the project root (gitignore syntax, 1:1 migration).',
+      stripHint,
+    ].join(' ');
+  }
+  return [
+    'content.include has been removed.',
+    'For subdirectory scoping, set content.dir in .ok/config.yml instead.',
+    'For pattern-based filtering, use .okignore (gitignore syntax — exclude-only; do not copy include patterns directly).',
+    stripHint,
+  ].join(' ');
+}
+
+function detectRemovedContentKeys(file: LoadedYamlFile): ConfigValidationError[] {
+  const value = file.value;
+  if (!isObject(value)) return [];
+  const content = value.content;
+  if (!isObject(content)) return [];
+  const errors: ConfigValidationError[] = [];
+  for (const key of REMOVED_CONTENT_KEYS) {
+    if (key in content) {
+      const path = ['content', key];
+      let source: ConfigIssueSource | undefined;
+      if (file.doc !== null && file.source !== null) {
+        source = locateIssue({
+          file: file.path,
+          source: file.source,
+          doc: file.doc,
+          path,
+        });
+      }
+      errors.push({
+        code: 'REMOVED_KEY',
+        path,
+        redirect: redirectForKey(key),
+        ...(source !== undefined ? { source } : {}),
+      });
+    }
+  }
+  return errors;
+}
+
+function annotateIssuesWithSource(
+  zodIssues: ReadonlyArray<{ path: PropertyKey[]; message: string; code: string }>,
+  projectFile: LoadedYamlFile,
+): ConfigIssue[] {
+  return zodIssues.map((issue) => {
+    const path = issue.path.map((seg) =>
+      typeof seg === 'symbol' ? String(seg) : (seg as string | number),
+    );
+    const base: ConfigIssue = {
+      path,
+      message: issue.message,
+      issueCode: issue.code,
+    };
+    if (projectFile.doc !== null && projectFile.source !== null) {
+      const located = locateIssue({
+        file: projectFile.path,
+        source: projectFile.source,
+        doc: projectFile.doc,
+        path,
+      });
+      if (located !== undefined) {
+        return { ...base, source: located };
+      }
+    }
+    return base;
+  });
 }
 
 export function loadConfig(cwd?: string): LoadConfigResult {
   const workingDir = cwd ?? process.cwd();
   const sources: string[] = [];
 
-  // Layer 1: user config
   const userConfigPath = resolve(homedir(), OK_DIR, CONFIG_FILENAME);
+  const userResult = readConfigSafely({ absPath: userConfigPath });
   let merged: Record<string, unknown> = {};
-  const userConfig = loadYamlFile(userConfigPath);
-  if (userConfig) {
-    merged = deepMerge(merged, userConfig);
+  if (userResult.valid && userResult.source !== undefined) {
+    merged = deepMerge(merged, userResult.value as unknown as Record<string, unknown>);
     sources.push(userConfigPath);
+  } else if (!userResult.valid) {
   }
 
-  // Layer 2: workspace config
-  const workspaceConfigPath = resolve(workingDir, OK_DIR, CONFIG_FILENAME);
-  const workspaceConfig = loadYamlFile(workspaceConfigPath);
-  if (workspaceConfig) {
-    merged = deepMerge(merged, workspaceConfig);
-    sources.push(workspaceConfigPath);
+  const projectConfigPath = resolve(workingDir, OK_DIR, CONFIG_FILENAME);
+  const projectFile = loadYamlFile(projectConfigPath);
+  if (projectFile.value !== null) {
+    const removedKeyErrors = detectRemovedContentKeys(projectFile);
+    if (removedKeyErrors.length > 0) {
+      throw new Error(removedKeyErrors.map(humanFormat).join('\n\n'));
+    }
+    merged = deepMerge(merged, projectFile.value);
+    sources.push(projectConfigPath);
   }
 
-  // Validate with Zod (applies defaults for missing fields)
+  const mergedUpload = merged.upload;
+  if (isObject(mergedUpload) && mergedUpload.maxBytes !== undefined) {
+    console.warn(
+      '[config] upload.maxBytes is deprecated and ignored — streaming uploads have no user-facing cap. Remove the key to silence this warning.',
+    );
+  }
+
   const result = ConfigSchema.safeParse(merged);
   if (!result.success) {
-    const errors = result.error.issues.map(
-      (issue) => `  ${issue.path.join('.')}: ${issue.message}`,
-    );
-    throw new Error(`Invalid configuration:\n${errors.join('\n')}`);
+    const issues = annotateIssuesWithSource(result.error.issues, projectFile);
+    const error: ConfigValidationError = { code: 'SCHEMA_INVALID', issues };
+    throw new Error(humanFormat(error));
   }
 
   return { config: result.data, sources };
 }
 
-/**
- * Apply process-level env overrides that affect config semantics. Kept narrow
- * on purpose: only values that already override the loaded config in the CLI
- * entrypoint belong here.
- */
 function applyProcessEnvConfigOverrides(
   config: Config,
   env: NodeJS.ProcessEnv = process.env,
 ): Config {
   let next = config;
-  if (env.PORT) {
-    next = {
-      ...next,
-      server: {
-        ...next.server,
-        port: Number(env.PORT),
-      },
-    };
-  }
   if (env.HOST) {
     next = {
       ...next,
@@ -136,11 +215,6 @@ interface CreateProjectConfigResolverOptions {
   loadConfigFn?: (cwd?: string) => LoadConfigResult;
 }
 
-/**
- * Create a lazy per-cwd config resolver for long-lived MCP sessions. Each cwd
- * re-loads its own `.open-knowledge/config.yml` (plus user config) and applies
- * the same process-level env overrides as the CLI bootstrap path.
- */
 export function createProjectConfigResolver(
   opts: CreateProjectConfigResolverOptions,
 ): (cwd?: string) => Promise<Config> {

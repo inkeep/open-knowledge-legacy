@@ -1,19 +1,3 @@
-/**
- * Content scope preview — enumerates the files the watcher will index, given
- * a config snapshot, without spinning up the server.
- *
- * `previewContent()` is the load-bearing helper: it builds a `ContentFilter`
- * from `@inkeep/open-knowledge-server` and walks `contentDir` mirroring the
- * file-watcher's startup walk (`file-watcher.ts:seedLastKnownHashes`). Reusing
- * the same filter is what makes the D8 invariant hold — the preview's count
- * matches what the watcher will actually index, including nested `.gitignore`
- * handling (so `.open-knowledge/cache/` is excluded automatically).
- *
- * Returns warnings rather than throwing — preview failure must never block
- * init (D4 LOCKED). `formatPreviewBlock()` renders the result for both the
- * `init` post-scaffold output and the standalone `open-knowledge preview`
- * verb; keeping the formatter here ensures both surfaces stay byte-identical.
- */
 import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createContentFilter } from '@inkeep/open-knowledge-server';
@@ -22,8 +6,6 @@ import { OK_DIR } from '../constants.ts';
 interface PreviewOptions {
   projectDir: string;
   contentDir: string;
-  include: string[];
-  exclude: string[];
   sampleCap?: number;
 }
 
@@ -31,15 +13,13 @@ export interface PreviewResult {
   totalCount: number;
   sample: string[];
   contentDir: string;
-  include: string[];
-  exclude: string[];
   warnings: string[];
 }
 
 const DEFAULT_SAMPLE_CAP = 5;
 
 export function previewContent(opts: PreviewOptions): PreviewResult {
-  const { projectDir, contentDir, include, exclude, sampleCap = DEFAULT_SAMPLE_CAP } = opts;
+  const { projectDir, contentDir, sampleCap = DEFAULT_SAMPLE_CAP } = opts;
   const warnings: string[] = [];
   const files: string[] = [];
 
@@ -51,8 +31,6 @@ export function previewContent(opts: PreviewOptions): PreviewResult {
       totalCount: 0,
       sample: [],
       contentDir,
-      include,
-      exclude,
       warnings: [`cannot access content directory ${contentDir}: ${msg}`],
     };
   }
@@ -62,8 +40,6 @@ export function previewContent(opts: PreviewOptions): PreviewResult {
     filter = createContentFilter({
       projectDir,
       contentDir,
-      includePatterns: include,
-      excludePatterns: exclude,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -71,8 +47,6 @@ export function previewContent(opts: PreviewOptions): PreviewResult {
       totalCount: 0,
       sample: [],
       contentDir,
-      include,
-      exclude,
       warnings: [msg],
     };
   }
@@ -138,8 +112,6 @@ export function previewContent(opts: PreviewOptions): PreviewResult {
     totalCount: files.length,
     sample: files.slice(0, sampleCap),
     contentDir,
-    include,
-    exclude,
     warnings,
   };
 }
@@ -151,10 +123,6 @@ export function formatPreviewBlock(result: PreviewResult, cwd: string): string {
 
   lines.push('Content:');
   lines.push(`  Found ${result.totalCount} markdown files in ${displayDir}`);
-
-  const includeStr = result.include.join(', ');
-  const excludeStr = result.exclude.length > 0 ? result.exclude.join(', ') : '(none)';
-  lines.push(`  Scope: include=${includeStr}  exclude=${excludeStr}`);
 
   if (result.sample.length > 0) {
     const sampleStr = result.sample.join(', ');
@@ -171,13 +139,10 @@ export function formatPreviewBlock(result: PreviewResult, cwd: string): string {
   lines.push('');
   const configPath = join(cwd, OK_DIR, 'config.yml');
   if (existsSync(configPath)) {
-    lines.push(`  To adjust, edit ${OK_DIR}/config.yml:`);
-    lines.push('    content:');
-    lines.push(`      include: ${JSON.stringify(result.include)}`);
-    lines.push(`      exclude: ${JSON.stringify(result.exclude)}`);
+    lines.push('  To adjust scope, add patterns to .okignore at the project root.');
+    lines.push(`  To change the content root, edit ${OK_DIR}/config.yml → content.dir.`);
   } else {
-    lines.push('  Run `open-knowledge init` to scaffold config, then adjust:');
-    lines.push(`    ${OK_DIR}/config.yml → content.include / content.exclude`);
+    lines.push('  Run `open-knowledge init` to scaffold config + .okignore.');
   }
 
   lines.push('');

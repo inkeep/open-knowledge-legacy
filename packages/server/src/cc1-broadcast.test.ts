@@ -3,14 +3,19 @@ import { setTimeout as wait } from 'node:timers/promises';
 import type { Hocuspocus } from '@hocuspocus/server';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   CC1BranchSwitchedPayloadSchema,
+  CC1ConfigValidationRejectedPayloadSchema,
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
+  CONFIG_DOC_NAME_PROJECT,
+  CONFIG_DOC_NAME_USER,
+  CONFIG_DOC_NAMES,
   SYSTEM_DOC_NAME,
 } from '@inkeep/open-knowledge-core';
-import { CC1Broadcaster, isSystemDoc } from './cc1-broadcast.ts';
+import { CC1Broadcaster, isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
 
 describe('isSystemDoc', () => {
@@ -25,12 +30,48 @@ describe('isSystemDoc', () => {
     expect(isSystemDoc('test-doc')).toBe(false);
   });
 
+  test('returns false for config doc names', () => {
+    expect(isSystemDoc(CONFIG_DOC_NAME_PROJECT)).toBe(false);
+    expect(isSystemDoc(CONFIG_DOC_NAME_USER)).toBe(false);
+  });
+
   test('SYSTEM_DOC_NAME matches expected value', () => {
     expect(SYSTEM_DOC_NAME).toBe('__system__');
   });
 
   test('CC1_CONTRACT_VERSION is 1', () => {
     expect(CC1_CONTRACT_VERSION).toBe(1);
+  });
+});
+
+describe('isConfigDoc', () => {
+  test('returns true for the well-known project config doc', () => {
+    expect(isConfigDoc('__config__/project')).toBe(true);
+    expect(isConfigDoc(CONFIG_DOC_NAME_PROJECT)).toBe(true);
+  });
+
+  test('returns true for the well-known user-global config doc', () => {
+    expect(isConfigDoc('__user__/config.yml')).toBe(true);
+    expect(isConfigDoc(CONFIG_DOC_NAME_USER)).toBe(true);
+  });
+
+  test('returns false for system doc and regular content names', () => {
+    expect(isConfigDoc(SYSTEM_DOC_NAME)).toBe(false);
+    expect(isConfigDoc('notes/intro')).toBe(false);
+    expect(isConfigDoc('')).toBe(false);
+  });
+
+  test('membership is exact — lookalikes do NOT match', () => {
+    expect(isConfigDoc('__config__/project.md')).toBe(false);
+    expect(isConfigDoc('__config__/user')).toBe(false);
+    expect(isConfigDoc('__config__/')).toBe(false);
+    expect(isConfigDoc('__user__/config.yml.md')).toBe(false);
+    expect(isConfigDoc('__user__/auth.yml')).toBe(false);
+    expect(isConfigDoc('a__config__/project')).toBe(false);
+  });
+
+  test('CONFIG_DOC_NAMES contains exactly the two well-known names', () => {
+    expect([...CONFIG_DOC_NAMES].sort()).toEqual(['__config__/project', '__user__/config.yml']);
   });
 });
 
@@ -75,13 +116,11 @@ describe('CC1Broadcaster', () => {
     broadcaster.signal('backlinks');
     await wait(70);
 
-    // 'files' should have fired at ~100ms, 'backlinks' not yet
     expect(broadcasts).toHaveLength(1);
     const first = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[0]));
     expect(first.ch).toBe('files');
 
     await wait(50);
-    // 'backlinks' should have fired by now (~120ms after its signal)
     expect(broadcasts).toHaveLength(2);
     const second = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[1]));
     expect(second.ch).toBe('backlinks');
@@ -179,7 +218,6 @@ describe('CC1Broadcaster', () => {
 
   test('emitBranchSwitched emits synchronously — no debounce', () => {
     broadcaster.emitBranchSwitched('feature-x');
-    // No wait — branch switches are discrete events, emit immediately.
     expect(broadcasts).toHaveLength(1);
   });
 
@@ -203,7 +241,6 @@ describe('CC1Broadcaster', () => {
   });
 
   test('emitBranchSwitched broadcasts on __system__ doc', () => {
-    // Remove __system__ — emit must be a no-op (graceful degradation like signal()).
     mockHocuspocus.documents.clear();
     broadcaster.emitBranchSwitched('main');
     expect(broadcasts).toHaveLength(0);
@@ -224,7 +261,6 @@ describe('CC1Broadcaster', () => {
     broadcaster.signal('files');
     await wait(120);
 
-    // First + third broadcasts are derived-view ('files'); second is branch-switched.
     const derived0 = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[0]));
     const branchSwitch = CC1BranchSwitchedPayloadSchema.parse(JSON.parse(broadcasts[1]));
     const derived2 = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[2]));
@@ -248,9 +284,6 @@ describe('CC1Broadcaster', () => {
   });
 
   test('emitDiskAck round-trips the state vector via base64', () => {
-    // Realistic SV: encoded by Y.js, several bytes including high bytes.
-    // The wire encoding (base64) must preserve byte-identity so the client's
-    // `decodeStateVector(payload.sv)` reproduces the original Uint8Array.
     const sv = new Uint8Array([0x00, 0x7f, 0x80, 0xff, 0x42, 0x10]);
     broadcaster.emitDiskAck('doc-a', sv);
     const payload = CC1DiskAckPayloadSchema.parse(JSON.parse(broadcasts[0]));
@@ -260,13 +293,10 @@ describe('CC1Broadcaster', () => {
 
   test('emitDiskAck emits synchronously — no debounce', () => {
     broadcaster.emitDiskAck('doc-a', new Uint8Array([1, 2, 3]));
-    // No wait — disk-ack tracks completed disk writes, emit immediately.
     expect(broadcasts).toHaveLength(1);
   });
 
   test('emitDiskAck seq increments monotonically across docs', () => {
-    // Per-document is irrelevant to seq — the seq is per-channel for
-    // observability uniformity, not for client-side ordering.
     broadcaster.emitDiskAck('doc-a', new Uint8Array([1]));
     broadcaster.emitDiskAck('doc-b', new Uint8Array([2]));
     broadcaster.emitDiskAck('doc-a', new Uint8Array([3]));
@@ -323,12 +353,6 @@ describe('CC1Broadcaster', () => {
     expect(snapshot.doc).toBe(Buffer.from([0x01, 0x02, 0x03]).toString('base64'));
   });
 
-  // Late-join recovery contract: the snapshot is the source of truth for
-  // `__system__`-disconnected clients to refresh `lastDiskAckedSV` on
-  // reconnect via `GET /api/server-info`. It MUST advance even when the
-  // broadcast itself was dropped (no `__system__` subscribers, document
-  // missing). Otherwise a client that reconnects after a brief drop
-  // would receive a stale snapshot and the missed-frame bug recurs.
   test('getLatestDiskAckSVsAsBase64 advances even when broadcast is dropped (no __system__ subscribers)', () => {
     mockHocuspocus.documents.clear();
     broadcaster.emitDiskAck('doc', new Uint8Array([0xab, 0xcd]));
@@ -343,5 +367,85 @@ describe('CC1Broadcaster', () => {
     const snapshot2 = broadcaster.getLatestDiskAckSVsAsBase64();
     expect(snapshot1).not.toBe(snapshot2);
     expect(snapshot1).toEqual(snapshot2);
+  });
+
+  test('emitConfigValidationRejected publishes payload with docName, error, seq=1', () => {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_PROJECT, {
+      code: 'YAML_PARSE',
+      detail: 'unexpected token at line 5',
+    });
+    expect(broadcasts).toHaveLength(1);
+    const payload = CC1ConfigValidationRejectedPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    expect(payload.v).toBe(1);
+    expect(payload.ch).toBe(CC1_CHANNEL_CONFIG_VALIDATION_REJECTED);
+    expect(payload.seq).toBe(1);
+    expect(payload.docName).toBe(CONFIG_DOC_NAME_PROJECT);
+    expect(payload.error.code).toBe('YAML_PARSE');
+  });
+
+  test('emitConfigValidationRejected emits synchronously — no debounce', () => {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_USER, {
+      code: 'SCHEMA_INVALID',
+      issues: [
+        {
+          path: ['mcp', 'autoStart'],
+          message: 'expected boolean, received string',
+          issueCode: 'invalid_type',
+        },
+      ],
+    });
+    expect(broadcasts).toHaveLength(1);
+  });
+
+  test('emitConfigValidationRejected seq increments monotonically', () => {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_PROJECT, {
+      code: 'UNKNOWN',
+      message: 'one',
+    });
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_USER, {
+      code: 'UNKNOWN',
+      message: 'two',
+    });
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_PROJECT, {
+      code: 'UNKNOWN',
+      message: 'three',
+    });
+    expect(broadcasts).toHaveLength(3);
+    const seqs = broadcasts.map(
+      (b) => CC1ConfigValidationRejectedPayloadSchema.parse(JSON.parse(b)).seq,
+    );
+    expect(seqs).toEqual([1, 2, 3]);
+  });
+
+  test('emitConfigValidationRejected graceful no-op when __system__ document missing', () => {
+    mockHocuspocus.documents.clear();
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_PROJECT, {
+      code: 'YAML_PARSE',
+      detail: 'oops',
+    });
+    expect(broadcasts).toHaveLength(0);
+  });
+
+  test('emitConfigValidationRejected serializes SCHEMA_INVALID issues array intact', () => {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_PROJECT, {
+      code: 'SCHEMA_INVALID',
+      issues: [
+        {
+          path: ['mcp', 'tools', 'search', 'maxResults'],
+          message: 'expected number, received string',
+          issueCode: 'invalid_type',
+          source: { file: '/abs/config.yml', line: 5, column: 19, snippet: '> 5 |  ...' },
+        },
+      ],
+    });
+    const payload = CC1ConfigValidationRejectedPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    if (payload.error.code !== 'SCHEMA_INVALID') {
+      throw new Error('expected SCHEMA_INVALID');
+    }
+    expect(payload.error.issues).toHaveLength(1);
+    const issue = payload.error.issues[0];
+    if (!issue) throw new Error('issue missing');
+    expect(issue.path).toEqual(['mcp', 'tools', 'search', 'maxResults']);
+    expect(issue.source?.line).toBe(5);
   });
 });

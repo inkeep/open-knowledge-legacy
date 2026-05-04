@@ -1,17 +1,3 @@
-/**
- * Menu template unit tests — exercise `buildMenuTemplate(deps)` as a pure
- * function over the injected `MenuDeps`, no real Electron runtime needed.
- *
- * `buildMenuTemplate` is the "exported-for-testing" seam in `menu.ts`; these
- * tests pin down (a) the recents-submenu shape on 0 / N entries + top-10
- * clamp, (b) the Clear-Menu click wiring, and (c) the macOS branch of the
- * File / Window submenus (close vs quit, Window `zoom`/`front` vs `close`).
- *
- * We don't mount a real menu — Electron's `Menu.setApplicationMenu` is
- * exercised in packaged-build Playwright smoke (M2). The value here is
- * regression detection on the template shape: if a future edit breaks the
- * top-10 clamp or the isMac branch, these tests fail with a precise diff.
- */
 import { describe, expect, mock, test } from 'bun:test';
 import type { MenuItemConstructorOptions } from 'electron';
 import { buildMenuTemplate, type MenuDeps } from '../../src/main/menu.ts';
@@ -20,6 +6,8 @@ type RecentRow = { path: string; name: string };
 
 function makeDeps(overrides: Partial<MenuDeps> = {}): MenuDeps {
   return {
+    appName: 'Open Knowledge',
+    dialog: {} as MenuDeps['dialog'],
     openNavigator: mock(() => {}),
     openProject: mock(() => Promise.resolve()),
     getRecentProjects: mock(() => []),
@@ -29,7 +17,6 @@ function makeDeps(overrides: Partial<MenuDeps> = {}): MenuDeps {
   };
 }
 
-/** Find the first submenu item with `label === searchLabel` at any depth. */
 function findByLabel(
   items: readonly MenuItemConstructorOptions[],
   searchLabel: string,
@@ -67,7 +54,6 @@ describe('buildMenuTemplate', () => {
     const template = buildMenuTemplate(deps);
     const openRecent = findByLabel(template, 'Open Recent');
     const sub = openRecent?.submenu as MenuItemConstructorOptions[] | undefined;
-    // 2 rows + separator + Clear Menu = 4 items
     expect(sub?.length).toBe(4);
     expect(sub?.[0]?.label).toBe('alpha');
     expect(sub?.[0]?.sublabel).toBe('/tmp/a');
@@ -85,11 +71,9 @@ describe('buildMenuTemplate', () => {
     const template = buildMenuTemplate(deps);
     const openRecent = findByLabel(template, 'Open Recent');
     const sub = openRecent?.submenu as MenuItemConstructorOptions[] | undefined;
-    // 10 rows + separator + Clear Menu = 12 items (not 17)
     expect(sub?.length).toBe(12);
     expect(sub?.[0]?.label).toBe('project-0');
     expect(sub?.[9]?.label).toBe('project-9');
-    // entries 10-14 are dropped; position 10 is the separator.
     expect(sub?.[10]?.type).toBe('separator');
     expect(sub?.[11]?.label).toBe('Clear Menu');
   });
@@ -104,7 +88,6 @@ describe('buildMenuTemplate', () => {
     const openRecent = findByLabel(template, 'Open Recent');
     const sub = openRecent?.submenu as MenuItemConstructorOptions[] | undefined;
     const row = sub?.[0];
-    // Electron's click signature accepts many args; we only use the zero-arg form.
     (row?.click as (() => void) | undefined)?.();
     expect(openProject).toHaveBeenCalledWith('/tmp/foo');
   });
@@ -139,8 +122,6 @@ describe('buildMenuTemplate', () => {
   });
 
   test('"New Project…" label no longer appears in any submenu', () => {
-    // Regression guard against partial rename — the old verb was misleading
-    // because the underlying action covers create AND open AND list.
     const template = buildMenuTemplate(makeDeps());
     expect(findByLabel(template, 'New Project…')).toBeUndefined();
   });
@@ -192,9 +173,6 @@ describe('buildMenuTemplate', () => {
     macOnlyTest(
       'cliInstallStatus returning "broken" renders the Install label (same as not-installed)',
       () => {
-        // 'broken' is primarily a launch-time-repair signal, but the menu
-        // item must stay clickable so users with a broken symlink have an
-        // alternate recovery affordance to the repair dialog.
         const deps = makeDeps({
           cliInstallStatus: () => 'broken',
           toggleCliInstall: mock(() => {}),
@@ -215,9 +193,6 @@ describe('buildMenuTemplate', () => {
     });
 
     test('omitting cliInstallStatus hides the menu item (backward-compat default)', () => {
-      // Existing callers that don't opt in get the pre-M6a behavior — the
-      // menu renders without any CLI-install item, matching the current
-      // shape asserted by the top-level-menus test above.
       const deps = makeDeps();
       const template = buildMenuTemplate(deps);
       expect(findByLabel(template, 'Install Command-Line Tools…')).toBeUndefined();
@@ -238,10 +213,6 @@ describe('buildMenuTemplate', () => {
     });
 
     macOnlyTest('menu item sits between Open Recent and the close/quit row', () => {
-      // Regression guard on placement — spec calls for the item between
-      // "Open Recent" and the trailing close/quit role. A future edit that
-      // inserts it elsewhere (e.g. above Open Recent) would pass the
-      // "item exists" tests above but break the File-submenu ordering.
       const deps = makeDeps({
         cliInstallStatus: () => 'not-installed',
         toggleCliInstall: mock(() => {}),
@@ -258,31 +229,90 @@ describe('buildMenuTemplate', () => {
     });
   });
 
+  describe('Settings… menu item (US-010 / FR-1 / D54)', () => {
+    const isMac = process.platform === 'darwin';
+
+    test('Settings… is rendered with the CmdOrCtrl+, accelerator', () => {
+      const deps = makeDeps({ openSettings: mock(() => {}) });
+      const template = buildMenuTemplate(deps);
+      const settings = findByLabel(template, 'Settings…');
+      expect(settings).toBeDefined();
+      expect(settings?.accelerator).toBe('CmdOrCtrl+,');
+    });
+
+    test('Settings… click dispatches deps.openSettings()', () => {
+      const openSettings = mock(() => {});
+      const deps = makeDeps({ openSettings });
+      const template = buildMenuTemplate(deps);
+      const settings = findByLabel(template, 'Settings…');
+      (settings?.click as (() => void) | undefined)?.();
+      expect(openSettings).toHaveBeenCalledTimes(1);
+    });
+
+    test('Settings… click is a safe no-op when openSettings dep is omitted', () => {
+      const deps = makeDeps();
+      const template = buildMenuTemplate(deps);
+      const settings = findByLabel(template, 'Settings…');
+      expect(() => (settings?.click as (() => void) | undefined)?.()).not.toThrow();
+    });
+
+    if (isMac) {
+      test('macOS: Settings… lives in the App menu, between About and the services separator', () => {
+        const deps = makeDeps({ openSettings: mock(() => {}) });
+        const template = buildMenuTemplate(deps);
+        const appMenu = template.find((t) => t.label === deps.appName);
+        expect(appMenu).toBeDefined();
+        const sub = appMenu?.submenu as MenuItemConstructorOptions[] | undefined;
+        if (!sub) throw new Error('App submenu missing on macOS');
+        const aboutIdx = sub.findIndex((i) => i.role === 'about');
+        const settingsIdx = sub.findIndex((i) => i.label === 'Settings…');
+        const servicesIdx = sub.findIndex((i) => i.role === 'services');
+        expect(aboutIdx).toBeGreaterThanOrEqual(0);
+        expect(settingsIdx).toBeGreaterThan(aboutIdx);
+        expect(settingsIdx).toBeLessThan(servicesIdx);
+      });
+
+      test('macOS: Settings… does NOT appear in the File submenu', () => {
+        const deps = makeDeps({ openSettings: mock(() => {}) });
+        const template = buildMenuTemplate(deps);
+        const fileMenu = template.find((t) => t.label === 'File');
+        const sub = fileMenu?.submenu as MenuItemConstructorOptions[] | undefined;
+        if (!sub) throw new Error('File submenu missing');
+        const settingsInFile = sub.find((i) => i.label === 'Settings…');
+        expect(settingsInFile).toBeUndefined();
+      });
+    } else {
+      test('Windows/Linux: Settings… lives in the File submenu, above the trailing close/quit row', () => {
+        const deps = makeDeps({ openSettings: mock(() => {}) });
+        const template = buildMenuTemplate(deps);
+        const fileMenu = template.find((t) => t.label === 'File');
+        const sub = fileMenu?.submenu as MenuItemConstructorOptions[] | undefined;
+        if (!sub) throw new Error('File submenu missing');
+        const settingsIdx = sub.findIndex((i) => i.label === 'Settings…');
+        const trailingRoleIdx = sub.findIndex((i) => i.role === 'close' || i.role === 'quit');
+        expect(settingsIdx).toBeGreaterThanOrEqual(0);
+        expect(settingsIdx).toBeLessThan(trailingRoleIdx);
+      });
+    }
+  });
+
   test('macOS-branch behavior for the current test host', () => {
-    // `buildMenuTemplate` reads `process.platform` directly — we can assert
-    // the consistent cross-shape pairing rather than stubbing the platform.
-    // On darwin: File.close is a role, Window submenu has zoom + front.
-    // On others: File.quit is a role, Window submenu has close.
     const template = buildMenuTemplate(makeDeps());
     const file = findByLabel(template, 'File');
     const fileSub = file?.submenu as MenuItemConstructorOptions[] | undefined;
     const last = fileSub?.[fileSub.length - 1];
     expect(last).toBeDefined();
-    // Whichever branch fired, `role` is defined and is one of close|quit.
     expect(['close', 'quit']).toContain(last?.role);
 
     const windowMenu = findByLabel(template, 'Window');
     const windowSub = windowMenu?.submenu as MenuItemConstructorOptions[] | undefined;
-    // macOS adds zoom + separator + front (so length > 1); non-mac adds close.
     const roles = windowSub?.map((i) => i.role).filter(Boolean) ?? [];
     const hasZoom = roles.includes('zoom');
     const hasClose = roles.includes('close');
     const hasFront = roles.includes('front');
-    // Exactly one branch must have fired — not both, not neither.
     const isMacBranch = hasZoom && hasFront;
     const isOtherBranch = hasClose && !hasZoom;
     expect(isMacBranch || isOtherBranch).toBe(true);
-    // Minimize is always present.
     expect(roles).toContain('minimize');
   });
 });

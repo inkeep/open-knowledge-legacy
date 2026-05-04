@@ -1,27 +1,3 @@
-/**
- * Local copy of the OkDesktopBridge contract types — see comment in
- * `packages/core/src/desktop-bridge.ts` and `packages/desktop/src/shared/
- * bridge-contract.ts` for why the contract is duplicated rather than
- * exported through core's barrel.
- *
- * This file's purpose is twofold:
- *   1. Type the optional `window.okDesktop` global so `useCollabUrl` and any
- *      future Electron-aware app code can read it with full type safety.
- *   2. Stay in sync with the desktop preload's contract — drift across the
- *      three copies is caught by the `M1 invariant: bridge contract drift
- *      catcher` test in
- *      `packages/desktop/tests/integration/m1-smoke.test.ts` (top-level
- *      `OkDesktopBridge` member parity + `KeyringSmokeResult` /
- *      `OkKeyringSmokeResult` field shape).
- *
- * Web / CLI distribution: `window.okDesktop` is `undefined` and the optional
- * chaining + `if (window.okDesktop?.config.collabUrl)` guards in `useCollabUrl`
- * fall through to the existing /api/config poll path.
- */
-
-/** Seed scaffolder shapes — structurally duplicated from
- * `@inkeep/open-knowledge-server`'s seed module. See core's desktop-bridge.ts
- * for rationale (avoids pulling server into the app compilation tree). */
 interface OkFolderRule {
   match: string;
   frontmatter: { title?: string; description?: string; tags?: string[] };
@@ -110,11 +86,6 @@ interface OkUpdateStuckHintInfo {
   readonly downloadUrl: string;
 }
 
-/**
- * Editor IDs surfaced through the M6b first-launch MCP consent bridge.
- * Mirrors the canonical `EditorId` + desktop / core copies; drift caught
- * by the M1 invariant drift catcher.
- */
 export type OkMcpWiringEditorId =
   | 'claude'
   | 'claude-desktop'
@@ -123,10 +94,6 @@ export type OkMcpWiringEditorId =
   | 'windsurf'
   | 'codex';
 
-/** Payload passed to `mcpWiring.onShow` subscribers. `willReplace: true`
- *  signals the editor has an existing OK-managed MCP entry (canonical npx,
- *  `-y` variant, or prior cliPath shape) that Add would overwrite (Pass 1
- *  Major #8). */
 export interface OkMcpWiringShowPayload {
   readonly detectedEditors: readonly {
     readonly id: OkMcpWiringEditorId;
@@ -136,18 +103,49 @@ export interface OkMcpWiringShowPayload {
   }[];
 }
 
-/** Result shape for `mcpWiring.confirm` / `skip`. */
 export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
 
-/**
- * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
- * `KeyringSmokeResult` in `packages/desktop/src/utility/keyring-smoke.ts`
- * and `OkKeyringSmokeResult` in `packages/core/src/desktop-bridge.ts`.
- * Duplicated across the three copies; drift is caught by the `M1 invariant:
- * bridge contract drift catcher` test in
- * `packages/desktop/tests/integration/m1-smoke.test.ts` (field-set equality
- * across all three files).
- */
+export type OkLocalOpAuthEvent =
+  | {
+      type: 'verification';
+      user_code: string;
+      verification_uri: string;
+      expires_in: number;
+    }
+  | {
+      type: 'complete';
+      host: string;
+      login: string;
+      name?: string;
+      email?: string;
+      avatarUrl?: string;
+    }
+  | { type: 'error'; message: string };
+
+export type OkLocalOpCloneEvent =
+  | { type: 'progress'; phase: string; pct: number }
+  | { type: 'complete'; dir: string }
+  | { type: 'error'; message: string };
+
+interface OkLocalOpStream<E> {
+  readonly events: AsyncIterable<E>;
+  cancel(): void;
+}
+
+export type OkLocalOpAuthStatusResponse =
+  | { authenticated: true; host: string; login: string; name?: string; email?: string }
+  | { authenticated: false; host: string; error?: string };
+
+interface OkLocalOpRepoEntry {
+  full_name: string;
+  clone_url: string;
+  private: boolean;
+}
+
+export type OkLocalOpAuthReposResponse =
+  | { ok: true; host: string; repos: OkLocalOpRepoEntry[] }
+  | { ok: false; error: string };
+
 interface OkKeyringSmokeResult {
   ok: boolean;
   backend?: 'keyring' | 'file';
@@ -171,13 +169,6 @@ export interface OkDesktopBridge {
   };
   shell: {
     openExternal(url: string): Promise<void>;
-    /**
-     * Scheme format contract: `scheme` is the scheme NAME without trailing
-     * colon (e.g. `'claude'`, not `'claude:'`). Matches the main-process
-     * shell-injection sanitizer and the Linux `xdg-mime` shell-command form
-     * — callers with a colonful scheme MUST strip the trailing `:` first.
-     * See `packages/desktop/src/shared/bridge-contract.ts` for canonical JSDoc.
-     */
     detectProtocol(scheme: string): Promise<{ installed: boolean; displayName?: string }>;
     spawnCursor(
       path: string,
@@ -198,10 +189,23 @@ export interface OkDesktopBridge {
         | 'dispatch-error'
         | 'web-host-cursor-unsupported';
     }): Promise<void>;
-    /**
-     * Reveal a file or folder in the OS file manager. See canonical JSDoc
-     * in `packages/desktop/src/shared/bridge-contract.ts`.
-     */
+
+    openAsset(
+      relPath: string,
+    ): Promise<
+      | { ok: true }
+      | { ok: false; reason: 'extension-blocked' | 'path-escape' | 'not-found' | 'resolve-error' }
+    >;
+
+    revealAsset(
+      relPath: string,
+    ): Promise<{ ok: true } | { ok: false; reason: 'path-escape' | 'not-found' | 'resolve-error' }>;
+
+    showAssetMenu(params: {
+      readonly relPath: string;
+      readonly title: string;
+      readonly kind: 'asset' | 'wiki-link' | 'image';
+    }): Promise<void>;
     showItemInFolder(path: string): Promise<void>;
   };
   clipboard: {
@@ -212,12 +216,6 @@ export interface OkDesktopBridge {
     open(request: { path: string; target: 'new-window' }): Promise<void>;
     close(): Promise<void>;
   };
-  /**
-   * Re-summon the Project Navigator window from inside an editor window.
-   * Focus-existing-or-create — idempotent on already-focused. Used by
-   * `ProjectSwitcher` and `CommandPalette` to expose the navigator from
-   * inside the editor without closing the current window.
-   */
   navigator: {
     open(): Promise<void>;
   };
@@ -226,14 +224,7 @@ export interface OkDesktopBridge {
     apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
   };
   skill: {
-    /** True when Claude Desktop's config dir exists on this machine. */
     detectClaudeDesktop(): Promise<boolean>;
-    /**
-     * Build `openknowledge.skill` from the bundled source, save to
-     * Downloads, invoke the OS file association (`.skill` → Claude
-     * Desktop). Fire-and-forget — Claude's native install dialog takes
-     * over on `ok: true`. Local build; no network.
-     */
     buildAndOpen(): Promise<
       | { ok: true; path: string }
       | {
@@ -252,12 +243,18 @@ export interface OkDesktopBridge {
     confirm(editorIds: readonly OkMcpWiringEditorId[]): Promise<OkMcpWiringResult>;
     skip(): Promise<OkMcpWiringResult>;
   };
+  localOp: {
+    auth: {
+      start(): OkLocalOpStream<OkLocalOpAuthEvent>;
+    };
+    clone: {
+      start(request: { url: string; dir: string }): OkLocalOpStream<OkLocalOpCloneEvent>;
+    };
+    authStatus(request?: { host?: string }): Promise<OkLocalOpAuthStatusResponse>;
+    authRepos(request?: { host?: string }): Promise<OkLocalOpAuthReposResponse>;
+  };
   readonly platform: 'darwin' | 'win32' | 'linux';
   readonly appVersion: string;
-  /**
-   * Debug-only namespace populated by preload when the runtime gate allows
-   * (SPEC M5 D-M5-8). Absent in production so a typo surfaces at compile time.
-   */
   debug?: {
     keyringSmoke(): Promise<OkKeyringSmokeResult>;
   };
@@ -265,7 +262,6 @@ export interface OkDesktopBridge {
 
 declare global {
   interface Window {
-    /** Populated by the desktop preload script. Absent in web / CLI distribution. */
     okDesktop?: OkDesktopBridge;
   }
 }

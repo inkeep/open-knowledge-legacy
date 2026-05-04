@@ -24,11 +24,9 @@ describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
   test('external-sources description references save-verbatim + ingest + immutability + traceability', () => {
     const entry = STARTER_FOLDERS.find((f) => f.path === 'external-sources');
     expect(entry).toBeDefined();
-    // Explicit SAVE verbatim (not just reference) — per user feedback 2026-04-23
     expect(entry?.description).toContain('SAVED verbatim');
     expect(entry?.description).toContain('Immutable');
     expect(entry?.description).toContain('ingest');
-    // Explicit downstream traceability — articles cite back here
     expect(entry?.description.toLowerCase()).toMatch(/cite|traceab/);
     expect(entry?.tags).toEqual(['source', 'immutable', 'layer-ingest']);
   });
@@ -41,7 +39,6 @@ describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
     expect(entry?.description).toContain('status: provisional');
     expect(entry?.description).toContain('sources:');
     expect(entry?.description).toContain('consolidate');
-    // Every claim cites a source — reinforces grounding per user feedback 2026-04-23
     expect(entry?.description.toLowerCase()).toMatch(/cite|sourced/);
     expect(entry?.tags).toEqual(['research', 'provisional', 'layer-research']);
   });
@@ -53,7 +50,6 @@ describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
     expect(entry?.description).toContain('consolidate');
     expect(entry?.description).toContain('status: canonical');
     expect(entry?.description).toContain('supersedes:');
-    // Full evidence chain traces back to external-sources — user feedback 2026-04-23
     expect(entry?.description).toContain('external-sources');
     expect(entry?.tags).toEqual(['article', 'canonical', 'layer-consolidate']);
   });
@@ -72,12 +68,7 @@ describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
   });
 
   test('STARTER_FOLDERS is a readonly constant (cannot be mutated)', () => {
-    // TypeScript enforces readonly-ness at compile time; runtime shape is still
-    // a plain array. This test documents the intent — unrestricted mutation
-    // would be a red flag in review.
     expect(Object.isFrozen(STARTER_FOLDERS)).toBe(false); // spec-style const, not Object.freeze'd
-    // Verify the type annotation: `readonly StarterFolder[]` disallows push/pop at the type level.
-    // Runtime reassignment check skipped — this is a TS-level guarantee.
   });
 });
 

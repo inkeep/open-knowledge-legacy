@@ -79,8 +79,6 @@ describe('POST /api/agent-patch', () => {
       const ytext = session.dc.document.getText('source');
       const initial =
         '# Notes\n\nProject Alpha appears first. Later, Project Alpha appears second.\n';
-      // Seed via applyAgentMarkdownWrite so both XmlFragment and Y.Text are populated
-      // (agent-patch reads from XmlFragment per precedent #12 XmlFragment-authoritative).
       session.dc.document.transact(() => {
         applyAgentMarkdownWrite(session.dc.document, initial, 'replace');
       }, AGENT_WRITE_ORIGIN);
@@ -122,8 +120,6 @@ describe('POST /api/agent-patch', () => {
       const ytext = session.dc.document.getText('source');
       const initial =
         '# Notes\n\nProject Alpha appears first. Later, Project Alpha appears second.\n';
-      // Seed via applyAgentMarkdownWrite so both XmlFragment and Y.Text are populated
-      // (agent-patch reads from XmlFragment per precedent #12 XmlFragment-authoritative).
       session.dc.document.transact(() => {
         applyAgentMarkdownWrite(session.dc.document, initial, 'replace');
       }, AGENT_WRITE_ORIGIN);
@@ -161,8 +157,6 @@ describe('POST /api/agent-patch', () => {
       const ytext = session.dc.document.getText('source');
       const initial =
         '# Notes\n\nProject Alpha appears first. Later, Project Alpha appears second.\n';
-      // Seed via applyAgentMarkdownWrite so both XmlFragment and Y.Text are populated
-      // (agent-patch reads from XmlFragment per precedent #12 XmlFragment-authoritative).
       session.dc.document.transact(() => {
         applyAgentMarkdownWrite(session.dc.document, initial, 'replace');
       }, AGENT_WRITE_ORIGIN);

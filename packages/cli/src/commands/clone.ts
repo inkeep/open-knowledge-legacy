@@ -1,17 +1,12 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import simpleGit, { type SimpleGitOptions } from 'simple-git';
 import { resolveAuth } from '../auth/resolve-auth.ts';
 import { createTokenStore } from '../auth/token-store.ts';
 import { OK_DIR } from '../constants.ts';
 import { parseGitUrl } from '../github/url.ts';
-import type { Config } from '../index.ts';
-
-// ---------------------------------------------------------------------------
-// Progress phase weighting
-// Counting: 0-10%, Compressing: 10-20%, Receiving: 20-60%, Resolving: 60-100%
-// ---------------------------------------------------------------------------
 
 const STAGE_RANGES: [string, number, number][] = [
   ['count', 0, 10],
@@ -21,7 +16,6 @@ const STAGE_RANGES: [string, number, number][] = [
 ];
 
 function parseProgressLine(line: string): { stage: string; pct: number } | null {
-  // Match lines like "Receiving objects:  56% (7/12)"
   const m = /^([\w ]+):\s+(\d+)%/.exec(line.trim());
   if (!m) return null;
   const label = m[1].toLowerCase();
@@ -37,10 +31,6 @@ function parseProgressLine(line: string): { stage: string; pct: number } | null 
 function emit(json: boolean, obj: Record<string, unknown>): void {
   if (json) process.stdout.write(`${JSON.stringify(obj)}\n`);
 }
-
-// ---------------------------------------------------------------------------
-// Core clone logic
-// ---------------------------------------------------------------------------
 
 interface CloneOptions {
   json: boolean;
@@ -66,7 +56,6 @@ async function runClone(
 
   const targetDir = opts.dir ? resolve(cwd, opts.dir) : resolve(cwd, parsed.name);
 
-  // Reject non-empty directories
   if (existsSync(targetDir)) {
     const entries = readdirSync(targetDir);
     if (entries.length > 0) {
@@ -81,11 +70,8 @@ async function runClone(
     GIT_TERMINAL_PROMPT: '0',
   };
 
-  // Build -c credential.helper config if needed
   const gitConfig = resolved.credentialArgs.length >= 2 ? [resolved.credentialArgs[1]] : [];
 
-  // simple-git 3.36 gates credential.helper behind a runtime-only unsafe flag
-  // that its published typings don't currently expose.
   const gitOptions: Partial<CredentialHelperUnsafeGitOptions> = {
     baseDir: cwd,
     config: gitConfig,
@@ -116,36 +102,23 @@ async function runClone(
 
   if (!opts.json) process.stderr.write('\n');
 
-  // Auto-init: scaffold .open-knowledge/ unconditionally. `runInit` is idempotent
-  // via per-file `writeIfMissing`, so it backfills a missing `.gitignore` even
-  // when upstream committed `.open-knowledge/config.yml` without one.
   try {
     const { runInit } = await import('./init.ts');
     const initResult = await runInit({ cwd: targetDir, mcp: false });
-    // Surface the `updated` classification so silent mutation of an
-    // upstream-tracked .open-knowledge/.gitignore doesn't hide behind ✓ Cloned.
     if (initResult.contentUpdated.length > 0) {
       const msg = `auto-init: updated ${initResult.contentUpdated.join(', ')}`;
       if (opts.json) emit(true, { type: 'warning', message: msg });
       else process.stderr.write(`  ${msg}\n`);
     }
   } catch (err) {
-    // Non-fatal — surface a warning so silent failures don't hide behind
-    // the ✓ Cloned banner. Same posture as start.ts auto-init.
     const msg = err instanceof Error ? err.message : String(err);
     if (opts.json) emit(true, { type: 'warning', message: `auto-init: ${msg}` });
     else process.stderr.write(`  auto-init: ${msg}\n`);
   }
 
-  // Per-clone protection from upstream pollution: append `.open-knowledge/` to
-  // the cloned repo's `.git/info/exclude`. That file is per-clone and never
-  // committed, so OK state can't accidentally land in someone else's tree from
-  // a stray `git add .`. Symmetric with `ok init`'s stance — `init` is the
-  // user's own project (config.yml is meant to be tracked, no exclude needed).
   try {
     ensureOkExcludedFromGit(targetDir);
   } catch (err) {
-    // Non-fatal — best-effort
     const msg = err instanceof Error ? err.message : String(err);
     if (opts.json) emit(true, { type: 'warning', message: `git-exclude: ${msg}` });
     else process.stderr.write(`  git-exclude: ${msg}\n`);
@@ -154,16 +127,6 @@ async function runClone(
   return targetDir;
 }
 
-/**
- * Append `${OK_DIR}/` to `<projectDir>/.git/info/exclude` so the cloned repo's
- * outer git ignores OK state without mutating any tracked file.
- *
- * Idempotent: recognizes the common variants (`.open-knowledge`,
- * `.open-knowledge/`, leading-slash rooted forms) and only appends when none
- * are present. Returns `'no-exclude'` when the file is absent (e.g., not a git
- * repo, or a bare repo with no `info/` dir) — the caller treats that case as
- * a no-op.
- */
 export function ensureOkExcludedFromGit(
   projectDir: string,
 ): 'appended' | 'already-present' | 'no-exclude' {
@@ -183,10 +146,6 @@ export function ensureOkExcludedFromGit(
   return 'appended';
 }
 
-// ---------------------------------------------------------------------------
-// Commander command
-// ---------------------------------------------------------------------------
-
 export function cloneCommand(getConfig: () => Config): Command {
   return new Command('clone')
     .description('Clone a git repository and open it')
@@ -201,7 +160,6 @@ export function cloneCommand(getConfig: () => Config): Command {
           emit(true, { type: 'complete', dir: targetDir });
         } else {
           process.stderr.write(`✓ Cloned to ${targetDir}\n`);
-          // Chain into start — change to the cloned dir and launch
           process.chdir(targetDir);
           const { startCommand } = await import('./start.ts');
           const startCmd = startCommand(getConfig);
@@ -214,9 +172,6 @@ export function cloneCommand(getConfig: () => Config): Command {
         } else {
           process.stderr.write(`✗ ${msg}\n`);
         }
-        // Don't call process.exit — it can truncate a buffered stdout pipe
-        // before the final JSON line is flushed. Set exitCode and return so
-        // Node drains stdout naturally before the process exits.
         process.exitCode = 1;
       }
     });

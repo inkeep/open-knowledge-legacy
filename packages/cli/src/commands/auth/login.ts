@@ -1,8 +1,8 @@
+import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { runDeviceFlow } from '../../auth/device-flow.ts';
 import type { TokenStore } from '../../auth/token-store.ts';
 import { getOAuthClientId } from '../../github/app-config.ts';
-import type { Config } from '../../index.ts';
 import { validateGitHubHost } from './validate-host.ts';
 
 interface LoginOptions {
@@ -16,10 +16,6 @@ function emit(json: boolean, obj: Record<string, unknown>): void {
   }
 }
 
-/**
- * Core login logic — runs Device Flow and stores the resulting token.
- * Injectable for unit tests (pass mocked tokenStore + runDeviceFlowFn).
- */
 async function runLogin(
   opts: LoginOptions,
   tokenStore: TokenStore,
@@ -56,7 +52,6 @@ async function runLogin(
     },
   });
 
-  // Fetch user profile for identity resolution (FR20a)
   let login = 'unknown';
   let name: string | undefined;
   let email: string | undefined;
@@ -75,9 +70,7 @@ async function runLogin(
       name = user.name ?? undefined;
       email = user.email ?? undefined;
     }
-  } catch {
-    // Non-fatal — token stored without profile
-  }
+  } catch {}
 
   await tokenStore.set(host, login, result.token, {
     gitProtocol: 'https',

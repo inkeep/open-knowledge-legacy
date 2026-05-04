@@ -2,7 +2,7 @@
 title: Service topology
 description: How the Hocuspocus server, file watcher, persistence pipeline, and shadow repo work together per project.
 ---
-Each Open Knowledge project runs its own pair of sibling processes. There is no global daemon or project registry. Running multiple projects means multiple process pairs on different ports — each fully independent with its own persistence pipeline, file watcher, shadow repo, and lockfile pair (`.open-knowledge/{server,ui}.lock`).
+Each Open Knowledge project runs its own pair of sibling processes. There is no global daemon or project registry. Running multiple projects means multiple process pairs on different ports — each fully independent with its own persistence pipeline, file watcher, shadow repo, and lockfile pair (`.ok/{server,ui}.lock`).
 
 ## Dual-process lifecycle
 
@@ -47,20 +47,22 @@ Three layers, each with its own cadence and responsibility.
 
 ### Layer 0: Disk to CRDT (file watcher)
 
-`@parcel/watcher` detects external `.md` file changes on disk and reconciles them into the CRDT.
+`@parcel/watcher` detects external `.md` file changes on disk and reconciles them into the CRDT. The same watcher also emits asset events (images, PDFs, video, audio, fonts, archives) for the basename index and the file sidebar.
 
-- ContentFilter drops excluded files (gitignored, config patterns)
+- ContentFilter drops excluded files (`.gitignore` + `.okignore` rules)
 - Symlinks resolved to canonical paths via `realpath`; multiple paths to the same file share one Y.Doc
-- Events classified as create, update, delete, rename, or conflict
+- Markdown events classified as create, update, delete, rename, or conflict
+- Asset events classified as `asset-create` or `asset-delete` (Finder-style renames arrive as a delete+create pair; the basename index's add/remove is idempotent so the end state is correct)
 - Self-writes skipped via content-hash matching
-- External changes reconciled into Y.Doc via three-way merge (base/ours/theirs)
+- External markdown changes reconciled into Y.Doc via three-way merge (base/ours/theirs)
+- Asset events update the in-memory basename index and fire the CC1 `ch:'files'` signal so clients invalidate their file list
 - Latency: 2--52ms event detection
 
 ### Layer 1: CRDT to Disk (Hocuspocus persistence)
 
 The `onStoreDocument` hook fires after Y.Doc changes and flushes the document to disk.
 
-- Y.Doc serialized to markdown (frontmatter preserved via Y.Map cache)
+- Y.Doc serialized to markdown — body composed from `Y.XmlFragment`'s ProseMirror serialization; frontmatter read from the YAML region of `Y.Text('source')` directly via `stripFrontmatter(ytext.toString()).frontmatter`. The disk write is `prependFrontmatter(rawFM, body)`, so user-authored YAML formatting (indentation, scalar styles, comments, blank lines) round-trips losslessly
 - Atomic write: temp file then rename (symlinks preserved -- writes target the canonical path)
 - Write hash registered in writeTracker for feedback prevention
 - Symlink-escape check refuses writes that resolve outside `contentDir`
@@ -81,7 +83,7 @@ On graceful shutdown, `destroy()` drains both layers in order -- L1 first, then 
 
 ## Shadow repo
 
-Located at `<projectRoot>/.git/open-knowledge/`. If the project has no `.git/` when the server starts, `ensureProjectGit` auto-runs `git init --initial-branch=main` before the shadow is created (fail-fast on git missing). The shadow repo provides auto-save history and attribution without touching the project's own git state.
+Located at `<projectRoot>/.git/ok/`. If the project has no `.git/` when the server starts, `ensureProjectGit` auto-runs `git init --initial-branch=main` before the shadow is created (fail-fast on git missing). The shadow repo provides auto-save history and attribution without touching the project's own git state.
 
 It contains:
 
@@ -107,7 +109,7 @@ The engine runs two independent timer loops:
 
 Both timers use chained `setTimeout` -- the next timer starts only after the current operation completes, preventing overlap.
 
-State persists to `<contentDir>/.open-knowledge/sync-state.json` so restart recovery computes the remaining wait from the last operation timestamp rather than restarting from zero. Conflict state persists to `<contentDir>/.open-knowledge/conflicts.json`.
+State persists to `<contentDir>/.ok/sync-state.json` so restart recovery computes the remaining wait from the last operation timestamp rather than restarting from zero. Conflict state persists to `<contentDir>/.ok/conflicts.json`.
 
 Error classification uses a 5-class taxonomy (network, auth, semantic, structural, local). Network errors trigger counted exponential backoff (5 min after 3 failures, 15 min after 5, 60 min after 8). Auth errors pause sync and surface a re-authentication prompt. Protected-branch rejection disables sync for the project.
 
@@ -150,7 +152,7 @@ This means switching branches in git and switching branches in the editor are th
 | UI port         | 5173 (same as collab)                                 | 3000 by default on `ok ui` (or `PORT` env / `--port`)                                  |
 | Git integration | No shadow repo, no HEAD watcher                       | Full shadow repo + HEAD watcher                                                        |
 | File watcher    | Simplified: create/update only                        | Full: create/update/delete/rename/conflict                                             |
-| Content filter  | Basic .md filtering                                   | Full gitignore + config patterns                                                       |
+| Content filter  | Basic .md filtering                                   | Full `.gitignore` + `.okignore` (root + nested)                                        |
 | Test routes     | Enabled (`/api/test-reset`)                           | Disabled by default                                                                    |
 | Auto-shutdown   | None                                                  | 30-min idle-shutdown on `ok start`; 12h safety-net on `ok ui`                          |
 

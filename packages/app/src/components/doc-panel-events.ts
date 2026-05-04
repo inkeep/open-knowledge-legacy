@@ -1,4 +1,6 @@
-type DocPanelTab = 'outline' | 'backlinks' | 'forward-links' | 'graph';
+import type { PanelTab } from './DocPanel';
+
+type DocPanelTab = PanelTab;
 
 const DOC_PANEL_TAB_EVENT = 'open-knowledge:doc-panel-tab';
 let pendingRequestedTab: DocPanelTab | null = null;

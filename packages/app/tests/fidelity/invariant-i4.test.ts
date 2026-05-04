@@ -1,14 +1,3 @@
-/**
- * Invariant I4 — Idempotence: serialize(parse(X)) applied twice
- * produces identical output. Equivalent to I3 but stated differently
- * for clarity — the serialize→parse pipeline is a fixed point after
- * one application.
- *
- * For our generated markdown (which is already canonical), I4 and I1
- * overlap. The distinction matters for external inputs: I1 checks
- * identity, I4 checks stability.
- */
-
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
 import { markdownDoc, paragraphWithFidelityChars } from './arbitraries';

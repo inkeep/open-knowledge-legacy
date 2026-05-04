@@ -1,28 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { installDesktopFetchRewrite } from './desktop-fetch';
 
-/**
- * Unit tests for the renderer-side fetch rewriter. These exercise the pure
- * wrapper logic — no DOM or Electron runtime needed. The real window.fetch
- * is replaced by a stub so we can assert on the URL passed through.
- *
- * Isolation contract: Bun's test runner shares a single process across test
- * files, so we preserve + restore `globalThis.window` and `globalThis.fetch`
- * around this suite. Other suites (e.g. `handle-paste.test.ts`) depend on
- * the ambient `window` object being untouched — without this restoration
- * they'd see our stub and fail with "window.getSelection is not a function"
- * or similar, depending on scheduling order.
- *
- * Coverage:
- *  - `/api/*` string URLs → rewritten to apiOrigin + path
- *  - absolute http/ws URLs pass through unchanged
- *  - URL objects with same-origin /api/* → rewritten
- *  - URL objects for absolute externals → unchanged
- *  - Request objects wrapping /api/* → rewritten while preserving method/body
- *  - apiOrigin === '' → installer is a no-op (web / CLI distribution)
- *  - double-install is idempotent
- */
-
 type GlobalLike = {
   window?: Window;
   fetch?: typeof fetch;
@@ -41,19 +19,14 @@ function stubWindowFetch() {
     fetch: fetchStub,
     location: { origin: 'http://localhost:5173' },
   } as unknown as Window;
-  // Replace globalThis.fetch too since `window.fetch.bind(window)` reads the
-  // identity from the `window` binding we just installed.
   g.fetch = fetchStub as unknown as typeof fetch;
   return { calls, fetchStub };
 }
 
 describe('installDesktopFetchRewrite', () => {
-  beforeAll(() => {
-    // Capture whatever ambient globals exist at suite entry. See header comment.
-  });
+  beforeAll(() => {});
 
   afterAll(() => {
-    // Restore — don't leak our stub into sibling suites.
     if (originalWindow === undefined) delete g.window;
     else g.window = originalWindow;
     if (originalFetch === undefined) delete g.fetch;
@@ -61,14 +34,11 @@ describe('installDesktopFetchRewrite', () => {
   });
 
   beforeEach(() => {
-    // Fresh window per test so the Symbol.for marker doesn't leak across.
     delete g.window;
     delete g.fetch;
   });
 
   afterEach(() => {
-    // Belt-and-suspenders: clear between tests so an early-abort test doesn't
-    // leave a stub that the next suite picks up if this suite stops here.
     delete g.window;
     delete g.fetch;
   });
@@ -142,7 +112,6 @@ describe('installDesktopFetchRewrite', () => {
     const { fetchStub } = stubWindowFetch();
     const before = window.fetch;
     installDesktopFetchRewrite({ apiOrigin: '' });
-    // Identity preserved — no wrapper installed.
     expect(window.fetch).toBe(before);
     expect(window.fetch).toBe(fetchStub as unknown as typeof fetch);
   });
@@ -153,7 +122,6 @@ describe('installDesktopFetchRewrite', () => {
     const firstWrapper = window.fetch;
     installDesktopFetchRewrite({ apiOrigin: 'http://localhost:59534' });
     expect(window.fetch).toBe(firstWrapper);
-    // And it still rewrites only once, not twice.
     await window.fetch('/api/documents');
     expect(calls[0]?.input).toBe('http://localhost:59534/api/documents');
   });

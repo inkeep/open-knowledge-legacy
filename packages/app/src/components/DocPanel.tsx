@@ -1,32 +1,21 @@
-import { Clock, CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
-import { lazy, Suspense } from 'react';
-import { BacklinksPanel } from '@/components/BacklinksPanel';
+import { Clock, Link2, ListTree, Network } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
 import type { DiffLayout } from '@/components/DiffView';
-import { ForwardLinksPanel } from '@/components/ForwardLinksPanel';
+import { LinksPanel } from '@/components/LinksPanel';
 import { OutlinePanel } from '@/components/OutlinePanel';
 import { TimelineContent } from '@/components/TimelinePanel';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-export type PanelTab = 'outline' | 'backlinks' | 'forward-links' | 'graph' | 'timeline';
+export type PanelTab = 'outline' | 'links' | 'graph' | 'timeline';
 
 export const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
   { id: 'outline', label: 'Outline', icon: ListTree },
-  { id: 'backlinks', label: 'Backlinks', icon: CornerDownLeft },
-  { id: 'forward-links', label: 'Outgoing Links', icon: CornerUpRight },
+  { id: 'links', label: 'Links', icon: Link2 },
   { id: 'graph', label: 'Graph', icon: Network },
   { id: 'timeline', label: 'Timeline', icon: Clock },
 ];
 
-/**
- * Top-level mode for the DocPanel container. Two values:
- *   - `'doc'`:   existing per-document info tabs (outline / backlinks / …).
- *   - `'agent'`: Agent Activity view keyed to a `connectionId`.
- *
- * The mode is a drill-in, not a persistent toggle: agent avatar click enters
- * `'agent'` mode; the back arrow (shown only in `'agent'` mode) returns to
- * `'doc'` mode via `closeActivityPanel()`.
- */
 type DocPanelMode = 'doc' | 'agent';
 
 function loadGraphPanelModule() {
@@ -48,8 +37,6 @@ interface DocPanelProps {
   isSourceMode: boolean;
   activeTab: PanelTab;
   onActiveTabChange: (tab: PanelTab) => void;
-  diffLayout?: DiffLayout;
-  /** Active mode — controlled by presence-bar avatar clicks + the back arrow. */
   mode: DocPanelMode;
 }
 
@@ -58,12 +45,12 @@ export function DocPanel({
   isSourceMode,
   activeTab,
   onActiveTabChange,
-  diffLayout,
   mode,
 }: DocPanelProps) {
+  const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
   return (
     <>
-      {/* In `'doc'` mode: the 5 info sub-tabs render as the panel header.
+      {/* In `'doc'` mode: the info sub-tabs render as the panel header.
           In `'agent'` mode: no header row — `ActivityModeContent` owns its
           own header (avatar + back-arrow), which eliminates the empty-row
           footprint the standalone back-arrow used to have. */}
@@ -109,8 +96,7 @@ export function DocPanel({
           {activeTab === 'outline' && (
             <OutlinePanel docName={docName} isSourceMode={isSourceMode} />
           )}
-          {activeTab === 'backlinks' && <BacklinksPanel docName={docName} />}
-          {activeTab === 'forward-links' && <ForwardLinksPanel docName={docName} />}
+          {activeTab === 'links' && <LinksPanel docName={docName} />}
           {activeTab === 'graph' && (
             <Suspense
               fallback={
@@ -123,7 +109,11 @@ export function DocPanel({
             </Suspense>
           )}
           {activeTab === 'timeline' && (
-            <TimelineContent docName={docName} diffLayout={diffLayout ?? 'unified'} />
+            <TimelineContent
+              docName={docName}
+              diffLayout={diffLayout}
+              onDiffLayoutChange={setDiffLayout}
+            />
           )}
         </div>
       ) : (

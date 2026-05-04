@@ -1,12 +1,30 @@
 import { getHeadingSlug, toWikiLinkSlug } from '@inkeep/open-knowledge-core';
+import type { PageListCacheSnapshot } from '../page-list-cache';
 
 export { getHeadingSlug, toWikiLinkSlug };
 
-/**
- * True when the wiki-link target text can safely be used as a path segment
- * verbatim (no path separators, no reserved chars, not "." or ".."). When
- * false, callers should fall back to `toWikiLinkSlug`.
- */
+type PagesLookupInput = ReadonlySet<string> | PageListCacheSnapshot;
+
+function isSnapshot(input: PagesLookupInput): input is PageListCacheSnapshot {
+  return 'pagesBySlug' in input;
+}
+
+function getPagesSet(input: PagesLookupInput): ReadonlySet<string> {
+  return isSnapshot(input) ? input.pages : input;
+}
+
+function slugLookup(target: string, input: PagesLookupInput): string | undefined {
+  const targetSlug = toWikiLinkSlug(target);
+  if (!targetSlug) return undefined;
+  if (isSnapshot(input)) {
+    return input.pagesBySlug.get(targetSlug);
+  }
+  for (const page of input) {
+    if (toWikiLinkSlug(page) === targetSlug) return page;
+  }
+  return undefined;
+}
+
 export function canUseTargetAsPathSegment(target: string): boolean {
   const trimmed = target.trim();
   return (
@@ -18,11 +36,6 @@ export function canUseTargetAsPathSegment(target: string): boolean {
   );
 }
 
-/**
- * Suggested filename (with `.md`) for the NewItemDialog when creating a page
- * from a wiki-link target. Preserves the literal target name when it's a safe
- * path segment; otherwise falls back to the kebab-case slug.
- */
 export function wikiLinkSuggestedFilename(target: string): string {
   const baseName = canUseTargetAsPathSegment(target) ? target.trim() : toWikiLinkSlug(target);
   return `${baseName}.md`;
@@ -53,10 +66,15 @@ export function getWikiLinkResolutionCandidates(target: string): string[] {
   return slug.length > 0 && slug !== trimmed ? [slug] : [];
 }
 
-export function isResolvedWikiLinkTarget(target: string, pages: Set<string>): boolean {
+export function isResolvedWikiLinkTarget(target: string, pages: PagesLookupInput): boolean {
   const trimmed = target.trim();
   if (!trimmed) return false;
-  if (pages.has(trimmed)) return true;
+  const pagesSet = getPagesSet(pages);
+  if (pagesSet.has(trimmed)) return true;
 
-  return getWikiLinkResolutionCandidates(trimmed).some((candidate) => pages.has(candidate));
+  if (getWikiLinkResolutionCandidates(trimmed).some((candidate) => pagesSet.has(candidate))) {
+    return true;
+  }
+
+  return slugLookup(trimmed, pages) !== undefined;
 }

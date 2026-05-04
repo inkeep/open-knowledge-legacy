@@ -1,28 +1,10 @@
-/**
- * Desktop preload bridge — exposes `window.okDesktop` to the renderer.
- *
- * Runs in Electron's preload context (Node + DOM available, but isolated
- * from the renderer's JavaScript world via `contextIsolation: true`). Adds
- * a single `okDesktop` global on `window` that the renderer can use to:
- *
- *   - read the project's collab URL + apiOrigin synchronously at startup
- *   - subscribe to project-switch + menu-action events from main
- *   - invoke main-process IPC handlers (folder picker, shell, clipboard)
- *
- * Per electron/electron#33328, subscription methods MUST track the wrapped-
- * listener reference for `removeListener` to actually detach. Returning an
- * unsubscribe closure that closes over the wrapper is the canonical pattern.
- *
- * Per electron/electron#25516, `contextBridge.exposeInMainWorld` evaluates
- * accessors at exposure time, not access time — every value we put on the
- * bridge object is captured immediately. Plain values + methods only; no
- * getters / setters.
- */
-
 import { contextBridge, type IpcRendererEvent, ipcRenderer } from 'electron';
 import type {
   OkDesktopBridge,
   OkDesktopConfig,
+  OkLocalOpAuthEvent,
+  OkLocalOpCloneEvent,
+  OkLocalOpStream,
   OkMcpWiringShowPayload,
   OkMenuAction,
   OkUpdateDownloadedInfo,
@@ -33,14 +15,124 @@ import { createInvoker } from '../shared/ipc-invoke.ts';
 
 const invoke = createInvoker(ipcRenderer);
 
-/** Parse an `--ok-key=value` argv flag, returning the value or undefined. */
+function createIpcEventStream<E extends { type: string }>(
+  startResultPromise: Promise<{ ok: true; streamId: string } | { ok: false; error: string }>,
+  eventChannel: 'ok:local-op:auth:event' | 'ok:local-op:clone:event',
+  cancelChannel: 'ok:local-op:auth:cancel' | 'ok:local-op:clone:cancel',
+): OkLocalOpStream<E> {
+  const buffer: E[] = [];
+  const waiters: ((event: E | null) => void)[] = [];
+  let terminated = false;
+  let myStreamId: string | null = null;
+  let listenerAttached = false;
+
+  const push = (event: E): void => {
+    if (terminated) return;
+    if (waiters.length > 0) {
+      const next = waiters.shift();
+      next?.(event);
+    } else {
+      buffer.push(event);
+    }
+    if (event.type === 'complete' || event.type === 'error') {
+      terminated = true;
+      detach();
+      for (const w of waiters.splice(0)) w(null);
+    }
+  };
+
+  const listener = (_event: IpcRendererEvent, payload: { streamId: string; event: E }): void => {
+    if (myStreamId === null || payload.streamId !== myStreamId) return;
+    push(payload.event);
+  };
+
+  const detach = (): void => {
+    if (listenerAttached) {
+      ipcRenderer.removeListener(eventChannel, listener);
+      listenerAttached = false;
+    }
+  };
+
+  ipcRenderer.on(eventChannel, listener);
+  listenerAttached = true;
+
+  startResultPromise
+    .then((result) => {
+      if (!result.ok) {
+        push({ type: 'error', message: result.error } as unknown as E);
+        return;
+      }
+      myStreamId = result.streamId;
+    })
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      push({ type: 'error', message: `IPC error: ${message}` } as unknown as E);
+    });
+
+  const events: AsyncIterable<E> = {
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<E>> {
+          if (buffer.length > 0) {
+            const value = buffer.shift();
+            if (value === undefined) return { value: undefined, done: true };
+            return { value, done: false };
+          }
+          if (terminated) return { value: undefined, done: true };
+          return new Promise<IteratorResult<E>>((resolve) => {
+            waiters.push((event) => {
+              if (event === null) resolve({ value: undefined, done: true });
+              else resolve({ value: event, done: false });
+            });
+          });
+        },
+      };
+    },
+  };
+
+  return {
+    events,
+    cancel: () => {
+      if (terminated) return;
+      terminated = true;
+      detach();
+      for (const w of waiters.splice(0)) w(null);
+      if (myStreamId !== null) {
+        invoke(cancelChannel, myStreamId).catch(() => {});
+        return;
+      }
+      void startResultPromise.then((result) => {
+        if (result.ok) invoke(cancelChannel, result.streamId).catch(() => {});
+      });
+    },
+  };
+}
+
+function createLocalOpAuthStream(): OkLocalOpStream<OkLocalOpAuthEvent> {
+  return createIpcEventStream<OkLocalOpAuthEvent>(
+    invoke('ok:local-op:auth:start'),
+    'ok:local-op:auth:event',
+    'ok:local-op:auth:cancel',
+  );
+}
+
+function createLocalOpCloneStream(request: {
+  url: string;
+  dir: string;
+}): OkLocalOpStream<OkLocalOpCloneEvent> {
+  return createIpcEventStream<OkLocalOpCloneEvent>(
+    invoke('ok:local-op:clone:start', request),
+    'ok:local-op:clone:event',
+    'ok:local-op:clone:cancel',
+  );
+}
+
 function parseArg(name: string): string | undefined {
   const prefix = `--ok-${name}=`;
   const arg = process.argv.find((a) => a.startsWith(prefix));
   return arg?.slice(prefix.length);
 }
 
-/** Read window-bound config from preload's `process.argv` (injected by main via `additionalArguments`). */
 function readConfigFromArgv(): OkDesktopConfig {
   const collabUrl = parseArg('collab-url') ?? '';
   const apiOrigin = parseArg('api-origin') ?? '';
@@ -61,8 +153,6 @@ const bridge: OkDesktopBridge = {
   config: readConfigFromArgv(),
 
   onProjectSwitched(cb: (next: OkDesktopConfig) => void) {
-    // Wrapper is what gets registered + later removed (electron/electron#33328).
-    // Channel name is the canonical form declared in shared/ipc-events.ts's EventChannels map.
     const listener = (_event: IpcRendererEvent, next: OkDesktopConfig) => cb(next);
     ipcRenderer.on('ok:project:switched', listener);
     return () => ipcRenderer.removeListener('ok:project:switched', listener);
@@ -114,6 +204,9 @@ const bridge: OkDesktopBridge = {
     detectProtocol: (scheme: string) => invoke('ok:shell:detect-protocol', scheme),
     spawnCursor: (path: string) => invoke('ok:shell:spawn-cursor', path),
     recordHandoff: (line) => invoke('ok:shell:record-handoff', line),
+    openAsset: (relPath: string) => invoke('ok:shell:open-asset', relPath),
+    revealAsset: (relPath: string) => invoke('ok:shell:reveal-asset', relPath),
+    showAssetMenu: (params) => invoke('ok:shell:show-asset-menu', params),
     showItemInFolder: (path: string) => invoke('ok:shell:show-item-in-folder', path),
   },
 
@@ -152,24 +245,27 @@ const bridge: OkDesktopBridge = {
       return () => ipcRenderer.removeListener('ok:mcp-wiring:show', listener);
     },
     signalReady: () => {
-      // Fire-and-forget: render doesn't need the resolved result. We invoke
-      // (not send) so it composes through the typed `createInvoker`
-      // wrapper and clears D19 enforcement. Any rejection is swallowed —
-      // a missing handler during teardown is expected, not a programmer error.
       invoke('ok:mcp-wiring:renderer-ready').catch(() => {});
     },
     confirm: (editorIds) => invoke('ok:mcp-wiring:confirm', { editorIds }),
     skip: () => invoke('ok:mcp-wiring:skip'),
   },
 
+  localOp: {
+    auth: {
+      start: () => createLocalOpAuthStream(),
+    },
+    clone: {
+      start: (request) => createLocalOpCloneStream(request),
+    },
+    authStatus: (request) => invoke('ok:local-op:auth:status', request),
+    authRepos: (request) => invoke('ok:local-op:auth:repos', request),
+  },
+
   platform: process.platform as 'darwin' | 'win32' | 'linux',
   appVersion: parseArg('app-version') ?? '0.0.0',
 };
 
-// Debug namespace — populated ONLY when main decided the runtime gate is
-// open (SPEC D-M5-8). When the flag is absent, `bridge.debug` stays
-// undefined so a typo in renderer code calling the method surfaces at
-// TypeScript compile time.
 if (parseArg('debug-keyring-smoke') === '1') {
   bridge.debug = {
     keyringSmoke: () => invoke('ok:debug:keyring-smoke'),

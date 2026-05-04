@@ -1,19 +1,8 @@
-/**
- * Hocuspocus extension that attaches server-authoritative observers per-document.
- *
- * Uses the Document reference from afterLoadDocument payload directly (Document
- * extends Y.Doc). This avoids openDirectConnection's connection-count increment
- * which would prevent documents from unloading during server shutdown.
- *
- * Skips __system__ docs via isSystemDoc().
- *
- * @see specs/2026-04-15-server-authoritative-observer-bridge/SPEC.md §7b
- */
 import type { Extension } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import type * as Y from 'yjs';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { incrementServerObserverError } from './metrics.ts';
 import { setupServerObservers } from './server-observers.ts';
 import type { ShadowRef } from './shadow-repo.ts';
@@ -21,33 +10,19 @@ import type { ShadowRef } from './shadow-repo.ts';
 export interface ServerObserverExtensionOptions {
   mdManager: MarkdownManager;
   schema: Schema;
-  /**
-   * Shadow-repo reference threaded into Observer A Path B so content-loss
-   * violations can write silent rescue checkpoints (US-005). Omit when no
-   * shadow is available (e.g., minimal integration harness) — Path B then
-   * skips the checkpoint but still emits structured telemetry.
-   */
   shadowRef?: ShadowRef;
-  /** Resolver for the current project branch name. Defaults to 'main'. */
   getCurrentBranch?: () => string | null;
-  /** Absolute content root used to place the rescue blob inside the commit tree. */
   contentRoot?: string;
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
 }
 
-/**
- * Create a Hocuspocus extension that attaches server observers per-document.
- *
- * - afterLoadDocument: attaches observers using the Document from the hook payload
- * - afterUnloadDocument: detaches observers (clears debounces)
- * - Skips __system__ doc (CC1 broadcast pseudo-doc)
- */
 export function createServerObserverExtension(opts: ServerObserverExtensionOptions): Extension {
   const cleanups = new Map<string, () => void>();
   const pendingRetries = new Map<string, ReturnType<typeof setTimeout>>();
 
   return {
     async afterLoadDocument({ documentName, document }) {
-      if (isSystemDoc(documentName)) return;
+      if (isSystemDoc(documentName) || isConfigDoc(documentName)) return;
       if (cleanups.has(documentName)) return;
 
       const doc = document as unknown as Y.Doc;
@@ -68,13 +43,11 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
               ? () => opts.getCurrentBranch?.() ?? 'main'
               : undefined,
             contentRoot: opts.contentRoot,
+            resolveEmbed: opts.resolveEmbed,
           });
           cleanups.set(documentName, unsubscribe);
           return true;
         } catch (err) {
-          // Do NOT re-throw: Hocuspocus afterLoadDocument is not try/catch guarded
-          // (unlike onLoadDocument). Re-throwing would break the document setup
-          // pipeline (beforeBroadcastStateless, awareness wiring) for ALL clients.
           console.error(
             `[ServerObserverExtension] Failed to attach observers for '${documentName}':`,
             err,
@@ -86,12 +59,6 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
       };
 
       if (!attach()) {
-        // Single delayed retry for transient failures (schema init timing,
-        // temporary resource exhaustion). If the retry also fails, the
-        // document remains degraded — the underlying cause is likely
-        // persistent and requires investigation via error counters.
-        // Tracked so afterUnloadDocument can cancel if the doc unloads
-        // before the retry fires (prevents orphaned observer attachment).
         const retryId = setTimeout(() => {
           pendingRetries.delete(documentName);
           if (cleanups.has(documentName)) return; // already attached (e.g., unload+reload)
@@ -105,7 +72,6 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
     },
 
     async afterUnloadDocument({ documentName }) {
-      // Cancel pending retry to prevent orphaned observer attachment
       const pending = pendingRetries.get(documentName);
       if (pending) {
         clearTimeout(pending);

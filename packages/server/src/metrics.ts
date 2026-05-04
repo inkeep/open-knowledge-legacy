@@ -1,9 +1,3 @@
-/**
- * Reconciliation metrics — in-memory counters for observability.
- *
- * Exposed via GET /api/metrics/reconciliation.
- */
-
 export interface ReconciliationMetrics {
   reconcileCount: number;
   conflictCount: number;
@@ -13,7 +7,6 @@ export interface ReconciliationMetrics {
   branchSwitchCount: number;
   parkCount: number;
   gitAutoSaveFailureCount: number;
-  /** Count of per-writer fan-out commitWipFromTree failures (US-014, D38). */
   gitWriterCommitFailureCount: number;
   cc1BroadcastCount: number;
   cc1BroadcastDropCount: number;
@@ -23,56 +16,16 @@ export interface ReconciliationMetrics {
   serverObserverFiresB: number;
   serverObserverErrorsA: number;
   serverObserverErrorsB: number;
-  /** Count of successful atomic disk writes from persistence.onStoreDocument.
-   *  Used as the Mutation F regression gate: if OBSERVER_SYNC_ORIGIN drops
-   *  skipStoreHooks, onStoreDocument fires on every observer write and
-   *  produces amplified disk I/O. Under skipStoreHooks: true, a single
-   *  agent-write produces exactly one persistence disk write. */
   persistenceDiskWrites: number;
-  /** Bridge-correctness SPEC §6 R9 — count of Observer A Path B
-   *  content-preservation post-condition violations. Calibration signal
-   *  for the parallel single-CRDT-collapse exploration. */
   bridgeMergeContentLoss: number;
-  /** Bridge-correctness SPEC §6 R9 — count of successful silent rescue
-   *  checkpoints written via saveInMemoryCheckpoint. Bounds the rate a user
-   *  might see in TimelinePanel; if high, R7c coalescing becomes worth adding. */
   bridgeMergeCheckpointCreated: number;
-  /** Collab WebSocket upgrade sockets emitting EPIPE from `ws.send()` AFTER
-   *  the call returned control — kernel-level TCP race against a peer that
-   *  has sent FIN. Filtered at the socket-boundary listener per precedent
-   *  §23 (known-safe at half-close). Counted for observability: a spike
-   *  indicates upstream network load or peer-disconnect patterns worth
-   *  investigating, even though individual events are expected. */
   collabSocketEpipeCount: number;
-  /** Collab WebSocket upgrade sockets emitting ECONNRESET — peer-side
-   *  unclean close (RST). Same precedent §23 filter boundary; same
-   *  observability rationale as `collabSocketEpipeCount`. */
   collabSocketEconnresetCount: number;
-  /** Count of legacy WIP refs deleted by the allowlist-based sweep in
-   *  initShadowRepo on first run post-upgrade (US-018, NFR-6, D35). */
   shadowMigrationLegacyRefsDeleted: number;
-  /** Count of captureEffect failures (US-022, D37). Prod swallows; dev/test throws. */
   effectDiffCaptureFailures: number;
-  /** Count of awareness-mutation failures in `AgentPresenceBroadcaster`
-   *  (setPresence / clearPresence / touchMode catching a throw from
-   *  `awareness.setLocalState`). Each failure logs at ERROR but the call
-   *  sites (HTTP handlers, keepalive close) swallow the return and move
-   *  on, so the counter is the operator-visible signal that presence is
-   *  silently dropping. A non-zero value means the badge state on clients
-   *  may disagree with what the server thinks it published — investigate
-   *  the correlated `[agent-presence] awareness mutation failed` log line. */
   agentPresenceMutationErrors: number;
-  /** Successful agent-write API calls that reached recordContributor —
-   *  denominator for the M1 summary-adoption metric in spec §7. Incremented
-   *  by the five agent-write handlers only AFTER a successful recordContributor
-   *  (D22: UI-driven rollback/rename without agentId does NOT increment). */
   agentWriteCalls: number;
-  /** Agent-write calls that carried a non-empty summary through
-   *  normalizeSummary — numerator for M1. Adoption rate = summariesProvided /
-   *  agentWriteCalls. */
   summariesProvided: number;
-  /** Agent-write calls whose input summary exceeded the API cap and was
-   *  truncated to 79 visible chars + `…`. Spec M2 steady-state target <10 %. */
   summariesTruncated: number;
 }
 
@@ -189,45 +142,11 @@ export function incrementBridgeMergeCheckpointCreated(): void {
   counters.bridgeMergeCheckpointCreated++;
 }
 
-/**
- * Record a filtered collab-socket error. Prefer `handleCollabSocketError`
- * at call sites — it pairs the classify + counter update atomically so the
- * two can't drift. This low-level function is exported for tests.
- */
 export function incrementCollabSocketFilteredError(code: 'EPIPE' | 'ECONNRESET'): void {
   if (code === 'EPIPE') counters.collabSocketEpipeCount++;
   else counters.collabSocketEconnresetCount++;
 }
 
-/**
- * Classify a collab-socket error. Returns `true` if the error is a
- * known-safe kernel TCP-teardown signal (EPIPE or ECONNRESET) that should
- * be filtered out of logs per precedent §23. As a side effect, increments
- * the corresponding per-code metric counter so operators can see the rate
- * during incident triage.
- *
- * Returns `false` for any other error code — the caller surfaces those
- * via their normal logging path.
- *
- * Contract: callers MUST use this helper rather than re-implementing the
- * `code === 'EPIPE' || code === 'ECONNRESET'` check inline. Centralizing
- * the filter surface prevents future skew (e.g., if ETIMEDOUT or ECONNABORTED
- * become known-safe, the decision flips in one place).
- *
- * Usage shape:
- *
- *   socket.on('error', (err: NodeJS.ErrnoException) => {
- *     if (handleCollabSocketError(err)) return;
- *     log.error({ err }, 'Upgrade socket error');
- *   });
- *
- *   ws.on('error', (err: NodeJS.ErrnoException) => {
- *     if (!handleCollabSocketError(err)) {
- *       log.error({ err }, 'WebSocket error');
- *     }
- *     ws.terminate();
- *   });
- */
 export function incrementShadowMigrationLegacyRefsDeleted(count: number): void {
   counters.shadowMigrationLegacyRefsDeleted += count;
 }

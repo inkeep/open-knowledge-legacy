@@ -1,3 +1,4 @@
+import { toWikiLinkSlug } from '@inkeep/open-knowledge-core';
 import { normalizeDocNameInput } from '@/lib/doc-paths';
 import { computeAncestors } from './file-tree-utils';
 
@@ -38,11 +39,22 @@ export function deriveKnownFolderPaths(docNames: Iterable<string>): Set<string> 
   return folderPaths;
 }
 
+function slugResolve(
+  normalizedTarget: string,
+  pagesBySlug: ReadonlyMap<string, string> | undefined,
+): string | undefined {
+  if (!pagesBySlug) return undefined;
+  const slug = toWikiLinkSlug(normalizedTarget);
+  if (!slug) return undefined;
+  return pagesBySlug.get(slug);
+}
+
 export function resolveNavigationTarget(
   target: string,
   options: {
     pages: ReadonlySet<string>;
     folderPaths?: ReadonlySet<string>;
+    pagesBySlug?: ReadonlyMap<string, string>;
   },
 ): ResolvedNavigationTarget {
   const normalizedTarget = normalizeTargetPath(target);
@@ -55,6 +67,15 @@ export function resolveNavigationTarget(
       kind: 'doc',
       target: normalizedTarget,
       docName: normalizedTarget,
+    };
+  }
+
+  const slugMatchDocName = slugResolve(normalizedTarget, options.pagesBySlug);
+  if (slugMatchDocName) {
+    return {
+      kind: 'doc',
+      target: slugMatchDocName,
+      docName: slugMatchDocName,
     };
   }
 

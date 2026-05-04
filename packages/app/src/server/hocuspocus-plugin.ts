@@ -1,20 +1,12 @@
-/**
- * Vite plugin that integrates Hocuspocus for dev mode. Delegates server
- * construction to `createServer()` from @inkeep/open-knowledge-server; the
- * plugin only adapts that ServerInstance to Vite's lifecycle (config.yml
- * resolution, `OK_TEST_CONTENT_DIR` override, `/api/config` synthesis, sirv
- * content serving, `/collab` + `/collab/keepalive` upgrade routing).
- *
- * `createServer()` is called lazily from `configureServer` (not at module
- * load) because its async init holds the event loop open via @parcel/watcher
- * — module-load invocation makes `vite build` hang after the bundle step.
- * A fresh ServerInstance is created per `configureServer` call so Vite
- * restarts (vite.config.ts / .env edits) don't leave the new httpServer
- * wired to a soon-to-be-destroyed srv.
- */
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import {
+  ASSET_EXTENSIONS,
+  EXECUTABLE_BLOCKLIST_EXTENSIONS,
+  INLINE_RENDERABLE_EXTENSIONS,
+} from '@inkeep/open-knowledge-core';
+import {
+  createAssetServeMiddleware,
   createServer,
   ensureProjectGit,
   handleCollabSocketError,
@@ -29,10 +21,6 @@ import { WebSocketServer } from 'ws';
 import { parse as parseYaml } from 'yaml';
 import { computeDevApiConfigResponse } from './api-config-handler.ts';
 
-// Counts `configureServer` invocations so the warn-on-restart message can
-// name the count. Referenced in `[collab]` diagnostic logs — see the
-// `Investigating a stuck /collab WS` section of
-// packages/app/src/server/README.md.
 let configureServerInvocations = 0;
 
 const PLUGIN_DIR = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
@@ -40,23 +28,11 @@ const PROJECT_ROOT = resolve(PLUGIN_DIR, '../../../..');
 
 interface ContentConfig {
   dir: string;
-  include: string[];
-  exclude: string[];
 }
 
-// Exported for unit testing. Matches `api-config-handler.ts:computeDevApiConfigResponse`
-// extraction pattern — keep the pure logic reachable from a test harness so the
-// defaults-fallback path gets regression coverage without spinning up Vite.
 export function resolveContentConfig(projectRoot: string): ContentConfig {
-  // Defaults must stay in sync with `packages/cli/src/config/schema.ts` —
-  // admitting both `.md` and `.mdx` is the path contract the rest of the
-  // stack (file watcher, content filter, doc-extensions) already expects.
-  const defaults: ContentConfig = {
-    dir: projectRoot,
-    include: ['**/*.md', '**/*.mdx'],
-    exclude: [],
-  };
-  const configPath = resolve(projectRoot, '.open-knowledge/config.yml');
+  const defaults: ContentConfig = { dir: projectRoot };
+  const configPath = resolve(projectRoot, '.ok/config.yml');
   if (existsSync(configPath)) {
     try {
       const raw = readFileSync(configPath, 'utf-8');
@@ -64,18 +40,6 @@ export function resolveContentConfig(projectRoot: string): ContentConfig {
       const content = parsed?.content as Record<string, unknown> | undefined;
       if (typeof content?.dir === 'string') {
         defaults.dir = resolve(projectRoot, content.dir);
-      }
-      if (Array.isArray(content?.include)) {
-        const valid = (content.include as unknown[]).filter(
-          (p): p is string => typeof p === 'string',
-        );
-        if (valid.length > 0) defaults.include = valid;
-      }
-      if (Array.isArray(content?.exclude)) {
-        const valid = (content.exclude as unknown[]).filter(
-          (p): p is string => typeof p === 'string',
-        );
-        if (valid.length > 0) defaults.exclude = valid;
       }
     } catch (err) {
       console.warn('[hocuspocus] Failed to parse config:', err);
@@ -85,29 +49,18 @@ export function resolveContentConfig(projectRoot: string): ContentConfig {
 }
 
 const contentConfig = resolveContentConfig(PROJECT_ROOT);
-// `realpathSync` resolves macOS /tmp → /private/tmp so the watcher and
-// persistence layer agree on canonical paths inside test tmpdirs.
 const CONTENT_DIR = process.env.OK_TEST_CONTENT_DIR
   ? realpathSync(process.env.OK_TEST_CONTENT_DIR)
   : contentConfig.dir;
 const CONTENT_ROOT = relative(PROJECT_ROOT, CONTENT_DIR);
 
-// Without this, fresh clones / worktrees crash on first write.
 mkdirSync(CONTENT_DIR, { recursive: true });
 
-// Playwright worker tmpdirs have no `.git/` by default. When a suite needs
-// the shadow-repo pipeline (e.g. /api/history, /api/save-version), it sets
-// OK_TEST_GIT_ENABLED=1 and this flag opts the plugin into git mode.
 const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 const gitEnabledForTest = isTestIsolated && process.env.OK_TEST_GIT_ENABLED === '1';
 
 const KEEPALIVE_GRACE_MS = 10_000;
 
-// Gate the process.once('exit', ...) registration to avoid tripping
-// MaxListenersExceededWarning after ~10 Vite restarts. The exit handler
-// reads `latestLockDir` inside its closure so a Vite restart that swaps
-// the resolved lockDir (content.dir edit, env flip) still releases the
-// current server's lock rather than the first invocation's.
 let exitHandlerRegistered = false;
 let latestLockDir: string | null = null;
 
@@ -115,9 +68,6 @@ export function hocuspocusPlugin(): Plugin {
   return {
     name: 'hocuspocus',
     async configureServer(server) {
-      // Per-invocation closure state. On Vite restart the OLD close handler
-      // sets its own `shuttingDown = true` on its own binding; the NEW
-      // invocation starts fresh. Mirrors boot.ts's closure shape.
       const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
       const keepaliveGraceInflight = new Set<Promise<void>>();
       let shuttingDown = false;
@@ -131,27 +81,17 @@ export function hocuspocusPlugin(): Plugin {
         console.info(`[collab] configureServer invocation=1 pid=${process.pid}`);
       }
 
-      // `createServer()` does not call `ensureProjectGit` — bootServer and
-      // the integration test harness both call it upstream; the plugin
-      // matches that contract for fail-fast on missing git.
       if (!isTestIsolated) {
         await ensureProjectGit(PROJECT_ROOT);
       } else if (gitEnabledForTest) {
         await ensureProjectGit(CONTENT_DIR);
       }
 
-      // Fresh ServerInstance per invocation. The local `currentSrv` is
-      // closed over by the close handler below so each configureServer pass
-      // destroys the srv IT created (not a later pass's). Same-pid server +
-      // shadow locks are idempotent + refcounted, so brief overlap during
-      // Vite restart is safe.
       const currentSrv = createServer({
         contentDir: CONTENT_DIR,
         projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
         contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
         gitEnabled: !isTestIsolated || gitEnabledForTest,
-        includePatterns: contentConfig.include,
-        excludePatterns: contentConfig.exclude,
         enableTestRoutes: true,
         quiet: true,
       });
@@ -159,17 +99,11 @@ export function hocuspocusPlugin(): Plugin {
       latestLockDir = currentSrv.lockDir;
       if (!exitHandlerRegistered) {
         exitHandlerRegistered = true;
-        // Fires for non-graceful exits where the close handler's
-        // `srv.destroy()` never runs. Ownership-guarded. Reads
-        // `latestLockDir` from module scope so a Vite restart that swapped
-        // the lockDir still releases the current server's lock.
         process.once('exit', () => {
           if (latestLockDir === null) return;
           try {
             releaseServerLock(latestLockDir);
-          } catch {
-            // Already released by close handler's destroy — fine.
-          }
+          } catch {}
         });
       }
 
@@ -192,20 +126,6 @@ export function hocuspocusPlugin(): Plugin {
         console.error('[collab] WebSocketServer error:', err);
       });
 
-      // `prependListener` intercepts /collab BEFORE Vite's HMR handler.
-      //
-      // Instrumented because `/collab` has reported-but-non-reproducible
-      // failure modes where the HTTP Upgrade never completes (Chrome shows
-      // Status: pending, 0 B). The four log lines below pinpoint where in
-      // the chain a stuck connection halted:
-      //
-      //   [collab] upgrade received …     — event reached our listener
-      //   [collab] handleUpgrade starting — path matched, pre-ws handoff
-      //   [collab] handleUpgrade threw …  — sync throw (e.g. double-upgrade)
-      //   [collab] handshake complete …   — 101 sent; hocuspocus takes over
-      //
-      // If a stuck WS report shows none of these lines for the offending
-      // connection, the upgrade never reached this listener.
       server.httpServer?.prependListener('upgrade', (req, socket, head) => {
         if (!req.url?.startsWith('/collab')) return;
 
@@ -213,11 +133,6 @@ export function hocuspocusPlugin(): Plugin {
           `[collab] upgrade received url=${req.url} protocol=${req.headers['sec-websocket-protocol'] ?? 'none'} host=${req.headers.host ?? 'none'} origin=${req.headers.origin ?? 'none'}`,
         );
 
-        // `ok mcp` holds a persistent WS to /collab/keepalive?connectionId=<id>
-        // to register as an active client. Must route as a bare WS — MCP
-        // never sends sync-step-1 that Hocuspocus waits for, so routing
-        // through hocuspocus.handleConnection would leave the socket
-        // half-initialized in the connection registry.
         if (req.url.startsWith('/collab/keepalive')) {
           socket.on('error', (err: NodeJS.ErrnoException) => {
             if (handleCollabSocketError(err)) return;
@@ -226,9 +141,6 @@ export function hocuspocusPlugin(): Plugin {
           console.info(`[collab] keepalive handleUpgrade starting for ${req.url}`);
           try {
             wss.handleUpgrade(req, socket, head, (ws) => {
-              // connectionId drives cleanup of agent sessions + focus +
-              // presence. Legacy clients without it fall through to the
-              // client-side 5s TTL filter.
               const connectionId = parseKeepaliveConnectionId(req.url);
 
               if (connectionId) {
@@ -247,20 +159,10 @@ export function hocuspocusPlugin(): Plugin {
               const pingTimer = setInterval(() => {
                 try {
                   ws.ping();
-                } catch {
-                  // Dead socket fires 'close' + 'error' which clean up below.
-                }
+                } catch {}
               }, 30_000);
               pingTimer.unref?.();
 
-              // Client-side TTL filter hides presence entries older than 5s.
-              // Write-path calls only fire on MCP edits, so agents between
-              // tool calls (LLM thinking 10-30s) would drop off without this
-              // 3s bump.
-              // `toBroadcasterKey` converts the raw URL id into the
-              // `agent-<id>` map key used by HTTP write handlers; without
-              // it, `bumpPresenceTs` no-ops because the entry lives under
-              // the prefixed key.
               const tsRefreshTimer = connectionId
                 ? setInterval(() => {
                     agentPresenceBroadcaster?.bumpPresenceTs(toBroadcasterKey(connectionId));
@@ -274,9 +176,6 @@ export function hocuspocusPlugin(): Plugin {
                 if (!connectionId) return;
                 const timer = setTimeout(() => {
                   keepaliveGraceTimers.delete(connectionId);
-                  // If destroy already ran, the sessionManager +
-                  // broadcasters may be mid-teardown. Racing them is worse
-                  // than skipping cleanup.
                   if (shuttingDown) return;
                   const work = (async () => {
                     console.info(
@@ -327,17 +226,11 @@ export function hocuspocusPlugin(): Plugin {
             console.error(`[collab] keepalive handleUpgrade threw for ${req.url}:`, err);
             try {
               socket.destroy();
-            } catch {
-              // Already-destroyed sockets throw on destroy; swallow.
-            }
+            } catch {}
           }
           return;
         }
 
-        // /collab — browser HocuspocusProvider connections. The socket error
-        // handler attaches BEFORE handleUpgrade because ECONNRESET during
-        // the upgrade handshake fires asynchronously with no listener, which
-        // crashes the whole Node process (see websockets/ws#1017).
         socket.on('error', (err: NodeJS.ErrnoException) => {
           if (handleCollabSocketError(err)) return;
           console.error('[collab] Upgrade socket error:', err);
@@ -371,22 +264,13 @@ export function hocuspocusPlugin(): Plugin {
           console.error(`[collab] handleUpgrade threw for ${req.url}:`, err);
           try {
             socket.destroy();
-          } catch {
-            // Already-destroyed — swallow.
-          }
+          } catch {}
         }
       });
 
-      // `/api/*` routes go through Hocuspocus's onRequest hook; unknown
-      // routes must return 404 JSON (NOT fall through to Vite's SPA
-      // fallback, which would confuse MCP stdio with an index.html body).
       server.middlewares.use(async (req, res, next) => {
         const url = req.url?.split('?')[0];
         if (url?.startsWith('/api/')) {
-          // `/api/config` is a dev-only analogue of what `ok ui` serves in
-          // prod. Answered here (before the Hocuspocus dispatch) so the
-          // first `useCollabUrl` tick gets a valid collabUrl even while
-          // extensions are still claiming routes.
           if (url === '/api/config') {
             const addr = server.httpServer?.address();
             const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
@@ -403,14 +287,9 @@ export function hocuspocusPlugin(): Plugin {
               }
               return;
             }
-            // Method not GET/HEAD — fall through to 404.
           }
           // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
           await hocuspocus.hooks('onRequest', { request: req, response: res } as any);
-          // Streaming NDJSON handlers call `writeHead(200)` and return
-          // before `end()` — `writableEnded` is false but `headersSent` is
-          // true. Either means "a handler owns the response"; setting
-          // headers here would throw ERR_HTTP_HEADERS_SENT.
           if (res.writableEnded || res.headersSent) return;
           res.statusCode = 404;
           res.setHeader('Content-Type', 'application/json');
@@ -420,21 +299,16 @@ export function hocuspocusPlugin(): Plugin {
         next();
       });
 
-      // Use the same filter createServer() passes to the file watcher so
-      // HTTP asset serving and CRDT loading agree on what's excluded.
-      const contentFilter = currentSrv.contentFilter;
-      const contentSirv = sirv(CONTENT_DIR, { dev: true, dotfiles: false });
-      server.middlewares.use((req, res, next) => {
-        const rel = decodeURIComponent(req.url?.split('?')[0]?.replace(/^\//, '') ?? '');
-        if (!rel || contentFilter.isExcluded(rel)) return next();
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        contentSirv(req, res, next);
-      });
+      server.middlewares.use(
+        createAssetServeMiddleware({
+          contentFilter: currentSrv.contentFilter,
+          contentSirv: sirv(CONTENT_DIR, { dev: true, dotfiles: false }),
+          inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,
+          assetExtensions: ASSET_EXTENSIONS,
+          blocklistExtensions: EXECUTABLE_BLOCKLIST_EXTENSIONS,
+        }),
+      );
 
-      // Close handler is pinned to THIS invocation's `currentSrv` so each
-      // configureServer pass destroys the srv it created — Vite restart
-      // semantics (close the old httpServer AFTER the new one has wired
-      // up) made a module-scope `srv` reference race with itself.
       server.httpServer?.on('close', async () => {
         shuttingDown = true;
         for (const timer of keepaliveGraceTimers.values()) {

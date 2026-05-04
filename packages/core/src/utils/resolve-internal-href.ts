@@ -3,11 +3,6 @@ export interface ResolvedInternalHref {
   anchor: string | null;
 }
 
-/**
- * Canonical resolution for markdown hrefs that target docs inside the content
- * tree. Server and app surfaces share this so "is this internal?" stays
- * consistent across backlinks, WYSIWYG rendering, and source-mode navigation.
- */
 export function resolveInternalHref(
   href: string,
   sourceDocName: string,
@@ -15,7 +10,6 @@ export function resolveInternalHref(
   const trimmed = href.trim();
   if (!trimmed) return null;
 
-  // External: URI scheme, protocol-relative, absolute path, or anchor-only.
   if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed)) return null;
   if (trimmed.startsWith('//') || trimmed.startsWith('/') || trimmed.startsWith('#')) return null;
 
@@ -26,9 +20,13 @@ export function resolveInternalHref(
   const cleanPath = (pathPart.split('?')[0] ?? '').trim();
   if (!cleanPath) return null;
 
-  // Strip the canonical doc extensions (see packages/server/src/doc-extensions.ts
-  // for the server-side source of truth — core can't import from server, so
-  // the list is inlined here and kept narrow: .md + .mdx).
+  const lastSegment = cleanPath.split('/').pop() ?? '';
+  const extMatch = lastSegment.match(/\.([a-z0-9]+)$/i);
+  if (extMatch) {
+    const ext = (extMatch[1] ?? '').toLowerCase();
+    if (ext !== 'md' && ext !== 'mdx') return null;
+  }
+
   const lower = cleanPath.toLowerCase();
   const withoutExt = lower.endsWith('.mdx')
     ? cleanPath.slice(0, -4)

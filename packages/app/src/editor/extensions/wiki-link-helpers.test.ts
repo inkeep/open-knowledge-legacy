@@ -50,6 +50,48 @@ describe('isResolvedWikiLinkTarget', () => {
   });
 });
 
+describe('isResolvedWikiLinkTarget — case-insensitive resolution against case-preserved pages cache', () => {
+  test('lowercased slug resolves against case-preserved cache entry', () => {
+    const pages = new Set(['README']);
+    expect(isResolvedWikiLinkTarget('readme', pages)).toBe(true);
+  });
+
+  test('exact case match still resolves (regression guard)', () => {
+    const pages = new Set(['README']);
+    expect(isResolvedWikiLinkTarget('README', pages)).toBe(true);
+  });
+
+  test('underscore/case filename (BA_for_Depression_Research) resolves', () => {
+    const pages = new Set(['BA_for_Depression_Research']);
+    expect(isResolvedWikiLinkTarget('ba-for-depression-research', pages)).toBe(true);
+    expect(isResolvedWikiLinkTarget('BA_for_Depression_Research', pages)).toBe(true);
+  });
+
+  test('hyphenated slug resolves against hyphenated case-preserved entry', () => {
+    const pages = new Set(['My-File']);
+    expect(isResolvedWikiLinkTarget('my-file', pages)).toBe(true);
+    expect(isResolvedWikiLinkTarget('My-File', pages)).toBe(true);
+  });
+
+  test('no spurious match when target is truly absent', () => {
+    const pages = new Set(['README', 'AGENTS']);
+    expect(isResolvedWikiLinkTarget('nonexistent', pages)).toBe(false);
+    expect(isResolvedWikiLinkTarget('somethingelse', pages)).toBe(false);
+  });
+
+  test('subdirectory-preserving docName (packages/server/README) resolves case-insensitively', () => {
+    const pages = new Set(['packages/server/README']);
+    expect(isResolvedWikiLinkTarget('packages/server/README', pages)).toBe(true);
+    expect(isResolvedWikiLinkTarget('packages/server/readme', pages)).toBe(true);
+  });
+
+  test('empty / whitespace target never resolves', () => {
+    const pages = new Set(['README']);
+    expect(isResolvedWikiLinkTarget('', pages)).toBe(false);
+    expect(isResolvedWikiLinkTarget('   ', pages)).toBe(false);
+  });
+});
+
 describe('canUseTargetAsPathSegment', () => {
   test('accepts plain text and spaces', () => {
     expect(canUseTargetAsPathSegment('Y')).toBe(true);

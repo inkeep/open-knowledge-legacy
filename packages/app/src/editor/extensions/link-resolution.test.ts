@@ -1,19 +1,6 @@
-/**
- * Tests for the pure link-resolution helpers (iter-24 US-005 prep primitive).
- *
- * Invariants under test:
- * - `computeLinkResolutionState` is pure (no globals, deterministic from inputs).
- * - State branching matches InternalLinkView's behavior today:
- *   `loading ? 'loading' : folder ? 'folder' : resolved ? 'resolved' : 'unresolved'`
- *   plus 'external' + 'anchor' for the additive V2 states.
- * - `computeLinkResolutionAttrs` returns `{'data-resolution-state': state}`
- *   or `null` when href is missing/malformed (skip decoration cleanly).
- * - `makeLinkResolutionAttrsComputer(docName)` captures sourceDocName once
- *   and produces a closure the decoration plugin can call many times.
- */
-
 import { describe, expect, test } from 'bun:test';
-import type { PageListCacheSnapshot } from '../page-list-cache';
+import { toWikiLinkSlug } from '@inkeep/open-knowledge-core';
+import { buildPagesBySlugIndex, type PageListCacheSnapshot } from '../page-list-cache';
 import {
   computeLinkResolutionAttrs,
   computeLinkResolutionState,
@@ -25,9 +12,11 @@ function makeCache(opts: {
   pages?: Iterable<string>;
   folderPaths?: Iterable<string>;
 }): PageListCacheSnapshot {
+  const pages = new Set(opts.pages ?? []);
   return {
-    pages: new Set(opts.pages ?? []),
+    pages,
     folderPaths: new Set(opts.folderPaths ?? []),
+    pagesBySlug: buildPagesBySlugIndex(pages, toWikiLinkSlug),
   };
 }
 
@@ -86,16 +75,12 @@ describe('computeLinkResolutionState', () => {
   });
 
   test('doc href with cache, target is folder → folder', () => {
-    // resolveLinkTargetIntent returns {kind: 'navigate', displayState: 'folder'} when target
-    // is present in folderPaths without a matching page.
     const cache = makeCache({ pages: [], folderPaths: ['subfolder'] });
     expect(computeLinkResolutionState('./subfolder', 'README', cache)).toBe('folder');
   });
 
   test('relative href normalization matches classifyMarkdownHref', () => {
-    // classifyMarkdownHref normalizes ./OTHER.md relative to sourceDocName before checking cache
     const cache = makeCache({ pages: ['topic/page'] });
-    // Source in topic/ should resolve ./page.md to topic/page
     expect(computeLinkResolutionState('./page.md', 'topic/other', cache)).toBe('resolved');
   });
 
@@ -156,6 +141,20 @@ describe('computeLinkResolutionAttrs', () => {
     const mark = makeMarkInfo({ href: './X.md' });
     expect(computeLinkResolutionAttrs(mark, null, 'README')).toEqual({
       'data-resolution-state': 'loading',
+    });
+  });
+
+  test('wikiembed-sourced link → no decoration (skip classification)', () => {
+    const cache = makeCache({ pages: ['README'] });
+    const mark = makeMarkInfo({ href: 'docs/foo.pdf', sourceForm: 'wikiembed' });
+    expect(computeLinkResolutionAttrs(mark, cache, 'README')).toBeNull();
+  });
+
+  test('plain link mark (sourceForm=null) still gets decoration', () => {
+    const cache = makeCache({ pages: ['OTHER'] });
+    const mark = makeMarkInfo({ href: './OTHER.md', sourceForm: null });
+    expect(computeLinkResolutionAttrs(mark, cache, 'README')).toEqual({
+      'data-resolution-state': 'resolved',
     });
   });
 });

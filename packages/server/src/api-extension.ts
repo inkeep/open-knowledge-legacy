@@ -1,46 +1,44 @@
-/**
- * HTTP API extension for Hocuspocus — agent write, file ops, and test reset endpoints.
- *
- * Implemented as a Hocuspocus onRequest extension so it works with both
- * the standalone Server and the Vite dev plugin.
- */
-
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
+  createReadStream,
+  createWriteStream,
   existsSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   realpathSync,
-  renameSync,
   rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { pipeline } from 'node:stream/promises';
 import { setTimeout as wait } from 'node:timers/promises';
 import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
-  ALLOWED_AUDIO_MIME_TYPES,
-  ALLOWED_IMAGE_MIME_TYPES,
-  ALLOWED_VIDEO_MIME_TYPES,
+  ASSET_EXTENSIONS,
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
   createWorkspaceSearchCorpus,
   createWorkspaceSearchDocument,
+  DEFAULT_ATTACHMENT_FOLDER_PATH,
+  DEFAULT_DEDUP_MODE,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
   type Principal,
   prependFrontmatter,
+  readFmMap,
   SYSTEM_DOC_NAME,
   searchWorkspaceCorpus,
   stripFrontmatter,
@@ -49,6 +47,7 @@ import {
   type WorkspaceSearchIntent,
   type WorkspaceSearchScope,
 } from '@inkeep/open-knowledge-core';
+import { writeConfigPatch } from '@inkeep/open-knowledge-core/server';
 import {
   formatCheckpointSubject,
   formatRenameSubject,
@@ -57,7 +56,7 @@ import {
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
-import { fileTypeFromBuffer } from 'file-type';
+import { fileTypeFromFile } from 'file-type';
 import { captureEffect } from './activity-log.ts';
 import { listAgentActivity, synthesizeStackItemDiffText } from './agent-activity.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
@@ -69,6 +68,7 @@ import {
   iconFromClientName,
 } from './agent-sessions.ts';
 import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
+import { isAllowedApiOrigin } from './api-origin.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
   createInstalledAgentsProbe,
@@ -83,7 +83,13 @@ import {
   parseFrontmatterMetadata,
 } from './page-identity.ts';
 import { readServerLock } from './server-lock.ts';
+import { buildAndOpenSkill } from './skill-install.ts';
 import { readUiLock } from './ui-lock.ts';
+import {
+  HashingPassThrough,
+  linkTempToFinalWithCollisionRetry,
+  mintTempUploadPath,
+} from './upload-streaming.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
@@ -97,21 +103,40 @@ import {
   ATTR_USER_AGENT_ORIGINAL,
 } from '@opentelemetry/semantic-conventions';
 import simpleGit from 'simple-git';
-import { AGENT_ID_RE, toBroadcasterKey, validateAgentId } from './agent-id.ts';
+import { parseAgentBodyFields, resolveAgentType, validateAgentId } from './agent-id.ts';
+import {
+  applyRenameMap,
+  buildRenameMap,
+  ManagedRenameCollisionError,
+  ManagedRenameDestinationExistsError,
+  ManagedRenameSourceNotFoundError,
+  ManagedRenameSourceTypeMismatchError,
+} from './apply-managed-rename.ts';
 import {
   type BacklinkIndex,
   type GraphNode as IndexedGraphNode,
   isOrphanMode,
 } from './backlink-index.ts';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
-import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
+import type { ContentFilter } from './content-filter.ts';
+import {
+  type DocExtension,
+  forgetDocExtension,
+  getDocExtension,
+  isSupportedDocFile,
+  registerDocExtension,
+  SUPPORTED_DOC_EXTENSIONS,
+  stripDocExtension,
+} from './doc-extensions.ts';
+import { extractActorIdentity } from './extract-actor-identity.ts';
 import {
   contentHash,
   type FileIndexEntry,
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import { tracedMkdirSync, tracedRenameSync, tracedWriteFileSync } from './fs-traced.ts';
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
@@ -122,6 +147,7 @@ import {
   isAllowedGitUrl,
   isSafeLocalPath,
 } from './local-op-security.ts';
+import { type AuthEvent, runCloneSubprocess, runDeviceFlowSubprocess } from './local-ops/index.ts';
 import { getLogger } from './logger.ts';
 import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import {
@@ -129,10 +155,6 @@ import {
   type ManagedRenameSnapshot,
   withManagedRenameRecovery,
 } from './managed-rename-journal.ts';
-import {
-  rewriteMarkdownLinksForDocumentRename,
-  rewriteWikiLinksForDocumentRename,
-} from './managed-rename-rewrite.ts';
 import { mdManager, schema } from './md-manager.ts';
 import {
   getMetrics,
@@ -167,13 +189,9 @@ import {
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
-import { getMeter, getTracer } from './telemetry.ts';
+import { getMeter, getTracer, withSpan } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
-// Cache the HTTP duration histogram at module scope — lazy-init at first use
-// so the meter is a real meter (post-`initTelemetry`), not the pre-init no-op.
-// Recreating the histogram every request allocates + registers a fresh
-// instrument on every hit (PR review finding 2026-04-24).
 let _httpDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
 function httpDurationHist(): ReturnType<ReturnType<typeof getMeter>['createHistogram']> {
   if (!_httpDurationHist) {
@@ -185,8 +203,6 @@ function httpDurationHist(): ReturnType<ReturnType<typeof getMeter>['createHisto
   return _httpDurationHist;
 }
 
-// Lazy-init so the counter registers against a real meter post-initTelemetry
-// (not the pre-init no-op). Matches the httpDurationHist pattern above.
 let _hintEmittedCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null = null;
 function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
   if (!_hintEmittedCounter) {
@@ -198,52 +214,61 @@ function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCou
   return _hintEmittedCounter;
 }
 
-/**
- * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
- *
- * `skipStoreHooks: false` — L1 persistence SHOULD fire after rollback so the
- * restored content reaches disk through the normal pipeline. The
- * file-watcher's registerWrite hash check prevents the self-write from
- * re-triggering reconciliation.
- *
- * `paired: true` — rollback atomically writes both XmlFragment and Y.Text
- * inside one `doc.transact()` block. `satisfies PairedWriteOrigin` gates the
- * marker at authoring time (bridge-correctness SPEC §6 R0 + review iteration 5).
- */
+let _agentPatchFmTouchCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null =
+  null;
+function agentPatchFmTouchCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
+  if (!_agentPatchFmTouchCounter) {
+    _agentPatchFmTouchCounter = getMeter().createCounter(
+      'ok.frontmatter.agent_patch_fm_touch_total',
+      {
+        description:
+          'Count of agent-patch calls whose find string targets the frontmatter region. Measures incidence during the soft-deprecation window before agent-patch FM-intersecting calls are enforced as 400. Bounded label: result ∈ {rejected, pre_deprecation_passthrough}.',
+      },
+    );
+  }
+  return _agentPatchFmTouchCounter;
+}
+
+function findLooksLikeFrontmatter(find: string): boolean {
+  if (/(^|\n)---(\s|\n|$)/.test(find)) return true;
+  if (/^\s*[\w-]+:\s+\S/.test(find)) return true;
+  return false;
+}
+
+let _renameAttributionCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null =
+  null;
+function renameAttributionCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
+  if (!_renameAttributionCounter) {
+    _renameAttributionCounter = getMeter().createCounter('ok.rename.attribution_kind', {
+      description:
+        'Count of rename and rollback handler dispatches by attribution kind (agent | principal | anonymous)',
+    });
+  }
+  return _renameAttributionCounter;
+}
+
+export function __resetRenameTelemetryForTesting(): void {
+  _renameAttributionCounter = null;
+}
+
 export const ROLLBACK_ORIGIN = {
-  source: 'local',
+  source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'rollback-apply', paired: true },
 } as const satisfies PairedWriteOrigin;
 
-/**
- * Managed-rename origin — typed `PairedWriteOrigin`.
- *
- * Exported so the bridge-invariant watcher can enforce by identity (precedent #1)
- * and so server observers can resolve `context.paired` without importing the
- * object transitively (bridge-correctness SPEC §6 R0d).
- *
- * `paired: true` — the caller atomically writes BOTH XmlFragment (via
- * `updateYFragment`) and Y.Text (via `applyFastDiff`) inside one transact
- * block. `satisfies PairedWriteOrigin` is the compile-time gate.
- */
 export const MANAGED_RENAME_ORIGIN = {
-  source: 'local',
+  source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'managed-rename', paired: true },
 } as const satisfies PairedWriteOrigin;
 
 const log = getLogger('api');
 
-/** Validates a docName and builds a shadow-repo-safe path.
- * Uses the same traversal check as safeContentPath (reject `..` and null bytes)
- * but allows `/` for nested content directories (e.g. `test-content/test-doc`). */
 function safeDocPath(docName: string, contentRoot: string): { path: string } | { error: string } {
   if (!docName || docName.includes('..') || docName.includes('\0')) {
     return { error: 'Invalid document name' };
   }
-  // Normalize: strip leading './' AND treat bare '.' as empty (git rejects
-  // both "./foo" and "./" pathspecs when operating against a bare repo).
   const normalized = contentRoot === '.' ? '' : contentRoot.replace(/^\.\//, '');
   const ext = getDocExtension(docName);
   const path = normalized ? `${normalized}/${docName}${ext}` : `${docName}${ext}`;
@@ -251,59 +276,154 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
 }
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_MIME_TYPES: Set<string> = new Set(ALLOWED_IMAGE_MIME_TYPES);
-const ALLOWED_VIDEO_MIME_TYPES_SET: Set<string> = new Set(ALLOWED_VIDEO_MIME_TYPES);
-const ALLOWED_AUDIO_MIME_TYPES_SET: Set<string> = new Set(ALLOWED_AUDIO_MIME_TYPES);
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
+const SAFE_FILENAME_CHARS = /[^\p{L}\p{N}\p{M}\p{Extended_Pictographic}.\-_ ]/gu;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — sanitize must strip control bytes.
+const STRIP_ON_SIGHT = /[/\\\x00-\x1f\x7f]/g;
+
 export function sanitizeFilename(name: string): string {
-  const base = name.replace(/[/\\]/g, '');
-  const ext = extname(base);
-  const stem = base.slice(0, base.length - ext.length);
-  const safeStem = stem.replace(/[^a-zA-Z0-9_\-.]/g, '_') || 'upload';
-  const safeExt = ext.replace(/[^a-zA-Z0-9_.]/g, '');
-  return safeStem + safeExt;
-}
+  let stripped = name.replace(STRIP_ON_SIGHT, '');
+  stripped = stripped.replace(SAFE_FILENAME_CHARS, '_');
 
-function writeUploadAtomic(destDir: string, sanitized: string, buffer: Buffer): string {
-  const ext = extname(sanitized);
-  const stem = sanitized.slice(0, sanitized.length - ext.length);
-  const candidates = [sanitized, ...Array.from({ length: 99 }, (_, i) => `${stem}-${i + 1}${ext}`)];
+  stripped = stripped.replace(/_+/g, '_').replace(/\.{2,}/g, '.');
 
-  for (const name of candidates) {
-    const destPath = resolve(destDir, name);
-    try {
-      const fd = openSync(destPath, 'wx');
-      try {
-        writeSync(fd, buffer);
-      } finally {
-        closeSync(fd);
-      }
-      return name;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
-      throw err;
+  stripped = stripped.replace(/^[._]+/, '');
+  stripped = stripped.replace(/\.+$/, '');
+
+  if (stripped === '') return 'upload';
+
+  const MAX_BYTES = 255;
+  const encoder = new TextEncoder();
+  if (encoder.encode(stripped).length > MAX_BYTES) {
+    const dotIdx = stripped.lastIndexOf('.');
+    const ext = dotIdx >= 0 ? stripped.slice(dotIdx) : '';
+    let stem = dotIdx >= 0 ? stripped.slice(0, dotIdx) : stripped;
+    while (encoder.encode(stem + ext).length > MAX_BYTES && stem.length > 0) {
+      stem = stem.slice(0, -1);
     }
+    stripped = (stem || 'upload') + ext;
+    if (encoder.encode(stripped).length > MAX_BYTES) stripped = 'upload';
   }
-  throw new Error('Could not find available filename after 100 attempts');
+
+  return stripped;
 }
+
+export function resolveUploadDestDir(
+  parentDocName: string,
+  attachmentFolderPath: string,
+  resolvedContentDir: string,
+): string {
+  const trimmed = attachmentFolderPath.trim();
+  if (trimmed === '' || trimmed === './') {
+    return resolve(resolvedContentDir, dirname(parentDocName));
+  }
+  if (trimmed === '/') {
+    return resolvedContentDir;
+  }
+  if (trimmed.startsWith('./')) {
+    return resolve(resolvedContentDir, dirname(parentDocName), trimmed.slice(2));
+  }
+  return resolve(resolvedContentDir, trimmed);
+}
+
+function readTempFileHead(path: string, n: number): Buffer {
+  const fd = openSync(path, 'r');
+  try {
+    const buf = Buffer.alloc(n);
+    const read = readSync(fd, buf, 0, n, 0);
+    return buf.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+const MAX_DEDUP_SCAN_CANDIDATES = 1000;
+
+async function streamingHashFile(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  await pipeline(createReadStream(path), hash);
+  return hash.digest('hex');
+}
+
+async function findDuplicateAsset(
+  destDir: string,
+  sha: string,
+  expectedSize: number,
+): Promise<string | null> {
+  let entries: string[];
+  try {
+    entries = await readdir(destDir);
+  } catch {
+    return null;
+  }
+  const log = getLogger('upload');
+  let scanned = 0;
+  for (const entry of entries) {
+    const ext = extname(entry).slice(1).toLowerCase();
+    if (!ASSET_EXTENSIONS.has(ext)) continue;
+    const fullPath = resolve(destDir, entry);
+    let entryStat: Awaited<ReturnType<typeof stat>>;
+    try {
+      entryStat = await stat(fullPath);
+    } catch {
+      continue;
+    }
+    if (!entryStat.isFile() || entryStat.size !== expectedSize) continue;
+    scanned++;
+    if (scanned > MAX_DEDUP_SCAN_CANDIDATES) {
+      log.warn(
+        {
+          event: 'upload-dedup-skip',
+          reason: 'scan-cap-exceeded',
+          destDir,
+          scanned: MAX_DEDUP_SCAN_CANDIDATES,
+          expectedSize,
+        },
+        `[upload-dedup] candidate scan exceeded ${MAX_DEDUP_SCAN_CANDIDATES} same-size siblings — degrading to no-dedup for this upload`,
+      );
+      return null;
+    }
+    let candidateSha: string;
+    try {
+      candidateSha = await streamingHashFile(fullPath);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        log.warn(
+          { event: 'upload-dedup-skip', reason: 'read-failed', code, entry },
+          '[upload-dedup] skipped candidate — read failed',
+        );
+      }
+      continue;
+    }
+    if (candidateSha === sha) return entry;
+  }
+  return null;
+}
+
+import { UploadWriteError, type UploadWriteReason } from './upload-errors.ts';
 
 interface UploadResult {
   filename: string;
   mimeType: string;
-  buffer: Buffer;
   parentDocName: string;
+  tempPath: string;
+  sha: string;
+  byteLength: number;
 }
 
-function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadResult> {
+function readUploadBody(req: IncomingMessage, contentDir: string): Promise<UploadResult> {
   return new Promise((resolveP, reject) => {
     let bb: ReturnType<typeof busboy>;
     try {
-      bb = busboy({ headers: req.headers, limits: { fileSize: maxBytes, files: 1 } });
+      bb = busboy({
+        headers: req.headers,
+        limits: { files: 1, fields: 10, fieldSize: 2 * 1024 },
+      });
     } catch (err) {
-      reject(err);
+      reject(new UploadWriteError('malformed-upload', err));
       return;
     }
 
@@ -311,59 +431,93 @@ function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadR
     let filename = 'upload';
     let mimeType = '';
     let parentDocName = '';
-    const chunks: Buffer[] = [];
-    let exceeded = false;
+    let tempPath: string | undefined;
+    let pipelineError: unknown;
+    let fileEventFired = false;
+
+    const fail = (reason: UploadWriteReason, cause: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (tempPath) {
+        try {
+          unlinkSync(tempPath);
+        } catch {}
+      }
+      reject(cause instanceof UploadWriteError ? cause : new UploadWriteError(reason, cause));
+    };
+
+    const classifyWriteError = (err: NodeJS.ErrnoException): UploadWriteReason => {
+      if (err.code === 'ENOSPC' || err.code === 'EDQUOT') return 'storage-full';
+      if (err.code === 'EROFS' || err.code === 'EACCES' || err.code === 'EPERM') {
+        return 'storage-readonly';
+      }
+      return 'storage-error';
+    };
 
     bb.on('field', (name, val) => {
       if (name === 'parentDocName') parentDocName = val;
     });
 
     bb.on('file', (_fieldname, file, info) => {
+      fileEventFired = true;
       filename = info.filename || 'upload';
       mimeType = info.mimeType || '';
 
-      file.on('data', (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
-
-      file.on('limit', () => {
-        exceeded = true;
-        req.unpipe(bb);
-        if (!settled) {
-          settled = true;
-          reject(new Error('Payload too large'));
-        }
-      });
-
-      file.on('error', (err) => {
-        if (!settled) {
-          settled = true;
-          reject(err);
-        }
-      });
-    });
-
-    bb.on('finish', () => {
-      if (!settled) {
-        if (exceeded) {
-          settled = true;
-          reject(new Error('Payload too large'));
-          return;
-        }
-        if (!mimeType && chunks.length === 0) {
-          settled = true;
-          reject(new Error('No file received'));
-          return;
-        }
-        settled = true;
-        resolveP({ filename, mimeType, buffer: Buffer.concat(chunks), parentDocName });
+      let path: string;
+      try {
+        path = mintTempUploadPath(contentDir);
+      } catch (err) {
+        const nodeErr = err as NodeJS.ErrnoException;
+        fail(classifyWriteError(nodeErr), err as Error);
+        file.resume();
+        return;
       }
+      tempPath = path;
+      const hasher = new HashingPassThrough();
+      const writeStream = createWriteStream(path);
+
+      pipeline(file, hasher, writeStream)
+        .then(() => {
+          if (settled) return;
+          settled = true;
+          resolveP({
+            filename,
+            mimeType,
+            parentDocName,
+            tempPath: path,
+            sha: hasher.digest(),
+            byteLength: hasher.byteLength(),
+          });
+        })
+        .catch((err) => {
+          pipelineError = err;
+          const nodeErr = err as NodeJS.ErrnoException;
+          fail(classifyWriteError(nodeErr), err);
+        });
     });
 
     bb.on('error', (err) => {
-      if (!settled) {
-        settled = true;
-        reject(err);
+      fail('malformed-upload', err);
+    });
+
+    bb.on('close', () => {
+      if (settled || pipelineError) return;
+      if (fileEventFired) return;
+      settled = true;
+      resolveP({
+        filename: '',
+        mimeType: '',
+        parentDocName,
+        tempPath: '',
+        sha: '',
+        byteLength: 0,
+      });
+    });
+
+    req.on('close', () => {
+      if (settled || pipelineError) return;
+      if (!req.complete) {
+        fail('malformed-upload', new Error('client disconnected'));
       }
     });
 
@@ -371,10 +525,6 @@ function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadR
   });
 }
 
-/**
- * Resolve a subdirectory path within a base directory, rejecting traversal attempts.
- * Throws if the resolved path escapes the base directory.
- */
 export function safeSubdir(baseDir: string, subdir: string): string {
   const resolved = resolve(baseDir, subdir);
   if (resolved !== baseDir && !resolved.startsWith(`${baseDir}/`)) {
@@ -431,35 +581,6 @@ function remapDocNameForRename(
   return `${toPath}${docName.slice(fromPath.length)}`;
 }
 
-function rewriteSupportedLinksForDocumentRename(
-  markdown: string,
-  sourceDocName: string,
-  oldDocName: string,
-  newDocName: string,
-): ManagedRenameRewriteSummary {
-  const { frontmatter, body } = stripFrontmatter(markdown);
-  const wikiRewrite = rewriteWikiLinksForDocumentRename(body, oldDocName, newDocName);
-  const markdownRewrite = rewriteMarkdownLinksForDocumentRename(
-    wikiRewrite.markdown,
-    sourceDocName,
-    oldDocName,
-    newDocName,
-  );
-
-  return {
-    markdown: prependFrontmatter(frontmatter, markdownRewrite.markdown),
-    rewrites: wikiRewrite.rewrites + markdownRewrite.rewrites,
-  };
-}
-
-/**
- * Ensures `fullPath` does not escape `resolvedContentDir` via symlinks (matches persistence
- * symlink-escape checks). Walks up with dirname when the leaf is missing so destinations like
- * `link/new.md` are rejected if `link` resolves outside the content dir.
- *
- * Uses `realpathSync(resolvedContentDir)` as the boundary anchor so platform normalization
- * (e.g. macOS `/var` → `/private/var`) matches `realpathSync` of paths under it.
- */
 function assertNoSymlinkEscape(fullPath: string, resolvedContentDir: string): void {
   let contentRoot: string;
   try {
@@ -498,11 +619,6 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   }
 
   const resolvedContentDir = resolve(contentDir);
-  // When kind is 'file': if the caller passed an explicit supported extension,
-  // use the path verbatim — this is how the rename handler signals an
-  // extension change (newDocName: "foo.mdx" renames foo.md → foo.mdx).
-  // Extension-less paths fall through to getDocExtension() + the registered
-  // extension map so legacy callers keep the source's existing extension.
   const relativePath =
     kind === 'file' ? (isSupportedDocFile(path) ? path : `${path}${getDocExtension(path)}`) : path;
   const fullPath = resolve(resolvedContentDir, relativePath);
@@ -514,6 +630,21 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   assertNoSymlinkEscape(fullPath, resolvedContentDir);
 
   return fullPath;
+}
+
+function probeAndRegisterSourceFileExtension(contentDir: string, fromPath: string): void {
+  if (!isValidRelativeContentPath(fromPath)) return;
+  const resolvedContentDir = resolve(contentDir);
+  for (const ext of SUPPORTED_DOC_EXTENSIONS) {
+    const candidate = resolve(resolvedContentDir, `${fromPath}${ext}`);
+    if (candidate !== resolvedContentDir && !candidate.startsWith(`${resolvedContentDir}${sep}`)) {
+      continue;
+    }
+    if (existsSync(candidate)) {
+      registerDocExtension(fromPath, ext);
+      return;
+    }
+  }
 }
 
 function toGitRelativePath(projectDir: string, absolutePath: string): string | null {
@@ -540,7 +671,13 @@ async function renameTrackedPathInGit(
 
   return await withParentLock(async () => {
     const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-    const tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
+    let tracked = '';
+    try {
+      tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
+    } catch (err) {
+      console.warn('[renameTrackedPathInGit] git ls-files failed, falling back to fs rename:', err);
+      return false;
+    }
     if (!tracked) return false;
     mkdirSync(dirname(destinationPath), { recursive: true });
     try {
@@ -557,109 +694,27 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
-  /**
-   * Per-process UUID advertised via `GET /api/server-info` and the
-   * `__system__` CC1 `server-info` broadcast. Clients cache this value
-   * and claim it in the `expectedServerInstanceId` field of their auth
-   * token on every connect; the server rejects on mismatch. Part of the
-   * CRDT server-restart recovery defense.
-   */
   serverInstanceId: string;
-  /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
-  /** Accessor for the alias map (alias docName → canonical docName). */
   getAliasMap?: () => ReadonlyMap<string, string>;
-  /**
-   * When true, register test-only routes (`/api/test-reset`,
-   * `/api/test-rescan-backlinks`). Defaults to `false` — these routes mutate
-   * server state in ways unsafe for multi-client use (reset wipes document
-   * content; rescan-backlinks rebuilds the index from disk, dropping
-   * unpersisted in-memory state) and must never be exposed in production.
-   * Enable only in tests and local dev mode.
-   */
   enableTestRoutes?: boolean;
   shadowRef?: ShadowRef;
-  /** Force-flush the L2 git commit debounce (e.g. after rollback). */
   flushGitCommit?: () => Promise<void>;
-  /** Accessor for the current branch from the HEAD watcher. Returns null when unknown. */
   getCurrentBranch?: () => string | null;
-  /**
-   * Accessor for the latest disk-ack state vectors per document. Wired
-   * to `cc1Broadcaster.getLatestDiskAckSVsAsBase64()` in standalone boot.
-   * Returned as part of `GET /api/server-info` so clients can recover
-   * the per-doc `lastDiskAckedSV` watermark on `__system__` reconnect
-   * without relying on stateless CC1 broadcasts (which have no replay).
-   * Empty `{}` is the cold-server case (no docs flushed yet); omitted
-   * when the broadcaster isn't available (e.g. plugin mode in dev
-   * server). Values are base64-encoded `Uint8Array` state vectors.
-   */
   getDiskAckSVs?: () => Record<string, string>;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
-  /**
-   * Optional. When present, agent write handlers publish per-write attribution
-   * entries on `__system__` awareness (`agentFocus` map) with writeKind +
-   * currentDoc — the signal that drives browser push-navigation to the doc the
-   * agent just wrote. Distinct from `agentPresenceBroadcaster` below, which
-   * publishes sustained session state.
-   */
   agentFocusBroadcaster?: AgentFocusBroadcaster;
-  /**
-   * Optional. When present, agent write handlers publish presence entries on
-   * `__system__` awareness (`agentPresence` map) so clients can render the
-   * multi-agent presence bar and follow the active agent. Omit to disable
-   * presence broadcasts entirely (e.g. in tests that don't care).
-   */
   agentPresenceBroadcaster?: AgentPresenceBroadcaster;
-  /**
-   * Optional. Called after every successful agent write (write_document /
-   * edit_document). The handler is expected to be cheap and idempotent —
-   * the CLI uses it to open the browser on the first agent edit per session.
-   */
   onAgentWrite?: () => void;
-  /**
-   * Getter for the active SyncEngine instance (may be null when dormant or if
-   * no remote was detected). Called per-request so it always reflects current state.
-   */
   getSyncEngine?: () => SyncEngine | null;
-  /**
-   * CLI argv prefix used to spawn subprocesses for /api/local-op/* relay endpoints.
-   * Defaults to ['open-knowledge'] (assumes CLI is on PATH).
-   * Pass [process.execPath, process.argv[1]] from the CLI start command to use
-   * the exact runtime that started this server.
-   *
-   * Example: ['bun', '/path/to/packages/cli/src/cli.ts'] in dev,
-   *          ['open-knowledge'] in production.
-   */
   localOpCliArgs?: string[];
-  /**
-   * Path to the project's parent git working tree (i.e. the repo root, not the
-   * shadow git dir). When provided, `POST /api/save-version` and
-   * `POST /api/rollback` create an additional commit + `ok/v<N>` tag in the
-   * parent git repository to make checkpoints and restores team-visible.
-   * Parent-git operations are serialized through `parentGitMutex`.
-   */
   projectDir?: string;
-  /**
-   * Getter for the server's principal record. Called at request time so
-   * deferred async init propagates. Returns null if principal has not
-   * yet been loaded or loading failed.
-   */
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
   getPrincipal?: () => Principal | null;
-  /**
-   * OS-scheme install probe used by `GET /api/installed-agents` (web-host
-   * parity for the Electron `ok:shell:detect-protocol` IPC — see
-   * `handoff-api.ts`). When omitted, the platform's default probe is used
-   * (`osascript` / `reg query` / `xdg-mime`). Tests inject a deterministic
-   * fake so the endpoint doesn't shell out.
-   */
+  contentFilter?: ContentFilter;
   installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
-  /**
-   * Explicit document unload hook. `createServer()` suppresses Hocuspocus's
-   * automatic unload-on-disconnect to avoid reload + IDB duplication, so API
-   * paths that intentionally retire a document must opt into unload here.
-   */
   forceUnloadDocument?: (document: Document) => Promise<void>;
 }
 
@@ -696,10 +751,6 @@ function json(
   });
   res.end(JSON.stringify(data));
 }
-/**
- * Extract all ATX headings (# … ######) from a Markdown document.
- * Frontmatter is stripped before scanning so `title:` YAML lines are ignored.
- */
 export function extractHeadings(content: string): HeadingEntry[] {
   let body = content;
   if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
@@ -733,32 +784,6 @@ function isSafeDocName(docName: string): boolean {
   );
 }
 
-/**
- * Returns true when an Origin header value is permitted to reach /api/* endpoints.
- *
- * Allowed:
- * - `"null"` (string) — opaque origin from file:// / packaged Electron (Fetch spec §4.3)
- * - http(s)://localhost[:port] — Electron dev server, ok-ui Vite, browser dev
- * - http(s)://127.x.x.x[:port] — 127.0.0.0/8 loopback block
- * - http(s)://[::1][:port] — IPv6 loopback
- *
- * Rejected: any other origin → 403 on /api/* (CSRF guard for unauthenticated mutating routes).
- */
-function isAllowedApiOrigin(origin: string): boolean {
-  if (origin === 'null') return true; // file:// / packaged Electron renderer
-  try {
-    const { hostname } = new URL(origin);
-    return (
-      hostname === 'localhost' ||
-      hostname === '::1' ||
-      hostname === '[::1]' ||
-      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
-    );
-  } catch {
-    return false;
-  }
-}
-
 export function createApiExtension(options: ApiExtensionOptions): Extension {
   const {
     hocuspocus,
@@ -782,16 +807,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     localOpCliArgs = ['open-knowledge'],
     projectDir,
     getPrincipal,
+    contentFilter,
     installedAgentsProbe,
     forceUnloadDocument,
   } = options;
 
-  // Concurrency guard: at most 1 in-flight request per local-op endpoint
   const localOpGuard = createConcurrencyGuard();
 
-  // Per-scheme cache + in-flight dedup for GET /api/installed-agents.
-  // Factory is called once per createApiExtension() so the cache lives for
-  // the lifetime of the server (cleared on server restart).
   const installedAgentsCache = createInstalledAgentsProbe({
     probe: installedAgentsProbe ?? createOsProbe(process.platform),
   });
@@ -826,13 +848,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const doc = hocuspocus.documents.get(docName);
       if (doc) {
-        const metaMap = doc.getMap('metadata');
-        const fm = metaMap.get('frontmatter');
-        if (typeof fm === 'string' && fm) return parseFrontmatterMetadata(fm);
+        const map = readFmMap(doc.getText('source').toString());
+        if (Object.keys(map).length > 0) {
+          const cluster = typeof map.cluster === 'string' ? map.cluster : undefined;
+          const category = typeof map.category === 'string' ? map.category : undefined;
+          let tags: string[] | undefined;
+          if (Array.isArray(map.tags)) {
+            tags = map.tags.length > 0 ? map.tags : undefined;
+          } else if (typeof map.tags === 'string' && map.tags) {
+            tags = [map.tags];
+          }
+          return { cluster, category, tags };
+        }
       }
-    } catch {
-      /* fall through to disk */
-    }
+    } catch {}
     try {
       const filePath = resolveDocPath(docName);
       if (!filePath || !existsSync(filePath)) return EMPTY_METADATA;
@@ -845,13 +874,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Soft orphan-hint (D7 / N1): when a written doc has zero backlinks AND a
-   * hub candidate exists in its folder tree, attach a hint suggesting the
-   * hub. Returns `undefined` when any prerequisite is unavailable (no
-   * backlinkIndex wired, target not in index, has backlinks, or no candidate).
-   * Non-throwing — a hint-computation failure must not fail the write.
-   */
   function computeOrphanHints(
     docName: string,
   ): Array<{ type: 'orphan'; parentCandidates: string[]; message: string }> | undefined {
@@ -859,9 +881,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const backlinks = backlinkIndex.getBacklinks(docName);
       if (backlinks.length > 0) return undefined;
-      // This runs on every write — if hub-candidate walking becomes pathological
-      // on very large file indexes, we want an observable signal. 5ms is well
-      // above the typical <1ms cost for a small-to-medium repo.
       const start = performance.now();
       const candidates = findHubCandidates(docName, getFileIndex());
       const elapsed = performance.now() - start;
@@ -890,15 +909,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return getAliasMap?.().get(docName) ?? docName;
   }
 
-  /**
-   * Return the number of live browser/editor connections currently subscribed
-   * to the given Hocuspocus document. Zero means the agent is writing to a
-   * room nobody is watching. Under the once-per-session preview-attach
-   * contract, this is a per-doc diagnostic — the hint threshold is
-   * `getSystemSubscriberCount()` (transport-presence on `__system__`).
-   *
-   * Never throws: a Hocuspocus introspection failure is silent (returns 0).
-   */
   function getSubscriberCount(docName: string): number {
     try {
       const doc = hocuspocus.documents.get(docName);
@@ -908,18 +918,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Return the number of live connections to the `__system__` Y.Doc — the
-   * shared awareness channel every editor tab subscribes to. Zero means no
-   * editor is attached to this server anywhere; non-zero means at least one
-   * tab is watching (and will follow agent writes via `AgentFocusBroadcaster`).
-   *
-   * This is the correct signal for the once-per-session preview-attach hint:
-   * the per-doc count flips on every new doc even when the user's tab is open
-   * and following, which would produce spurious "attach" hints.
-   *
-   * Never throws.
-   */
   function getSystemSubscriberCount(): number {
     try {
       const doc = hocuspocus.documents.get(SYSTEM_DOC_NAME);
@@ -929,18 +927,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Fire-and-forget L1 → L2 flush for a single document.
-   *
-   * L1 (CRDT → disk): per-document debounce flush so concurrent human edits on
-   * other documents are undisturbed.
-   * L2 (disk → git): chained after L1 resolves to guarantee disk content is
-   * up-to-date before the shadow-repo commit.
-   *
-   * The returned promise is intentionally not awaited by callers — the HTTP
-   * response fires immediately after the CRDT transaction; persistence is
-   * best-effort background work.
-   */
   function flushDocToGit(docName: string, label: string): void {
     const debounceId = `onStoreDocument-${docName}`;
     const l1 = hocuspocus.debouncer.isDebounced(debounceId)
@@ -979,23 +965,34 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     };
   }
 
-  // Managed rename mutates overlapping backlink sets across many docs, so serialize it.
   const runSerialized = createSerializedRunner();
 
-  function toManagedRenamePublicError(error: unknown): string {
+  function toManagedRenamePublicError(error: unknown): { status: number; error: string } {
     if (!(error instanceof Error)) {
-      return 'Failed to rename document';
+      return { status: 500, error: 'Failed to rename document' };
     }
-
-    if (
-      error.message === 'Managed rename requires backlink index support' ||
-      error.message.startsWith('Cannot rename missing document:') ||
-      error.message.startsWith('symlink-escape:')
-    ) {
-      return error.message;
+    if (error instanceof ManagedRenameSourceNotFoundError) {
+      return { status: 404, error: error.message };
     }
-
-    return 'Failed to rename document';
+    if (error instanceof ManagedRenameDestinationExistsError) {
+      return { status: 409, error: error.message };
+    }
+    if (error instanceof ManagedRenameSourceTypeMismatchError) {
+      return { status: 400, error: error.message };
+    }
+    if (error.message.startsWith('Cannot rename missing document:')) {
+      return { status: 404, error: error.message };
+    }
+    if (error.message.startsWith('Cannot snapshot missing document:')) {
+      return { status: 404, error: error.message };
+    }
+    if (error.message.startsWith('symlink-escape:')) {
+      return { status: 400, error: error.message };
+    }
+    if (error.message === 'Managed rename requires backlink index support') {
+      return { status: 503, error: error.message };
+    }
+    return { status: 500, error: 'Failed to rename document' };
   }
 
   async function captureAndCloseDocuments(docNames: string[]): Promise<Map<string, string>> {
@@ -1033,7 +1030,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const filePath = safeContentPath(toDocName, contentDir);
       const liveContent = liveContents.get(fromDocName);
       if (typeof liveContent === 'string') {
-        writeFileSync(filePath, liveContent, 'utf-8');
+        tracedWriteFileSync(filePath, liveContent, 'utf-8');
       }
 
       const finalContent =
@@ -1086,8 +1083,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   function writeManagedRenameDocumentToDisk(docName: string, markdown: string): void {
     const filePath = resolveContentEntryPath(contentDir, 'file', docName);
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, markdown, 'utf-8');
+    tracedMkdirSync(dirname(filePath), { recursive: true });
+    tracedWriteFileSync(filePath, markdown, 'utf-8');
     registerWrite(filePath, contentHash(markdown));
     setReconciledBase(docName, markdown);
 
@@ -1100,10 +1097,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  function applyManagedRenameToLoadedDocument(
+  function applyManagedRenameMapToLoadedDocument(
     docName: string,
-    oldDocName: string,
-    newDocName: string,
+    renameMap: ReadonlyMap<string, string>,
   ): ManagedRenameRewriteSummary {
     const document = hocuspocus.documents.get(docName);
     if (!document) {
@@ -1115,17 +1111,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const xmlFragment = document.getXmlFragment('default');
       const ytext = document.getText('source');
       const currentText = ytext.toString();
-      result = rewriteSupportedLinksForDocumentRename(currentText, docName, oldDocName, newDocName);
+      result = applyRenameMap(currentText, docName, renameMap);
       if (result.rewrites === 0) {
         return;
       }
 
-      // Apply rewrite via XmlFragment-authoritative pattern (PRECEDENTS.md precedent #12;
-      // replaces the deleted syncTextToFragment helper). Parse new markdown →
-      // updateYFragment (preserves user-content Items at matching positions) →
-      // mirror Y.Text via applyFastDiff (character-level CRDT mutation).
       const { body } = stripFrontmatter(result.markdown);
-      const parsedJson = mdManager.parseWithFallback(body);
+      const parseOpts = options.resolveEmbed
+        ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+        : undefined;
+      const parsedJson = mdManager.parseWithFallback(body, parseOpts);
       const pmNode = schema.nodeFromJSON(parsedJson);
       updateYFragment(document, xmlFragment, pmNode, {
         mapping: new Map(),
@@ -1136,145 +1131,219 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return result;
   }
 
-  async function _performManagedRename(
-    sourceDocName: string,
-    destinationDocName: string,
+  async function _performManagedRenameForDocs(
+    fromPath: string,
+    toPath: string,
+    kind: ContentEntryKind,
   ): Promise<{ renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] }> {
-    return runSerialized(async () => {
-      if (!backlinkIndex) {
-        throw new Error('Managed rename requires backlink index support');
-      }
-
-      const sourcePath = resolveContentEntryPath(contentDir, 'file', sourceDocName);
-      const destinationPath = resolveContentEntryPath(contentDir, 'file', destinationDocName);
-      const renamed: RenamedDocMapping[] = [
-        { fromDocName: sourceDocName, toDocName: destinationDocName },
-      ];
-
-      const backlinkSources = [
-        ...new Set(backlinkIndex.getBacklinks(sourceDocName).map((entry) => entry.source)),
-      ].sort((a, b) => a.localeCompare(b));
-      const snapshotContents = new Map<string, string>();
-      const rewriteDocNames: string[] = [];
-      const missingBacklinkSources: string[] = [];
-
-      for (const docName of [sourceDocName, ...backlinkSources]) {
-        if (snapshotContents.has(docName)) continue;
-        const content = readCurrentDocumentContent(docName);
-        if (typeof content === 'string') {
-          snapshotContents.set(docName, content);
-          if (docName !== sourceDocName) {
-            rewriteDocNames.push(docName);
-          }
-        } else if (docName !== sourceDocName) {
-          missingBacklinkSources.push(docName);
-        }
-      }
-
-      const sourceSnapshot = snapshotContents.get(sourceDocName);
-      if (typeof sourceSnapshot !== 'string') {
-        throw new Error(`Cannot rename missing document: ${sourceDocName}`);
-      }
-
-      const recoveryJournal = createManagedRenameRecoveryJournal({
-        sourceDocName,
-        destinationDocName,
-        snapshots: buildManagedRenameSnapshots([...snapshotContents.keys()], snapshotContents),
-      });
-
-      const rewrittenDocs: ManagedRenameRewrittenDoc[] = [];
-
-      await withManagedRenameRecovery(contentDir, recoveryJournal, async () => {
-        for (const docName of missingBacklinkSources) {
-          backlinkIndex.deleteDocument(docName);
-        }
-
-        for (const docName of rewriteDocNames) {
-          const document = hocuspocus.documents.get(docName);
-          const rewritten = document
-            ? applyManagedRenameToLoadedDocument(docName, sourceDocName, destinationDocName)
-            : rewriteSupportedLinksForDocumentRename(
-                snapshotContents.get(docName) ?? '',
-                docName,
-                sourceDocName,
-                destinationDocName,
-              );
-
-          if (rewritten.rewrites > 0) {
-            writeManagedRenameDocumentToDisk(docName, rewritten.markdown);
-            rewrittenDocs.push({ docName, rewrites: rewritten.rewrites });
+    return runSerialized(async () =>
+      withSpan(
+        'rename.executeRewrites',
+        {
+          attributes: {
+            'rename.kind': kind,
+          },
+        },
+        async (span) => {
+          if (!backlinkIndex) {
+            throw new Error('Managed rename requires backlink index support');
           }
 
-          backlinkIndex.updateDocumentFromMarkdown(docName, rewritten.markdown);
-        }
+          const sourcePathRoot = resolveContentEntryPath(contentDir, kind, fromPath);
+          const destinationPathRoot = resolveContentEntryPath(contentDir, kind, toPath);
+          if (sourcePathRoot === destinationPathRoot) {
+            return { renamed: [], rewrittenDocs: [] };
+          }
+          if (!existsSync(sourcePathRoot)) {
+            throw new ManagedRenameSourceNotFoundError(kind);
+          }
+          if (existsSync(destinationPathRoot)) {
+            throw new ManagedRenameDestinationExistsError();
+          }
+          const sourceStat = statSync(sourcePathRoot);
+          if (
+            (kind === 'file' && !sourceStat.isFile()) ||
+            (kind === 'folder' && !sourceStat.isDirectory())
+          ) {
+            throw new ManagedRenameSourceTypeMismatchError(kind);
+          }
 
-        const sourceLiveContents = await captureAndCloseDocuments([sourceDocName]);
-        const sourceCurrentContent =
-          sourceLiveContents.get(sourceDocName) ??
-          snapshotContents.get(sourceDocName) ??
-          readFileSync(sourcePath, 'utf-8');
-        const renamedSource = rewriteSupportedLinksForDocumentRename(
-          sourceCurrentContent,
-          sourceDocName,
-          sourceDocName,
-          destinationDocName,
-        );
-
-        const renamedWithGit = await renameTrackedPathInGit(
-          projectDir,
-          sourcePath,
-          destinationPath,
-        );
-        if (!renamedWithGit) {
-          mkdirSync(dirname(destinationPath), { recursive: true });
-          renameSync(sourcePath, destinationPath);
-        }
-        syncRenamedDocsToDisk(renamed, new Map([[sourceDocName, renamedSource.markdown]]));
-        setReconciledBase(destinationDocName, renamedSource.markdown);
-
-        const fileIndex = getFileIndex();
-        if (fileIndex instanceof Map) {
-          updateFileIndex(
-            {
-              kind: 'rename',
-              oldPath: sourcePath,
-              newPath: destinationPath,
-              oldDocName: sourceDocName,
-              newDocName: destinationDocName,
-              content: renamedSource.markdown,
-            },
-            fileIndex as Map<string, FileIndexEntry>,
+          const affectedDocNames =
+            kind === 'file'
+              ? [stripDocExtension(fromPath)]
+              : listAffectedDocNames(getFileIndex(), kind, fromPath);
+          const affectedDocs: Array<{ from: string; to: string }> = affectedDocNames.map(
+            (docName) => ({
+              from: docName,
+              to:
+                kind === 'file'
+                  ? stripDocExtension(toPath)
+                  : remapDocNameForRename(docName, kind, fromPath, toPath),
+            }),
           );
-        }
+          span.setAttribute('rename.affected_docs', affectedDocs.length);
 
-        backlinkIndex.renameDocument(sourceDocName, destinationDocName, renamedSource.markdown);
-        if (renamedSource.rewrites > 0) {
-          rewrittenDocs.push({ docName: destinationDocName, rewrites: renamedSource.rewrites });
-        }
-      });
+          if (affectedDocs.length === 0) {
+            return { renamed: [], rewrittenDocs: [] };
+          }
 
-      void backlinkIndex.saveToDisk().catch((err) => {
-        console.warn(
-          `[backlinks] Failed to persist managed rename cache for ${sourceDocName} -> ${destinationDocName}:`,
-          err,
-        );
-      });
-      signalChannel?.('files');
-      signalChannel?.('backlinks');
-      signalChannel?.('graph');
+          const renameMap = buildRenameMap(affectedDocs);
+          const renamed: RenamedDocMapping[] = affectedDocs.map(({ from, to }) => ({
+            fromDocName: from,
+            toDocName: to,
+          }));
 
-      rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
-      return { renamed, rewrittenDocs };
-    });
+          const backlinkSourceSet = new Set<string>();
+          for (const { from } of affectedDocs) {
+            for (const entry of backlinkIndex.getBacklinks(from)) {
+              if (!renameMap.has(entry.source)) {
+                backlinkSourceSet.add(entry.source);
+              }
+            }
+          }
+          const backlinkSources = [...backlinkSourceSet].sort((a, b) => a.localeCompare(b));
+
+          const snapshotContents = new Map<string, string>();
+          const rewriteDocNames: string[] = [];
+          const missingBacklinkSources: string[] = [];
+
+          for (const docName of [...renameMap.keys(), ...backlinkSources]) {
+            if (snapshotContents.has(docName)) continue;
+
+            if (!renameMap.has(docName)) {
+              const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+              if (!existsSync(filePath)) {
+                missingBacklinkSources.push(docName);
+                continue;
+              }
+            }
+
+            const content = readCurrentDocumentContent(docName);
+            if (typeof content === 'string') {
+              snapshotContents.set(docName, content);
+              if (!renameMap.has(docName)) {
+                rewriteDocNames.push(docName);
+              }
+            } else if (!renameMap.has(docName)) {
+              missingBacklinkSources.push(docName);
+            }
+          }
+
+          for (const { from } of affectedDocs) {
+            if (typeof snapshotContents.get(from) !== 'string') {
+              throw new Error(`Cannot rename missing document: ${from}`);
+            }
+          }
+
+          const recoveryJournal = createManagedRenameRecoveryJournal({
+            fromPath,
+            toPath,
+            affectedDocs: [...affectedDocs],
+            snapshots: buildManagedRenameSnapshots([...snapshotContents.keys()], snapshotContents),
+          });
+
+          const rewrittenDocs: ManagedRenameRewrittenDoc[] = [];
+
+          await withManagedRenameRecovery(contentDir, recoveryJournal, async () => {
+            for (const docName of missingBacklinkSources) {
+              backlinkIndex.deleteDocument(docName);
+            }
+
+            for (const docName of rewriteDocNames) {
+              const document = hocuspocus.documents.get(docName);
+              const rewritten = document
+                ? applyManagedRenameMapToLoadedDocument(docName, renameMap)
+                : applyRenameMap(snapshotContents.get(docName) ?? '', docName, renameMap);
+
+              if (rewritten.rewrites > 0) {
+                writeManagedRenameDocumentToDisk(docName, rewritten.markdown);
+                rewrittenDocs.push({ docName, rewrites: rewritten.rewrites });
+              }
+
+              backlinkIndex.updateDocumentFromMarkdown(docName, rewritten.markdown);
+            }
+
+            const liveContents = await captureAndCloseDocuments([...renameMap.keys()]);
+
+            const rootSourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
+            const rootDestinationPath = resolveContentEntryPath(contentDir, kind, toPath);
+            const renamedWithGit = await renameTrackedPathInGit(
+              projectDir,
+              rootSourcePath,
+              rootDestinationPath,
+            );
+            if (!renamedWithGit) {
+              tracedMkdirSync(dirname(rootDestinationPath), { recursive: true });
+              tracedRenameSync(rootSourcePath, rootDestinationPath);
+            }
+
+            const explicitDestExt: DocExtension | null =
+              kind === 'file' && isSupportedDocFile(toPath)
+                ? (extname(toPath).toLowerCase() as DocExtension)
+                : null;
+            for (const { from, to } of affectedDocs) {
+              const sourceExt = getDocExtension(from);
+              forgetDocExtension(from);
+              registerDocExtension(to, explicitDestExt ?? sourceExt);
+            }
+
+            const sortedAffected = [...affectedDocs].sort((a, b) => a.from.localeCompare(b.from));
+
+            for (const { from: fromDocName, to: toDocName } of sortedAffected) {
+              const sourcePath = resolveContentEntryPath(contentDir, 'file', fromDocName);
+              const destinationPath = resolveContentEntryPath(contentDir, 'file', toDocName);
+              const sourceCurrentContent =
+                liveContents.get(fromDocName) ??
+                snapshotContents.get(fromDocName) ??
+                readFileSync(destinationPath, 'utf-8');
+              const renamedSource = applyRenameMap(sourceCurrentContent, fromDocName, renameMap);
+
+              syncRenamedDocsToDisk(
+                [{ fromDocName, toDocName }],
+                new Map([[fromDocName, renamedSource.markdown]]),
+              );
+              setReconciledBase(toDocName, renamedSource.markdown);
+
+              const fileIndex = getFileIndex();
+              if (fileIndex instanceof Map) {
+                updateFileIndex(
+                  {
+                    kind: 'rename',
+                    oldPath: sourcePath,
+                    newPath: destinationPath,
+                    oldDocName: fromDocName,
+                    newDocName: toDocName,
+                    content: renamedSource.markdown,
+                  },
+                  fileIndex as Map<string, FileIndexEntry>,
+                );
+              }
+
+              backlinkIndex.renameDocument(fromDocName, toDocName, renamedSource.markdown);
+              if (renamedSource.rewrites > 0) {
+                rewrittenDocs.push({ docName: toDocName, rewrites: renamedSource.rewrites });
+              }
+            }
+          });
+
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(
+              `[backlinks] Failed to persist managed rename cache for ${fromPath} -> ${toPath}:`,
+              err,
+            );
+          });
+          signalChannel?.('files');
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+
+          rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
+          span.setAttribute('rename.rewrite_count', rewrittenDocs.length);
+          return { renamed, rewrittenDocs };
+        },
+      ),
+    );
   }
 
-  const AGENT_NAME_MAX_LEN = 128;
-
-  /**
-   * Canonical identity boundary (precedent #24) — every mutating POST handler calls this
-   * before any Y.Doc mutation. Resolves request body → {agentId, agentName, colorSeed, clientName}.
-   * The meta-test in attribution-sweep-coverage.test.ts asserts all handlers call this at entry.
-   */
   function extractAgentIdentity(body: Record<string, unknown>): {
     rawAgentId: string | undefined;
     agentId: string;
@@ -1284,56 +1353,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     clientVersion: string | undefined;
     label: string | undefined;
   } {
-    let rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
-    if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
-      rawAgentId = undefined;
-    }
-    const agentId = rawAgentId ? toBroadcasterKey(rawAgentId) : 'claude-1';
-    const agentName =
-      typeof body.agentName === 'string' ? sanitizeGitIdentity(body.agentName) : 'Claude';
-    let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
-    if (clientName !== undefined) {
-      clientName = sanitizeGitIdentity(clientName);
-    }
-    let clientVersion = typeof body.clientVersion === 'string' ? body.clientVersion : undefined;
-    if (clientVersion !== undefined) {
-      clientVersion = sanitizeGitIdentity(clientVersion);
-    }
-    let label = typeof body.label === 'string' ? body.label : undefined;
-    if (label !== undefined) {
-      label = sanitizeGitIdentity(label);
-    }
-    // colorSeed must match what getSession() uses for presence bar color consistency.
-    // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
-    const colorSeed =
-      typeof body.colorSeed === 'string' && body.colorSeed.length > 0
-        ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
-        : (rawAgentId ?? agentId);
-    return { rawAgentId, agentId, agentName, colorSeed, clientName, clientVersion, label };
+    const fields = parseAgentBodyFields(body);
+    const agentId = fields.writerId ?? 'claude-1';
+    return {
+      rawAgentId: fields.rawAgentId,
+      agentId,
+      agentName: fields.displayName,
+      colorSeed: fields.colorSeed ?? fields.rawAgentId ?? agentId,
+      clientName: fields.clientName,
+      clientVersion: fields.clientVersion,
+      label: fields.label,
+    };
   }
 
-  /**
-   * Derive `agent_type` from `clientInfo.name` (FR-8). Mirrors the registry used by
-   * `iconFromClientName` on the client side. Unknown clients map to `'bot'`.
-   */
-  function resolveAgentType(clientName: string | undefined): string {
-    if (!clientName) return 'bot';
-    const lower = clientName.toLowerCase();
-    if (lower.includes('claude')) return 'claude';
-    if (lower.includes('cursor')) return 'cursor';
-    if (lower.includes('codex')) return 'codex';
-    if (lower.includes('cline')) return 'cline';
-    if (lower.includes('windsurf')) return 'windsurf';
-    return 'bot';
-  }
-
-  /**
-   * Build actor-tuple metadata (FR-8) for threading through recordContributor →
-   * ContributorEntry → OkActorEntry. Populates:
-   *   - principalId from getPrincipal() (stable UUID per local install)
-   *   - agentType derived from clientName
-   *   - clientName / clientVersion / label passed through from request body
-   */
   function buildAgentActor(args: {
     clientName: string | undefined;
     clientVersion?: string;
@@ -1355,28 +1387,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     };
   }
 
-  /**
-   * Shape of the `summary` field appended to a handler's success JSON response
-   * when the caller provided a summary (spec FR8). Absent from the response
-   * entirely when the caller did not supply a summary (including empty string,
-   * which is treated as absent per `normalizeSummary`).
-   *
-   * `hint` is nested inside `summary` (not a sibling top-level key) so the
-   * truncation message always travels with the field it explains — this
-   * prevents naming collisions at the response root and tightens the coupling
-   * between `truncatedFrom` and the human-readable explanation.
-   */
   type SummaryResponse = { value: string; truncatedFrom?: number; hint?: string };
 
-  /**
-   * Pure response-shape derivation from a normalized summary — NO side effects.
-   * Returns the fields the handler appends to its success JSON when the caller
-   * supplied a summary (FR8/FR12). `undefined` return values mean "omit the
-   * corresponding response key entirely."
-   *
-   * The hint is nested inside `response.hint` when truncation fires — callers
-   * that want the top-level text line read the value via `response?.hint`.
-   */
   function summaryResponseFields(normalized: NormalizedSummary): {
     response?: SummaryResponse;
     stored: string | undefined;
@@ -1395,29 +1407,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return { response: { value: normalized.value }, stored: normalized.value };
   }
 
-  /**
-   * Strip truncation-specific fields from a `SummaryResponse`. Used by the
-   * rename / rollback default-substitution path: when the server generates a
-   * default like "Renamed X → Y" and that default itself overflows the cap,
-   * the agent did not submit the long string — so `truncatedFrom` and the
-   * "Summary truncated from ..." hint would misattribute blame to the caller.
-   * The stored value is still the truncated form (so the timeline bullet fits),
-   * but the diagnostic metadata is silenced in the response.
-   */
   function stripDefaultPathTruncation(response: SummaryResponse): SummaryResponse {
     return { value: response.value };
   }
 
-  /**
-   * Fire the M1/M2 counters for a summary that is about to be persisted.
-   * Call AFTER the contribution is guaranteed to land (i.e. not on 404/409
-   * early-returns) so adoption rate reflects successful writes.
-   *
-   * `fromDefault` suppresses the `summariesTruncated` increment when the
-   * truncation came from a server-generated default (rename / rollback default
-   * substitution). The agent had no control over those strings, so counting
-   * them toward M2 would muddy the "agent behavior" signal per spec §7 M2.
-   */
   function countNormalizedSummary(normalized: NormalizedSummary, fromDefault = false): void {
     if (normalized.kind !== 'value') return;
     incrementSummariesProvided();
@@ -1454,7 +1447,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
@@ -1476,10 +1469,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const { response: summaryResponse, stored: storedSummary } =
         summaryResponseFields(normalizedSummary);
 
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
       try {
         const icon = iconFromClientName(clientName);
         const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
@@ -1491,11 +1480,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           mode: 'writing',
           ts: Date.now(),
         });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
-          applyAgentMarkdownWrite(session.dc.document, `${content}\n`, 'append');
+          applyAgentMarkdownWrite(
+            session.dc.document,
+            `${content}\n`,
+            'append',
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+              : undefined,
+          );
 
           const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
@@ -1578,7 +1572,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const resolvedDocName = resolveAlias(effectiveDocName);
-      if (isSystemDoc(resolvedDocName)) {
+      if (isSystemDoc(resolvedDocName) || isConfigDoc(resolvedDocName)) {
         json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
         return;
       }
@@ -1598,10 +1592,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
       const timestamp = new Date().toISOString();
 
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
       try {
         const icon = iconFromClientName(clientName);
         const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
@@ -1613,11 +1603,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           mode: 'writing',
           ts: Date.now(),
         });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
-          applyAgentMarkdownWrite(session.dc.document, markdown, position);
+          applyAgentMarkdownWrite(
+            session.dc.document,
+            markdown,
+            position,
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: resolvedDocName }
+              : undefined,
+          );
 
           const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
@@ -1644,9 +1639,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       flushDocToGit(resolvedDocName, 'agent-write-md');
 
-      // Focus (attribution) on __system__ awareness. Focus drives browser
-      // push-navigation to the doc the agent just wrote (writeKind); presence
-      // is separately maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: resolvedDocName,
@@ -1655,19 +1647,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
       onAgentWrite?.();
 
-      // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
-      // backlinks and a plausible hub exists in its folder tree, suggest the
-      // hub. Soft — agent can ignore. Silent when no backlinkIndex is wired.
       const hints = computeOrphanHints(resolvedDocName);
 
       const subscriberCount = getSubscriberCount(resolvedDocName);
       const systemSubscriberCount = getSystemSubscriberCount();
 
-      // Once-per-session attach hint counter: fires when no editor is attached
-      // to `__system__` (transport-presence = false). Labels are bounded-
-      // cardinality per CLAUDE.md STOP rule on OTel attributes — writer-kind
-      // is always `agent` at this call site (`handleAgentWriteMd`), and
-      // `resolveAgentType` is a 6-valued enum. No raw session IDs or names.
       if (systemSubscriberCount === 0) {
         hintEmittedCounter().add(1, {
           'shadow.writer': 'agent',
@@ -1703,13 +1687,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      // Read via a transient DirectConnection rather than sessionManager.getSession —
-      // this endpoint has no agent identity, and creating a cached session would
-      // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
+
+      const existing = hocuspocus.documents.get(docName);
+      if (existing) {
+        json(res, 200, { ok: true, docName, content: existing.getText('source').toString() });
+        return;
+      }
+
+      const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+      if (!existsSync(filePath)) {
+        json(res, 404, { ok: false, error: `Document not found: ${docName}` });
+        return;
+      }
+
       const dc = await hocuspocus.openDirectConnection(docName);
       try {
         const document = dc.document;
@@ -1738,7 +1732,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const dir = url.searchParams.get('dir');
 
-      // Validate dir parameter (reject traversal attempts)
       if (dir) {
         try {
           safeSubdir(contentDir, dir);
@@ -1748,7 +1741,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      // Read from the watcher's in-memory file index (instant, no filesystem scan)
       const index = getFileIndex();
       const documents: {
         docName: string;
@@ -1761,13 +1753,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }[] = [];
 
       for (const [docName, entry] of index) {
-        // Filter by dir prefix if specified
         if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
 
-        // getDocExtension() returns the registered on-disk extension for the
-        // docName (or `.md` by default when nothing is yet recorded). Surfacing
-        // it to the client lets the sidebar render `foo.mdx` vs `foo.md`
-        // faithfully instead of hard-coding `.md`.
         const docExt = getDocExtension(docName);
 
         documents.push({
@@ -1780,7 +1767,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           targetPath: null,
         });
 
-        // Emit alias entries for this canonical file
         for (const alias of entry.aliases) {
           if (dir && !alias.startsWith(`${dir}/`) && alias !== dir) continue;
           const targetRelPath = relative(contentDir, entry.canonicalPath);
@@ -1837,13 +1823,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Bulk backlink-count lookup. `GET /api/backlink-counts?docNames=a,b,c`
-   * returns `{ ok: true, counts: { a: 3, b: 0, c: 2 } }`. Serves listing UIs
-   * (exec ls/grep/find slim enrichment) that need connection density per file
-   * without N-amplifying the single-doc `/api/backlinks` endpoint.
-   * docNames failing `isSafeDocName` are silently dropped from `counts`.
-   */
   async function handleBacklinkCounts(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -2122,6 +2101,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'replace field required' });
         return;
       }
+      if (findLooksLikeFrontmatter(find)) {
+        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+        json(res, 400, {
+          ok: false,
+          error:
+            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
+        });
+        return;
+      }
       const hasOffset = Object.hasOwn(body, 'offset');
       let offset: number | undefined;
       if (hasOffset) {
@@ -2138,7 +2126,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(effectivePatchDocName);
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
@@ -2158,10 +2146,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let notFound = false;
       let staleTarget = false;
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
+      let fmIntersect = false;
       try {
         const icon = iconFromClientName(clientName);
         const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
@@ -2173,20 +2158,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           mode: 'writing',
           ts: Date.now(),
         });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
-          // Read current authoritative state. Search the FULL markdown
-          // (frontmatter + body) so agents can patch frontmatter fields
-          // (e.g. `title:`, `cluster:`) the same way they patch body text.
-          // XmlFragment is the authoritative body per precedent #12; the
-          // frontmatter lives in Y.Map('metadata') and must be composed
-          // in for the search surface to reflect the document as the
-          // agent sees it on disk.
           const xmlFragment = session.dc.document.getXmlFragment('default');
-          const metaMap = session.dc.document.getMap('metadata');
-          const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
+          const ytext = session.dc.document.getText('source');
+          const currentFm = stripFrontmatter(ytext.toString()).frontmatter;
           const currentBody = mdManager.serialize(
             yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
           );
@@ -2207,18 +2183,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             return;
           }
 
-          // Splice at the character level. The result is the authoritative
-          // post-patch full document — if the patch deletes the FM region,
-          // metaMap must be cleared accordingly. Route through explicit
-          // split-then-write so empty-FM is distinguishable from
-          // "body-only payload" (which applyAgentMarkdownWrite preserves).
+          if (pos < currentFm.length) {
+            fmIntersect = true;
+            return;
+          }
+
           const newFull =
             currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
-          const { frontmatter: newFm, body: newBody } = stripFrontmatter(newFull);
-          if (newFm !== currentFm) {
-            metaMap.set('frontmatter', newFm);
-          }
-          applyAgentMarkdownWrite(session.dc.document, newBody, 'replace');
+          const { body: newBody } = stripFrontmatter(newFull);
+          applyAgentMarkdownWrite(
+            session.dc.document,
+            newBody,
+            'replace',
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+              : undefined,
+          );
 
           const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
@@ -2228,10 +2208,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, session.origin);
-        if (!notFound && !staleTarget) {
-          // Only count + record when the patch actually applied. The M1
-          // denominator excludes 404/409 so adoption rate reflects successful
-          // writes, not total attempts.
+        if (!notFound && !staleTarget && !fmIntersect) {
           const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
           recordContributor(
             docName,
@@ -2260,11 +2237,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 404, { ok: false, error: 'Text not found in document' });
         return;
       }
+      if (fmIntersect) {
+        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+        json(res, 400, {
+          ok: false,
+          error:
+            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
+        });
+        return;
+      }
 
       flushDocToGit(docName, 'agent-patch');
 
-      // Focus (attribution) on __system__ awareness. Presence is separately
-      // maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: docName,
@@ -2276,7 +2260,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const subscriberCount = getSubscriberCount(docName);
       const systemSubscriberCount = getSystemSubscriberCount();
 
-      // Once-per-session attach hint counter (matches handleAgentWriteMd).
       if (systemSubscriberCount === 0) {
         hintEmittedCounter().add(1, {
           'shadow.writer': 'agent',
@@ -2299,16 +2282,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * POST /api/agent-undo — V0-14 agent undo via per-session Y.UndoManager.
-   *
-   * Body: { docName?: string, connectionId: string, scope?: 'last' | 'session' }
-   *   connectionId — the session's agentId (matches sessionManager key)
-   *   scope — 'last' undoes the top UM stack item; 'session' undoes all items.
-   *
-   * Fires applyAgentUndo under session.undoOrigin (paired: true) — Observer
-   * A/B short-circuit; XmlFragment-authoritative composition updates both CRDTs.
-   */
   async function handleAgentUndo(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -2332,11 +2305,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // FR-5, D42: extract identity from body so shadow-repo attribution threads through
-      // the undo write the same way it does through agent-write / agent-write-md / agent-patch.
-      // MCP clients that don't yet forward identity fall back to extractAgentIdentity defaults.
-      // `agentId` is the broadcaster-map key (prefixed via `toBroadcasterKey`) — use it for
-      // setPresence/touchMode so cleanup via the keepalive WS close handler finds the entry.
       const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
         extractAgentIdentity(body);
 
@@ -2347,7 +2315,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
@@ -2359,7 +2327,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const rawScope = body.scope;
-      // 'file' scope is a thin alias for 'session' (all bursts on this file's session).
       const scope: 'last' | 'session' =
         rawScope === 'session' || rawScope === 'file' ? 'session' : 'last';
 
@@ -2370,15 +2337,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const session = await sessionManager.getSession(docName, connectionId);
 
-      // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
-      // instead of the per-doc awareness — the per-doc awareness has ONE
-      // shared clientID across N concurrent agents and would stomp. The
-      // broadcaster map is keyed by `agentId` (prefixed via toBroadcasterKey)
-      // so the keepalive-WS close handler's cleanup path finds the entry.
-      //
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and the undo
-      // transact flips the badge back to idle rather than wedging it on 'writing'.
       let undone = false;
       try {
         const icon = iconFromClientName(clientName);
@@ -2391,13 +2349,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           mode: 'writing',
           ts: Date.now(),
         });
-        // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
-        // applyAgentUndo wraps um.undo() + composition in one transact under
-        // session.undoOrigin (paired: true) so Observer A/B short-circuit.
-        undone = applyAgentUndo(session, scope);
-        // FR-5 / D42: record attribution for the undo write so the shadow-repo
-        // L2 drain fans it out under this session's writer-id. Skip when the
-        // UM stack was empty — a no-op undo has no mutation to attribute.
+        undone = applyAgentUndo(
+          session,
+          scope,
+          options.resolveEmbed
+            ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+            : undefined,
+        );
         if (undone) {
           recordContributor(
             docName,
@@ -2430,11 +2388,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * GET /api/agent-activity?agentId=<connId>
-   * Returns per-file + per-burst stats for one agent's session(s).
-   * Exempt from extractAgentIdentity — read-only, no CRDT mutation.
-   */
   async function handleAgentActivity(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -2443,9 +2396,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      // `validateAgentId` enforces AGENT_ID_RE (same shape as every mutating
-      // POST handler) — consistent identity shape across all surfaces per
-      // `packages/server/src/agent-id.ts`'s "three-surfaces" rule.
       const agentId = validateAgentId(url.searchParams.get('agentId'));
       if (agentId === null) {
         json(res, 400, { ok: false, error: 'agentId required (alphanumeric/_/- only)' });
@@ -2459,11 +2409,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * GET /api/agent-burst-diff?agentId=<connId>&docName=<path>&stackIndex=<n>
-   * Returns unified-diff text for one StackItem in a given session.
-   * Exempt from extractAgentIdentity — read-only, no CRDT mutation.
-   */
   async function handleAgentBurstDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -2484,14 +2429,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'docName required' });
         return;
       }
-      // Same docName validator every mutating POST handler uses — parity with
-      // the rest of the API surface (path traversal, reserved names).
       if (!isSafeDocName(rawDocName)) {
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
       }
       const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
@@ -2505,7 +2448,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Typed accessor — no `(as any).sessions` bypass.
       const session = sessionManager.getLiveSession(docName, agentId);
       if (!session) {
         json(res, 404, { ok: false, error: 'No active session for this agentId and docName' });
@@ -2525,10 +2467,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const stackItem = um.undoStack[stackIndex] as any;
       const ytext = session.dc.document.getText('source');
       const diff = synthesizeStackItemDiffText(stackItem, ytext, docName);
-      // `generatedAt` is the server's wall clock at response time (used for
-      // client-side cache staleness). The StackItem's capture timestamp is
-      // already carried in `/api/agent-activity`'s `bursts[].ts` — no need
-      // to duplicate it here.
       json(res, 200, { ok: true, diff, generatedAt: Date.now() });
     } catch (e) {
       log.error({ err: e }, '[agent-burst-diff] handler failed');
@@ -2546,21 +2484,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const docName = resolveAlias(url.searchParams.get('docName') ?? 'test-doc');
 
-      // Path traversal guard — reuse the canonical validator from persistence.ts.
-      // Throws `Invalid document name: ${docName}` for names that escape contentDir;
-      // we translate that to a 400 response. Keeping the guard in one place (not
-      // re-implementing the startsWith check inline) ensures handleTestReset stays
-      // in lock-step with persistence's onLoadDocument / onStoreDocument validators.
       let filePath: string;
       try {
         filePath = safeContentPath(docName, contentDir);
       } catch (err) {
-        // Log the original error (safeContentPath produces messages like
-        // `Invalid document name: ${docName}` which are useful for diagnosing
-        // unexpected failures beyond the standard path-traversal case — e.g.,
-        // encoding errors from resolve(), null-byte truncation, etc.) but
-        // still return a sanitized, uniform 400 message to the client so
-        // filesystem details never leak through the API boundary.
         console.error('[test-reset] safeContentPath rejected docName:', docName, err);
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
@@ -2569,9 +2496,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       await sessionManager.closeAll(docName);
       hocuspocus.closeConnections(docName);
 
-      // D18: Force-flush any pending onStoreDocument debounced work before unload.
-      // Without this, unloadDocument silently no-ops if the debouncer is active
-      // (Hocuspocus.shouldUnloadDocument returns false when isDebounced is true).
       const debounceId = `onStoreDocument-${docName}`;
       if (hocuspocus.debouncer.isDebounced(debounceId)) {
         await hocuspocus.debouncer.executeNow(debounceId);
@@ -2596,23 +2520,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Test-only rescue hatch for the @parcel/watcher + inotify race on Linux.
-   *
-   * Under CI CPU contention, `@parcel/watcher` can drop `create` events for
-   * files written into freshly-created subdirectories (the recursive subwatch
-   * is registered asynchronously after the IN_CREATE for the directory, so
-   * rapid follow-up file writes race the registration). That leaves the
-   * backlink index out of sync with the content directory on disk, which the
-   * backlink-dependent integration tests (e.g. `agent-focus-wiring.test.ts`
-   * orphan-hint shape) cannot otherwise recover from.
-   *
-   * This endpoint forces `backlinkIndex.rebuildFromDisk()` — authoritative
-   * resync from the filesystem that covers dropped events. It is NOT suitable
-   * for production: rebuild wipes any in-memory backlink state not yet
-   * debounced to disk (e.g. a live agent-write awaiting persistence). Gated
-   * behind `enableTestRoutes` for that reason.
-   */
   async function handleTestRescanBacklinks(
     req: IncomingMessage,
     res: ServerResponse,
@@ -2662,7 +2569,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Parse optional writers + message + principal from body
       const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
       let writers: WriterIdentity[] = [];
       let userMessage: string | undefined;
@@ -2694,7 +2600,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             };
           });
         }
-        // Optional principal identity: { name: string, email: string } (US-020, D12)
         const p = body.principal;
         if (p && typeof p === 'object' && !Array.isArray(p)) {
           const pr = p as Record<string, unknown>;
@@ -2707,7 +2612,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      // Thread agent identity — extends writers[] with calling agent (D42).
       const {
         rawAgentId: svRawAgentId,
         agentId: svAgentId,
@@ -2730,15 +2634,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       console.log(`[history] checkpoint ${result.checkpointRef}`);
 
-      // Drain contributor snapshot for Co-Authored-By trailers (US-020, FR-9, D12).
-      // swapContributors() atomically captures all agent writes since the last checkpoint.
       const contributorSnapshot = swapContributors();
 
-      // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
       let versionTag: string | undefined;
       if (projectDir) {
-        // Verify a git repo exists at projectDir before acquiring the lock (US-021, D45).
-        // git rev-parse --git-dir succeeds iff the directory is inside a git repo.
         let parentGitAvailable = false;
         try {
           const checkPg = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
@@ -2753,12 +2652,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           try {
             versionTag = await withParentLock(async () => {
               const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-              // Count existing ok/v* tags to derive N
               const existing = await pg.tags(['--list', 'ok/v*']);
               const n = existing.all.length + 1;
               const tag = `ok/v${n}`;
 
-              // Author identity: principal from body > git config > openknowledge fallback
               let authorName = 'openknowledge';
               let authorEmail = 'noreply@openknowledge.local';
               if (principalName && principalEmail) {
@@ -2771,12 +2668,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                     authorName = gitId.name;
                     authorEmail = gitId.email;
                   }
-                } catch {
-                  // no-op — use defaults
-                }
+                } catch {}
               }
 
-              // Co-Authored-By trailers for agent/principal session contributors (US-020)
               const coAuthorLines: string[] = [];
               for (const entry of contributorSnapshot.values()) {
                 if (
@@ -2788,14 +2682,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                 }
               }
 
-              // Commit message: checkpoint: subject + trailers (US-015 prefix, US-020 trailers)
               const subjectLine = formatCheckpointSubject(userMessage ?? `Checkpoint v${n}`);
               const commitMsg =
                 coAuthorLines.length > 0
                   ? `${subjectLine}\n\n${coAuthorLines.join('\n')}`
                   : subjectLine;
 
-              // Stage content changes and create commit (allow-empty so a tag always lands)
               const gitPathspec = resolvedContentRoot || '.';
               await pg.add(gitPathspec);
               await pg
@@ -2827,7 +2719,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ── GET /api/history ─────────────────────────────────────────────────────
   async function handleHistory(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -2892,7 +2783,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ── GET /api/history/:sha ─────────────────────────────────────────────────
   async function handleHistoryVersion(
     req: IncomingMessage,
     res: ServerResponse,
@@ -2922,14 +2812,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const docPath = pathResult.path;
     const sg = shadowGit(shadow);
 
-    // Validate SHA format
     if (!/^[0-9a-f]{40}$/i.test(sha)) {
       json(res, 400, { ok: false, error: 'Invalid commit SHA' });
       return;
     }
 
     try {
-      // Verify file exists at this commit
       try {
         await sg.raw('cat-file', '-e', `${sha}:${docPath}`);
       } catch {
@@ -2939,7 +2827,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const content = await sg.raw('show', `${sha}:${docPath}`);
 
-      // Resolve commit metadata
       const logLine = (await sg.raw('log', '-1', '--format=%aI%x00%an', sha)).trim();
       const [timestamp = '', author = ''] = logLine.split('\x00');
 
@@ -2950,7 +2837,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ── GET /api/diff ─────────────────────────────────────────────────────────
   async function handleDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -2984,7 +2870,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const sg = shadowGit(shadow);
 
     try {
-      // Get "to" content
       let toContent: string;
       try {
         toContent = await sg.raw('show', `${to}:${docPath}`);
@@ -2993,7 +2878,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Get "from" content — either a commit SHA or current Y.Doc text
       let fromContent: string;
       if (from && /^[0-9a-f]{40}$/i.test(from)) {
         try {
@@ -3003,7 +2887,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           return;
         }
       } else {
-        // from omitted — read current Y.Doc content directly (avoids creating an agent session)
         const doc = hocuspocus.documents.get(docName);
         if (!doc) {
           json(res, 409, {
@@ -3015,14 +2898,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         fromContent = doc.getText('source').toString();
       }
 
-      // Strip frontmatter from both sides so the diff shows only body changes.
-      // Git content includes frontmatter; Y.Text may or may not depending on
-      // sync state. Stripping both sides normalizes the comparison.
       const fromBody = stripFrontmatter(fromContent).body;
       const toBody = stripFrontmatter(toContent).body;
       const changes = diffLines(fromBody, toBody);
 
-      // Build full-file line array: every line annotated as added/removed/unchanged
       const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
       let additions = 0;
       let deletions = 0;
@@ -3043,7 +2922,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ── POST /api/rollback ────────────────────────────────────────────────────
   async function handleRollback(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -3078,20 +2956,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const {
-      agentId: rollbackAgentId,
-      agentName: rollbackAgentName,
-      colorSeed: rollbackColorSeed,
-      clientName: rollbackClientName,
-      clientVersion: rollbackClientVersion,
-      label: rollbackLabel,
-    } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+    const bodyObj = body as Record<string, unknown>;
+    const actor = extractActorIdentity(bodyObj, getPrincipal);
+    if (actor.kind === 'invalid-summary') {
+      json(res, 400, { ok: false, error: 'summary must be a string' });
+      return;
+    }
 
-    const {
-      docName: rawDocName,
-      commitSha: rawSha,
-      versionTag: rawVersionTag,
-    } = body as Record<string, unknown>;
+    const { docName: rawDocName, commitSha: rawSha, versionTag: rawVersionTag } = bodyObj;
     const docName = typeof rawDocName === 'string' ? rawDocName : '';
     const commitSha = typeof rawSha === 'string' ? rawSha : '';
     const versionTagForRollback = typeof rawVersionTag === 'string' ? rawVersionTag : undefined;
@@ -3102,25 +2974,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     if (!commitSha || !/^[0-9a-f]{40}$/i.test(commitSha)) {
       json(res, 400, { ok: false, error: 'commitSha must be a valid 40-char commit SHA' });
-      return;
-    }
-
-    // D22 LOCKED 1-way door: UI-driven rollback (EditorPane.tsx:155 Restore
-    // button) posts no `agentId`. Without this guard, `extractAgentIdentity`
-    // defaults would attribute every human Restore to Claude. Only when the
-    // caller explicitly sends `agentId` do we attribute + record a summary.
-    //
-    // Validation runs unconditionally (independent of `hasAgentId`) so a
-    // malformed `summary: 42` returns 400 even when identity is absent — this
-    // surfaces MCP-client identity-passthrough regressions loudly instead of
-    // silently dropping the summary on the floor. The attribution semantics
-    // (D22) are unchanged: `recordContributor` still only fires when
-    // `hasAgentId` is true.
-    const bodyObj = body as Record<string, unknown>;
-    const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
-    const normalizedSummary = normalizeSummary(bodyObj.summary);
-    if (normalizedSummary.kind === 'invalid') {
-      json(res, 400, { ok: false, error: 'summary must be a string' });
       return;
     }
 
@@ -3135,7 +2988,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const t0 = Date.now();
     try {
-      // Verify file exists at this commit
       try {
         await sg.raw('cat-file', '-e', `${commitSha}:${docPath}`);
       } catch {
@@ -3146,13 +2998,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const markdown = await sg.raw('show', `${commitSha}:${docPath}`);
       const timestamp = new Date().toISOString();
 
-      // snapshot current state before the destructive rollback
       await safetyCheckpoint(shadow, resolvedContentRoot, {
         action: 'rollback',
         context: { docName, targetSha: commitSha },
       });
 
-      // Apply to live Y.Doc via updateYFragment (L1 persistence fires normally)
       const document = hocuspocus.documents.get(docName);
       if (!document) {
         json(res, 409, {
@@ -3162,8 +3012,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      const { frontmatter, body: mdBody } = stripFrontmatter(markdown);
-      const parsedJson = mdManager.parseWithFallback(mdBody);
+      const { body: mdBody } = stripFrontmatter(markdown);
+      const rollbackParseOpts = options.resolveEmbed
+        ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+        : undefined;
+      const parsedJson = mdManager.parseWithFallback(mdBody, rollbackParseOpts);
       const pmNode = schema.nodeFromJSON(parsedJson);
       const xmlFragment = document.getXmlFragment('default');
 
@@ -3177,72 +3030,64 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           ytext.delete(0, currentText.length);
           ytext.insert(0, markdown);
         }
-
-        // Update metadata map with restored frontmatter so persistence
-        // serializes the correct frontmatter on next L1 flush.
-        const metaMap = document.getMap('metadata');
-        metaMap.set('frontmatter', frontmatter);
       }, ROLLBACK_ORIGIN);
 
-      // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`
-      // here. Setting the base before `onStoreDocument` has fired would trip the
-      // "skip write when serialized === currentBase" guard at
-      // `persistence.ts:onStoreDocument` and drop the L1 disk write entirely
-      // — which also skips the following `scheduleGitCommit()`, orphaning any
-      // `recordContributor(...)` entry we add below into the next unrelated
-      // write's L2 commit (a leak surfaced by the agent-write-summaries QA run).
-      // Letting `onStoreDocument` fire naturally writes disk AND updates the
-      // reconciled base (line 497 of persistence.ts), which is the correct order.
-
-      // D22 LOCKED: attribute + record summary ONLY when caller supplied
-      // agentId. UI-driven Restore (no agentId) stays anonymous — no bullet,
-      // no focus push, no actor tuple. Default summary `"Restored to <sha-short>"`
-      // applies when agent-supplied summary was absent; the default goes through
-      // `normalizeSummary` too so the 80-char cap covers the default path (FR10).
-      //
-      // When the default is used and it happens to truncate (rare for rollback
-      // since "Restored to <8-char-sha>" is ~22 chars, but we keep the code
-      // path symmetric with `handleRename` where defaults frequently overflow
-      // for deeply-nested doc paths), we strip `truncatedFrom` + `hint` from
-      // the response: the agent never submitted the long string, so the
-      // "Summary truncated from N chars to 80" message would misattribute
-      // blame to the caller. `summariesTruncated` is also suppressed for
-      // server-generated defaults so the M2 metric reflects agent behavior.
       let summaryResponse: SummaryResponse | undefined;
-      if (hasAgentId) {
-        const shaShort = commitSha.slice(0, 8);
-        const agentProvidedSummary = normalizedSummary.kind === 'value';
-        const effectiveNormalized = agentProvidedSummary
-          ? normalizedSummary
-          : normalizeSummary(`Restored to ${shaShort}`);
-        const fields = summaryResponseFields(effectiveNormalized);
-        summaryResponse =
-          agentProvidedSummary || !fields.response
-            ? fields.response
-            : stripDefaultPathTruncation(fields.response);
-        recordContributor(
-          docName,
-          rollbackAgentId,
-          rollbackAgentName,
-          rollbackColorSeed,
-          formatRollbackSubject(docName, commitSha),
-          buildAgentActor({
-            clientName: rollbackClientName,
-            clientVersion: rollbackClientVersion,
-            label: rollbackLabel,
-          }),
-          fields.stored,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+      switch (actor.kind) {
+        case 'agent': {
+          const shaShort = commitSha.slice(0, 8);
+          const agentProvidedSummary = actor.summary.kind === 'value';
+          const effectiveNormalized = agentProvidedSummary
+            ? actor.summary
+            : normalizeSummary(`Restored to ${shaShort}`);
+          const fields = summaryResponseFields(effectiveNormalized);
+          summaryResponse =
+            agentProvidedSummary || !fields.response
+              ? fields.response
+              : stripDefaultPathTruncation(fields.response);
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            formatRollbackSubject(docName, commitSha),
+            actor.actor,
+            fields.stored,
+          );
+          incrementAgentWriteCalls();
+          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+          break;
+        }
+        case 'principal': {
+          const fields = summaryResponseFields(actor.summary);
+          summaryResponse = fields.response;
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            formatRollbackSubject(docName, commitSha),
+            actor.actor,
+            fields.stored,
+          );
+          countNormalizedSummary(actor.summary, false);
+          break;
+        }
+        case 'anonymous':
+          log.debug(
+            { docName, commitSha: commitSha.slice(0, 8) },
+            '[rollback] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+          );
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleRollback: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+          );
+        }
       }
+      renameAttributionCounter().add(1, { kind: 'rollback', attribution_kind: actor.kind });
 
-      // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
-      // restored version + attribution appear in the timeline within ~100ms
-      // rather than waiting for the natural ~4s L1+L2 debounce stack. Uses
-      // the shared `flushDocToGit` helper (same pattern as the three
-      // agent-write handlers) rather than a raw `flushGitCommit()` which
-      // no-ops when no L2 timer is set yet.
       flushDocToGit(docName, 'rollback');
 
       const duration = Date.now() - t0;
@@ -3250,7 +3095,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         `[rollback] docName=${docName} from=${commitSha.slice(0, 8)} duration=${duration}ms`,
       );
 
-      // Parent-git commit for team-visible restore record (non-fatal)
       if (projectDir) {
         const versionLabel = versionTagForRollback ?? commitSha.slice(0, 8);
         const restoreMsg = `Restored to ${versionLabel}: ${docName}`;
@@ -3266,12 +3110,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       }
 
-      // D22: only broadcast agent-focus push-nav when the caller explicitly
-      // identified as an agent. UI-driven Restore (no agentId) must not
-      // trigger a cross-client push-nav as if Claude-1 did the rollback.
-      if (hasAgentId) {
-        agentFocusBroadcaster?.setFocus(rollbackAgentId, {
-          agentName: rollbackAgentName,
+      if (actor.kind === 'agent') {
+        agentFocusBroadcaster?.setFocus(actor.writerId, {
+          agentName: actor.displayName,
           currentDoc: docName,
           writeKind: 'rollback-apply',
           ts: Date.now(),
@@ -3286,7 +3127,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       console.error('[rollback]', e);
-      const message = e instanceof Error ? e.message : String(e);
+      const message = e instanceof Error ? e.message : 'Failed to roll back document';
       json(res, 500, { ok: false, error: message });
     }
   }
@@ -3315,42 +3156,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, getParseHealth());
   }
 
-  /**
-   * GET /api/server-info
-   *
-   * Returns `{ ok, serverInstanceId, currentBranch, currentDiskAckSVs }`.
-   * Called by the client's `ProviderPool` as a boot-time warmup BEFORE
-   * any WebSocket provider opens, so the first provider's auth token
-   * can carry `expectedServerInstanceId` and `expectedBranch` on the
-   * very first connect (avoiding one "null-claim accept → broadcast →
-   * populate cache → next connect claim" cycle on cold start).
-   *
-   * `currentBranch` is the late-join backstop for CC1's `branch-switched`
-   * stateless broadcast — disconnected clients reconnecting compare it
-   * against their last-observed branch and trigger `handleBranchSwitched`
-   * on mismatch (also surfaced as the `expectedBranch` auth-token claim,
-   * see `auth-token-schema.ts`). Always populated — `getActiveBranch()`
-   * defaults to `'main'` when git is disabled.
-   *
-   * `currentDiskAckSVs` is the late-join backstop for the per-doc CC1
-   * `disk-ack` channel — same recovery shape as `currentBranch` but the
-   * per-doc state vector watermark used by mismatch-recycle baseline-
-   * selection. Omitted in dev/plugin mode (no CC1 broadcaster).
-   *
-   * Gating: protected by the global `/api/*` Origin allowlist (CSRF
-   * guard against cross-origin browsers). No-Origin requests (curl,
-   * server-to-server, LAN peers using non-browser tooling) pass through
-   * — the same posture as the rest of the read-side `/api/*` surface
-   * (`/api/documents`, `/api/document`, `/api/pages`, `/api/backlinks`).
-   * Disclosure shape: `serverInstanceId` is a per-process random UUID;
-   * `currentBranch` matches the workspace's git history; the SV map
-   * enumerates the same docName set as `/api/documents` plus per-
-   * client Lamport op counts (random clientID, no wall-clock).
-   * Single-user-loopback deployment model is documented in
-   * `standalone.ts` near the principalAuthExtension; hosted/multi-
-   * tenant deployments must wrap this entire `/api/*` class with
-   * authentication and per-caller scoping.
-   */
   async function handleServerInfo(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -3358,15 +3163,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     const currentBranch = getActiveBranch();
-    // `getDiskAckSVs` is wired by standalone boot; plugin mode (dev
-    // server) doesn't have a CC1Broadcaster and omits the field. The
-    // schema's `.optional()` keeps the response shape valid in both
-    // cases without a separate "no broadcaster" branch on the client.
     const currentDiskAckSVs = getDiskAckSVs?.();
-    // `Cache-Control: no-store` matches the disclosure semantics: every
-    // field is per-process / per-moment state. A back/forward-cached
-    // 304 carrying a stale `currentDiskAckSVs` could silently corrupt
-    // the recycle baseline-selection on the next mismatch.
     json(
       res,
       200,
@@ -3381,15 +3178,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // Loopback + Host-header gate. The principal record discloses operator
-    // PII — `display_name` (real name) and `display_email` — sourced from
-    // local `git config`. Under `--host 0.0.0.0` (demos, shared dev boxes,
-    // Codespaces) this would otherwise be readable by any LAN peer or
-    // cross-origin page that bypasses the Origin allowlist (non-browser
-    // callers send no `Origin` header). Matches the same gate
-    // `handleMetricsAgentPresence` and `handleWorkspace` apply.
-    // Authorization runs BEFORE method dispatch so a bad Host never leaks
-    // "verb the endpoint expects" via the 405 response (OWASP ASVS V4.1.1).
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
       json(res, 403, { ok: false, error: 'loopback-required' });
       return;
@@ -3415,15 +3203,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    // Loopback + Host-header gate — matches /api/workspace. The presence map
-    // exposes per-agent identity (`displayName` — operator-configured AGENT
-    // label) and the workspace-relative path each agent is currently writing
-    // to (`currentDoc`). Those are local-editing-only signals; if a user
-    // deploys to `0.0.0.0` / reverse-proxies the port, cross-origin pages or
-    // LAN peers MUST NOT be able to read the map. Authorization runs before
-    // method dispatch so a bad Host never leaks "verb the endpoint expects"
-    // via 405 (same pattern + rationale as handleWorkspace — see its
-    // comment block for the ASVS / DNS-rebinding background).
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
       json(res, 403, { ok: false, error: 'loopback-required' });
       return;
@@ -3437,15 +3216,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
-    // Pre-filter stale entries using the same threshold the broadcaster
-    // uses for opportunistic eviction (runs inside setPresence). Eviction
-    // is write-triggered — if the last agent disconnects without the
-    // keepalive close firing (proxy ate the frame, `-9` kill) and no other
-    // agent writes after, the raw map keeps the zombie entry. Clients
-    // already filter with their own 5s TTL so this is invisible to the
-    // bar, but `/api/metrics/agent-presence` would otherwise lie to
-    // operators. Filtering here matches what a "live" read returns
-    // without paying for a sparse timer.
     const rawPresence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
     const now = Date.now();
     const presence: typeof rawPresence = {};
@@ -3458,26 +3228,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // Authorization runs BEFORE method dispatch: reversing the order turns the
-    // method check into a fingerprinting oracle for unauth callers (GET → 403,
-    // POST → 405 discloses the verb the endpoint expects). See OWASP ASVS 4.0
-    // V4.1.1 — "perform access control on every request."
-    //
-    // Loopback-only: this endpoint discloses the absolute host filesystem path
-    // (including home directory / username). That's fine for the local-editing
-    // use case the rest of the API is designed for, but if the user configures
-    // `server.host: 0.0.0.0` (demos, shared dev boxes, Codespaces), we do NOT
-    // want to leak the host shape over the network or to cross-origin fetches.
-    // All loopback clients (including requests from a browser on the same
-    // machine) pass — connections from other interfaces are refused.
-    //
-    // DNS-rebinding defense: `req.socket.remoteAddress` will read `127.0.0.1`
-    // for any request that reached the socket via loopback, including requests
-    // triggered by a malicious page that rebinds its hostname to `127.0.0.1`.
-    // The Host-header allowlist below enforces that the caller actually spoke
-    // to us via `localhost` / `127.0.0.1` / `[::1]`, matching the mitigation
-    // in the Ethereum/geth JSON-RPC lineage. Same-origin fetches from the
-    // editor app pass; cross-origin rebinding attempts are refused.
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
       json(res, 403, { ok: false, error: 'loopback-required' });
       return;
@@ -3490,18 +3240,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
-    // Absolute, canonical contentDir so the client can build full filesystem
-    // paths (e.g. for the sidebar 'Copy path > Full path' action). Symlinks in
-    // the workspace root are resolved via realpath so the path matches on-disk
-    // truth. We treat error kinds in line with the persistence layer's symlink
-    // contract (CLAUDE.md "Symlinks" §):
-    //   - ENOENT: contentDir missing on disk → 200 with `symlinkResolved: false`
-    //     and the unresolved path. Lets "Copy Path" still produce a meaningful
-    //     value when the directory was deleted between server start and this
-    //     request; the client decides whether to act on it.
-    //   - ELOOP / EACCES / anything else: real filesystem error → 500. Matches
-    //     persistence's stricter policy (cyclic symlinks are rejected
-    //     everywhere) and avoids handing the user a path that won't resolve.
     const resolvedRoot = resolve(contentDir);
     let resolvedContentDir = resolvedRoot;
     let symlinkResolved = true;
@@ -3520,9 +3258,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
     }
-    // `pathSeparator` lets the client build full paths without guessing from
-    // the shape of `contentDir` (which breaks on Windows + forward-slash paths
-    // and on POSIX folders that contain a literal backslash in the name).
     json(res, 200, {
       ok: true,
       contentDir: resolvedContentDir,
@@ -3531,7 +3266,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
-  /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
   const RESCUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
   async function handleRescueList(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -3546,10 +3280,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const now = Date.now();
-    // `source: 'flat'` rows came from the shutdown-flush path (retained flat-
-    // file per SPEC); `source: 'timeline'` rows came from reconcile-delete /
-    // branch-switch (migrated to saveInMemoryCheckpoint per R7e). Clients
-    // can treat both as interchangeable unless they need the checkpoint sha.
     interface RescueRowFlat {
       docName: string;
       timestamp: string;
@@ -3591,8 +3321,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     }
 
-    // Timeline-ref source — merged in so the unified response surfaces all
-    // three rescue classes once R7e's write migration ships (SPEC §6 R7f).
     try {
       const branch = getCurrentBranch?.() ?? 'main';
       const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
@@ -3622,9 +3350,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Flat-file source (shutdown-flush retains flat-file per SPEC). Try
-    // this first — the flat-file path is how shutdown-flush delivers the
-    // most recent unflushed state, which is the most relevant artifact.
     const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
@@ -3637,9 +3362,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (Date.now() - stat.mtimeMs > RESCUE_MAX_AGE_MS) {
         try {
           unlinkSync(filePath);
-        } catch {
-          // ignore
-        }
+        } catch {}
       } else {
         const content = readFileSync(filePath, 'utf-8');
         res.writeHead(200, {
@@ -3651,21 +3374,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     }
 
-    // Timeline-ref source — fall back to the most recent
-    // `external-change-rescue` checkpoint for this doc on the current
-    // branch (SPEC §6 R7f). Reads the blob via `git cat-file` so large
-    // docs stream directly from git object storage.
     try {
       const branch = getCurrentBranch?.() ?? 'main';
       const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
-      // Most recent for this doc
       const match = timelineEntries
         .filter((e) => e.docName === docName)
         .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
       if (match) {
         const sg = shadowGit(shadowRef.current);
         const tree = (await sg.raw('ls-tree', '-r', match.sha)).trim();
-        // The blob is the single entry; extract its object SHA.
         const firstLine = tree.split('\n')[0] ?? '';
         const parts = firstLine.split(/\s+/);
         const blobSha = parts[2];
@@ -3711,14 +3428,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Body must be a JSON object' });
         return;
       }
-      const {
-        agentId: createPageAgentId,
-        agentName: createPageAgentName,
-        colorSeed: createPageColorSeed,
-        clientName: createPageClientName,
-        clientVersion: createPageClientVersion,
-        label: createPageLabel,
-      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+      const actor = extractActorIdentity(body as Record<string, unknown>, getPrincipal);
+      if (actor.kind === 'invalid-summary') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
       const { path: filePath } = body as Record<string, unknown>;
       if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
         json(res, 400, { ok: false, error: 'path is required' });
@@ -3744,7 +3458,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const candidateDocName = stripDocExtension(filePath);
-      if (isSystemDoc(candidateDocName)) {
+      if (isSystemDoc(candidateDocName) || isConfigDoc(candidateDocName)) {
         json(res, 400, { ok: false, error: `'${candidateDocName}' is a reserved document name` });
         return;
       }
@@ -3760,18 +3474,31 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
       const docName = stripDocExtension(filePath);
-      recordContributor(
-        docName,
-        createPageAgentId,
-        createPageAgentName,
-        createPageColorSeed,
-        undefined,
-        buildAgentActor({
-          clientName: createPageClientName,
-          clientVersion: createPageClientVersion,
-          label: createPageLabel,
-        }),
-      );
+      if (contentFilter) {
+        contentFilter.incrementMdDir(dirname(docName));
+      }
+      registerWrite(fullPath, contentHash(initialContent));
+      switch (actor.kind) {
+        case 'agent':
+        case 'principal':
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            undefined,
+            actor.actor,
+          );
+          break;
+        case 'anonymous':
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleCreatePage: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+          );
+        }
+      }
       const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
       if (fileIndex instanceof Map) {
         updateFileIndex(
@@ -3829,167 +3556,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleRename(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-
-      const {
-        agentId: renameAgentId,
-        agentName: renameAgentName,
-        colorSeed: renameColorSeed,
-        clientName: renameClientName,
-        clientVersion: renameClientVersion,
-        label: renameLabel,
-      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
-      const { docName, newDocName } = body as Record<string, unknown>;
-      if (typeof docName !== 'string' || typeof newDocName !== 'string') {
-        json(res, 400, { ok: false, error: 'docName and newDocName are required' });
-        return;
-      }
-      if (!isValidRelativeContentPath(docName) || !isValidRelativeContentPath(newDocName)) {
-        json(res, 400, { ok: false, error: 'Document names must be relative content paths' });
-        return;
-      }
-      if (isSystemDoc(docName) || isSystemDoc(newDocName)) {
-        json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
-        return;
-      }
-      if (docName === newDocName) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-      if (!backlinkIndex) {
-        json(res, 503, { ok: false, error: 'Backlink index unavailable' });
-        return;
-      }
-
-      // D22 LOCKED 1-way door: only attribute when the caller explicitly
-      // supplies agentId. Any future UI-driven rename (no agentId) stays
-      // anonymous as today — even though the rename handler has no existing
-      // UI call site, adding the guard up front keeps the pattern uniform
-      // with `handleRollback` and prevents `extractAgentIdentity` defaults
-      // from silently attributing future UI paths to Claude.
-      //
-      // Validation runs unconditionally (independent of `hasAgentId`) so a
-      // malformed `summary: 42` returns 400 even when identity is absent —
-      // this surfaces MCP-client identity-passthrough regressions loudly
-      // instead of silently dropping the summary on the floor. The
-      // attribution semantics (D22) are unchanged.
-      const bodyObj = body as Record<string, unknown>;
-      const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
-      const normalizedSummary = normalizeSummary(bodyObj.summary);
-      if (normalizedSummary.kind === 'invalid') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-
-      const sourcePath = resolveContentEntryPath(contentDir, 'file', docName);
-      const destinationPath = resolveContentEntryPath(contentDir, 'file', newDocName);
-      // Handles the case where the client sends an explicit extension that
-      // matches the source's existing one (e.g. `newDocName: "foo.md"` when
-      // the file is already `foo.md`) — `docName !== newDocName` textually
-      // but the on-disk paths resolve to the same file. Treat as no-op,
-      // mirroring the extension-less `docName === newDocName` short-circuit
-      // above.
-      if (sourcePath === destinationPath) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-      if (!existsSync(sourcePath)) {
-        json(res, 404, { ok: false, error: 'Document does not exist' });
-        return;
-      }
-      if (existsSync(destinationPath)) {
-        json(res, 409, { ok: false, error: 'Destination already exists' });
-        return;
-      }
-
-      const result = await _performManagedRename(docName, newDocName);
-
-      // D22 LOCKED: only attribute when the caller explicitly sent agentId.
-      // UI-driven rename stays anonymous on the timeline (no bullet, no focus
-      // push, no actor tuple). Attribute on the NEW docName per D15/FR9 — the
-      // backlink-rewritten side-effect docs stay anonymous (defaultWriter) to
-      // avoid "Claude renamed X → Y" noise on every inbound doc.
-      //
-      // When the default "Renamed X → Y" template overflows the 80-char cap
-      // (common for deeply-nested doc paths, e.g. `specs/2026-04-19-ci-signal-quality/SPEC`
-      // pairs blow past 80 easily), we strip `truncatedFrom` + `hint` from the
-      // response: the agent never submitted the long string, so the
-      // "Summary truncated from N chars to 80" hint would misattribute blame
-      // to the caller. `summariesTruncated` is also suppressed for
-      // server-generated defaults so the M2 metric reflects agent behavior,
-      // not server-template width.
-      let summaryResponse: SummaryResponse | undefined;
-      if (hasAgentId) {
-        const agentProvidedSummary = normalizedSummary.kind === 'value';
-        const effectiveNormalized = agentProvidedSummary
-          ? normalizedSummary
-          : normalizeSummary(`Renamed ${docName} → ${newDocName}`);
-        const fields = summaryResponseFields(effectiveNormalized);
-        summaryResponse =
-          agentProvidedSummary || !fields.response
-            ? fields.response
-            : stripDefaultPathTruncation(fields.response);
-        recordContributor(
-          newDocName as string,
-          renameAgentId,
-          renameAgentName,
-          renameColorSeed,
-          formatRenameSubject(docName as string, newDocName as string),
-          buildAgentActor({
-            clientName: renameClientName,
-            clientVersion: renameClientVersion,
-            label: renameLabel,
-          }),
-          fields.stored,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
-        // BUG-1 (agent-write-summaries QA Phase 7): drain the just-recorded
-        // pendingContributors entry into its own L2 shadow commit. Parallels
-        // the `flushDocToGit(...)` call in `handleRollback` above; uses
-        // `flushDocToGit(newDocName, ...)` because the source doc may no
-        // longer be open after `_performManagedRename` closed it.
-        flushDocToGit(newDocName as string, 'rename');
-      }
-
-      json(res, 200, {
-        ok: true,
-        renamed: result.renamed,
-        rewrittenDocs: result.rewrittenDocs,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      console.error('[rename]', e);
-      json(res, 500, { ok: false, error: toManagedRenamePublicError(e) });
-    }
-  }
-
   async function handleRenamePath(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -4018,8 +3584,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
-      const { kind, fromPath, toPath } = body as Record<string, unknown>;
+      const bodyObj = body as Record<string, unknown>;
+      const actor = extractActorIdentity(bodyObj, getPrincipal);
+      if (actor.kind === 'invalid-summary') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+      const { kind, fromPath, toPath } = bodyObj;
       if (kind !== 'file' && kind !== 'folder') {
         json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
         return;
@@ -4032,115 +3603,149 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Paths must be relative content paths' });
         return;
       }
-      if (fromPath === toPath) {
-        json(res, 200, { ok: true, renamed: [] });
-        return;
-      }
-
-      const sourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
-      const destinationPath = resolveContentEntryPath(contentDir, kind, toPath);
-
-      if (!existsSync(sourcePath)) {
-        json(res, 404, { ok: false, error: `${kind} does not exist` });
-        return;
-      }
-      if (existsSync(destinationPath)) {
-        json(res, 409, { ok: false, error: 'Destination already exists' });
-        return;
-      }
-
-      const sourceStat = statSync(sourcePath);
       if (
-        (kind === 'file' && !sourceStat.isFile()) ||
-        (kind === 'folder' && !sourceStat.isDirectory())
+        kind === 'file' &&
+        (isSystemDoc(fromPath) ||
+          isSystemDoc(toPath) ||
+          isConfigDoc(fromPath) ||
+          isConfigDoc(toPath))
       ) {
-        json(res, 400, { ok: false, error: `Source path is not a ${kind}` });
+        json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
         return;
       }
-
-      const affectedDocNames = listAffectedDocNames(getFileIndex(), kind, fromPath);
-      const renamed: RenamedDocMapping[] =
-        kind === 'file'
-          ? [{ fromDocName: fromPath, toDocName: toPath }]
-          : affectedDocNames.map((docName) => ({
-              fromDocName: docName,
-              toDocName: remapDocNameForRename(docName, kind, fromPath, toPath),
-            }));
-
-      const liveContents = await captureAndCloseDocuments(
-        renamed.map(({ fromDocName }) => fromDocName),
-      );
-
-      const applyRename = async (): Promise<void> => {
-        const renamedWithGit = await renameTrackedPathInGit(
-          projectDir,
-          sourcePath,
-          destinationPath,
-        );
-        if (!renamedWithGit) {
-          mkdirSync(dirname(destinationPath), { recursive: true });
-          renameSync(sourcePath, destinationPath);
-        }
-        syncRenamedDocsToDisk(renamed, liveContents);
-      };
+      if (
+        fromPath === '.ok' ||
+        fromPath.startsWith('.ok/') ||
+        toPath === '.ok' ||
+        toPath.startsWith('.ok/')
+      ) {
+        json(res, 400, { ok: false, error: '.ok is a reserved directory' });
+        return;
+      }
+      if (fromPath === toPath) {
+        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
+        return;
+      }
+      if (fromPath.toLowerCase() === toPath.toLowerCase()) {
+        json(res, 400, { ok: false, error: 'Case-only renames are not supported' });
+        return;
+      }
 
       if (kind === 'file') {
-        const recoveryJournal = createManagedRenameRecoveryJournal({
-          sourceDocName: fromPath,
-          destinationDocName: toPath,
-          snapshots: buildManagedRenameSnapshots(
-            renamed.map(({ fromDocName }) => fromDocName),
-            liveContents,
-          ),
-        });
-        await withManagedRenameRecovery(contentDir, recoveryJournal, applyRename);
-      } else {
-        await applyRename();
-
-        const fileIndex = getFileIndex();
-        for (const { fromDocName, toDocName } of renamed) {
-          updateFileIndex(
-            {
-              kind: 'rename',
-              oldPath: resolveContentEntryPath(contentDir, 'file', fromDocName),
-              newPath: resolveContentEntryPath(contentDir, 'file', toDocName),
-              oldDocName: fromDocName,
-              newDocName: toDocName,
-              content:
-                liveContents.get(fromDocName) ??
-                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
-            },
-            fileIndex as Map<string, FileIndexEntry>,
-          );
-        }
-
-        if (backlinkIndex) {
-          for (const { fromDocName, toDocName } of renamed) {
-            backlinkIndex.renameDocument(
-              fromDocName,
-              toDocName,
-              liveContents.get(fromDocName) ??
-                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
-            );
-          }
-
-          void backlinkIndex.saveToDisk().catch((err) => {
-            console.warn(
-              `[backlinks] Failed to persist folder rename cache for ${fromPath} -> ${toPath}:`,
-              err,
-            );
-          });
-          signalChannel?.('backlinks');
-          signalChannel?.('graph');
-        }
-
-        signalChannel?.('files');
+        probeAndRegisterSourceFileExtension(contentDir, fromPath);
       }
 
-      json(res, 200, { ok: true, renamed });
+      if (contentFilter) {
+        const excluded =
+          kind === 'file'
+            ? contentFilter.isExcluded(
+                isSupportedDocFile(toPath) ? toPath : `${toPath}${getDocExtension(fromPath)}`,
+              )
+            : contentFilter.isDirExcluded(toPath);
+        if (excluded) {
+          json(res, 400, {
+            ok: false,
+            error: `Destination ${kind === 'file' ? 'document' : 'folder'} is excluded by the workspace content config`,
+          });
+          return;
+        }
+      }
+
+      let result: { renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] };
+      try {
+        result = await _performManagedRenameForDocs(fromPath, toPath, kind);
+      } catch (err) {
+        if (err instanceof ManagedRenameCollisionError) {
+          json(res, 409, {
+            ok: false,
+            error: err.message,
+            colliding: err.colliding,
+          });
+          return;
+        }
+        throw err;
+      }
+
+      if (result.renamed.length === 0) {
+        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
+        return;
+      }
+
+      let summaryResponse: SummaryResponse | undefined;
+      switch (actor.kind) {
+        case 'agent': {
+          const agentProvidedSummary = actor.summary.kind === 'value';
+          const effectiveNormalized = agentProvidedSummary
+            ? actor.summary
+            : normalizeSummary(`Renamed ${fromPath} → ${toPath}`);
+          const fields = summaryResponseFields(effectiveNormalized);
+          summaryResponse =
+            agentProvidedSummary || !fields.response
+              ? fields.response
+              : stripDefaultPathTruncation(fields.response);
+          for (const { fromDocName, toDocName } of result.renamed) {
+            recordContributor(
+              toDocName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRenameSubject(fromDocName, toDocName),
+              actor.actor,
+              fields.stored,
+            );
+          }
+          incrementAgentWriteCalls();
+          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+          for (const { toDocName } of result.renamed) {
+            flushDocToGit(toDocName, 'rename-path');
+          }
+          break;
+        }
+        case 'principal': {
+          const fields = summaryResponseFields(actor.summary);
+          summaryResponse = fields.response;
+          for (const { fromDocName, toDocName } of result.renamed) {
+            recordContributor(
+              toDocName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRenameSubject(fromDocName, toDocName),
+              actor.actor,
+              fields.stored,
+            );
+          }
+          countNormalizedSummary(actor.summary, false);
+          for (const { toDocName } of result.renamed) {
+            flushDocToGit(toDocName, 'rename-path');
+          }
+          break;
+        }
+        case 'anonymous':
+          log.debug(
+            { kind, fromPath, toPath, affectedDocs: result.renamed.length },
+            '[rename-path] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+          );
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleRenamePath: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+          );
+        }
+      }
+      renameAttributionCounter().add(1, { kind: `rename-${kind}`, attribution_kind: actor.kind });
+
+      json(res, 200, {
+        ok: true,
+        renamed: result.renamed,
+        rewrittenDocs: result.rewrittenDocs,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       console.error('[rename-path]', e);
-      json(res, 500, { ok: false, error: 'Failed to rename path' });
+      const { status, error } = toManagedRenamePublicError(e);
+      json(res, status, { ok: false, error });
     }
   }
 
@@ -4453,7 +4058,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
       }
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
@@ -4474,61 +4079,96 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Shared upload mechanics for image / video / audio endpoints. The three
-   * handlers differ only in their per-endpoint MIME allowlist + whether SVG
-   * fallback applies (image only — video and audio are binary formats with
-   * detectable magic bytes). Keeping a single source of truth for the
-   * security-critical path validation, magic-byte sniffing, and atomic
-   * write — every per-endpoint copy of this 100-line body would otherwise
-   * need the same audit + bug-fix cadence.
-   */
-  async function uploadMediaCore(
-    req: IncomingMessage,
-    res: ServerResponse,
-    allowlist: Set<string>,
-    options: { allowSvgFallback: boolean },
-  ): Promise<void> {
-    let uploadResult: UploadResult | undefined;
-    try {
-      uploadResult = await readUploadBody(req, MAX_UPLOAD_BYTES);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (message === 'Payload too large') {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-      } else if (message === 'No file received') {
-        json(res, 400, { ok: false, error: 'No file received' });
-      } else {
-        json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
-      }
+  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
 
-    const { filename, buffer, parentDocName } = uploadResult;
+    let uploadResult: UploadResult | undefined;
+    try {
+      uploadResult = await readUploadBody(req, contentDir);
+    } catch (e) {
+      if (e instanceof UploadWriteError) {
+        if (e.reason === 'malformed-upload') {
+          json(res, 400, { ok: false, error: 'malformed-upload' });
+          return;
+        }
+        if (e.reason === 'storage-full') {
+          json(res, 507, { ok: false, error: 'storage-full' });
+          return;
+        }
+        if (e.reason === 'storage-readonly') {
+          json(res, 500, { ok: false, error: 'storage-readonly' });
+          return;
+        }
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
+      }
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
+      return;
+    }
+
+    const { filename, tempPath, sha, byteLength, parentDocName } = uploadResult;
+
+    const { agentId, agentName } = extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
+
+    const cleanupTempfile = () => {
+      if (existsSync(tempPath)) {
+        try {
+          unlinkSync(tempPath);
+        } catch {}
+      }
+    };
+
+    if (byteLength === 0) {
+      cleanupTempfile();
+      json(res, 400, { ok: false, error: 'No file received' });
+      return;
+    }
 
     if (!parentDocName) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'parentDocName is required' });
       return;
     }
 
-    // D15: reject path-escape attempts
     if (
       parentDocName.includes('\x00') ||
       parentDocName.includes('..') ||
       parentDocName.startsWith('/')
     ) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'path-escape' });
       return;
     }
 
     const resolvedContentDir = resolve(contentDir);
-    const destDir = resolve(resolvedContentDir, dirname(parentDocName));
+    const destDir = resolveUploadDestDir(
+      parentDocName,
+      DEFAULT_ATTACHMENT_FOLDER_PATH,
+      resolvedContentDir,
+    );
     if (!isWithinContentDir(destDir, resolvedContentDir)) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'path-escape' });
       return;
     }
+    try {
+      mkdirSync(destDir, { recursive: true });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') {
+        cleanupTempfile();
+        log.error({ err, destDir }, '[upload] failed to create attachment directory');
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
+      }
+    }
 
-    // Symlink escape check: realpath the dest dir and compare against realpath'd contentDir
     try {
       const realDestDir = realpathSync(destDir);
       let realContentDir: string;
@@ -4538,129 +4178,135 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         realContentDir = resolvedContentDir;
       }
       if (!isWithinContentDir(realDestDir, realContentDir)) {
+        cleanupTempfile();
         json(res, 400, { ok: false, error: 'path-escape' });
         return;
       }
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
-        // Directory doesn't exist yet — will be created below; no symlink escape possible
       } else {
+        cleanupTempfile();
         json(res, 400, { ok: false, error: 'path-escape' });
         return;
       }
     }
 
-    // Magic bytes check — ignore the client-supplied mimeType entirely
-    const fileTypeResult = await fileTypeFromBuffer(buffer);
+    const fileTypeResult = await fileTypeFromFile(tempPath);
     let detectedMime: string | undefined = fileTypeResult?.mime;
     let detectedExt: string | undefined = fileTypeResult?.ext;
-    // file-type can't detect SVG (text-based, no magic bytes). Only the image
-    // endpoint accepts SVG, so the fallback is gated by the option.
-    if (!detectedMime && options.allowSvgFallback) {
-      const head = buffer.subarray(0, 256).toString('utf-8').trimStart();
-      if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) {
+    if (!detectedMime) {
+      const head = readTempFileHead(tempPath, 256);
+      const headText = head.toString('utf-8').replace(/^﻿/, '').trimStart();
+      if (
+        headText.startsWith('<svg') ||
+        (headText.startsWith('<?xml') && headText.includes('<svg'))
+      ) {
         detectedMime = 'image/svg+xml';
         detectedExt = 'svg';
       }
     }
-    if (!detectedMime || !detectedExt || !allowlist.has(detectedMime)) {
-      json(res, 400, {
-        ok: false,
-        error: `Unsupported file type${detectedMime ? `: ${detectedMime}` : ''}`,
-      });
-      return;
+
+    if (DEFAULT_DEDUP_MODE === 'same-dir') {
+      const existing = await findDuplicateAsset(destDir, sha, byteLength);
+      if (existing) {
+        cleanupTempfile();
+        const relPath = relative(contentDir, resolve(destDir, existing));
+        log.info(
+          {
+            event: 'upload',
+            endpoint: req.url ?? '/api/upload',
+            agentId,
+            agentName,
+            dedup: true,
+            mime: detectedMime ?? null,
+            size: byteLength,
+            destPath: relPath,
+            httpStatus: 200,
+          },
+          '[upload] dedup hit',
+        );
+        json(res, 200, { ok: true, src: existing, path: relPath, deduped: true });
+        return;
+      }
     }
 
-    // D8: detect clipboard paste (generic/empty filename) → timestamp stem
     let finalFilename: string;
-    if (!filename || filename === 'upload' || GENERIC_PASTE_NAMES.test(filename)) {
+    const isGenericPaste = !filename || filename === 'upload' || GENERIC_PASTE_NAMES.test(filename);
+    if (isGenericPaste) {
       const now = new Date();
       const ts = now
         .toISOString()
         .replace(/[-:T]/g, '')
         .slice(0, 14)
         .replace(/(\d{8})(\d{6})/, '$1-$2');
-      finalFilename = `pasted-${ts}.${detectedExt}`;
+      const fallbackExt = filename ? extname(filename).slice(1) : '';
+      const ext = detectedExt ?? fallbackExt ?? '';
+      finalFilename = ext === '' ? `pasted-${ts}` : `pasted-${ts}.${ext}`;
     } else {
       finalFilename = sanitizeFilename(filename);
     }
 
-    mkdirSync(destDir, { recursive: true });
-
     try {
-      const destFilename = writeUploadAtomic(destDir, finalFilename, buffer);
+      const destFilename = linkTempToFinalWithCollisionRetry(tempPath, destDir, finalFilename);
       const relPath = relative(contentDir, resolve(destDir, destFilename));
-      // Server-absolute, POSIX-normalized path. Doc-relative bare filename
-      // resolves wrong under hash routing for subdir docs: page URL
-      // `/#/showcase/02-image` has base `localhost:5173/`, so a bare
-      // `foo.png` in <img src> fetches `/foo.png` while the file is at
-      // `/showcase/foo.png`. The leading slash anchors the resolution to
-      // the server root regardless of the doc's location in the tree.
-      const src = `/${relPath.split(sep).join('/')}`;
-      console.log(`[upload] ok ${relPath} ${buffer.length}`);
-      json(res, 200, { ok: true, src });
+      log.info(
+        {
+          event: 'upload',
+          endpoint: req.url ?? '/api/upload',
+          agentId,
+          agentName,
+          dedup: false,
+          mime: detectedMime ?? null,
+          size: byteLength,
+          destPath: relPath,
+          httpStatus: 200,
+        },
+        '[upload] write ok',
+      );
+      json(res, 200, { ok: true, src: destFilename, path: relPath, deduped: false });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      console.error(`[upload] error ${finalFilename} ${buffer.length} ${message}`);
-      json(res, 500, { ok: false, error: 'Failed to save file' });
+      const reason = e instanceof UploadWriteError ? e.reason : 'unknown';
+      log.error(
+        {
+          event: 'upload',
+          endpoint: req.url ?? '/api/upload',
+          agentId,
+          agentName,
+          filename: finalFilename,
+          size: byteLength,
+          reason,
+          message,
+          httpStatus: e instanceof UploadWriteError && e.reason === 'storage-full' ? 507 : 500,
+        },
+        '[upload] write failed',
+      );
+      if (e instanceof UploadWriteError) {
+        if (e.reason === 'storage-full') {
+          json(res, 507, { ok: false, error: 'storage-full' });
+          return;
+        }
+        if (e.reason === 'storage-readonly') {
+          json(res, 500, { ok: false, error: 'storage-readonly' });
+          return;
+        }
+        if (e.reason === 'collision-exhaustion') {
+          json(res, 500, { ok: false, error: 'collision-exhaustion' });
+          return;
+        }
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
+      }
+      json(res, 500, { ok: false, error: 'storage-error' });
     }
   }
-
-  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    // attribution threading (FR-5, D42): extract identity from query params (multipart body precludes JSON)
-    extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
-    await uploadMediaCore(req, res, ALLOWED_MIME_TYPES, { allowSvgFallback: true });
-  }
-
-  async function handleUploadVideo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
-    await uploadMediaCore(req, res, ALLOWED_VIDEO_MIME_TYPES_SET, { allowSvgFallback: false });
-  }
-
-  async function handleUploadAudio(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
-    await uploadMediaCore(req, res, ALLOWED_AUDIO_MIME_TYPES_SET, { allowSvgFallback: false });
-  }
-
-  // ─── Local-op relay endpoints (/api/local-op/*) ─────────────────────────────
-  // FR18: loopback + origin + path safety + URL allowlist + concurrency=1 + 10-min timeout
 
   const LOCAL_OP_CLONE_KEY = '/api/local-op/clone';
   const LOCAL_OP_OPEN_KEY = '/api/local-op/open';
-  /** Wall-clock timeout for clone subprocess (10 min). */
   const LOCAL_OP_TIMEOUT_MS = 10 * 60 * 1000;
-  /** Max time to wait for a spawned server's lock file to show a port > 0. */
   const LOCAL_OP_OPEN_TIMEOUT_MS = 45_000;
 
-  /**
-   * POST /api/local-op/clone
-   *
-   * Body: { url: string, dir: string }
-   * Spawns: open-knowledge clone --json --dir <dir> <url>
-   * Streams: NDJSON lines via chunked HTTP.
-   */
   async function handleLocalOpClone(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -4668,7 +4314,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Parse request body
     let url: string;
     let dir: string;
     try {
@@ -4689,13 +4334,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Security: URL protocol allowlist
     if (!isAllowedGitUrl(url)) {
       json(res, 400, { ok: false, error: 'URL protocol not allowed' });
       return;
     }
 
-    // Security: dir must be within user home dir (no traversal)
     if (!isSafeLocalPath(dir)) {
       json(res, 400, {
         ok: false,
@@ -4704,13 +4347,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Concurrency guard: reject concurrent requests to this endpoint
     if (!localOpGuard.tryAcquire(LOCAL_OP_CLONE_KEY)) {
       json(res, 429, { ok: false, error: 'A clone operation is already in progress' });
       return;
     }
 
-    // Start chunked NDJSON response
     res.writeHead(200, {
       'Content-Type': 'application/x-ndjson',
       'Transfer-Encoding': 'chunked',
@@ -4718,167 +4359,75 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
-    // CLI clone takes `dir` as a positional argument (not a `--dir` flag).
-    // Expand `~` here so the CLI doesn't treat it as a literal directory name.
-    const targetDir = expandTilde(dir);
-    const [cmd, ...baseArgs] = localOpCliArgs;
-    const spawnArgs = [...baseArgs, 'clone', '--json', url, targetDir];
-
-    let timedOut = false;
-    let settled = false;
-    // The CLI emits `{type:'complete', dir}` on success, but the browser
-    // client expects `{type:'complete', port}`. We intercept the CLI's
-    // complete event, boot a server at the cloned dir, then emit a rewritten
-    // complete with the port. Non-terminal events (progress / error) flow
-    // through unchanged.
     let cloneCompleteDir: string | null = null;
-    let stdoutBuffer = '';
 
-    const child = spawn(cmd, spawnArgs, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
-
-    const killTimer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-    }, LOCAL_OP_TIMEOUT_MS);
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString('utf-8');
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let parsed: { type?: unknown; dir?: unknown } | null = null;
-        try {
-          parsed = JSON.parse(line) as { type?: unknown; dir?: unknown };
-        } catch {
-          /* non-JSON — ignore */
+    const flow = runCloneSubprocess({
+      cliArgs: localOpCliArgs,
+      url,
+      dir,
+      timeoutMs: LOCAL_OP_TIMEOUT_MS,
+      onEvent: (event) => {
+        if (event.type === 'complete') {
+          cloneCompleteDir = event.dir;
+          return;
         }
-        if (parsed && parsed.type === 'complete' && typeof parsed.dir === 'string') {
-          // Swallow this line; we'll emit our own complete after starting the server.
-          cloneCompleteDir = parsed.dir;
-          continue;
+        if (event.type === 'error') {
+          if (event.message) {
+            log.warn({ stderr: event.message, url, dir }, '[local-op/clone] clone failed');
+          }
         }
-        if (!res.writableEnded) res.write(`${line}\n`);
-      }
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify(event)}\n`);
+        }
+      },
     });
 
-    // Buffer stderr so we can surface it when the clone fails; also log.
-    const stderrChunks: Buffer[] = [];
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrChunks.push(chunk);
-      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/clone] stderr');
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(killTimer);
-      const stderrOutput = Buffer.concat(stderrChunks).toString('utf-8').trim();
-      if (settled) {
-        localOpGuard.release(LOCAL_OP_CLONE_KEY);
-        return;
-      }
-      settled = true;
-
-      void (async () => {
-        try {
-          if (timedOut && !res.writableEnded) {
-            res.write(
-              `${JSON.stringify({ type: 'error', message: 'Clone timed out after 10 minutes' })}\n`,
-            );
-          } else if (code !== 0 && !res.writableEnded) {
-            if (stderrOutput) {
-              log.warn({ code, stderr: stderrOutput, url, dir }, '[local-op/clone] clone failed');
-            }
-            const detail = stderrOutput ? ` — ${stderrOutput}` : '';
-            res.write(
-              `${JSON.stringify({ type: 'error', message: `Clone process exited with code ${code}${detail}` })}\n`,
-            );
-          } else if (code === 0 && cloneCompleteDir && !res.writableEnded) {
-            // Chain into server-start so the client can redirect.
-            const result = await startServerAtDirAndGetPort(cloneCompleteDir);
-            if (!res.writableEnded) {
-              if ('port' in result) {
-                res.write(`${JSON.stringify({ type: 'complete', port: result.port })}\n`);
-              } else {
-                res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
-              }
+    void (async () => {
+      try {
+        await flow.done;
+        if (cloneCompleteDir && !res.writableEnded) {
+          const result = await startServerAtDirAndGetPort(cloneCompleteDir);
+          if (!res.writableEnded) {
+            if ('port' in result) {
+              res.write(
+                `${JSON.stringify({ type: 'complete', port: result.port, dir: cloneCompleteDir })}\n`,
+              );
+            } else {
+              res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
             }
           }
-        } finally {
-          if (!res.writableEnded) res.end();
-          localOpGuard.release(LOCAL_OP_CLONE_KEY);
         }
-      })();
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(killTimer);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
-          res.end();
-        }
+      } finally {
+        if (!res.writableEnded) res.end();
+        localOpGuard.release(LOCAL_OP_CLONE_KEY);
       }
-      localOpGuard.release(LOCAL_OP_CLONE_KEY);
+    })();
+
+    res.on('close', () => {
+      flow.cancel();
     });
   }
 
-  /**
-   * Spawn a detached Open Knowledge server at `dir` and poll the server.lock
-   * until a real port appears. Reused by /api/local-op/open and by the clone
-   * handler to chain clone → server-start → redirect.
-   *
-   * NOTE: The CLI's `start` command has no `--content-dir` flag — it derives
-   * the content dir from cwd + config. So we spawn with `cwd: dir` instead
-   * of passing a flag.
-   */
-  /**
-   * Ensure both the collab server (`ok start`) and the React UI (`ok ui`) are
-   * live for `dir`, and return the UI port — that's the browser-navigable
-   * redirect target post-lifecycle-split. `ok start` serves only the collab
-   * API/WebSocket and returns 404 at `/` with an `ok ui`-pointing message.
-   *
-   * Three cases:
-   *   1. `ui.lock` is live → reuse its port (UI already running in that dir).
-   *   2. `server.lock` live but `ui.lock` absent/stale → spawn `ok ui` alone;
-   *      `ok start` won't re-spawn its UI sibling when the server-lock is held.
-   *   3. Nothing live → spawn `ok start`; it auto-spawns `ok ui` as a sibling
-   *      (see `start.ts` ~line 340, "auto-spawned ok ui sibling").
-   *
-   * Polls `ui.lock` (not `server.lock`) because only `ui.lock.port` hosts the
-   * React bundle. Single polling loop covers cases 2 and 3 uniformly.
-   */
   async function startServerAtDirAndGetPort(
     dir: string,
   ): Promise<{ port: number } | { error: string }> {
     const absDir = resolve(expandTilde(dir));
-    const lockDir = resolve(absDir, '.open-knowledge');
+    const lockDir = resolve(absDir, '.ok');
 
-    // Case 1: UI already live — reuse.
     const existingUi = readUiLock(lockDir);
     if (existingUi && existingUi.port > 0) {
       return { port: existingUi.port };
     }
 
-    // Case 2 vs 3: pick which CLI command to spawn based on whether the
-    // collab server is already live. `ok ui` alone is correct and necessary
-    // when `server.lock` is held (can't re-run `ok start` under a live lock).
     const existingServer = readServerLock(lockDir);
     const [cmd, ...baseArgs] = localOpCliArgs;
     const cliCmd = existingServer && existingServer.port > 0 ? 'ui' : 'start';
     const spawnArgs = [...baseArgs, cliCmd];
-    // Pipe stderr so we can log why a spawn failed; ignore stdout.
     const child = spawn(cmd, spawnArgs, {
       cwd: absDir,
       detached: true,
       stdio: ['ignore', 'ignore', 'pipe'],
-      // Explicit `interactive` — `OK_LOCK_KIND` may be inherited from a
-      // surrounding MCP-spawn parent and we don't want a user-driven
-      // local-op/open relay to mark its child server as `mcp-spawned`.
-      env: { ...process.env, OK_LOCK_KIND: 'interactive', OK_PARENT_PID: String(process.pid) },
+      env: { ...process.env, OK_LOCK_KIND: 'interactive' },
     });
 
     const stderrChunks: Buffer[] = [];
@@ -4895,8 +4444,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       earlyExitCode = code ?? -1;
     });
 
-    // `unref` so the child survives past the parent. Do it after attaching
-    // the stderr listener so we still capture its output.
     child.unref();
 
     const deadline = Date.now() + LOCAL_OP_OPEN_TIMEOUT_MS;
@@ -4919,14 +4466,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     };
   }
 
-  /**
-   * POST /api/local-op/open
-   *
-   * Body: { dir: string }
-   * Spawns: open-knowledge start --content-dir <dir> (detached, unref'd)
-   * Polls <dir>/.open-knowledge/server.lock until port > 0 appears.
-   * Returns: { port: number }
-   */
   async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -4948,7 +4487,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Security: dir must be within user home dir
     if (!isSafeLocalPath(dir)) {
       json(res, 400, {
         ok: false,
@@ -4957,7 +4495,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Concurrency guard
     if (!localOpGuard.tryAcquire(LOCAL_OP_OPEN_KEY)) {
       json(res, 429, { ok: false, error: 'A server-open operation is already in progress' });
       return;
@@ -4975,25 +4512,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ─── Auth relay endpoints (/api/local-op/auth/*) ────────────────────────────
-  // FR18: loopback + origin security enforced on all five endpoints.
-  // Each endpoint has its own concurrency key to allow parallel auth operations
-  // (e.g., status check while login is in progress).
-
   const LOCAL_OP_AUTH_LOGIN_KEY = '/api/local-op/auth/login';
   const LOCAL_OP_AUTH_STATUS_KEY = '/api/local-op/auth/status';
   const LOCAL_OP_AUTH_REPOS_KEY = '/api/local-op/auth/repos';
   const LOCAL_OP_AUTH_SIGNOUT_KEY = '/api/local-op/auth/signout';
   const LOCAL_OP_AUTH_PAT_KEY = '/api/local-op/auth/pat';
 
-  /**
-   * POST /api/local-op/auth/login
-   *
-   * Body: { host?: string }
-   * Spawns: auth login --json [--host <host>]
-   * Streams: NDJSON lines (verification + complete events) via chunked HTTP.
-   * The device-flow subprocess manages its own timeout.
-   */
   async function handleLocalOpAuthLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -5023,97 +4547,29 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
-    const [cmd, ...baseArgs] = localOpCliArgs;
-    const spawnArgs = [...baseArgs, 'auth', 'login', '--json', '--host', host];
-
-    let settled = false;
-    let sawTerminalEvent = false;
-    let stdoutBuffer = '';
-    const child = spawn(cmd, spawnArgs, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+    const flow = runDeviceFlowSubprocess({
+      cliArgs: localOpCliArgs,
+      host,
+      timeoutMs: LOCAL_OP_TIMEOUT_MS,
+      onEvent: (event: AuthEvent) => {
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify(event)}\n`);
+        }
+      },
     });
 
-    const killTimer = setTimeout(() => {
-      child.kill('SIGTERM');
-    }, LOCAL_OP_TIMEOUT_MS);
-
-    // Kill the child if the client disconnects so `auth login` doesn't keep
-    // polling in the background and write a token to the keychain that the
-    // user never saw confirmation for.
     const onClientClose = () => {
-      if (!child.killed) child.kill('SIGTERM');
+      flow.cancel();
     };
     res.on('close', onClientClose);
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      if (!res.writableEnded) res.write(chunk);
-      // Parse line-by-line to detect whether the CLI emitted a terminal event
-      // (`complete` | `error`). If it didn't but the process exits 0, we
-      // synthesize one below so the client never hangs on a silent exit.
-      stdoutBuffer += chunk.toString('utf-8');
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const parsed = JSON.parse(line) as { type?: unknown };
-          if (parsed.type === 'complete' || parsed.type === 'error') {
-            sawTerminalEvent = true;
-          }
-        } catch {
-          /* non-JSON line (e.g. keychain-backend log) — ignore */
-        }
-      }
-    });
-
-    child.stderr.on('data', (chunk: Buffer) => {
-      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/auth/login] stderr');
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(killTimer);
+    void flow.done.finally(() => {
       res.off('close', onClientClose);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          if (code === 0 && !sawTerminalEvent) {
-            // CLI exited cleanly without emitting a terminal event — synthesize
-            // one so the client's stream reader can resolve. Login name will be
-            // filled in by the next /api/local-op/auth/status poll.
-            res.write(`${JSON.stringify({ type: 'complete', host, login: '' })}\n`);
-          } else if (code !== 0) {
-            res.write(
-              `${JSON.stringify({ type: 'error', message: `auth login exited with code ${code}` })}\n`,
-            );
-          }
-        }
-        res.end();
-      }
-      localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(killTimer);
-      res.off('close', onClientClose);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
-          res.end();
-        }
-      }
+      if (!res.writableEnded) res.end();
       localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
     });
   }
 
-  /**
-   * POST /api/local-op/auth/status
-   *
-   * Body: { host?: string }
-   * Spawns: auth status --json [--host <host>]
-   * Returns: the single NDJSON line as parsed JSON.
-   */
   async function handleLocalOpAuthStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -5163,9 +4619,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       });
 
-      // The CLI may emit non-JSON log lines on stdout before the terminal
-      // event (e.g. keychain probe messages on older builds). Find the last
-      // parseable JSON line and return that.
       const lines = output
         .split('\n')
         .map((l) => l.trim())
@@ -5175,9 +4628,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         try {
           parsed = JSON.parse(lines[i] as string);
           break;
-        } catch {
-          /* skip non-JSON line */
-        }
+        } catch {}
       }
       if (parsed !== null) {
         json(res, 200, parsed);
@@ -5194,13 +4645,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * POST /api/local-op/auth/repos
-   *
-   * Body: { host?: string }
-   * Spawns: auth repos --json [--host <host>]
-   * Streams: NDJSON via chunked HTTP.
-   */
   async function handleLocalOpAuthRepos(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -5281,13 +4725,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
-  /**
-   * POST /api/local-op/auth/signout
-   *
-   * Body: { host?: string }
-   * Spawns: auth signout [--host <host>]
-   * Returns: { ok: true }
-   */
   async function handleLocalOpAuthSignout(
     req: IncomingMessage,
     res: ServerResponse,
@@ -5346,13 +4783,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * POST /api/local-op/auth/pat
-   *
-   * Body: { pat: string, host?: string }
-   * Spawns: auth pat --json [--host <host>] with pat piped to stdin.
-   * Returns: the NDJSON complete-event as parsed JSON.
-   */
   async function handleLocalOpAuthPat(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -5393,7 +4823,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const killTimer = setTimeout(() => {
           child.kill('SIGTERM');
         }, 30_000);
-        // Write the PAT to stdin and close it so the CLI readline resolves
         child.stdin.write(`${pat}\n`);
         child.stdin.end();
 
@@ -5413,8 +4842,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       });
 
-      // Same robustness as status: pick the last JSON line, ignore any
-      // non-JSON output the CLI may have emitted.
       const lines = output
         .split('\n')
         .map((l) => l.trim())
@@ -5424,9 +4851,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         try {
           parsed = JSON.parse(lines[i] as string);
           break;
-        } catch {
-          /* skip non-JSON line */
-        }
+        } catch {}
       }
       if (parsed !== null) {
         json(res, 200, parsed);
@@ -5443,10 +4868,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ─── GET /api/local-op/auth/identity ───────────────────────────────────────
-  // Reads the resolved git identity via the identity resolution chain.
-  // Returns { ok: true, identity: { name, email } | null }.
-
   async function handleLocalOpAuthIdentity(
     req: IncomingMessage,
     res: ServerResponse,
@@ -5461,10 +4882,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      // Step 3 of the chain (OAuth profile fallback) requires a tokenStore; the
-      // server package doesn't import the CLI's token store today, so we resolve
-      // only local + global config tiers here. Sign-in flows pre-fill the form
-      // with OAuth name/email separately.
       const identity = await resolveGitIdentity(projectDir);
       json(res, 200, { ok: true, identity });
     } catch (err) {
@@ -5474,12 +4891,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     }
   }
-
-  // ─── POST /api/local-op/auth/set-identity ──────────────────────────────────
-  // Writes git user.name + user.email to repo-local config via writeGitIdentity
-  // On success, nudges the sync engine to re-probe the identity chain
-  // so the UI unresolved-nudge clears immediately instead of waiting for the
-  // next push cycle.
 
   const LOCAL_OP_AUTH_SET_IDENTITY_KEY = '/api/local-op/auth/set-identity';
 
@@ -5525,13 +4936,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     try {
       writeGitIdentity(projectDir, name, email);
-      // Fire-and-forget: the sync engine re-probes + signals CC1 'sync-status'
-      // so the unresolved nudge clears in the UI without waiting on the push timer.
       void getSyncEngine?.()
         ?.refreshIdentity()
-        .catch(() => {
-          /* best-effort — status will catch up on next push cycle */
-        });
+        .catch(() => {});
       json(res, 200, { ok: true });
     } catch (err) {
       json(res, 500, {
@@ -5543,12 +4950,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ─── Security helpers for sync endpoints ────────────────────────────────────
-  // Sync endpoints reuse the shared loopback + origin check from local-op-security.ts
-  // to avoid duplicating the same logic (checkLocalOpSecurity already imported above).
-
-  // ─── Sync endpoints ──────────────────────────────────────────────────────────
-
   async function handleSyncStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'GET') {
@@ -5557,8 +4958,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     const engine = getSyncEngine?.();
     if (!engine) {
-      // Shape must stay aligned with SyncStatus (see sync-engine.ts) — the UI
-      // reads these fields unconditionally.
       json(res, 200, {
         state: 'dormant',
         lastSyncUtc: null,
@@ -5597,10 +4996,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           op = parsed.op as 'push' | 'pull' | 'sync';
         }
       }
-    } catch {
-      // Ignore parse errors — use default op
-    }
-    // Fire-and-return: 202 Accepted immediately, trigger runs in background
+    } catch {}
     json(res, 202, { ok: true, op });
     void engine.trigger(op);
   }
@@ -5627,6 +5023,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       enabled = parsed.enabled;
     } catch {
       json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+    const configWrite = await writeConfigPatch({
+      cwd: projectDir ?? contentDir,
+      scope: 'project',
+      patch: { autoSync: { enabled } },
+    });
+    if (!configWrite.ok) {
+      json(res, 500, { ok: false, error: 'Could not persist sync preference to config' });
       return;
     }
     await engine.setEnabled(enabled);
@@ -5710,14 +5115,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 400, { ok: false, error: 'Missing required query param: file' });
       return;
     }
-    // Reject obvious path-traversal; git itself rejects paths outside the index.
     if (file.includes('..') || file.startsWith('/')) {
       json(res, 400, { ok: false, error: 'Invalid file path' });
       return;
     }
     const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-    // git stages: 1 = base, 2 = ours, 3 = theirs. Any may be missing for
-    // delete/edit or add/add conflicts — tolerate by returning empty content.
     async function showStage(stage: 1 | 2 | 3): Promise<string> {
       try {
         return await pg.raw(['show', `:${stage}:${file}`]);
@@ -5734,21 +5136,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ─── `ok seed` scaffolder endpoints ──────────────────────────────────────
-  // GET /api/seed/plan  → { ok:true, plan } | { ok:false, error:{kind,message} }
-  // POST /api/seed/apply with { plan } → { ok:true, result } | { ok:false, error:{kind,message} }
-  //
-  // Same logic as the `ok seed` CLI subcommand and the Electron IPC handler —
-  // three surfaces share `planSeed` / `applySeed` from the server seed module.
-  // Gated on `checkLocalOpSecurity` because the operation mutates the local
-  // filesystem; same contract as /api/local-op/* and /api/installed-agents.
-
-  /**
-   * GET `/api/seed/plan?rootDir=brain` — preview the scaffold for a given
-   * subfolder. `rootDir` defaults to `.` (project root). Plan-time errors
-   * (absolute path, escape segments) surface as `{ ok: false, error }` so
-   * the dialog can render the message without an HTTP failure.
-   */
   async function handleSeedPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'GET') {
@@ -5802,10 +5189,46 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     try {
-      // The plan already has rootDir baked into its entries — apply only
-      // needs projectDir.
       const result = await applySeed(plan, { projectDir: contentDir });
       json(res, 200, { ok: true, result });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+    }
+  }
+
+  async function handleInstallSkill(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    const opts: { noOpen?: boolean; out?: string } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw.length > 0) {
+        const parsed = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (typeof parsed.noOpen === 'boolean') opts.noOpen = parsed.noOpen;
+        if (typeof parsed.out === 'string') {
+          if (!isSafeLocalPath(parsed.out)) {
+            json(res, 400, {
+              ok: false,
+              error: 'Output path must be within home directory',
+            });
+            return;
+          }
+          opts.out = parsed.out;
+        }
+      }
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    try {
+      const result = await buildAndOpenSkill(opts);
+      json(res, 200, result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       json(res, 500, { ok: false, error: { kind: 'internal', message } });
@@ -5816,14 +5239,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    // Loopback + DNS-rebinding gate. Same contract the rest of the host-
-    // disclosure surface uses (`/api/workspace`, every `/api/local-op/*`) —
-    // this endpoint discloses a stable OS-level fingerprint of which AI
-    // agents are installed, readable without preflight under the permissive
-    // `Access-Control-Allow-Origin: *` that `/api/*` sets. Gating on
-    // `checkLocalOpSecurity` confines the fingerprint to same-machine,
-    // same-origin callers (the editor UI) and refuses cross-origin browser
-    // contexts + DNS-rebinding attempts that would otherwise succeed.
     if (!checkLocalOpSecurity(req, res, json)) return;
     return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
   }
@@ -5863,12 +5278,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/suggest-links': handleSuggestLinks,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,
-    '/api/rename': handleRename,
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
-    '/api/upload-image': handleUploadImage,
-    '/api/upload-video': handleUploadVideo,
-    '/api/upload-audio': handleUploadAudio,
+    '/api/upload': handleUploadImage,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
@@ -5903,6 +5315,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
     '/api/installed-agents': handleInstalledAgentsRoute,
+    '/api/install-skill': handleInstallSkill,
     '/api/seed/plan': handleSeedPlan,
     '/api/seed/apply': handleSeedApply,
   };
@@ -5912,27 +5325,32 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     routes['/api/test-rescan-backlinks'] = handleTestRescanBacklinks;
   }
 
+  const MUTATING_ROUTES: ReadonlySet<string> = new Set([
+    '/api/upload',
+    '/api/create-page',
+    '/api/rename-path',
+    '/api/delete-path',
+    '/api/agent-write',
+    '/api/agent-write-md',
+    '/api/agent-patch',
+    '/api/save-version',
+    '/api/rollback',
+    '/api/sync/trigger',
+    '/api/sync/set-enabled',
+    '/api/sync/resolve-conflict',
+    '/api/sync/abort-merge',
+    '/api/test-reset',
+    '/api/test-rescan-backlinks',
+    '/api/install-skill',
+  ]);
+  const STATE_MUTATING_PREFIXES: ReadonlyArray<string> = ['/api/local-op/'];
+
   return {
     priority: 100, // Higher priority — API routes run before static file serving
     async onRequest({ request, response }: { request: IncomingMessage; response: ServerResponse }) {
       const url = request.url?.split('?')[0];
       if (!url) return;
 
-      // Origin-allowlist CORS for /api/*. Only loopback origins are accepted:
-      // - No Origin header (same-origin browser tab, curl, CLI): passes through.
-      // - Origin "null" (Electron packaged renderer, file:// per Fetch spec §4.3): allowed.
-      // - http(s)://localhost[:port] / 127.x.x.x[:port] / [::1][:port]: allowed.
-      // - Any other Origin: 403 — closes the CSRF door on unauthenticated mutating
-      //   routes (/api/agent-write-md, /api/rollback, /api/manage/delete, etc.)
-      //   without breaking the Electron renderer or local Vite dev servers.
-      //
-      // When an allowed Origin is present, it is reflected verbatim in ACAO (not
-      // `*`) so the browser's preflight check passes while non-loopback origins are
-      // still refused by the gate above. `Vary: Origin` prevents cache poisoning.
-      //
-      // Setting via `setHeader` (not `writeHead`) so handler responses that call
-      // `writeHead(status, { ... })` inherit these headers. The typeof guard handles
-      // unit tests that stub only `writeHead` + `end`.
       if (url.startsWith('/api/')) {
         const origin = request.headers.origin;
         if (origin !== undefined && !isAllowedApiOrigin(origin)) {
@@ -5949,13 +5367,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             response.setHeader('Vary', 'Origin');
           }
           response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-          // Allow OTel W3C trace-context propagation from the browser SDK.
           response.setHeader(
             'Access-Control-Allow-Headers',
             'Content-Type, Authorization, traceparent, tracestate, baggage',
           );
         }
-        // OPTIONS preflight — short-circuit with 204 + the headers above.
         if (request.method === 'OPTIONS') {
           response.writeHead(204);
           response.end();
@@ -5963,16 +5379,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      // Only /api/* gets a server span. Non-API routes (static file serving,
-      // Hocuspocus's own paths) fall through silently.
+      if (MUTATING_ROUTES.has(url) || STATE_MUTATING_PREFIXES.some((p) => url.startsWith(p))) {
+        const peerAddress = request.socket?.remoteAddress;
+        if (peerAddress !== undefined && !isLoopbackAddress(peerAddress)) {
+          json(response, 403, { ok: false, error: 'loopback-required' });
+          return;
+        }
+        if (!isAllowedWorkspaceHostHeader(request.headers.host)) {
+          json(response, 403, { ok: false, error: 'host-header-not-allowed' });
+          return;
+        }
+      }
+
       if (!url.startsWith('/api/')) return;
 
-      // Extract incoming trace context (W3C traceparent header) so this server
-      // span attaches as a child of the browser-initiated trace.
       const extractedCtx = propagation.extract(context.active(), request.headers);
       const method = request.method ?? 'GET';
-      // Normalize route for low-cardinality metric labels. `:id` placeholders
-      // replace dynamic segments; anything else collapses to the URL prefix.
       let routeTemplate = url;
       if (url.startsWith('/api/rescue/')) routeTemplate = '/api/rescue/:docName';
       else if (url.startsWith('/api/history/')) routeTemplate = '/api/history/:sha';
@@ -5994,7 +5416,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           },
           async (span) => {
             try {
-              // Static routes
               const handler = routes[url];
               if (handler) {
                 await handler(request, response);

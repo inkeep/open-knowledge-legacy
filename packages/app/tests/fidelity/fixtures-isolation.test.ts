@@ -1,31 +1,3 @@
-/**
- * Fixture-isolation guard (US-001 / R8).
- *
- * Invariants:
- *   (A) The externalized fixture locations — under
- *       `packages/core/src/markdown/fixtures/` — are the single source of
- *       truth for markdown corpora. The legacy locations
- *       `packages/app/tests/fixtures/` and `packages/app/tests/fidelity/fixtures/`
- *       must not return.
- *   (B) Source files across `packages/` must not read from the legacy
- *       fixture paths (even indirectly — any mention of those paths in a
- *       source or test file is a red flag).
- *   (C) Fixture-specific signatures unique to the canonical corpora
- *       (e.g. the `r23Covers` key from the MDX crash taxonomy; the
- *       `section: "Task list items"` + `"Strikethrough"` shape from the
- *       GFM corpus) must only appear in the fixture files and their
- *       loader, never inline in a test or source file.
- *
- * When this test fails, move the offending content into
- * `packages/core/src/markdown/fixtures/<subdir>/` and load it via
- * `loadGfmExamples()` / `loadMdxCrashTaxonomy()` / etc.
- *
- * Scope note: this test deliberately scans for specific fixture signatures
- * rather than any long string literal. Tests often contain legitimately
- * large inline strings (expected outputs, fuzz arbitraries, integration
- * scenarios) that are not corpus duplication.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
@@ -39,19 +11,12 @@ const LEGACY_FIXTURE_LOCATIONS = [
   join(PACKAGES_DIR, 'app', 'tests', 'fidelity', 'fixtures'),
 ];
 
-/** Path fragments that MUST NOT appear in any scanned source file. */
 const LEGACY_PATH_FRAGMENTS = [
   'tests/fixtures/large-realistic.md',
   'tests/fidelity/fixtures/gfm-examples.json',
   'tests/fidelity/fixtures/mdx-tolerant-crash-taxonomy.json',
 ];
 
-/**
- * Signatures unique to the canonical corpora. If any of these regexes
- * matches outside the fixtures directory, someone has duplicated the
- * fixture inline. Regex (rather than literal includes) so the guard
- * survives re-quoting / re-indentation of the same signature.
- */
 const FIXTURE_SIGNATURES: Array<{ pattern: RegExp; label: string; suggestion: string }> = [
   {
     pattern: /\br23Covers\b/,
@@ -79,10 +44,6 @@ const WALK_SKIP_DIRS = new Set([
   'fixtures', // the canonical fixture location itself
 ]);
 
-/**
- * File names exempted from the signature + path scan. Use sparingly —
- * this isolation test itself is the only legitimate exception.
- */
 const SCAN_EXEMPT_BASENAMES = new Set<string>(['fixtures-isolation.test.ts']);
 
 function walk(dir: string, acc: string[] = []): string[] {
@@ -102,9 +63,6 @@ function walk(dir: string, acc: string[] = []): string[] {
       continue;
     }
     if (stat.isDirectory()) walk(full, acc);
-    // Scan .ts/.tsx source files AND .json files — copying a JSON fixture
-    // outside the canonical location is a common duplication pattern that
-    // the .ts-only walk previously missed.
     else if (entry.endsWith('.ts') || entry.endsWith('.tsx') || entry.endsWith('.json')) {
       acc.push(full);
     }
@@ -112,12 +70,6 @@ function walk(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-/**
- * Enumerate every directory under `root` matching `/^fixtures?$/`, skipping
- * build / vendor dirs. Used by the positive-assertion walk below so that
- * ANY new fixture directory outside the canonical location fails the guard,
- * not just known-legacy paths.
- */
 function findFixtureDirs(root: string, acc: string[] = []): string[] {
   let entries: string[];
   try {
@@ -163,11 +115,6 @@ describe('fixture isolation (US-001 / R8)', () => {
   });
 
   test('no fixture directory exists outside the canonical location', () => {
-    // Positive-assertion walk: the stated goal of this file is "fixtures
-    // live only in the canonical location." A signature-based scan catches
-    // duplication of *existing* corpora; this walk catches *any new* fixture
-    // directory (e.g. `packages/app/tests/integration/fixtures/`) that the
-    // signature list doesn't enumerate.
     const allFixtureDirs = findFixtureDirs(PACKAGES_DIR);
     const offenders = allFixtureDirs.filter((d) => d !== FIXTURES_ROOT);
     if (offenders.length > 0) {

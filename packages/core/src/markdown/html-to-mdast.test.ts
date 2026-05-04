@@ -1,15 +1,3 @@
-/**
- * Tests for htmlToMdast — HTML → mdast conversion scaffolding.
- *
- * Covers the canonically-typed mdast output for the simple prose HTML surface
- * area specified in US-002's acceptance criteria: paragraphs, headings h1-h6,
- * strong/em/code inlines, ul/ol lists, tables, links, blockquotes. Validates
- * malformed-input tolerance via rehype-parse fragment mode.
- *
- * Future stories (US-008 through US-010) extend with vendor-specific fixture
- * tests (GDocs, Word, Gmail, etc.) colocated alongside each cleanup plugin.
- */
-
 import { describe, expect, test } from 'bun:test';
 import type {
   Blockquote,
@@ -122,14 +110,11 @@ describe('htmlToMdast — basic HTML→mdast conversion', () => {
     const root = htmlToMdast(html);
     const table = root.children.find((c) => c.type === 'table') as Table;
     expect(table).toBeDefined();
-    // Header row + 1 body row = 2 table rows.
     expect(table.children).toHaveLength(2);
   });
 
   test('malformed HTML is tolerated (no throw)', () => {
-    // Missing closing tag — rehype-parse tolerates per HTML5 spec.
     expect(() => htmlToMdast('<p>unclosed <strong>bold')).not.toThrow();
-    // Completely broken markup.
     expect(() => htmlToMdast('<<><foo bar=>')).not.toThrow();
   });
 
@@ -156,15 +141,11 @@ describe('htmlToMdast — basic HTML→mdast conversion', () => {
   });
 
   test('cleanupPlugins is the scaffold-time registration point', () => {
-    // Scaffold contract: until US-008 lands the first vendor plugin, the
-    // built-in cleanup array is empty. This test is the tripwire — it will
-    // need updating when plugins are registered.
     expect(Array.isArray(cleanupPlugins)).toBe(true);
   });
 
   test('throws HtmlPayloadTooLargeError when input exceeds the size ceiling', async () => {
     const { HtmlPayloadTooLargeError } = await import('./html-to-mdast.ts');
-    // Use a low override so the test does not allocate 5MB strings.
     let caught: unknown;
     try {
       htmlToMdast('<p>x</p>'.repeat(2000), { maxBytes: 100 });
