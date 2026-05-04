@@ -163,6 +163,7 @@ function NewItemShortcutHandler() {
 
 export function App() {
   const desktopBridge = typeof window !== 'undefined' ? (window.okDesktop ?? null) : null;
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   return (
     <ProfilerBoundary name="app">
@@ -180,9 +181,13 @@ export function App() {
                 nothing until main fires `ok:mcp-wiring:show`. Mounted
                 identically in NavigatorApp. */}
             <McpConsentDialog />
-            {desktopBridge ? <CommandPalette bridge={desktopBridge} /> : null}
+            <CommandPalette
+              bridge={desktopBridge}
+              open={commandPaletteOpen}
+              onOpenChange={setCommandPaletteOpen}
+            />
             <SidebarProvider className="h-screen overflow-hidden">
-              <FileSidebar />
+              <FileSidebar onOpenSearch={() => setCommandPaletteOpen(true)} />
               <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
                 <EditorPane />
               </SidebarInset>

@@ -1,10 +1,15 @@
 import type { HeadingEntry } from '@inkeep/open-knowledge-core';
+import {
+  createWorkspaceSearchCorpus,
+  createWorkspaceSearchDocument,
+  searchWorkspaceCorpus,
+  type WorkspaceSearchCorpus,
+} from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
 import type { ResolvedPos } from '@tiptap/pm/model';
 import { PluginKey } from '@tiptap/pm/state';
 import { ReactRenderer } from '@tiptap/react';
 import Suggestion, { type SuggestionKeyDownProps, type SuggestionProps } from '@tiptap/suggestion';
-import fuzzysort from 'fuzzysort';
 import { WikiLinkSuggestionMenu } from '../wiki-link-suggestion/WikiLinkSuggestionMenu';
 import {
   createSuggestionPopup,
@@ -35,6 +40,15 @@ interface ParsedQuery {
 
 const MAX_ITEMS = 8;
 
+interface SuggestionSearchCorpus<T> {
+  fingerprint: string;
+  byPath: ReadonlyMap<string, T>;
+  corpus: WorkspaceSearchCorpus;
+}
+
+let cachedPageSearchCorpus: SuggestionSearchCorpus<PageItem> | null = null;
+let cachedHeadingSearchCorpus: SuggestionSearchCorpus<HeadingEntry> | null = null;
+
 export function parseQuery(query: string): ParsedQuery {
   const hashIdx = query.indexOf('#');
   if (hashIdx > 0) {
@@ -49,14 +63,68 @@ export function parseQuery(query: string): ParsedQuery {
 
 export function filterPages(pages: PageItem[], query: string): PageItem[] {
   if (!query) return pages.slice(0, MAX_ITEMS);
-  const results = fuzzysort.go(query, pages, { keys: ['title', 'docName'], threshold: -10000 });
-  return results.map((r) => r.obj).slice(0, MAX_ITEMS);
+  const searchCorpus = getCachedPageSearchCorpus(pages);
+  return searchWorkspaceCorpus(searchCorpus.corpus, query, {
+    intent: 'autocomplete',
+    limit: MAX_ITEMS,
+  })
+    .map((result) => searchCorpus.byPath.get(result.document.path))
+    .filter((page) => !!page);
+}
+
+function getCachedPageSearchCorpus(pages: readonly PageItem[]): SuggestionSearchCorpus<PageItem> {
+  const fingerprint = pages
+    .map((page) => `${page.kind ?? 'page'}\u0000${page.docName}\u0000${page.title}`)
+    .join('\u0001');
+  if (cachedPageSearchCorpus?.fingerprint === fingerprint) return cachedPageSearchCorpus;
+  cachedPageSearchCorpus = {
+    fingerprint,
+    byPath: new Map(pages.map((page) => [page.docName, page])),
+    corpus: createWorkspaceSearchCorpus(
+      pages.map((page) =>
+        createWorkspaceSearchDocument({
+          kind: 'page',
+          path: page.docName,
+          title: page.title,
+        }),
+      ),
+    ),
+  };
+  return cachedPageSearchCorpus;
+}
+
+function getCachedHeadingSearchCorpus(
+  headings: readonly HeadingEntry[],
+): SuggestionSearchCorpus<HeadingEntry> {
+  const fingerprint = headings
+    .map((heading) => `${heading.slug}\u0000${heading.level}\u0000${heading.text}`)
+    .join('\u0001');
+  if (cachedHeadingSearchCorpus?.fingerprint === fingerprint) return cachedHeadingSearchCorpus;
+  cachedHeadingSearchCorpus = {
+    fingerprint,
+    byPath: new Map(headings.map((heading) => [heading.slug, heading])),
+    corpus: createWorkspaceSearchCorpus(
+      headings.map((heading) =>
+        createWorkspaceSearchDocument({
+          kind: 'page',
+          path: heading.slug,
+          title: heading.text,
+        }),
+      ),
+    ),
+  };
+  return cachedHeadingSearchCorpus;
 }
 
 export function filterHeadings(headings: HeadingEntry[], anchorQuery: string): HeadingEntry[] {
   if (!anchorQuery) return headings.slice(0, MAX_ITEMS);
-  const results = fuzzysort.go(anchorQuery, headings, { key: 'text', threshold: -10000 });
-  return results.map((r) => r.obj).slice(0, MAX_ITEMS);
+  const searchCorpus = getCachedHeadingSearchCorpus(headings);
+  return searchWorkspaceCorpus(searchCorpus.corpus, anchorQuery, {
+    intent: 'autocomplete',
+    limit: MAX_ITEMS,
+  })
+    .map((result) => searchCorpus.byPath.get(result.document.path))
+    .filter((heading) => !!heading);
 }
 
 export function buildSuggestionItems(pages: PageItem[], query: string): WikiLinkSuggestionItem[] {
