@@ -117,7 +117,6 @@ export async function buildReadResult(
         projectDir: cwd,
         serverUrl: resolvedServerUrl,
         historyDepth,
-        folderRules: config.folders,
       },
       { includeRichFields: true },
     ),

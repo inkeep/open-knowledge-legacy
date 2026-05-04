@@ -1,15 +1,4 @@
-import {
-  describe as _bunDescribe,
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  expect,
-  test,
-} from 'bun:test';
-
-const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
-
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';

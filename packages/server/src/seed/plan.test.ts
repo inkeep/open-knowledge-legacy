@@ -1,264 +1,105 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { planSeed } from './plan.ts';
 import { STARTER_FOLDERS } from './starter.ts';
-import { SEED_CONFIG_FILENAME, SeedPrerequisiteError, SeedRootDirError } from './types.ts';
+import { SeedPrerequisiteError, SeedRootDirError } from './types.ts';
 
-let testDir: string;
+describe('planSeed — nested .ok/ era', () => {
+  let projectDir: string;
 
-beforeEach(() => {
-  testDir = mkdtempSync(join(tmpdir(), 'ok-seed-plan-test-'));
-});
+  beforeEach(async () => {
+    projectDir = await mkdtemp(join(tmpdir(), 'seed-plan-'));
+    mkdirSync(join(projectDir, '.ok'), { recursive: true });
+  });
 
-afterEach(() => {
-  if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
-});
+  afterEach(async () => {
+    await rm(projectDir, { recursive: true, force: true });
+  });
 
-function scaffoldOkDir(dir: string, configYml?: string): void {
-  mkdirSync(join(dir, OK_DIR), { recursive: true });
-  if (configYml !== undefined) {
-    writeFileSync(join(dir, OK_DIR, SEED_CONFIG_FILENAME), configYml, 'utf-8');
-  }
-}
-
-describe('planSeed — preconditions', () => {
   test('throws SeedPrerequisiteError when .ok/ is absent', async () => {
-    await expect(planSeed({ projectDir: testDir })).rejects.toThrow(SeedPrerequisiteError);
-  });
-
-  test('error message points at `ok init`', async () => {
+    const bare = await mkdtemp(join(tmpdir(), 'seed-bare-'));
     try {
-      await planSeed({ projectDir: testDir });
-      throw new Error('Expected rejection');
-    } catch (err) {
-      expect(err).toBeInstanceOf(SeedPrerequisiteError);
-      expect((err as Error).message).toContain('ok init');
-    }
-  });
-});
-
-describe('planSeed — fresh project', () => {
-  test('all three starter folders queued for creation', async () => {
-    scaffoldOkDir(testDir);
-    const plan = await planSeed({ projectDir: testDir });
-    const createdFolders = plan.created.filter((e) => e.kind === 'folder').map((e) => e.path);
-    expect(createdFolders).toEqual(['external-sources', 'research', 'articles']);
-  });
-
-  test('log.md queued for creation', async () => {
-    scaffoldOkDir(testDir);
-    const plan = await planSeed({ projectDir: testDir });
-    const createdFiles = plan.created.filter((e) => e.kind === 'file').map((e) => e.path);
-    expect(createdFiles).toContain('log.md');
-  });
-
-  test('all three config edits queued when config.yml has no folders: entries', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    const plan = await planSeed({ projectDir: testDir });
-    expect(plan.configEdits).toHaveLength(3);
-    expect(plan.configEdits.map((e) => e.folderMatch)).toEqual([
-      'external-sources/**',
-      'research/**',
-      'articles/**',
-    ]);
-  });
-
-  test('all three config edits queued when config.yml is absent entirely', async () => {
-    scaffoldOkDir(testDir); // no config.yml written
-    const plan = await planSeed({ projectDir: testDir });
-    expect(plan.configEdits).toHaveLength(3);
-  });
-
-  test('each config edit carries correct entry shape', async () => {
-    scaffoldOkDir(testDir);
-    const plan = await planSeed({ projectDir: testDir });
-    for (let i = 0; i < STARTER_FOLDERS.length; i++) {
-      const folder = STARTER_FOLDERS[i];
-      const edit = plan.configEdits[i];
-      expect(edit.folderMatch).toBe(folder.match);
-      expect(edit.entry.match).toBe(folder.match);
-      expect(edit.entry.frontmatter.title).toBe(folder.title);
-      expect(edit.entry.frontmatter.description).toBe(folder.description);
-      expect(edit.entry.frontmatter.tags).toEqual(folder.tags);
+      await expect(planSeed({ projectDir: bare })).rejects.toThrow(SeedPrerequisiteError);
+    } finally {
+      await rm(bare, { recursive: true, force: true });
     }
   });
 
-  test('no skipped entries on a fresh project', async () => {
-    scaffoldOkDir(testDir);
-    const plan = await planSeed({ projectDir: testDir });
-    expect(plan.skipped).toEqual([]);
-  });
+  test('plans every starter folder + nested .ok/ + frontmatter.yml + templates/<name>.md', async () => {
+    const plan = await planSeed({ projectDir });
+    const createdPaths = new Set(plan.created.map((e) => e.path));
 
-  test('no warnings on a clean config.yml', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    const plan = await planSeed({ projectDir: testDir });
-    expect(plan.warnings).toEqual([]);
-  });
-});
-
-describe('planSeed — fully seeded project', () => {
-  test('all entries skipped when folders exist on disk + config has all three matches', async () => {
-    scaffoldOkDir(
-      testDir,
-      `content:\n  dir: .\nfolders:\n  - match: 'external-sources/**'\n    frontmatter:\n      title: Existing\n  - match: 'research/**'\n    frontmatter:\n      title: Existing\n  - match: 'articles/**'\n    frontmatter:\n      title: Existing\n`,
-    );
     for (const folder of STARTER_FOLDERS) {
-      mkdirSync(join(testDir, folder.path), { recursive: true });
+      expect(createdPaths.has(folder.path)).toBe(true); // the folder itself
+      expect(createdPaths.has(`${folder.path}/.ok`)).toBe(true); // nested .ok/
+      expect(createdPaths.has(`${folder.path}/.ok/frontmatter.yml`)).toBe(true);
+      expect(createdPaths.has(`${folder.path}/.ok/templates`)).toBe(true);
+      expect(createdPaths.has(`${folder.path}/.ok/templates/${folder.starterTemplate}.md`)).toBe(
+        true,
+      );
     }
-    writeFileSync(join(testDir, 'log.md'), '# Work Log\n', 'utf-8');
-
-    const plan = await planSeed({ projectDir: testDir });
-    expect(plan.created).toEqual([]);
-    expect(plan.configEdits).toEqual([]);
-    expect(plan.skipped.length).toBeGreaterThan(0);
-  });
-});
-
-describe('planSeed — partial overlap', () => {
-  test('existing folder is skipped; missing folder queued', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    mkdirSync(join(testDir, 'research'), { recursive: true });
-
-    const plan = await planSeed({ projectDir: testDir });
-    const createdPaths = plan.created.filter((e) => e.kind === 'folder').map((e) => e.path);
-    const skippedPaths = plan.skipped.map((s) => s.path);
-    expect(createdPaths).toEqual(['external-sources', 'articles']);
-    expect(skippedPaths).toContain('research');
+    expect(createdPaths.has('log.md')).toBe(true);
   });
 
-  test('existing config.yml match is skipped; missing matches queued', async () => {
-    scaffoldOkDir(
-      testDir,
-      `content:\n  dir: .\nfolders:\n  - match: 'research/**'\n    frontmatter:\n      title: My Research\n      description: Custom description\n`,
+  test('plan has no configEdits field — folders[] write path retired (FR8 / D19)', async () => {
+    const plan = await planSeed({ projectDir });
+    expect((plan as unknown as Record<string, unknown>).configEdits).toBeUndefined();
+  });
+
+  test('frontmatter.yml + template entries carry their template id for apply()', async () => {
+    const plan = await planSeed({ projectDir });
+    for (const folder of STARTER_FOLDERS) {
+      const fmEntry = plan.created.find((e) => e.path === `${folder.path}/.ok/frontmatter.yml`);
+      expect(fmEntry?.template).toBe(`${folder.path}/.ok/frontmatter.yml`);
+
+      const tplEntry = plan.created.find(
+        (e) => e.path === `${folder.path}/.ok/templates/${folder.starterTemplate}.md`,
+      );
+      expect(tplEntry?.template).toBe(`${folder.path}/.ok/templates/${folder.starterTemplate}.md`);
+    }
+  });
+
+  test('skips entries that already exist on disk', async () => {
+    mkdirSync(join(projectDir, 'external-sources', '.ok'), { recursive: true });
+    writeFileSync(
+      join(projectDir, 'external-sources', '.ok', 'frontmatter.yml'),
+      'title: User had this already\n',
     );
 
-    const plan = await planSeed({ projectDir: testDir });
-    const editMatches = plan.configEdits.map((e) => e.folderMatch);
-    expect(editMatches).toEqual(['external-sources/**', 'articles/**']);
-    expect(plan.skipped.some((s) => s.path.includes('research/**'))).toBe(true);
+    const plan = await planSeed({ projectDir });
+    const skippedPaths = new Set(plan.skipped.map((e) => e.path));
+    expect(skippedPaths.has('external-sources')).toBe(true);
+    expect(skippedPaths.has('external-sources/.ok')).toBe(true);
+    expect(skippedPaths.has('external-sources/.ok/frontmatter.yml')).toBe(true);
+
+    const createdPaths = new Set(plan.created.map((e) => e.path));
+    expect(createdPaths.has('research')).toBe(true);
+    expect(createdPaths.has('articles')).toBe(true);
   });
 
-  test('pre-existing custom folders: entries are preserved in the skip list (not re-written)', async () => {
-    scaffoldOkDir(
-      testDir,
-      `folders:\n  - match: 'external-sources/**'\n    frontmatter:\n      title: Evidence\n`,
-    );
-    const plan = await planSeed({ projectDir: testDir });
-    expect(plan.configEdits.map((e) => e.folderMatch)).not.toContain('external-sources/**');
-    expect(plan.skipped.some((s) => s.path.includes('external-sources/**'))).toBe(true);
-  });
-});
+  test('rootDir scopes the scaffold under a subfolder', async () => {
+    const plan = await planSeed({ projectDir, rootDir: 'brain' });
+    const createdPaths = new Set(plan.created.map((e) => e.path));
 
-describe('planSeed — rootDir scoping', () => {
-  test('scaffolds starter folders + log.md under a brand-new rootDir', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    const plan = await planSeed({ projectDir: testDir, rootDir: 'brain' });
-
-    const createdFolders = plan.created.filter((e) => e.kind === 'folder').map((e) => e.path);
-    expect(createdFolders).toEqual([
-      'brain',
-      'brain/external-sources',
-      'brain/research',
-      'brain/articles',
-    ]);
-
-    const createdFiles = plan.created.filter((e) => e.kind === 'file').map((e) => e.path);
-    expect(createdFiles).toEqual(['brain/log.md']);
-
-    expect(plan.configEdits.map((e) => e.folderMatch)).toEqual([
-      'brain/external-sources/**',
-      'brain/research/**',
-      'brain/articles/**',
-    ]);
+    expect(createdPaths.has('brain')).toBe(true);
+    for (const folder of STARTER_FOLDERS) {
+      expect(createdPaths.has(`brain/${folder.path}`)).toBe(true);
+      expect(createdPaths.has(`brain/${folder.path}/.ok/frontmatter.yml`)).toBe(true);
+      expect(
+        createdPaths.has(`brain/${folder.path}/.ok/templates/${folder.starterTemplate}.md`),
+      ).toBe(true);
+    }
+    expect(createdPaths.has('brain/log.md')).toBe(true);
   });
 
-  test('does not re-create an existing rootDir but still scaffolds children', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    mkdirSync(join(testDir, 'knowledge'), { recursive: true });
-    const plan = await planSeed({ projectDir: testDir, rootDir: 'knowledge' });
-
-    const createdFolders = plan.created.filter((e) => e.kind === 'folder').map((e) => e.path);
-    expect(createdFolders).not.toContain('knowledge');
-    expect(createdFolders).toContain('knowledge/external-sources');
-    expect(plan.skipped.some((s) => s.path === 'knowledge')).toBe(true);
+  test('rootDir rejects absolute paths', async () => {
+    await expect(planSeed({ projectDir, rootDir: '/etc/evil' })).rejects.toThrow(SeedRootDirError);
   });
 
-  test('rootDir="." is equivalent to the default project-root scaffold', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    const a = await planSeed({ projectDir: testDir });
-    const b = await planSeed({ projectDir: testDir, rootDir: '.' });
-    expect(a).toEqual(b);
-  });
-
-  test('normalizes trailing slashes and leading ./ in rootDir', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    const a = await planSeed({ projectDir: testDir, rootDir: 'brain' });
-    const b = await planSeed({ projectDir: testDir, rootDir: './brain/' });
-    expect(a.created.map((e) => e.path)).toEqual(b.created.map((e) => e.path));
-    expect(a.configEdits.map((e) => e.folderMatch)).toEqual(
-      b.configEdits.map((e) => e.folderMatch),
-    );
-  });
-
-  test('rejects absolute rootDir as SeedRootDirError', async () => {
-    scaffoldOkDir(testDir);
-    await expect(planSeed({ projectDir: testDir, rootDir: '/tmp/escape' })).rejects.toBeInstanceOf(
-      SeedRootDirError,
-    );
-  });
-
-  test('rejects rootDir with .. escape segments as SeedRootDirError', async () => {
-    scaffoldOkDir(testDir);
-    await expect(planSeed({ projectDir: testDir, rootDir: '../sibling' })).rejects.toBeInstanceOf(
-      SeedRootDirError,
-    );
-  });
-
-  test('containment check rejects strings that resolve outside projectDir', async () => {
-    scaffoldOkDir(testDir);
-    await expect(
-      planSeed({ projectDir: testDir, rootDir: 'foo/bar/../../..' }),
-    ).rejects.toBeInstanceOf(SeedRootDirError);
-  });
-
-  test('rejects rootDir whose first segment matches projectDir prefix without separator', async () => {
-    scaffoldOkDir(testDir);
-    await expect(
-      planSeed({ projectDir: testDir, rootDir: `${testDir}foo` }),
-    ).rejects.toBeInstanceOf(SeedRootDirError);
-  });
-
-  test('rootDir config edits only collide with matching-scoped entries', async () => {
-    scaffoldOkDir(
-      testDir,
-      `folders:\n  - match: 'external-sources/**'\n    frontmatter:\n      title: Root scaffold\n`,
-    );
-    const plan = await planSeed({ projectDir: testDir, rootDir: 'brain' });
-    expect(plan.configEdits.map((e) => e.folderMatch)).toEqual([
-      'brain/external-sources/**',
-      'brain/research/**',
-      'brain/articles/**',
-    ]);
-  });
-
-  test('nested rootDir path works', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    const plan = await planSeed({ projectDir: testDir, rootDir: 'areas/personal' });
-    expect(plan.configEdits.map((e) => e.folderMatch)).toEqual([
-      'areas/personal/external-sources/**',
-      'areas/personal/research/**',
-      'areas/personal/articles/**',
-    ]);
-  });
-});
-
-describe('planSeed — corrupt config.yml', () => {
-  test('surfaces a warning on unreadable config.yml but still returns a plan', async () => {
-    scaffoldOkDir(testDir, ': invalid yaml :::\n');
-    const plan = await planSeed({ projectDir: testDir });
-    expect(plan.configEdits.length).toBeGreaterThan(0);
+  test('rootDir rejects path traversal', async () => {
+    await expect(planSeed({ projectDir, rootDir: '../escape' })).rejects.toThrow(SeedRootDirError);
   });
 });

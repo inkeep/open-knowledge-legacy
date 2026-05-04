@@ -9,12 +9,14 @@ import {
   Plus,
 } from 'lucide-react';
 import { useState } from 'react';
+import { FolderDefaultsCard } from '@/components/FolderDefaultsCard';
 import {
   buildFolderOverviewData,
   type FolderOverviewEntry,
 } from '@/components/folder-overview-data';
 import { NewItemDialog } from '@/components/NewItemDialog';
 import { usePageList } from '@/components/PageListContext';
+import { TemplatesCard } from '@/components/TemplatesCard';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -31,6 +33,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { useFolderConfig } from '@/hooks/use-folder-config';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged } from '@/lib/documents-events';
 
@@ -112,6 +115,7 @@ function SortableHeader({
 
 export function FolderOverview({ folderPath }: { folderPath: string }) {
   const { addPage, folderPaths, loading, pages, pageTitles, pageMeta } = usePageList();
+  const { state: folderConfig, refresh: refreshFolderConfig } = useFolderConfig(folderPath);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [creatingIndex, setCreatingIndex] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -250,6 +254,16 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
               </span>
             ) : null}
           </div>
+          <FolderDefaultsCard
+            folderPath={folderPath}
+            state={folderConfig}
+            onChange={refreshFolderConfig}
+          />
+          <TemplatesCard
+            folderPath={folderPath}
+            state={folderConfig}
+            onChange={refreshFolderConfig}
+          />
           <div className="rounded-lg border">
             <Table>
               <TableHeader>

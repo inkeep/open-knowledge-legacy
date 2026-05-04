@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { LOG_MD_TEMPLATE, STARTER_FOLDERS, starterFolderRule } from './starter.ts';
+import {
+  buildStarterFolderFrontmatterYaml,
+  LOG_MD_TEMPLATE,
+  STARTER_FOLDER_FRONTMATTER_FILENAME,
+  STARTER_FOLDERS,
+  STARTER_TEMPLATES,
+} from './starter.ts';
 
 describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
   test('ships exactly three starter folders in Karpathy-layer order', () => {
@@ -14,10 +20,10 @@ describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
   test('each entry has all required fields and non-empty values', () => {
     for (const folder of STARTER_FOLDERS) {
       expect(folder.path).toMatch(/^[a-z][a-z-]*$/);
-      expect(folder.match).toBe(`${folder.path}/**`);
       expect(folder.title.length).toBeGreaterThan(0);
       expect(folder.description.length).toBeGreaterThan(20);
       expect(folder.tags.length).toBeGreaterThan(0);
+      expect(STARTER_TEMPLATES[folder.starterTemplate]).toBeDefined();
     }
   });
 
@@ -29,6 +35,7 @@ describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
     expect(entry?.description).toContain('ingest');
     expect(entry?.description.toLowerCase()).toMatch(/cite|traceab/);
     expect(entry?.tags).toEqual(['source', 'immutable', 'layer-ingest']);
+    expect(entry?.starterTemplate).toBe('clip');
   });
 
   test('research description references research tool + provisional status + sources + grounding rule', () => {
@@ -41,6 +48,7 @@ describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
     expect(entry?.description).toContain('consolidate');
     expect(entry?.description.toLowerCase()).toMatch(/cite|sourced/);
     expect(entry?.tags).toEqual(['research', 'provisional', 'layer-research']);
+    expect(entry?.starterTemplate).toBe('research-log');
   });
 
   test('articles description references consolidate + canonical status + supersedes chain + traceable evidence', () => {
@@ -52,23 +60,36 @@ describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
     expect(entry?.description).toContain('supersedes:');
     expect(entry?.description).toContain('external-sources');
     expect(entry?.tags).toEqual(['article', 'canonical', 'layer-consolidate']);
+    expect(entry?.starterTemplate).toBe('article');
+  });
+});
+
+describe('STARTER_TEMPLATES', () => {
+  test('ships exactly the three starter templates', () => {
+    expect(Object.keys(STARTER_TEMPLATES).sort()).toEqual(['article', 'clip', 'research-log']);
   });
 
-  test('all entries are shape-valid FolderRule objects', () => {
-    for (const folder of STARTER_FOLDERS) {
-      const rule = starterFolderRule(folder);
-      expect(typeof rule.match).toBe('string');
-      expect(rule.match.length).toBeGreaterThan(0);
-      expect(typeof rule.frontmatter).toBe('object');
-      expect(rule.frontmatter).not.toBeNull();
-      expect(typeof rule.frontmatter.title).toBe('string');
-      expect(typeof rule.frontmatter.description).toBe('string');
-      expect(Array.isArray(rule.frontmatter.tags)).toBe(true);
+  test('each template has a non-empty body with frontmatter + title + tags', () => {
+    for (const [name, body] of Object.entries(STARTER_TEMPLATES)) {
+      expect(body.length).toBeGreaterThan(50);
+      expect(body.startsWith('---\n')).toBe(true);
+      expect(body).toContain('title:');
+      expect(body).toContain('tags:');
+      expect(body.toLowerCase()).toContain(name.replace('-', ' ').slice(0, 3));
     }
   });
 
-  test('STARTER_FOLDERS is a readonly constant (cannot be mutated)', () => {
-    expect(Object.isFrozen(STARTER_FOLDERS)).toBe(false); // spec-style const, not Object.freeze'd
+  test('templates use only the v1 substitution allowlist tokens ({{date}} / {{user}})', () => {
+    const ALLOWED = new Set(['date', 'user']);
+    for (const [name, body] of Object.entries(STARTER_TEMPLATES)) {
+      const tokens = [...body.matchAll(/\{\{([^{}\n]+?)\}\}/g)].map((m) => (m[1] ?? '').trim());
+      for (const token of tokens) {
+        expect(
+          ALLOWED.has(token),
+          `Template "${name}" uses unknown token "{{${token}}}" — only {{date}} and {{user}} are allowed in v1.`,
+        ).toBe(true);
+      }
+    }
   });
 });
 
@@ -89,23 +110,34 @@ describe('LOG_MD_TEMPLATE', () => {
   });
 });
 
-describe('starterFolderRule()', () => {
-  test('converts a StarterFolder to a FolderRule with correct shape', () => {
+describe('STARTER_FOLDER_FRONTMATTER_FILENAME', () => {
+  test('is the canonical literal expected by the cascade resolver', () => {
+    expect(STARTER_FOLDER_FRONTMATTER_FILENAME).toBe('frontmatter.yml');
+  });
+});
+
+describe('buildStarterFolderFrontmatterYaml()', () => {
+  test('emits title + description + tags for a folder', () => {
     const folder = STARTER_FOLDERS[0];
-    const rule = starterFolderRule(folder);
-    expect(rule).toEqual({
-      match: folder.match,
-      frontmatter: {
-        title: folder.title,
-        description: folder.description,
-        tags: folder.tags,
-      },
-    });
+    if (!folder) throw new Error('STARTER_FOLDERS is empty');
+    const yaml = buildStarterFolderFrontmatterYaml(folder);
+    expect(yaml).toContain(`title: `);
+    expect(yaml).toContain(`description:`);
+    expect(yaml).toContain('tags:');
+    for (const tag of folder.tags) {
+      expect(yaml).toContain(`  - ${tag}`);
+    }
+    expect(yaml.endsWith('\n')).toBe(true);
   });
 
-  test('output is structurally a FolderRule (match + frontmatter keys only)', () => {
-    const rule = starterFolderRule(STARTER_FOLDERS[0]);
-    expect(Object.keys(rule).sort()).toEqual(['frontmatter', 'match']);
-    expect(Object.keys(rule.frontmatter).sort()).toEqual(['description', 'tags', 'title']);
+  test('quotes scalars containing colons (description prose)', () => {
+    const yaml = buildStarterFolderFrontmatterYaml({
+      path: 'x',
+      title: 'X',
+      description: 'A description: with a colon',
+      tags: [],
+      starterTemplate: 'clip',
+    });
+    expect(yaml).toContain('description: "A description: with a colon"');
   });
 });

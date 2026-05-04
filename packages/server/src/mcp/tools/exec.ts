@@ -388,12 +388,11 @@ export async function buildExecResult(
   const paths = extractReferencedPaths(stdout, stages);
   const { files, dirs } = await classifyPaths(cwd, paths);
   const isSinglePathCat = stages.length === 1 && stages[0].command === 'cat' && files.length === 1;
-  const folderRules = config.folders;
   const fileEnriched: EnrichedMeta[] = await Promise.all(
     files.map((p) =>
       enrichPath(
         p,
-        { projectDir: cwd, serverUrl: resolvedServerUrl, folderRules },
+        { projectDir: cwd, serverUrl: resolvedServerUrl },
         {
           includeRichFields: isSinglePathCat,
         },
@@ -401,6 +400,7 @@ export async function buildExecResult(
         (): EnrichedMeta => ({
           path: p,
           tags: [],
+          frontmatter: {},
           backlinkCount: null,
           backlinks: null,
           forwardLinkCount: null,
@@ -415,7 +415,7 @@ export async function buildExecResult(
   );
   const dirEnriched: DirectoryMeta[] = await Promise.all(
     dirs.map((p) =>
-      enrichDirectory(p, { projectDir: cwd, folderRules }).catch(
+      enrichDirectory(p, { projectDir: cwd }).catch(
         (): DirectoryMeta => ({
           path: p,
           type: 'directory',

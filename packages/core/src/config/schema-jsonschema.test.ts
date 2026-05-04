@@ -61,16 +61,6 @@ const FIXTURES: Fixture[] = [
     shouldAccept: false,
   },
   {
-    name: 'autoSync.enabled accepted',
-    input: { autoSync: { enabled: true } },
-    shouldAccept: true,
-  },
-  {
-    name: 'autoSync empty object accepted for stale/partial YAML',
-    input: { autoSync: {} },
-    shouldAccept: true,
-  },
-  {
     name: 'mcp.tools.search.maxResults=25 accepted',
     input: { mcp: { tools: { search: { maxResults: 25 } } } },
     shouldAccept: true,
@@ -78,17 +68,6 @@ const FIXTURES: Fixture[] = [
   {
     name: 'mcp.tools.search.maxResults=0 rejected (min 1)',
     input: { mcp: { tools: { search: { maxResults: 0 } } } },
-    shouldAccept: false,
-  },
-  { name: 'folders array empty', input: { folders: [] }, shouldAccept: true },
-  {
-    name: 'folders rule with all frontmatter',
-    input: { folders: [{ match: 'specs/**', frontmatter: { title: 'Specs' } }] },
-    shouldAccept: true,
-  },
-  {
-    name: 'folders rule empty match rejected',
-    input: { folders: [{ match: '', frontmatter: { title: 'X' } }] },
     shouldAccept: false,
   },
   {

@@ -202,6 +202,23 @@ describe('ContentFilter', () => {
       expect(filter.isDirExcluded('src')).toBe(false);
     });
 
+    test('excludes BUILTIN_SKIP_DIRS at any path depth, not just top segment (FR-CF1)', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isDirExcluded('meetings/.ok')).toBe(true);
+      expect(filter.isDirExcluded('meetings/.ok/templates')).toBe(true);
+      expect(filter.isDirExcluded('a/b/c/.ok/d')).toBe(true);
+
+      expect(filter.isDirExcluded('packages/foo/node_modules')).toBe(true);
+      expect(filter.isDirExcluded('packages/foo/node_modules/bar')).toBe(true);
+
+      expect(filter.isDirExcluded('apps/web/dist')).toBe(true);
+      expect(filter.isDirExcluded('apps/web/.next/cache')).toBe(true);
+
+      expect(filter.isDirExcluded('meetings/prep-notes')).toBe(false);
+      expect(filter.isDirExcluded('a/b/c')).toBe(false);
+    });
+
     test('does not descend into node_modules during populateDirCount even with a symlink inside', () => {
       const nmDir = join(projectDir, 'node_modules');
       mkdirSync(nmDir);

@@ -1,7 +1,3 @@
-interface OkFolderRule {
-  match: string;
-  frontmatter: { title?: string; description?: string; tags?: string[] };
-}
 interface OkScaffoldFileEntry {
   path: string;
   kind: 'folder' | 'file';
@@ -11,15 +7,9 @@ interface OkScaffoldSkipEntry {
   path: string;
   reason: 'already-exists' | 'user-content' | 'glob-collision';
 }
-interface OkScaffoldConfigEdit {
-  configPath: string;
-  folderMatch: string;
-  entry: OkFolderRule;
-}
 export interface OkScaffoldPlan {
   created: OkScaffoldFileEntry[];
   skipped: OkScaffoldSkipEntry[];
-  configEdits: OkScaffoldConfigEdit[];
   warnings: string[];
 }
 interface OkScaffoldApplyError {

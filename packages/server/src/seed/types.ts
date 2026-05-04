@@ -1,7 +1,3 @@
-import type { FolderFrontmatter, FolderRule } from '../config/schema.ts';
-
-export type { FolderFrontmatter, FolderRule };
-
 export interface FileEntry {
   path: string;
   kind: 'folder' | 'file';
@@ -14,16 +10,9 @@ export interface SkipEntry {
   reason: 'already-exists' | 'user-content' | 'glob-collision';
 }
 
-export interface ConfigEdit {
-  configPath: string;
-  folderMatch: string;
-  entry: FolderRule;
-}
-
 export interface ScaffoldPlan {
   created: FileEntry[];
   skipped: SkipEntry[];
-  configEdits: ConfigEdit[];
   warnings: string[];
 }
 
@@ -56,5 +45,3 @@ export class SeedRootDirError extends Error {
     this.name = 'SeedRootDirError';
   }
 }
-
-export const SEED_CONFIG_FILENAME = 'config.yml';

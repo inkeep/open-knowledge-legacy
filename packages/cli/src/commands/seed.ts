@@ -45,7 +45,7 @@ export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedComman
     };
   }
 
-  if (plan.created.length === 0 && plan.configEdits.length === 0) {
+  if (plan.created.length === 0) {
     return {
       status: 'no-op',
       message: `${success('Your knowledge base is already seeded.')}\n${dim('Nothing to do.')}`,
@@ -121,16 +121,6 @@ function formatPlanBody(plan: ScaffoldPlan, cwd: string): string {
     lines.push(accent('Files to create:'));
     for (const f of files) {
       lines.push(`  ${success('+')} ${info(relative(cwd, resolve(cwd, f.path)) || f.path)}`);
-    }
-  }
-
-  if (plan.configEdits.length > 0) {
-    if (lines.length > 0) lines.push('');
-    lines.push(accent('config.yml folders: entries to add:'));
-    for (const edit of plan.configEdits) {
-      lines.push(
-        `  ${success('+')} ${info(edit.folderMatch)} ${dim('—')} ${edit.entry.frontmatter.title ?? ''}`,
-      );
     }
   }
 

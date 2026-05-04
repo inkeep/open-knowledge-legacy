@@ -507,12 +507,12 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     dispatch: dispatchHandoff,
   };
 
+  const isAvailable = () => busyPathRef.current === null;
+
   const { model } = useFileTree({
     paths: [],
     flattenEmptyDirectories: false,
     initialExpansion: 'closed',
-    search: true,
-    searchBlurBehavior: 'retain',
     fileTreeSearchMode: 'hide-non-matches',
     initialVisibleRowCount: 18,
     stickyFolders: true,
@@ -529,15 +529,15 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       },
     },
     dragAndDrop: {
-      canDrag: () => busyPathRef.current === null,
-      canDrop: () => busyPathRef.current === null,
+      canDrag: isAvailable,
+      canDrop: isAvailable,
       onDropComplete: (event) => handleDropCompleteRef.current(event),
       onDropError: (message) => {
         toast.error(message);
       },
     },
     renaming: {
-      canRename: () => busyPathRef.current === null,
+      canRename: isAvailable,
       onRename: (event) => handleRenameRef.current(event),
       onError: toast.error,
     },
@@ -636,7 +636,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     let active = true;
     fetch('/api/workspace')
       .then(async (res) => {
-        const data = await res.json().catch(() => null);
+        const data = await res.json();
         if (!active) return;
         if (
           res.ok &&
@@ -694,7 +694,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       if (model.isSearchOpen()) return;
       for (const ancestor of activeAncestorTreePathsRef.current) {
         const item = asDirectoryHandle(model.getItem(ancestor));
-        if (item && !item.isExpanded()) item.expand();
+        if (item && !item.isExpanded()) {
+          item.expand();
+        }
       }
     });
   }, [model]);
@@ -739,7 +741,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path: createPath }),
         });
-        const data: CreatePageResponse | null = await res.json().catch(() => null);
+        const data: CreatePageResponse | null = await res.json();
 
         if (!res.ok || !data?.ok) {
           const msg = data?.error ?? `Failed to create ${kind}`;
@@ -971,7 +973,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       startTransition(() => {
         for (const folderPath of folderTreePathsRef.current) {
           const item = asDirectoryHandle(model.getItem(folderPath));
-          if (item) item.expand();
+          if (item) {
+            item.expand();
+          }
         }
       });
     },
@@ -981,7 +985,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         for (const folderPath of [...folderTreePathsRef.current].reverse()) {
           if (activeAncestors.has(folderPath)) continue;
           const item = asDirectoryHandle(model.getItem(folderPath));
-          if (item) item.collapse();
+          if (item) {
+            item.collapse();
+          }
         }
       });
     },

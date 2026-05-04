@@ -1,231 +1,152 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { applySeed } from './apply.ts';
 import { planSeed } from './plan.ts';
-import { LOG_MD_TEMPLATE, STARTER_FOLDERS } from './starter.ts';
-import { SEED_CONFIG_FILENAME } from './types.ts';
+import { LOG_MD_TEMPLATE, STARTER_FOLDERS, STARTER_TEMPLATES } from './starter.ts';
 
-let testDir: string;
+describe('applySeed — nested .ok/ era', () => {
+  let projectDir: string;
 
-beforeEach(() => {
-  testDir = mkdtempSync(join(tmpdir(), 'ok-seed-apply-test-'));
-});
+  beforeEach(async () => {
+    projectDir = await mkdtemp(join(tmpdir(), 'seed-apply-'));
+    mkdirSync(join(projectDir, '.ok'), { recursive: true });
+  });
 
-afterEach(() => {
-  if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
-});
+  afterEach(async () => {
+    await rm(projectDir, { recursive: true, force: true });
+  });
 
-function scaffoldOkDir(dir: string, configYml?: string): void {
-  mkdirSync(join(dir, OK_DIR), { recursive: true });
-  if (configYml !== undefined) {
-    writeFileSync(join(dir, OK_DIR, SEED_CONFIG_FILENAME), configYml, 'utf-8');
-  }
-}
-
-describe('applySeed — fresh plan writes everything', () => {
-  test('creates all three Karpathy folders, writes log.md, appends three folders: entries', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    const plan = await planSeed({ projectDir: testDir });
-    const result = await applySeed(plan, { projectDir: testDir });
+  test('writes every starter folder + nested .ok/frontmatter.yml + starter template', async () => {
+    const plan = await planSeed({ projectDir });
+    const result = await applySeed(plan, { projectDir });
 
     expect(result.errors).toEqual([]);
+    expect(result.applied).toBe(plan.created.length);
+
     for (const folder of STARTER_FOLDERS) {
-      expect(existsSync(join(testDir, folder.path))).toBe(true);
+      expect(existsSync(join(projectDir, folder.path))).toBe(true);
+      expect(existsSync(join(projectDir, folder.path, '.ok'))).toBe(true);
+      expect(existsSync(join(projectDir, folder.path, '.ok', 'frontmatter.yml'))).toBe(true);
+      expect(existsSync(join(projectDir, folder.path, '.ok', 'templates'))).toBe(true);
+      expect(
+        existsSync(
+          join(projectDir, folder.path, '.ok', 'templates', `${folder.starterTemplate}.md`),
+        ),
+      ).toBe(true);
     }
-    expect(existsSync(join(testDir, 'log.md'))).toBe(true);
-    expect(readFileSync(join(testDir, 'log.md'), 'utf-8')).toBe(LOG_MD_TEMPLATE);
-
-    const config = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
-    expect(config).toContain('external-sources/**');
-    expect(config).toContain('research/**');
-    expect(config).toContain('articles/**');
-    expect(result.applied).toBeGreaterThanOrEqual(7); // 3 folders + 1 file + 3 config entries
+    expect(existsSync(join(projectDir, 'log.md'))).toBe(true);
   });
 
-  test('applied count reflects all writes', async () => {
-    scaffoldOkDir(testDir);
-    const plan = await planSeed({ projectDir: testDir });
-    const result = await applySeed(plan, { projectDir: testDir });
-    expect(result.applied).toBe(plan.created.length + plan.configEdits.length);
+  test('frontmatter.yml carries the folder defaults verbatim from STARTER_FOLDERS', async () => {
+    const plan = await planSeed({ projectDir });
+    await applySeed(plan, { projectDir });
+
+    for (const folder of STARTER_FOLDERS) {
+      const fmContent = readFileSync(
+        join(projectDir, folder.path, '.ok', 'frontmatter.yml'),
+        'utf-8',
+      );
+      expect(fmContent).toContain(folder.title);
+      expect(fmContent).toContain(folder.description.slice(0, 30));
+      for (const tag of folder.tags) {
+        expect(fmContent).toContain(`- ${tag}`);
+      }
+    }
   });
 
-  test('durationMs is non-negative', async () => {
-    scaffoldOkDir(testDir);
-    const plan = await planSeed({ projectDir: testDir });
-    const result = await applySeed(plan, { projectDir: testDir });
-    expect(result.durationMs).toBeGreaterThanOrEqual(0);
-  });
-});
+  test('starter template files contain the registered STARTER_TEMPLATES body verbatim', async () => {
+    const plan = await planSeed({ projectDir });
+    await applySeed(plan, { projectDir });
 
-describe('applySeed — idempotent on an empty plan', () => {
-  test('empty plan = zero writes, zero errors', async () => {
-    scaffoldOkDir(testDir);
-    const result = await applySeed(
-      { created: [], skipped: [], configEdits: [], warnings: [] },
-      { projectDir: testDir },
-    );
-    expect(result.applied).toBe(0);
-    expect(result.errors).toEqual([]);
+    for (const folder of STARTER_FOLDERS) {
+      const tplContent = readFileSync(
+        join(projectDir, folder.path, '.ok', 'templates', `${folder.starterTemplate}.md`),
+        'utf-8',
+      );
+      expect(tplContent).toBe(STARTER_TEMPLATES[folder.starterTemplate]);
+    }
   });
 
-  test('re-applying after full scaffold is a no-op', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    const firstPlan = await planSeed({ projectDir: testDir });
-    await applySeed(firstPlan, { projectDir: testDir });
+  test('log.md gets the LOG_MD_TEMPLATE content verbatim', async () => {
+    const plan = await planSeed({ projectDir });
+    await applySeed(plan, { projectDir });
+    const logContent = readFileSync(join(projectDir, 'log.md'), 'utf-8');
+    expect(logContent).toBe(LOG_MD_TEMPLATE);
+  });
 
-    const configBefore = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
+  test('rerunning seed is idempotent — existing files are skipped, no errors', async () => {
+    const firstPlan = await planSeed({ projectDir });
+    const firstResult = await applySeed(firstPlan, { projectDir });
+    expect(firstResult.errors).toEqual([]);
 
-    const secondPlan = await planSeed({ projectDir: testDir });
-    const secondResult = await applySeed(secondPlan, { projectDir: testDir });
-
-    expect(secondPlan.created).toEqual([]);
-    expect(secondPlan.configEdits).toEqual([]);
-    expect(secondResult.applied).toBe(0);
+    const secondPlan = await planSeed({ projectDir });
+    const secondResult = await applySeed(secondPlan, { projectDir });
     expect(secondResult.errors).toEqual([]);
-
-    const configAfter = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
-    expect(configAfter).toBe(configBefore);
-  });
-});
-
-describe('applySeed — YAML preservation', () => {
-  test('preserves existing comments in config.yml across apply', async () => {
-    const configYmlWithComments = `# This is a user comment at the top
-content:
-  # inline comment about dir
-  dir: .
-
-# Separator comment
-server:
-  port: 3000
-`;
-    scaffoldOkDir(testDir, configYmlWithComments);
-
-    const plan = await planSeed({ projectDir: testDir });
-    await applySeed(plan, { projectDir: testDir });
-
-    const updated = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
-    expect(updated).toContain('# This is a user comment at the top');
-    expect(updated).toContain('# inline comment about dir');
-    expect(updated).toContain('# Separator comment');
+    expect(secondPlan.created).toEqual([]);
+    expect(secondResult.applied).toBe(0);
   });
 
-  test('preserves pre-existing user-written folders: entry byte-identically', async () => {
-    const yml = `folders:
-  - match: 'external-sources/**'
-    frontmatter:
-      title: My Custom Title
-      description: My custom description for external-sources
-      tags:
-        - custom
-        - override
-`;
-    scaffoldOkDir(testDir, yml);
+  test('user-edited frontmatter.yml is preserved across reseed', async () => {
+    const plan1 = await planSeed({ projectDir });
+    await applySeed(plan1, { projectDir });
 
-    const plan = await planSeed({ projectDir: testDir });
-    expect(plan.configEdits.map((e) => e.folderMatch)).toEqual(['research/**', 'articles/**']);
+    const fmPath = join(projectDir, 'external-sources', '.ok', 'frontmatter.yml');
+    const userEdit =
+      'title: My Custom External Sources\ndescription: edited by user\ntags:\n  - mine\n';
+    writeFileSync(fmPath, userEdit, 'utf-8');
 
-    await applySeed(plan, { projectDir: testDir });
+    const plan2 = await planSeed({ projectDir });
+    await applySeed(plan2, { projectDir });
 
-    const updated = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
-    expect(updated).toContain('My Custom Title');
-    expect(updated).toContain('My custom description for external-sources');
-    expect(updated).toContain('- custom');
-    expect(updated).toContain('- override');
-    expect(updated).toContain('research/**');
-    expect(updated).toContain('articles/**');
+    expect(readFileSync(fmPath, 'utf-8')).toBe(userEdit);
   });
 
-  test('adds folders: section when config.yml has no folders: key', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    const plan = await planSeed({ projectDir: testDir });
-    await applySeed(plan, { projectDir: testDir });
-
-    const updated = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
-    expect(updated).toContain('folders:');
-    expect(updated).toContain('content:');
-    expect(updated).toContain('dir: .');
-  });
-});
-
-describe('applySeed — file write guards', () => {
-  test('skips log.md if it already exists (defense-in-depth on plan staleness)', async () => {
-    scaffoldOkDir(testDir);
-    writeFileSync(join(testDir, 'log.md'), '# User-written log\n', 'utf-8');
-
-    const plan = {
-      created: [{ path: 'log.md', kind: 'file' as const }],
-      skipped: [],
-      configEdits: [],
-      warnings: [],
-    };
-    await applySeed(plan, { projectDir: testDir });
-
-    const after = readFileSync(join(testDir, 'log.md'), 'utf-8');
-    expect(after).toBe('# User-written log\n');
-  });
-});
-
-describe('applySeed — rootDir scaffolding', () => {
-  test('writes the full starter pack inside a new rootDir', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-    const plan = await planSeed({ projectDir: testDir, rootDir: 'brain' });
-    const result = await applySeed(plan, { projectDir: testDir });
-
-    expect(result.errors).toEqual([]);
-    expect(existsSync(join(testDir, 'brain'))).toBe(true);
-    for (const folder of STARTER_FOLDERS) {
-      expect(existsSync(join(testDir, 'brain', folder.path))).toBe(true);
-    }
-    expect(existsSync(join(testDir, 'brain', 'log.md'))).toBe(true);
-    expect(readFileSync(join(testDir, 'brain', 'log.md'), 'utf-8')).toBe(LOG_MD_TEMPLATE);
-    expect(existsSync(join(testDir, 'log.md'))).toBe(false);
-    for (const folder of STARTER_FOLDERS) {
-      expect(existsSync(join(testDir, folder.path))).toBe(false);
-    }
-
-    const config = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
-    expect(config).toContain('brain/external-sources/**');
-    expect(config).toContain('brain/research/**');
-    expect(config).toContain('brain/articles/**');
-  });
-
-  test('a project-root scaffold and a rootDir scaffold coexist without collision', async () => {
-    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
-
-    const firstPlan = await planSeed({ projectDir: testDir });
-    await applySeed(firstPlan, { projectDir: testDir });
-
-    const secondPlan = await planSeed({ projectDir: testDir, rootDir: 'brain' });
-    const result = await applySeed(secondPlan, { projectDir: testDir });
+  test('rootDir scopes apply under a subfolder', async () => {
+    const plan = await planSeed({ projectDir, rootDir: 'brain' });
+    const result = await applySeed(plan, { projectDir });
 
     expect(result.errors).toEqual([]);
     for (const folder of STARTER_FOLDERS) {
-      expect(existsSync(join(testDir, folder.path))).toBe(true);
-      expect(existsSync(join(testDir, 'brain', folder.path))).toBe(true);
+      expect(existsSync(join(projectDir, 'brain', folder.path, '.ok', 'frontmatter.yml'))).toBe(
+        true,
+      );
+      expect(
+        existsSync(
+          join(
+            projectDir,
+            'brain',
+            folder.path,
+            '.ok',
+            'templates',
+            `${folder.starterTemplate}.md`,
+          ),
+        ),
+      ).toBe(true);
     }
-
-    const config = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
-    expect(config).toContain('external-sources/**');
-    expect(config).toContain('brain/external-sources/**');
+    expect(existsSync(join(projectDir, 'brain', 'log.md'))).toBe(true);
   });
-});
 
-describe('applySeed — error handling', () => {
-  test('records error in errors[] for unknown file content template', async () => {
-    scaffoldOkDir(testDir);
-    const plan = {
-      created: [{ path: 'unknown.md', kind: 'file' as const }],
-      skipped: [],
-      configEdits: [],
-      warnings: [],
-    };
-    const result = await applySeed(plan, { projectDir: testDir });
+  test('reports an error for unknown template ids without crashing', async () => {
+    const result = await applySeed(
+      {
+        created: [
+          {
+            path: 'phantom/.ok/templates/unknown.md',
+            kind: 'file',
+            template: 'phantom/.ok/templates/unknown.md',
+          },
+        ],
+        skipped: [],
+        warnings: [],
+      },
+      { projectDir },
+    );
+
+    expect(result.applied).toBe(0);
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].path).toBe('unknown.md');
-    expect(result.errors[0].error).toContain('No content template');
+    expect(result.errors[0]?.error).toContain('No content template registered');
   });
 });

@@ -131,7 +131,7 @@ describe('Settings entry (US-010 / FR-1 / D54 — source-level guards)', () => {
   });
 
   test('Settings onSelect closes the palette and routes to SETTINGS_OPEN_HASH', () => {
-    expect(settingsBlock).toContain('setOpen(false)');
+    expect(settingsBlock).toContain('onOpenChange(false)');
     expect(settingsBlock).toContain('SETTINGS_OPEN_HASH');
   });
 
@@ -148,7 +148,7 @@ describe('Settings entry (US-010 / FR-1 / D54 — source-level guards)', () => {
     const agentGroupIdx = src.indexOf('heading="Open in agent"');
     expect(projectGroupIdx).toBeLessThan(settingsIdx);
     if (agentGroupIdx >= 0) {
-      expect(settingsIdx).toBeLessThan(agentGroupIdx);
+      expect(agentGroupIdx).toBeLessThan(projectGroupIdx);
     }
   });
 });

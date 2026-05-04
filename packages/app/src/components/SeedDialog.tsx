@@ -1,4 +1,4 @@
-import { FileCog, FileText, Folder, Loader2, Sparkles } from 'lucide-react';
+import { FileText, Folder, Loader2, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -109,7 +109,7 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
             setPhase({ kind: 'error', message: result.error.message });
             return;
           }
-          const hasWork = result.plan.created.length > 0 || result.plan.configEdits.length > 0;
+          const hasWork = result.plan.created.length > 0;
           setPhase(
             hasWork
               ? { kind: 'plan', plan: result.plan }
@@ -335,7 +335,7 @@ function basename(path: string): string {
 }
 
 interface CreatedItem {
-  kind: 'folder' | 'file' | 'config';
+  kind: 'folder' | 'file';
   name: string;
   description: string;
 }
@@ -356,17 +356,7 @@ function describeCreatedItems(plan: OkScaffoldPlan): CreatedItem[] {
       name: e.path,
       description: FILE_DESCRIPTIONS[basename(e.path)] ?? '',
     }));
-  const configRow: CreatedItem[] =
-    plan.configEdits.length > 0
-      ? [
-          {
-            kind: 'config',
-            name: '.ok/config.yml',
-            description: 'Folder descriptions for AI agents',
-          },
-        ]
-      : [];
-  return [...folders, ...files, ...configRow];
+  return [...folders, ...files];
 }
 
 function CreatedItemsList({ plan }: { plan: OkScaffoldPlan }) {
@@ -390,12 +380,6 @@ function CreatedItemsList({ plan }: { plan: OkScaffoldPlan }) {
               <Folder
                 aria-hidden="true"
                 className="mt-1 h-4 w-4 shrink-0 text-muted-foreground"
-                strokeWidth={1.5}
-              />
-            ) : item.kind === 'config' ? (
-              <FileCog
-                aria-hidden="true"
-                className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
                 strokeWidth={1.5}
               />
             ) : (

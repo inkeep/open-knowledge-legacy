@@ -1,7 +1,4 @@
-import { describe as _bunDescribe, beforeEach, expect, test } from 'bun:test';
-
-const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
-
+import { beforeEach, describe, expect, test } from 'bun:test';
 import type { SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';

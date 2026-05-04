@@ -1,5 +1,12 @@
-import { FolderPlus, FoldVertical, ListCollapse, SquarePen, UnfoldVertical } from 'lucide-react';
-import { useRef } from 'react';
+import {
+  FolderPlus,
+  FoldVertical,
+  ListCollapse,
+  Search,
+  SquarePen,
+  UnfoldVertical,
+} from 'lucide-react';
+import { type ComponentProps, type FC, useRef } from 'react';
 import { FileTree, type FileTreeHandle } from '@/components/FileTree';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { UpdateNotices } from '@/components/UpdateNotices';
@@ -22,17 +29,38 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ProfilerBoundary } from '@/lib/perf';
 
-export function FileSidebar() {
+interface FileSidebarProps {
+  onOpenSearch: () => void;
+}
+
+export function FileSidebar({ onOpenSearch }: FileSidebarProps) {
   return (
     <ProfilerBoundary name="file-sidebar">
-      <FileSidebarInner />
+      <FileSidebarInner onOpenSearch={onOpenSearch} />
     </ProfilerBoundary>
   );
 }
 
-function FileSidebarInner() {
-  const fileTreeRef = useRef<FileTreeHandle | null>(null);
+interface ToolbarButtonProps extends ComponentProps<typeof Button> {
+  icon: FC<ComponentProps<'svg'>>;
+  label: string;
+}
 
+const ToolbarButton: FC<ToolbarButtonProps> = ({ icon: Icon, label, ...props }) => {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label={label} {...props}>
+          <Icon aria-hidden="true" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+};
+
+function FileSidebarInner({ onOpenSearch }: FileSidebarProps) {
+  const fileTreeRef = useRef<FileTreeHandle | null>(null);
   return (
     <Sidebar variant="inset">
       <SidebarHeader className="flex-row items-center justify-between">
@@ -52,16 +80,10 @@ function FileSidebarInner() {
            * for toolbar menus.
            */}
           <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label="Tree view options">
-                    <ListCollapse aria-hidden="true" />
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent>Tree view options</TooltipContent>
-            </Tooltip>
+            <ToolbarButton icon={Search} label="Search" onClick={onOpenSearch} />
+            <DropdownMenuTrigger asChild>
+              <ToolbarButton icon={ListCollapse} label="Tree View Options" />
+            </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => fileTreeRef.current?.expandAll()}>
                 <UnfoldVertical aria-hidden="true" />
@@ -73,32 +95,16 @@ function FileSidebarInner() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="New file"
-                onClick={() => fileTreeRef.current?.startCreating('file', '')}
-              >
-                <SquarePen aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>New File</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="New folder"
-                onClick={() => fileTreeRef.current?.startCreating('folder', '')}
-              >
-                <FolderPlus aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>New Folder</TooltipContent>
-          </Tooltip>
+          <ToolbarButton
+            icon={SquarePen}
+            label="New File"
+            onClick={() => fileTreeRef.current?.startCreating('file', '')}
+          />
+          <ToolbarButton
+            icon={FolderPlus}
+            label="New Folder"
+            onClick={() => fileTreeRef.current?.startCreating('folder', '')}
+          />
         </div>
       </SidebarHeader>
       <SidebarContent>

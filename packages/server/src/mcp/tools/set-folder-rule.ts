@@ -1,10 +1,5 @@
-import {
-  ConfigValidationErrorSchema,
-  FolderFrontmatterSchema,
-  humanFormat,
-} from '@inkeep/open-knowledge-core';
-import { applyFolderRulesUpsert } from '@inkeep/open-knowledge-core/server';
 import { z } from 'zod';
+import { applyNestedFolderRulesUpsert } from '../../content/folder-rule-write.ts';
 import type { ConfigOrResolver, ServerInstance } from './shared.ts';
 import {
   ROUTED_CWD_DESCRIPTION,
@@ -13,41 +8,63 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  '[Operates on disk; no running OK server required] Upsert one or more folder rules in the project `folders[]` array.',
+  '[Operates on disk; no running OK server required] Upsert one or more folder rules — writes nested `<folder>/.ok/frontmatter.yml` files.',
   '',
-  'Folder rules apply default frontmatter (title / description / tags) to every doc whose path matches `match` (a glob like `specs/**` or `reports/*/**`). Use this tool to add a new rule, replace an existing one keyed by `match`, or rename via `new_match`.',
+  'Folder rules apply default frontmatter to every doc inside `<folder>/` (and its descendants via cascade). Open shape — any YAML-representable key is accepted. Common keys: `title`, `description`, `tags` (the well-known three) plus arbitrary additions like `status`, `team`, `owners`, `review_cycle`. Use this tool to add a new rule, replace an existing one keyed by `match`, or rename via `new_match`.',
   '',
-  'Always pass an array — even for a single rule. The tool runs all rules transactionally: if any rule produces an invalid merged config, NO rules are applied to disk.',
+  '**Cascade merge semantics (D6 generalized):** scalars (string / number / boolean / null) replace last-wins along the leaf → root walk; arrays union-and-dedup with first-occurrence preserved; objects replace last-wins.',
   '',
-  '**To remove a rule**, use `set_config({patch: {folders: [<filtered-array>]}})` — read folders via `get_config({path: ["folders"]})`, drop the entry, then write back.',
+  'Each `match` glob must resolve to a SINGLE target folder by walking leading literal segments — `"specs/**"` writes `specs/.ok/frontmatter.yml`. Multi-folder globs (e.g. `"specs/*/evidence/**"`, where the literal `evidence` follows `*`) are rejected with `MULTI_FOLDER_GLOB`; split into per-folder rules instead.',
+  '',
+  'Always pass an array — even for a single rule. Validation runs against every rule first; if any fails (e.g. `MULTI_FOLDER_GLOB`, `PATH_ESCAPE`), NO rules are applied to disk. Filesystem-level errors during the write phase (disk full, permissions) may leave a partial result — the error response includes `partiallyApplied` listing which rules already landed.',
+  '',
+  '**To remove a rule**, pass an empty `frontmatter: {}` — the merge collapses, the file is deleted, and `<folder>/.ok/` is auto-cleaned if no other tenant remains. To clear a SPECIFIC key while keeping others, set that key to `null` / `""` / `[]` in the patch.',
   '',
   '**Parameters:**',
   '- `rules` — Array of `{match, frontmatter, new_match?}`.',
-  '  - `match` — Glob pattern that identifies the rule (e.g. `"specs/**"`). Required.',
-  '  - `frontmatter` — `{title?, description?, tags?: string[]}` to apply. Required (use `{}` for "match the rule but apply no frontmatter").',
-  '  - `new_match` — If set, rename the rule keyed by `match` to this glob. If both already exist, the rename target is overwritten.',
+  '  - `match` — Glob pattern that identifies the target folder (e.g. `"specs/**"`, `"meetings/prep-notes/**"`). Required.',
+  '  - `frontmatter` — Open `Record<string, unknown>` of key/value defaults. Common: `{title?, description?, tags?: string[]}`. Any other key persists too (`status`, `team`, etc.).',
+  "  - `new_match` — If set, move the rule from `match` to this new glob (deletes the old folder's frontmatter.yml + auto-cleans).",
   '- `cwd` (optional) — Project root.',
 ].join('\n');
 
 interface SetFolderRuleDeps {
   resolveCwd: (explicit?: string) => Promise<string>;
   config: ConfigOrResolver;
-  homedirOverride?: string;
 }
 
 const FolderRuleUpsertInputSchema = z.object({
   match: z
     .string()
     .min(1)
-    .describe('Glob pattern (e.g. "specs/**", "reports/*/**") that identifies the rule.'),
-  frontmatter: FolderFrontmatterSchema.describe(
-    'Default frontmatter to apply to matched docs: `{title?, description?, tags?: string[]}`.',
-  ),
+    .describe(
+      'Glob pattern (e.g. "specs/**", "meetings/prep-notes/**") that identifies the target folder.',
+    ),
+  frontmatter: z
+    .record(z.string(), z.unknown())
+    .refine(
+      (obj) => {
+        if ('title' in obj && obj.title !== null && typeof obj.title !== 'string') return false;
+        if ('description' in obj && obj.description !== null && typeof obj.description !== 'string')
+          return false;
+        if ('tags' in obj && obj.tags !== null && !Array.isArray(obj.tags)) return false;
+        return true;
+      },
+      {
+        message:
+          'Well-known keys must match expected types when present: `title` (string|null), `description` (string|null), `tags` (string[]|null).',
+      },
+    )
+    .describe(
+      'Default frontmatter to apply to matched docs. Open shape — any YAML-representable key. Common: `{title?, description?, tags?: string[]}`; arbitrary keys (`status`, `team`, `owners`, `review_cycle`, …) also persist. Pass `{}` to remove the rule (auto-cleans `.ok/` if empty). Pass `key: null | "" | []` to clear that specific key while keeping others.',
+    ),
   new_match: z
     .string()
     .min(1)
     .optional()
-    .describe('If set, rename the existing rule keyed by `match` to this new glob.'),
+    .describe(
+      "If set, move the rule from `match` to this new folder (deletes the old folder's frontmatter.yml + auto-cleans).",
+    ),
 });
 
 const InputSchema = {
@@ -60,17 +77,25 @@ const InputSchema = {
   cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
 } as const;
 
+const AppliedEntrySchema = z.object({
+  match: z.string(),
+  path: z.string(),
+  action: z.enum(['written', 'deleted']),
+});
+
 const SuccessOutputSchema = z.object({
   ok: z.literal(true),
-  applied: z.array(z.string()),
-  scope: z.literal('project'),
-  path: z.string(),
-  current: z.record(z.string(), z.unknown()),
+  applied: z.array(AppliedEntrySchema),
 });
 
 const ErrorOutputSchema = z.object({
   ok: z.literal(false),
-  error: ConfigValidationErrorSchema,
+  error: z.object({
+    code: z.enum(['MULTI_FOLDER_GLOB', 'PATH_ESCAPE', 'BAD_PROJECT_DIR', 'WRITE_ERROR']),
+    message: z.string(),
+    rule: z.string().optional(),
+  }),
+  partiallyApplied: z.array(AppliedEntrySchema).optional(),
 });
 
 const OutputSchema = {
@@ -91,7 +116,11 @@ export function register(server: ServerInstance, deps: SetFolderRuleDeps): void 
       },
     },
     async (args: {
-      rules: Array<{ match: string; frontmatter: Record<string, unknown>; new_match?: string }>;
+      rules: Array<{
+        match: string;
+        frontmatter: Record<string, unknown>;
+        new_match?: string;
+      }>;
       cwd?: string;
     }) => {
       const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
@@ -103,41 +132,30 @@ export function register(server: ServerInstance, deps: SetFolderRuleDeps): void 
       }
       const { cwd } = context;
 
-      const result = await applyFolderRulesUpsert({
-        cwd,
+      const result = applyNestedFolderRulesUpsert({
+        projectDir: cwd,
         rules: args.rules.map((r) => ({
           match: r.match,
-          frontmatter: r.frontmatter,
+          frontmatter: r.frontmatter ?? {},
           ...(r.new_match !== undefined ? { new_match: r.new_match } : {}),
         })),
-        scope: 'project',
-        ...(deps.homedirOverride !== undefined ? { homedirOverride: deps.homedirOverride } : {}),
       });
 
       if (!result.ok) {
-        const payload = { result: { ok: false as const, error: result.error } };
+        const payload = { result };
         return {
           isError: true,
           structuredContent: payload,
           content: [
             {
               type: 'text' as const,
-              text: `${humanFormat(result.error)}\n\nPlease fix and try again.`,
+              text: `${result.error.code}: ${result.error.message}`,
             },
           ],
         };
       }
 
-      const success = {
-        result: {
-          ok: true as const,
-          applied: result.appliedPaths,
-          scope: 'project' as const,
-          path: result.path,
-          current: result.effective as unknown as Record<string, unknown>,
-        },
-      };
-      return textPlusStructured(JSON.stringify(success.result, null, 2), success);
+      return textPlusStructured(JSON.stringify(result, null, 2), { result });
     },
   );
 }

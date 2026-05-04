@@ -52,7 +52,7 @@ export function EmptyEditorState() {
             setSeedStatus('error');
             return;
           }
-          const hasWork = result.plan.created.length > 0 || result.plan.configEdits.length > 0;
+          const hasWork = result.plan.created.length > 0;
           setSeedStatus(hasWork ? 'has-work' : 'seeded');
         } catch {
           if (!cancelled) setSeedStatus('error');

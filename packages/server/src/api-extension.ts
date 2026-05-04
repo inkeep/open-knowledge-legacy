@@ -24,9 +24,10 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as wait } from 'node:timers/promises';
 import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
@@ -36,6 +37,8 @@ import {
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
+  createWorkspaceSearchCorpus,
+  createWorkspaceSearchDocument,
   DEFAULT_ATTACHMENT_FOLDER_PATH,
   DEFAULT_DEDUP_MODE,
   getHeadingSlug,
@@ -45,9 +48,13 @@ import {
   prependFrontmatter,
   readFmMap,
   SYSTEM_DOC_NAME,
+  searchWorkspaceCorpus,
   stripFrontmatter,
+  type WorkspaceSearchCorpus,
+  type WorkspaceSearchDocument,
+  type WorkspaceSearchIntent,
+  type WorkspaceSearchScope,
 } from '@inkeep/open-knowledge-core';
-import { writeConfigPatch } from '@inkeep/open-knowledge-core/server';
 import {
   formatCheckpointSubject,
   formatRenameSubject,
@@ -57,6 +64,7 @@ import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-ti
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromFile } from 'file-type';
+import { parse as parseYaml } from 'yaml';
 import { captureEffect } from './activity-log.ts';
 import { listAgentActivity, synthesizeStackItemDiffText } from './agent-activity.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
@@ -75,6 +83,13 @@ import {
   toContentRelativePath,
 } from './asset-references.ts';
 import { assetContentTypeForPath } from './asset-serve-middleware.ts';
+import { enrichDirectory } from './content/enrichment.ts';
+import { applyNestedFolderRulesUpsert } from './content/folder-rule-write.ts';
+import {
+  applyTemplateDelete,
+  applyTemplateWrite,
+  type TemplateFrontmatter,
+} from './content/templates-write.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
   createInstalledAgentsProbe,
@@ -728,6 +743,14 @@ export interface ApiExtensionOptions {
   installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
   forceUnloadDocument?: (document: Document) => Promise<void>;
 }
+
+interface WorkspaceSearchCacheEntry {
+  fingerprint: string;
+  corpus?: WorkspaceSearchCorpus;
+  pending?: Promise<WorkspaceSearchCorpus>;
+}
+
+const workspaceSearchCaches = new Map<string, WorkspaceSearchCacheEntry>();
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -4003,6 +4026,550 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  function validateFolderRel(
+    raw: string,
+    res: ServerResponse,
+    label: 'path' | 'folder' = 'path',
+  ): { folderRel: string; resolvedContentDir: string } | null {
+    const folderRel = raw.replace(/^\.\//, '').replace(/^\/+/, '').replace(/\/+$/, '');
+    if (folderRel.split('/').some((seg) => seg === '..') || raw.startsWith('/')) {
+      json(res, 400, { ok: false, error: `Invalid ${label}: must be project-root-relative` });
+      return null;
+    }
+    const resolvedContentDir = resolve(contentDir);
+    const candidateAbs =
+      folderRel === '' ? resolvedContentDir : resolve(resolvedContentDir, folderRel);
+    if (
+      candidateAbs !== resolvedContentDir &&
+      !candidateAbs.startsWith(`${resolvedContentDir}${sep}`)
+    ) {
+      json(res, 400, { ok: false, error: 'Path escapes content directory' });
+      return null;
+    }
+    return { folderRel, resolvedContentDir };
+  }
+
+  const TEMPLATE_NAME_RE = /^[A-Za-z0-9_-]+$/;
+  function validateTemplateName(name: string, res: ServerResponse): boolean {
+    if (!name || !TEMPLATE_NAME_RE.test(name)) {
+      json(res, 400, {
+        ok: false,
+        error: 'Invalid name: must be letters / digits / `_` / `-` only (no `.md` extension).',
+      });
+      return false;
+    }
+    return true;
+  }
+
+  function pickFrontmatterFields(raw: unknown): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (value === undefined) continue;
+      out[key] = value;
+    }
+    return out;
+  }
+
+  async function handleFolderConfig(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method === 'GET') {
+      return handleFolderConfigGet(req, res);
+    }
+    if (req.method === 'PUT') {
+      return handleFolderConfigPut(req, res);
+    }
+    json(res, 405, { ok: false, error: 'Method not allowed' });
+  }
+
+  async function handleFolderConfigGet(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const validated = validateFolderRel(url.searchParams.get('path') ?? '', res);
+      if (!validated) return;
+      const meta = await enrichDirectory(validated.folderRel, {
+        projectDir: validated.resolvedContentDir,
+      });
+      const localFmPath = resolve(
+        validated.resolvedContentDir,
+        validated.folderRel,
+        '.ok',
+        'frontmatter.yml',
+      );
+      let frontmatterLocal: Record<string, unknown> | null = null;
+      if (existsSync(localFmPath)) {
+        try {
+          const raw = await readFile(localFmPath, 'utf-8');
+          const parsed = parseYaml(raw);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            frontmatterLocal = parsed as Record<string, unknown>;
+          } else {
+            frontmatterLocal = {};
+          }
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          console.warn(`[folder-config:get] malformed YAML in ${localFmPath}: ${reason}`);
+          frontmatterLocal = null;
+        }
+      }
+      json(res, 200, { ok: true, folder: meta, frontmatter_local: frontmatterLocal });
+    } catch (error) {
+      console.error('[folder-config:get]', error);
+      json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'internal error',
+      });
+    }
+  }
+
+  async function handleFolderConfigPut(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      const raw = (await readBody(req)).toString('utf-8');
+      const parsed = JSON.parse(raw) as {
+        path?: unknown;
+        frontmatter?: unknown;
+      };
+      const validated = validateFolderRel(typeof parsed.path === 'string' ? parsed.path : '', res);
+      if (!validated) return;
+
+      const match = validated.folderRel === '' ? '**' : `${validated.folderRel}/**`;
+      const result = applyNestedFolderRulesUpsert({
+        projectDir: validated.resolvedContentDir,
+        rules: [{ match, frontmatter: pickFrontmatterFields(parsed.frontmatter) }],
+      });
+
+      if (!result.ok) {
+        const status =
+          result.error.code === 'WRITE_ERROR' || result.error.code === 'BAD_PROJECT_DIR'
+            ? 500
+            : 400;
+        json(res, status, {
+          ok: false,
+          error: { code: result.error.code, message: result.error.message },
+        });
+        return;
+      }
+
+      json(res, 200, { ok: true, applied: result.applied });
+    } catch (error) {
+      console.error('[folder-config:put]', error);
+      const status = error instanceof SyntaxError ? 400 : 500;
+      json(res, status, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'internal error',
+      });
+    }
+  }
+
+  async function handleTemplate(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method === 'GET') {
+      return handleTemplateGet(req, res);
+    }
+    if (req.method === 'PUT') {
+      return handleTemplatePut(req, res);
+    }
+    if (req.method === 'DELETE') {
+      return handleTemplateDelete(req, res);
+    }
+    json(res, 405, { ok: false, error: 'Method not allowed' });
+  }
+
+  async function handleTemplateGet(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const name = url.searchParams.get('name') ?? '';
+      if (!validateTemplateName(name, res)) return;
+      const validated = validateFolderRel(url.searchParams.get('folder') ?? '', res, 'folder');
+      if (!validated) return;
+      const { folderRel, resolvedContentDir } = validated;
+
+      const segments = folderRel === '' ? [] : folderRel.split('/');
+      let foundAbs: string | null = null;
+      let foundFolder: string | null = null;
+      let foundScope: 'local' | 'inherited' | null = null;
+
+      for (let depth = segments.length; depth >= 0; depth--) {
+        const ancestorFolder = depth === 0 ? '' : segments.slice(0, depth).join('/');
+        const ancestorAbs =
+          ancestorFolder === '' ? resolvedContentDir : resolve(resolvedContentDir, ancestorFolder);
+        if (
+          ancestorAbs !== resolvedContentDir &&
+          !ancestorAbs.startsWith(`${resolvedContentDir}${sep}`)
+        ) {
+          continue;
+        }
+        const candidate = resolve(ancestorAbs, '.ok', 'templates', `${name}.md`);
+        if (existsSync(candidate)) {
+          foundAbs = candidate;
+          foundFolder = ancestorFolder;
+          foundScope = depth === segments.length ? 'local' : 'inherited';
+          break;
+        }
+      }
+
+      if (!foundAbs || foundFolder === null || foundScope === null) {
+        json(res, 404, {
+          ok: false,
+          error: `Template "${name}" not found for folder "${folderRel || '.'}". Walked leaf → root.`,
+        });
+        return;
+      }
+
+      const raw = await readFile(foundAbs, 'utf-8');
+      const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+      const match = raw.match(FRONTMATTER_RE);
+      let frontmatter: Record<string, unknown> = {};
+      let body = raw;
+      if (match) {
+        try {
+          const parsed = parseYaml(match[1]);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            frontmatter = parsed as Record<string, unknown>;
+          }
+        } catch {}
+        body = raw.slice(match[0].length);
+      }
+
+      const relPath = relative(resolvedContentDir, foundAbs)
+        .split(/[\\/]/)
+        .filter(Boolean)
+        .join('/');
+
+      json(res, 200, {
+        ok: true,
+        template: {
+          name,
+          folder: foundFolder,
+          scope: foundScope,
+          path: relPath,
+          frontmatter,
+          body,
+        },
+      });
+    } catch (error) {
+      console.error('[template:get]', error);
+      json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'internal error',
+      });
+    }
+  }
+
+  async function handleTemplatePut(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      const raw = (await readBody(req)).toString('utf-8');
+      const parsed = JSON.parse(raw) as {
+        folder?: unknown;
+        name?: unknown;
+        body?: unknown;
+        frontmatter?: unknown;
+      };
+      const name = typeof parsed.name === 'string' ? parsed.name : '';
+      if (!validateTemplateName(name, res)) return;
+      const validated = validateFolderRel(
+        typeof parsed.folder === 'string' ? parsed.folder : '',
+        res,
+        'folder',
+      );
+      if (!validated) return;
+
+      const result = applyTemplateWrite({
+        projectDir: validated.resolvedContentDir,
+        folder: validated.folderRel,
+        name,
+        body: typeof parsed.body === 'string' ? parsed.body : '',
+        frontmatter: pickFrontmatterFields(parsed.frontmatter) satisfies TemplateFrontmatter,
+      });
+      if (!result.ok) {
+        const status =
+          result.error.code === 'WRITE_ERROR' || result.error.code === 'BAD_PROJECT_DIR'
+            ? 500
+            : 400;
+        json(res, status, {
+          ok: false,
+          error: { code: result.error.code, message: result.error.message },
+        });
+        return;
+      }
+      json(res, 200, {
+        ok: true,
+        path: result.path,
+        created: result.created,
+        warnings: result.warnings,
+      });
+    } catch (error) {
+      console.error('[template:put]', error);
+      const status = error instanceof SyntaxError ? 400 : 500;
+      json(res, status, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'internal error',
+      });
+    }
+  }
+
+  async function handleTemplateDelete(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const name = url.searchParams.get('name') ?? '';
+      if (!validateTemplateName(name, res)) return;
+      const validated = validateFolderRel(url.searchParams.get('folder') ?? '', res, 'folder');
+      if (!validated) return;
+
+      const result = applyTemplateDelete({
+        projectDir: validated.resolvedContentDir,
+        folder: validated.folderRel,
+        name,
+      });
+      if (!result.ok) {
+        const status =
+          result.error.code === 'WRITE_ERROR' || result.error.code === 'BAD_PROJECT_DIR'
+            ? 500
+            : 400;
+        json(res, status, {
+          ok: false,
+          error: { code: result.error.code, message: result.error.message },
+        });
+        return;
+      }
+      json(res, 200, { ok: true, existed: result.existed, path: result.path });
+    } catch (error) {
+      console.error('[template:delete]', error);
+      json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'internal error',
+      });
+    }
+  }
+
+  function deriveFolderSearchDocuments(
+    pages: readonly WorkspaceSearchDocument[],
+  ): WorkspaceSearchDocument[] {
+    const folderModified = new Map<string, number>();
+    for (const page of pages) {
+      const segments = page.path.split('/').filter(Boolean);
+      segments.pop();
+      for (let i = 1; i <= segments.length; i++) {
+        const folderPath = segments.slice(0, i).join('/');
+        folderModified.set(
+          folderPath,
+          Math.max(folderModified.get(folderPath) ?? 0, page.modifiedTs),
+        );
+      }
+    }
+    return [...folderModified.entries()].map(([path, modifiedTs]) =>
+      createWorkspaceSearchDocument({ kind: 'folder', path, modifiedTs }),
+    );
+  }
+
+  function buildSearchSnippet(content: string, query: string): string | undefined {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery || !content) return undefined;
+    const normalizedContent = content.toLowerCase();
+    const index = normalizedContent.indexOf(normalizedQuery);
+    if (index < 0) return undefined;
+    const start = Math.max(0, index - 80);
+    const end = Math.min(content.length, index + normalizedQuery.length + 120);
+    const prefix = start > 0 ? '...' : '';
+    const suffix = end < content.length ? '...' : '';
+    return `${prefix}${content.slice(start, end).replace(/\s+/g, ' ').trim()}${suffix}`;
+  }
+
+  function parseSearchIntent(value: unknown): WorkspaceSearchIntent {
+    if (value === 'autocomplete' || value === 'full_text' || value === 'omnibar') return value;
+    return 'omnibar';
+  }
+
+  function parseSearchScopes(value: unknown): WorkspaceSearchScope[] | undefined {
+    const rawScopes =
+      typeof value === 'string' ? value.split(',') : Array.isArray(value) ? value : undefined;
+    if (!rawScopes) return undefined;
+    const scopes = rawScopes.filter(
+      (scope): scope is WorkspaceSearchScope =>
+        scope === 'page' || scope === 'folder' || scope === 'content',
+    );
+    return scopes.length > 0 ? scopes : undefined;
+  }
+
+  class SearchRequestError extends Error {
+    constructor(
+      readonly status: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  }
+
+  async function readSearchRequest(req: IncomingMessage): Promise<{
+    query: string;
+    intent: WorkspaceSearchIntent;
+    scopes?: WorkspaceSearchScope[];
+    limit?: number;
+  }> {
+    if (req.method === 'GET') {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const limit = url.searchParams.get('limit');
+      return {
+        query: url.searchParams.get('query') ?? '',
+        intent: parseSearchIntent(url.searchParams.get('intent')),
+        scopes: parseSearchScopes(url.searchParams.get('scope') ?? url.searchParams.get('scopes')),
+        limit: limit === null ? undefined : Number(limit),
+      };
+    }
+
+    let body: Buffer;
+    try {
+      body = await readBody(req);
+    } catch {
+      throw new SearchRequestError(413, 'Payload too large');
+    }
+
+    let parsed: {
+      query?: unknown;
+      intent?: unknown;
+      scope?: unknown;
+      scopes?: unknown;
+      limit?: unknown;
+    };
+    try {
+      const value = JSON.parse(body.toString()) as unknown;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new SearchRequestError(400, 'Invalid JSON body');
+      }
+      parsed = value as typeof parsed;
+    } catch (err) {
+      if (err instanceof SearchRequestError) throw err;
+      throw new SearchRequestError(400, 'Invalid JSON body');
+    }
+    return {
+      query: typeof parsed.query === 'string' ? parsed.query : '',
+      intent: parseSearchIntent(parsed.intent),
+      scopes: parseSearchScopes(parsed.scopes ?? parsed.scope),
+      limit: typeof parsed.limit === 'number' ? parsed.limit : Number(parsed.limit),
+    };
+  }
+
+  async function buildWorkspaceSearchDocumentsFromIndex(): Promise<WorkspaceSearchDocument[]> {
+    const pages: WorkspaceSearchDocument[] = [];
+    for (const [docName, entry] of getFileIndex()) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
+      let content = '';
+      let title = docName;
+      try {
+        content = await readFile(entry.canonicalPath, 'utf-8');
+        title = extractPageTitle(content, docName);
+      } catch (err) {
+        console.warn(`[search] Failed to index ${docName}:`, err);
+      }
+      pages.push(
+        createWorkspaceSearchDocument({
+          kind: 'page',
+          path: docName,
+          title,
+          content,
+          modifiedTs: Date.parse(entry.modified),
+        }),
+      );
+    }
+    return [...pages, ...deriveFolderSearchDocuments(pages)];
+  }
+
+  function workspaceSearchFingerprint(): string {
+    return [...getFileIndex()]
+      .filter(([docName]) => !isSystemDoc(docName) && !isConfigDoc(docName))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(
+        ([docName, entry]) =>
+          `${docName}\u0000${entry.modified}\u0000${entry.size}\u0000${entry.canonicalPath}\u0000${entry.inode}\u0000${entry.aliases.join(',')}`,
+      )
+      .join('\u0001');
+  }
+
+  async function getWorkspaceSearchCorpus(): Promise<WorkspaceSearchCorpus> {
+    const cacheKey = `${contentDir}\u0000${projectDir ?? ''}`;
+    const fingerprint = workspaceSearchFingerprint();
+    const workspaceSearchCache = workspaceSearchCaches.get(cacheKey);
+    if (workspaceSearchCache?.fingerprint === fingerprint && workspaceSearchCache.corpus) {
+      return workspaceSearchCache.corpus;
+    }
+    if (workspaceSearchCache?.fingerprint === fingerprint && workspaceSearchCache.pending) {
+      return workspaceSearchCache.pending;
+    }
+
+    const pending = buildWorkspaceSearchDocumentsFromIndex().then((documents) =>
+      createWorkspaceSearchCorpus(documents),
+    );
+    workspaceSearchCaches.set(cacheKey, { fingerprint, pending });
+    try {
+      const corpus = await pending;
+      if (workspaceSearchCaches.get(cacheKey)?.pending === pending) {
+        workspaceSearchCaches.set(cacheKey, { fingerprint, corpus });
+      }
+      return corpus;
+    } catch (err) {
+      if (workspaceSearchCaches.get(cacheKey)?.pending === pending) {
+        workspaceSearchCaches.delete(cacheKey);
+      }
+      throw err;
+    }
+  }
+
+  function prewarmWorkspaceSearchCache(): void {
+    if (process.env.NODE_ENV === 'test') return;
+    for (const delayMs of [0, 1000, 3000]) {
+      setTimeout(() => {
+        void getWorkspaceSearchCorpus().catch((err) => {
+          console.warn('[search] Failed to prewarm workspace search cache:', err);
+        });
+      }, delayMs);
+    }
+  }
+
+  prewarmWorkspaceSearchCache();
+
+  async function handleSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const startedAt = performance.now();
+      const request = await readSearchRequest(req);
+      if (request.query.length > 200) {
+        json(res, 400, { ok: false, error: 'Query is too long' });
+        return;
+      }
+      const corpus = await getWorkspaceSearchCorpus();
+      const results = searchWorkspaceCorpus(corpus, request.query, {
+        intent: request.intent,
+        scopes: request.scopes,
+        limit: request.limit,
+      });
+      json(res, 200, {
+        ok: true,
+        query: request.query,
+        intent: request.intent,
+        results: results.map((result) => ({
+          kind: result.document.kind,
+          path: result.document.path,
+          title: result.document.title,
+          score: result.score,
+          signals: result.signals,
+          snippet:
+            result.document.kind === 'page'
+              ? buildSearchSnippet(result.document.content, request.query)
+              : undefined,
+        })),
+        elapsedMs: Math.max(0, performance.now() - startedAt),
+      });
+    } catch (err) {
+      if (err instanceof SearchRequestError) {
+        json(res, err.status, { ok: false, error: err.message });
+        return;
+      }
+      console.error('[search]', err);
+      json(res, 500, { ok: false, error: 'Failed to search workspace' });
+    }
+  }
+
   async function handleSuggestLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -4388,7 +4955,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       cwd: absDir,
       detached: true,
       stdio: ['ignore', 'ignore', 'pipe'],
-      env: { ...process.env, OK_LOCK_KIND: 'interactive' },
+      env: { ...process.env, OK_LOCK_KIND: 'interactive', OK_PARENT_PID: String(process.pid) },
     });
 
     const stderrChunks: Buffer[] = [];
@@ -4986,15 +5553,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 400, { ok: false, error: 'Invalid JSON body' });
       return;
     }
-    const configWrite = await writeConfigPatch({
-      cwd: projectDir ?? contentDir,
-      scope: 'project',
-      patch: { autoSync: { enabled } },
-    });
-    if (!configWrite.ok) {
-      json(res, 500, { ok: false, error: 'Could not persist sync preference to config' });
-      return;
-    }
     await engine.setEnabled(enabled);
     json(res, 200, { ok: true, status: engine.getStatus() });
   }
@@ -5235,6 +5793,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/orphans': handleOrphans,
     '/api/hubs': handleHubs,
     '/api/pages': handlePages,
+    '/api/folder-config': handleFolderConfig,
+    '/api/template': handleTemplate,
+    '/api/search': handleSearch,
     '/api/suggest-links': handleSuggestLinks,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,
@@ -5303,6 +5864,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/test-reset',
     '/api/test-rescan-backlinks',
     '/api/install-skill',
+    '/api/folder-config',
+    '/api/template',
   ]);
   const STATE_MUTATING_PREFIXES: ReadonlyArray<string> = ['/api/local-op/'];
 

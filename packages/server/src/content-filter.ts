@@ -136,8 +136,9 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
     },
 
     isDirExcluded(relativePath: string): boolean {
-      const topSegment = relativePath.split('/')[0];
-      if (BUILTIN_SKIP_DIRS.has(topSegment)) return true;
+      for (const segment of relativePath.split('/')) {
+        if (BUILTIN_SKIP_DIRS.has(segment)) return true;
+      }
       if (contentOutsideProject) return false;
       const projectRelPath = contentRelPrefix
         ? `${contentRelPrefix}/${relativePath}`
