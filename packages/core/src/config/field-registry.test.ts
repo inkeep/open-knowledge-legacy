@@ -120,17 +120,19 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
       .map((l) => l.path.join('.'))
       .sort();
     expect(allowlisted).toEqual(
-      ['folders', 'mcp.tools.read_document.historyDepth', 'mcp.tools.search.maxResults'].sort(),
+      ['mcp.tools.read_document.historyDepth', 'mcp.tools.search.maxResults'].sort(),
     );
   });
 
-  test('project-strict fields cover content.dir + preview.baseUrl + autoSync.enabled', () => {
+  test('project-strict fields cover content.dir + preview.baseUrl + autoSync.onboardingResolvedAt', () => {
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
     const projectStrict = leaves
       .filter((l) => getFieldMeta(l.schema)?.scope === 'project')
       .map((l) => l.path.join('.'))
       .sort();
-    expect(projectStrict).toEqual(['autoSync.enabled', 'content.dir', 'preview.baseUrl'].sort());
+    expect(projectStrict).toEqual(
+      ['autoSync.onboardingResolvedAt', 'content.dir', 'preview.baseUrl'].sort(),
+    );
   });
 });

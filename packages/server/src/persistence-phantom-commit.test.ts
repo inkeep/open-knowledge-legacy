@@ -21,10 +21,7 @@
  * the safety-net back above the gate silently fails Scenario 1 below.
  */
 
-import { describe as _bunDescribe, afterEach, beforeEach, expect, test } from 'bun:test';
-
-const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
-
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

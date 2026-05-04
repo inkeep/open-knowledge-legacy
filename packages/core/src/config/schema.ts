@@ -73,14 +73,6 @@ export const ConfigSchema = z.looseObject({
         .optional(),
     })
     .default({}),
-  folders: z
-    .array(FolderRuleSchema)
-    .register(fieldRegistry, {
-      scope: 'either',
-      agentSettable: true,
-      defaultScope: 'project',
-    })
-    .default([]),
   mcp: z
     .looseObject({
       autoStart: z
@@ -156,16 +148,17 @@ export const ConfigSchema = z.looseObject({
     .default({}),
   autoSync: z
     .looseObject({
-      enabled: z
-        .boolean()
+      onboardingResolvedAt: z.iso
+        .datetime()
         .register(fieldRegistry, {
           scope: 'project',
           agentSettable: false,
           defaultScope: 'project',
         })
-        .optional(),
+        .nullable()
+        .default(null),
     })
-    .optional(),
+    .default({ onboardingResolvedAt: null }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

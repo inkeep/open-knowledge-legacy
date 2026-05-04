@@ -11,7 +11,7 @@ import {
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { isProcessAlive } from './process-alive.ts';
-import { RUNTIME_VERSION } from './version-constants.ts';
+import { PROTOCOL_VERSION, RUNTIME_VERSION } from './version-constants.ts';
 
 export type LockName = 'server' | 'ui';
 
@@ -24,7 +24,9 @@ export interface ProcessLockMetadata {
   startedAt: string;
   worktreeRoot: string;
   kind?: LockKind;
+  parentPid?: number;
   capabilities?: string[];
+  protocolVersion?: number;
   runtimeVersion?: string;
 }
 
@@ -92,7 +94,9 @@ export function acquireProcessLock(opts: {
     port: number;
     worktreeRoot: string;
     kind?: LockKind;
+    parentPid?: number;
     capabilities?: string[];
+    protocolVersion?: number;
     runtimeVersion?: string;
   };
 }): ProcessLockHandle {
@@ -109,7 +113,9 @@ export function acquireProcessLock(opts: {
     startedAt: new Date().toISOString(),
     worktreeRoot: init.worktreeRoot,
     ...(init.kind !== undefined && { kind: init.kind }),
+    ...(init.parentPid !== undefined && { parentPid: init.parentPid }),
     ...(init.capabilities !== undefined && { capabilities: init.capabilities }),
+    protocolVersion: init.protocolVersion ?? PROTOCOL_VERSION,
     runtimeVersion: init.runtimeVersion ?? RUNTIME_VERSION,
   };
   const payload = JSON.stringify(record, null, 2);
@@ -244,7 +250,7 @@ export type ReadProcessLockResult =
   | { status: 'absent' }
   | { status: 'stale'; lock: ProcessLockMetadata }
   | { status: 'live'; lock: ProcessLockMetadata }
-  | { status: 'incompatible'; reason: 'corrupt'; raw: unknown };
+  | { status: 'incompatible'; reason: 'missing-fields' | 'corrupt'; raw: unknown };
 
 export function readProcessLockDetailed(opts: {
   lockName: LockName;
@@ -281,6 +287,7 @@ export function readProcessLockDetailed(opts: {
     port: r.port,
     startedAt: r.startedAt,
     worktreeRoot: r.worktreeRoot,
+    protocolVersion: typeof r.protocolVersion === 'number' ? r.protocolVersion : undefined,
     runtimeVersion: typeof r.runtimeVersion === 'string' ? r.runtimeVersion : undefined,
   };
 
@@ -290,6 +297,10 @@ export function readProcessLockDetailed(opts: {
       unlinkSync(lockPath);
     } catch {}
     return { status: 'stale', lock };
+  }
+
+  if (lock.protocolVersion === undefined || lock.runtimeVersion === undefined) {
+    return { status: 'incompatible', reason: 'missing-fields', raw };
   }
 
   return { status: 'live', lock };

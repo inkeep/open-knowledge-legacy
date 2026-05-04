@@ -288,6 +288,23 @@ export {
   type DerivedViewChannel,
   DerivedViewChannelSchema,
 } from './schemas/cc1.ts';
+export {
+  createWorkspaceSearchCorpus,
+  createWorkspaceSearchDocument,
+  DEFAULT_WORKSPACE_SEARCH_LIMIT,
+  MAX_WORKSPACE_SEARCH_LIMIT,
+  searchWorkspaceCorpus,
+  searchWorkspaceDocuments,
+  type WorkspaceSearchCorpus,
+  type WorkspaceSearchDocument,
+  type WorkspaceSearchIntent,
+  type WorkspaceSearchKind,
+  type WorkspaceSearchOptions,
+  type WorkspaceSearchResult,
+  type WorkspaceSearchScope,
+  workspaceSearchBasename,
+  workspaceSearchPathSegments,
+} from './search/workspace-search.ts';
 export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {
   AgentFlashEntry,

@@ -1,25 +1,38 @@
+/**
+ * Shared `enrichPath()` — single source of truth for per-path metadata
+ * assembly used by `read_document`, `search`, and `exec`.
+ *
+ * Returns a **single unified `EnrichedMeta` shape** with nullable fields
+ * (D20 / FR14). Multi-path callers (ls/grep/find enrichment) pass
+ * `{ includeRichFields: false }` and get `backlinkCount`, `history`, and
+ * `historySource` as `null` to avoid N-amplification. Single-path callers
+ * (cat) pass `{ includeRichFields: true }` and get all fields populated.
+ *
+ * `catalogCategory` was removed per D19 (folder INDEX.md frontmatter
+ * deprecated across OK; catalog is an on-demand view, not a stored artifact).
+ *
+ * See SPEC.md FR7 + FR14 + FR15 + D13 + D19 + D20.
+ */
 import type { Dirent } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, relative, resolve } from 'node:path';
 import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { parse as parseYaml } from 'yaml';
-import { type output, type ZodType, z } from 'zod';
-import type { FolderRule } from '../config/schema.ts';
 import { httpGet } from '../mcp/tools/shared.ts';
-import { resolveFolderFrontmatter } from './folder-rules.ts';
+import { mergeCascade } from './frontmatter-merge.ts';
+import { parentFolderOf, resolveNestedFrontmatter } from './nested-folder-rules.ts';
 import { type GitCommit, type ProjectHistorySource, readProjectGitLog } from './project-log.ts';
 import { type HistorySource, readShadowLog, type ShadowCommit } from './shadow-log.ts';
+import { resolveTemplatesAvailable, type TemplateEntry } from './templates-resolver.ts';
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
-
-function parseFrontmatter<S extends ZodType>(content: string, schema: S): output<S> | null {
+function parseFrontmatterRaw(content: string): Record<string, unknown> | null {
   const match = content.match(FRONTMATTER_RE);
   if (!match) return null;
   try {
     const parsed = parseYaml(match[1]);
     if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const result = schema.safeParse(parsed);
-      return result.success ? result.data : null;
+      return parsed as Record<string, unknown>;
     }
   } catch {}
   return null;
@@ -79,6 +92,13 @@ export interface DirectoryMeta {
     updatedAt: string;
   };
   truncated: boolean;
+  frontmatter_defaults?: {
+    title?: string;
+    description?: string;
+    tags?: string[];
+  } & Record<string, unknown>;
+  templates_available?: TemplateEntry[];
+  subfolders?: DirectoryMeta[];
 }
 
 export interface EnrichedMeta {
@@ -86,6 +106,7 @@ export interface EnrichedMeta {
   title?: string;
   description?: string;
   tags: string[];
+  frontmatter: Record<string, unknown>;
   backlinkCount: number | null;
   backlinks: BacklinkEntry[] | null;
   forwardLinkCount: number | null;
@@ -100,32 +121,33 @@ interface EnrichPathDeps {
   projectDir: string;
   serverUrl?: string | undefined;
   historyDepth?: number;
-  folderRules?: FolderRule[];
 }
 
 interface EnrichPathOptions {
   includeRichFields?: boolean;
 }
 
-const FrontmatterSchema = z.object({
-  title: z.string().optional(),
-  description: z.string().optional(),
-  tags: z.array(z.string()).default([]),
-});
-
 export function pathToDocName(relPath: string): string {
   return relPath.replace(/\.md$/, '').replace(/\.mdx$/, '');
 }
 
-async function readFrontmatter(
-  absPath: string,
-): Promise<{ title?: string; description?: string; tags: string[] } | null> {
+const fmReadWarnedPaths = new Set<string>();
+
+async function readFrontmatter(absPath: string): Promise<Record<string, unknown> | null> {
   try {
     const content = await readFile(absPath, 'utf-8');
-    const fm = parseFrontmatter(content, FrontmatterSchema);
-    if (!fm) return { tags: [] };
-    return { title: fm.title, description: fm.description, tags: fm.tags ?? [] };
-  } catch {
+    const fm = parseFrontmatterRaw(content);
+    return fm ?? {};
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== 'ENOENT' && !fmReadWarnedPaths.has(absPath)) {
+      fmReadWarnedPaths.add(absPath);
+      const reason = err instanceof Error ? err.message : String(err);
+      // eslint-disable-next-line no-console -- ad-hoc operator-facing diagnostic
+      console.warn(
+        `[ok-enrich] failed to read frontmatter at ${absPath} — enrichment degraded for this file. Reason: ${reason}`,
+      );
+    }
     return null;
   }
 }
@@ -231,36 +253,23 @@ async function fetchForwardLinks(
 }
 
 function mergeFileAndFolder(
-  fileFm: { title?: string; description?: string; tags: string[] } | null,
-  folderRules: FolderRule[] | undefined,
+  fileFm: Record<string, unknown> | null,
   relPath: string,
-): { title?: string; description?: string; tags: string[] } {
-  const rules = folderRules ?? [];
-  const folderFm = rules.length === 0 ? {} : resolveFolderFrontmatter(rules, relPath);
-  const title = fileFm?.title ?? folderFm.title;
-  const description = fileFm?.description ?? folderFm.description;
-  const fileTags = fileFm?.tags ?? [];
-  const folderTags = folderFm.tags ?? [];
-  let tags: string[];
-  if (folderTags.length === 0) {
-    tags = fileTags;
-  } else {
-    const seen = new Set<string>();
-    tags = [];
-    for (const tag of folderTags) {
-      if (!seen.has(tag)) {
-        seen.add(tag);
-        tags.push(tag);
-      }
-    }
-    for (const tag of fileTags) {
-      if (!seen.has(tag)) {
-        seen.add(tag);
-        tags.push(tag);
-      }
-    }
-  }
-  return { title, description, tags };
+  projectDir: string | undefined,
+): { title?: string; description?: string; tags: string[]; frontmatter: Record<string, unknown> } {
+  const nestedFm = projectDir
+    ? (resolveNestedFrontmatter(projectDir, parentFolderOf(relPath)) as Record<string, unknown>)
+    : {};
+
+  const merged = mergeCascade(nestedFm, fileFm ?? {});
+
+  const title = typeof merged.title === 'string' ? merged.title : undefined;
+  const description = typeof merged.description === 'string' ? merged.description : undefined;
+  const tags = Array.isArray(merged.tags)
+    ? (merged.tags as unknown[]).filter((t): t is string => typeof t === 'string')
+    : [];
+
+  return { title, description, tags, frontmatter: merged };
 }
 
 export async function enrichPath(
@@ -277,12 +286,13 @@ export async function enrichPath(
 
   if (!rich) {
     const fm = await fmPromise;
-    const merged = mergeFileAndFolder(fm, deps.folderRules, relPath);
+    const merged = mergeFileAndFolder(fm, relPath, deps.projectDir);
     return {
       path: relPath,
       title: merged.title,
       description: merged.description,
       tags: merged.tags,
+      frontmatter: merged.frontmatter,
       backlinkCount: null,
       backlinks: null,
       forwardLinkCount: null,
@@ -308,12 +318,13 @@ export async function enrichPath(
     })),
   ]);
 
-  const merged = mergeFileAndFolder(fm, deps.folderRules, relPath);
+  const merged = mergeFileAndFolder(fm, relPath, deps.projectDir);
   return {
     path: relPath,
     title: merged.title,
     description: merged.description,
     tags: merged.tags,
+    frontmatter: merged.frontmatter,
     backlinkCount: backlinks?.length ?? null,
     backlinks,
     forwardLinkCount: forwardLinks?.length ?? null,
@@ -390,7 +401,7 @@ async function scanDirectory(absDir: string, projectDir: string): Promise<DirSca
 
 export async function enrichDirectory(
   relPathInput: string,
-  deps: Pick<EnrichPathDeps, 'projectDir' | 'folderRules'>,
+  deps: Pick<EnrichPathDeps, 'projectDir'>,
 ): Promise<DirectoryMeta> {
   const relPath = relPathInput.replace(/^\.\//, '').replace(/^\/+/, '').replace(/\/+$/, '');
   const absDir = resolve(deps.projectDir, relPath);
@@ -399,9 +410,10 @@ export async function enrichDirectory(
   let mostRecentMd: DirectoryMeta['mostRecentMd'];
   if (scan.mostRecent) {
     const fm = await readFrontmatter(scan.mostRecent.absPath);
+    const fmTitle = typeof fm?.title === 'string' ? fm.title : undefined;
     mostRecentMd = {
       path: scan.mostRecent.relPath,
-      title: fm?.title ?? basename(scan.mostRecent.relPath),
+      title: fmTitle ?? basename(scan.mostRecent.relPath),
       updatedAt: new Date(scan.mostRecent.mtimeMs).toISOString(),
     };
   }
@@ -416,13 +428,75 @@ export async function enrichDirectory(
     truncated: scan.truncated,
   };
 
-  const rules = deps.folderRules ?? [];
-  if (rules.length > 0) {
-    const folderFm = resolveFolderFrontmatter(rules, relPath);
-    if (folderFm.title !== undefined) result.title = folderFm.title;
-    if (folderFm.description !== undefined) result.description = folderFm.description;
-    if (folderFm.tags !== undefined && folderFm.tags.length > 0) result.tags = folderFm.tags;
+  const nestedFm = resolveNestedFrontmatter(deps.projectDir, relPath);
+  const title = nestedFm.title;
+  const description = nestedFm.description;
+  const tags = nestedFm.tags ?? [];
+
+  if (title !== undefined) result.title = title;
+  if (description !== undefined) result.description = description;
+  if (tags.length > 0) result.tags = tags;
+
+  if (Object.keys(nestedFm).length > 0) {
+    result.frontmatter_defaults = nestedFm;
   }
+
+  const templates = resolveTemplatesAvailable(deps.projectDir, relPath);
+  if (templates.length > 0) result.templates_available = templates;
 
   return result;
 }
+
+export async function enrichDirectoryRecursive(
+  relPathInput: string,
+  depth: number,
+  deps: Pick<EnrichPathDeps, 'projectDir'>,
+): Promise<DirectoryMeta> {
+  const top = await enrichDirectory(relPathInput, deps);
+  if (depth <= 1) return top;
+
+  const relPath = top.path;
+  const absDir = resolve(deps.projectDir, relPath);
+
+  let entries: Dirent[];
+  try {
+    entries = await readdir(absDir, { withFileTypes: true });
+  } catch {
+    return top;
+  }
+
+  const subfolders: DirectoryMeta[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (RECURSIVE_LISTING_SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
+    const childRel = relPath ? `${relPath}/${entry.name}` : entry.name;
+    const child = await enrichDirectoryRecursive(childRel, depth - 1, deps);
+    subfolders.push(child);
+  }
+
+  if (subfolders.length > 0) top.subfolders = subfolders;
+  return top;
+}
+
+const RECURSIVE_LISTING_SKIP_DIRS = new Set<string>([
+  '.git',
+  '.ok',
+  'node_modules',
+  '.venv',
+  'venv',
+  'env',
+  '__pycache__',
+  'vendor',
+  'dist',
+  'build',
+  'out',
+  'output',
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.astro',
+  '.turbo',
+  '.cache',
+  '.parcel-cache',
+  'coverage',
+]);

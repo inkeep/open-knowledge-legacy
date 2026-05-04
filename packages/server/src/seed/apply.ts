@@ -1,13 +1,31 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { humanFormat } from '@inkeep/open-knowledge-core';
-import { applyFolderRulesUpsert } from '@inkeep/open-knowledge-core/server';
-import { LOG_MD_TEMPLATE } from './starter.ts';
+import {
+  buildStarterFolderFrontmatterYaml,
+  LOG_MD_TEMPLATE,
+  STARTER_FOLDERS,
+  STARTER_TEMPLATES,
+} from './starter.ts';
 import type { ApplyError, ApplyResult, FileEntry, ScaffoldPlan, SeedOptions } from './types.ts';
 
-const FILE_CONTENT: Readonly<Record<string, string>> = {
-  'log.md': LOG_MD_TEMPLATE,
-};
+function resolveFileContent(templateId: string): string | undefined {
+  if (templateId === 'log.md') return LOG_MD_TEMPLATE;
+
+  const fmMatch = /^([^/]+)\/\.ok\/frontmatter\.yml$/.exec(templateId);
+  if (fmMatch) {
+    const folder = STARTER_FOLDERS.find((f) => f.path === fmMatch[1]);
+    if (!folder) return undefined;
+    return buildStarterFolderFrontmatterYaml(folder);
+  }
+
+  const tplMatch = /^([^/]+)\/\.ok\/templates\/([^/]+)\.md$/.exec(templateId);
+  if (tplMatch) {
+    const templateName = tplMatch[2] ?? '';
+    return STARTER_TEMPLATES[templateName];
+  }
+
+  return undefined;
+}
 
 export async function applySeed(plan: ScaffoldPlan, opts: SeedOptions = {}): Promise<ApplyResult> {
   const started = Date.now();
@@ -33,7 +51,7 @@ export async function applySeed(plan: ScaffoldPlan, opts: SeedOptions = {}): Pro
   )) {
     const absPath = join(projectDir, entry.path);
     const templateId = entry.template ?? entry.path;
-    const content = FILE_CONTENT[templateId];
+    const content = resolveFileContent(templateId);
     if (content === undefined) {
       errors.push({
         path: entry.path,
@@ -49,28 +67,6 @@ export async function applySeed(plan: ScaffoldPlan, opts: SeedOptions = {}): Pro
       applied += 1;
     } catch (err) {
       errors.push({ path: entry.path, error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-
-  if (plan.configEdits.length > 0) {
-    const result = await applyFolderRulesUpsert({
-      cwd: projectDir,
-      scope: 'project',
-      rules: plan.configEdits.map((edit) => ({
-        match: edit.entry.match,
-        frontmatter: { ...edit.entry.frontmatter },
-      })),
-    });
-    if (result.ok) {
-      applied += plan.configEdits.length;
-    } else {
-      const message = humanFormat(result.error);
-      for (const edit of plan.configEdits) {
-        errors.push({
-          path: `${edit.configPath}#${edit.folderMatch}`,
-          error: message,
-        });
-      }
     }
   }
 

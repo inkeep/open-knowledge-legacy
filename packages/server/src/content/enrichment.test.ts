@@ -1,14 +1,10 @@
-import { describe as _bunDescribe, afterEach, beforeEach, expect, test } from 'bun:test';
-
-const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
-
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
-import type { FolderRule } from '../config/schema.ts';
-import { commitWip, initShadowRepo, type WriterIdentity } from '../shadow-repo.ts';
 import { enrichDirectory, enrichPath } from './enrichment.ts';
 
 let tmpDir: string;
@@ -120,103 +116,72 @@ describe('enrichPath — rich (single-path) shape', () => {
   });
 });
 
-describe('enrichPath — folder-rule merge', () => {
-  test('no folderRules → identical behavior to today (file-only)', async () => {
+describe('enrichPath — nested cascade (D6: scalars replace, tags union-and-dedup)', () => {
+  test('file frontmatter wins per-scalar over nested cascade; tags union with first-occurrence preserved', async () => {
     const project = await bootstrapProject();
-    mkdirSync(resolve(project, 'specs'), { recursive: true });
-    writeFileSync(resolve(project, 'specs/foo.md'), '---\ntitle: Foo\n---\nBody\n');
-
-    const without = await enrichPath('specs/foo.md', { projectDir: project });
-    const withEmpty = await enrichPath('specs/foo.md', {
-      projectDir: project,
-      folderRules: [],
-    });
-
-    expect(without.title).toBe('Foo');
-    expect(withEmpty.title).toBe('Foo');
-    expect(without.tags).toEqual([]);
-    expect(withEmpty.tags).toEqual([]);
-  });
-
-  test('file has no frontmatter → folder rule fills in title/description/tags', async () => {
-    const project = await bootstrapProject();
-    mkdirSync(resolve(project, 'specs'), { recursive: true });
-    writeFileSync(resolve(project, 'specs/foo.md'), 'Body only\n');
-
-    const rules: FolderRule[] = [
-      {
-        match: 'specs/**',
-        frontmatter: { title: 'Specs', description: 'Spec docs', tags: ['spec'] },
-      },
-    ];
-    const meta = await enrichPath('specs/foo.md', { projectDir: project, folderRules: rules });
-    expect(meta.title).toBe('Specs');
-    expect(meta.description).toBe('Spec docs');
-    expect(meta.tags).toEqual(['spec']);
-  });
-
-  test('file title wins over folder-rule title (scalar file-wins)', async () => {
-    const project = await bootstrapProject();
-    mkdirSync(resolve(project, 'specs'), { recursive: true });
-    writeFileSync(resolve(project, 'specs/foo.md'), '---\ntitle: My Foo\n---\nBody\n');
-
-    const rules: FolderRule[] = [{ match: 'specs/**', frontmatter: { title: 'Specs' } }];
-    const meta = await enrichPath('specs/foo.md', { projectDir: project, folderRules: rules });
-    expect(meta.title).toBe('My Foo');
-  });
-
-  test('tags concat folder then file with dedup (file last, first-occurrence preserved)', async () => {
-    const project = await bootstrapProject();
-    mkdirSync(resolve(project, 'specs'), { recursive: true });
-    writeFileSync(resolve(project, 'specs/foo.md'), '---\ntitle: Foo\ntags:\n  - wip\n---\nBody\n');
-
-    const rules: FolderRule[] = [{ match: 'specs/**', frontmatter: { tags: ['spec'] } }];
-    const meta = await enrichPath('specs/foo.md', { projectDir: project, folderRules: rules });
-    expect(meta.tags).toEqual(['spec', 'wip']);
-  });
-
-  test('tag dedup preserves first occurrence across folder + file', async () => {
-    const project = await bootstrapProject();
-    mkdirSync(resolve(project, 'specs'), { recursive: true });
+    mkdirSync(resolve(project, 'specs/.ok'), { recursive: true });
     writeFileSync(
       resolve(project, 'specs/foo.md'),
-      '---\ntitle: Foo\ntags:\n  - spec\n  - wip\n---\nBody\n',
+      '---\ntitle: File\ntags:\n  - file-tag\n---\nBody\n',
+    );
+    writeFileSync(
+      resolve(project, 'specs/.ok/frontmatter.yml'),
+      'title: Nested\ndescription: Nested desc\ntags:\n  - nested-tag\n',
     );
 
-    const rules: FolderRule[] = [{ match: 'specs/**', frontmatter: { tags: ['spec'] } }];
-    const meta = await enrichPath('specs/foo.md', { projectDir: project, folderRules: rules });
-    expect(meta.tags).toEqual(['spec', 'wip']);
+    const meta = await enrichPath('specs/foo.md', { projectDir: project });
+    expect(meta.title).toBe('File');
+    expect(meta.description).toBe('Nested desc');
+    expect(meta.tags).toEqual(['nested-tag', 'file-tag']);
   });
 
-  test('folder tags:[] is a no-op — file tags unchanged (QA-007)', async () => {
+  test('root .ok/frontmatter.yml seeds the cascade for root docs', async () => {
     const project = await bootstrapProject();
+    mkdirSync(resolve(project, '.ok'), { recursive: true });
+    writeFileSync(resolve(project, 'top.md'), '# top\n');
+    writeFileSync(resolve(project, '.ok/frontmatter.yml'), 'title: Root Default\ntags:\n  - kb\n');
+
+    const meta = await enrichPath('top.md', { projectDir: project });
+    expect(meta.title).toBe('Root Default');
+    expect(meta.tags).toEqual(['kb']);
+  });
+
+  test('root cascade reaches docs in nested folders (root → leaf)', async () => {
+    const project = await bootstrapProject();
+    mkdirSync(resolve(project, '.ok'), { recursive: true });
     mkdirSync(resolve(project, 'specs'), { recursive: true });
-    writeFileSync(resolve(project, 'specs/foo.md'), '---\ntitle: Foo\ntags:\n  - wip\n---\nBody\n');
+    writeFileSync(resolve(project, 'specs/foo.md'), '# foo\n');
+    writeFileSync(
+      resolve(project, '.ok/frontmatter.yml'),
+      'description: From root\ntags:\n  - kb\n',
+    );
 
-    const rules: FolderRule[] = [{ match: 'specs/**', frontmatter: { tags: [] } }];
-    const meta = await enrichPath('specs/foo.md', { projectDir: project, folderRules: rules });
-    expect(meta.tags).toEqual(['wip']);
+    const meta = await enrichPath('specs/foo.md', { projectDir: project });
+    expect(meta.description).toBe('From root');
+    expect(meta.tags).toEqual(['kb']);
   });
 
-  test('multi-rule last-match positional precedence for scalars (QA-004)', async () => {
+  test('multi-level cascade: tags from root + ancestor + leaf union with first-occurrence preserved', async () => {
     const project = await bootstrapProject();
-    mkdirSync(resolve(project, 'specs/2026-04-16'), { recursive: true });
-    writeFileSync(resolve(project, 'specs/2026-04-16/foo.md'), 'Body only\n');
+    mkdirSync(resolve(project, '.ok'), { recursive: true });
+    mkdirSync(resolve(project, 'specs/.ok'), { recursive: true });
+    mkdirSync(resolve(project, 'specs/2026-04-16/.ok'), { recursive: true });
+    writeFileSync(resolve(project, '.ok/frontmatter.yml'), 'tags:\n  - kb\n');
+    writeFileSync(resolve(project, 'specs/.ok/frontmatter.yml'), 'tags:\n  - spec\n');
+    writeFileSync(
+      resolve(project, 'specs/2026-04-16/.ok/frontmatter.yml'),
+      'title: 2026-04-16\ntags:\n  - april\n',
+    );
+    writeFileSync(resolve(project, 'specs/2026-04-16/foo.md'), '# foo\n');
 
-    const rules: FolderRule[] = [
-      { match: 'specs/**', frontmatter: { title: 'Specs' } },
-      { match: 'specs/2026-*/**', frontmatter: { title: '2026 Specs' } },
-    ];
-    const meta = await enrichPath('specs/2026-04-16/foo.md', {
-      projectDir: project,
-      folderRules: rules,
-    });
-    expect(meta.title).toBe('2026 Specs');
+    const meta = await enrichPath('specs/2026-04-16/foo.md', { projectDir: project });
+    expect(meta.title).toBe('2026-04-16');
+    expect(meta.tags).toEqual(['kb', 'spec', 'april']);
   });
 });
 
-describe('enrichDirectory — folder-rule attachment', () => {
-  test('no folderRules → identical shape to today (no title/description/tags)', async () => {
+describe('enrichDirectory — nested cascade attachment', () => {
+  test('no nested .ok/frontmatter.yml → DirectoryMeta has no title/description/tags', async () => {
     const project = await bootstrapProject();
     mkdirSync(resolve(project, 'specs'), { recursive: true });
     writeFileSync(resolve(project, 'specs/foo.md'), '---\ntitle: Foo\n---\nBody\n');
@@ -229,50 +194,34 @@ describe('enrichDirectory — folder-rule attachment', () => {
     expect(meta.recursiveMdCount).toBe(1);
   });
 
-  test('matching folder rule attaches title/description/tags', async () => {
+  test('matching nested .ok/frontmatter.yml attaches title/description/tags to the directory', async () => {
     const project = await bootstrapProject();
-    mkdirSync(resolve(project, 'specs'), { recursive: true });
+    mkdirSync(resolve(project, 'specs/.ok'), { recursive: true });
     writeFileSync(resolve(project, 'specs/foo.md'), '---\ntitle: Foo\n---\nBody\n');
+    writeFileSync(
+      resolve(project, 'specs/.ok/frontmatter.yml'),
+      'title: Specs\ndescription: Spec docs\ntags:\n  - spec\n',
+    );
 
-    const rules: FolderRule[] = [
-      {
-        match: 'specs/**',
-        frontmatter: { title: 'Specs', description: 'Spec docs', tags: ['spec'] },
-      },
-    ];
-    const meta = await enrichDirectory('specs', { projectDir: project, folderRules: rules });
+    const meta = await enrichDirectory('specs', { projectDir: project });
     expect(meta.title).toBe('Specs');
     expect(meta.description).toBe('Spec docs');
     expect(meta.tags).toEqual(['spec']);
     expect(meta.recursiveMdCount).toBe(1);
   });
 
-  test('no matching folder rule → DirectoryMeta returned without folder fields (QA-006)', async () => {
+  test('cascade reaches deeper directories: tags accumulate from root + parent + own', async () => {
     const project = await bootstrapProject();
-    mkdirSync(resolve(project, 'specs'), { recursive: true });
-    writeFileSync(resolve(project, 'specs/foo.md'), '# Foo\n');
-
-    const rules: FolderRule[] = [{ match: 'reports/**', frontmatter: { title: 'Reports' } }];
-    const meta = await enrichDirectory('specs', { projectDir: project, folderRules: rules });
-    expect(meta.title).toBeUndefined();
-    expect(meta.description).toBeUndefined();
-    expect(meta.tags).toBeUndefined();
-  });
-
-  test('multi-rule last-match scalar precedence + tags concat+dedup', async () => {
-    const project = await bootstrapProject();
-    mkdirSync(resolve(project, 'specs/2026-04-16'), { recursive: true });
+    mkdirSync(resolve(project, '.ok'), { recursive: true });
+    mkdirSync(resolve(project, 'specs/.ok'), { recursive: true });
+    mkdirSync(resolve(project, 'specs/2026-04-16/.ok'), { recursive: true });
+    writeFileSync(resolve(project, '.ok/frontmatter.yml'), 'tags:\n  - kb\n');
+    writeFileSync(resolve(project, 'specs/.ok/frontmatter.yml'), 'tags:\n  - spec\n');
+    writeFileSync(resolve(project, 'specs/2026-04-16/.ok/frontmatter.yml'), 'title: 2026-04-16\n');
     writeFileSync(resolve(project, 'specs/2026-04-16/foo.md'), '# foo\n');
 
-    const rules: FolderRule[] = [
-      { match: 'specs/**', frontmatter: { title: 'Specs', tags: ['spec'] } },
-      { match: 'specs/*', frontmatter: { title: '2026 Specs', tags: ['2026'] } },
-    ];
-    const meta = await enrichDirectory('specs/2026-04-16', {
-      projectDir: project,
-      folderRules: rules,
-    });
-    expect(meta.title).toBe('2026 Specs');
-    expect(meta.tags).toEqual(['spec', '2026']);
+    const meta = await enrichDirectory('specs/2026-04-16', { projectDir: project });
+    expect(meta.title).toBe('2026-04-16');
+    expect(meta.tags).toEqual(['kb', 'spec']);
   });
 });

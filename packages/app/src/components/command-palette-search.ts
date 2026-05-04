@@ -1,0 +1,247 @@
+import {
+  createWorkspaceSearchCorpus,
+  createWorkspaceSearchDocument,
+  searchWorkspaceCorpus,
+  type WorkspaceSearchCorpus,
+  type WorkspaceSearchDocument,
+  workspaceSearchBasename,
+} from '@inkeep/open-knowledge-core';
+import type { PageMeta } from './PageListContext';
+
+export interface WorkspaceEntry {
+  kind: 'file' | 'folder';
+  path: string;
+  name: string;
+  title?: string;
+  modifiedTs?: number;
+}
+
+export interface WorkspaceSearchEntry extends WorkspaceEntry {
+  snippet?: string;
+  score?: number;
+}
+
+interface HighlightSegment {
+  text: string;
+  match: boolean;
+  start: number;
+}
+
+interface WorkspaceEntrySearchCorpus {
+  entries: readonly WorkspaceEntry[];
+  byId: ReadonlyMap<string, WorkspaceEntry>;
+  corpus: WorkspaceSearchCorpus;
+}
+
+export const EMPTY_QUERY_NAV_LIMIT = 20;
+const MATCH_QUERY_NAV_LIMIT = 50;
+const API_SEARCH_LIMIT = 30;
+
+let cachedEntriesFingerprint = '';
+let cachedEntrySearchCorpus: WorkspaceEntrySearchCorpus | null = null;
+
+function normalize(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function queryTerms(query: string): string[] {
+  const normalized = query.trim();
+  if (!normalized) return [];
+  return [...new Set(normalized.split(/\s+/).filter(Boolean))].sort((a, b) => b.length - a.length);
+}
+
+export function buildWorkspaceEntries(
+  pages: ReadonlySet<string>,
+  folderPaths: ReadonlySet<string>,
+  pageTitles: ReadonlyMap<string, string> = new Map(),
+  pageMeta: ReadonlyMap<string, PageMeta> = new Map(),
+): WorkspaceEntry[] {
+  const entries: WorkspaceEntry[] = [];
+
+  for (const path of pages) {
+    const modified = pageMeta.get(path)?.modified;
+    const title = pageTitles.get(path);
+    entries.push({
+      kind: 'file',
+      path,
+      name: workspaceSearchBasename(path),
+      ...(title ? { title } : {}),
+      ...(modified ? { modifiedTs: Date.parse(modified) } : {}),
+    });
+  }
+  for (const path of folderPaths) {
+    entries.push({ kind: 'folder', path, name: workspaceSearchBasename(path) });
+  }
+
+  entries.sort((a, b) => {
+    const pathCompare = a.path.localeCompare(b.path);
+    if (pathCompare !== 0) return pathCompare;
+    if (a.kind === b.kind) return 0;
+    return a.kind === 'folder' ? -1 : 1;
+  });
+
+  return entries;
+}
+
+function toSearchDocument(entry: WorkspaceEntry): WorkspaceSearchDocument {
+  return createWorkspaceSearchDocument({
+    kind: entry.kind === 'file' ? 'page' : 'folder',
+    path: entry.path,
+    title: entry.title ?? entry.name,
+    modifiedTs: entry.modifiedTs ?? 0,
+  });
+}
+
+function buildWorkspaceEntrySearchCorpus(
+  entries: readonly WorkspaceEntry[],
+): WorkspaceEntrySearchCorpus {
+  const byId = new Map(
+    entries.map((entry) => [`${entry.kind === 'file' ? 'page' : 'folder'}:${entry.path}`, entry]),
+  );
+  return {
+    entries,
+    byId,
+    corpus: createWorkspaceSearchCorpus(entries.map(toSearchDocument)),
+  };
+}
+
+function workspaceEntriesFingerprint(entries: readonly WorkspaceEntry[]): string {
+  return entries
+    .map(
+      (entry) =>
+        `${entry.kind}\u0000${entry.path}\u0000${entry.title ?? ''}\u0000${entry.modifiedTs ?? 0}`,
+    )
+    .join('\u0001');
+}
+
+function getCachedWorkspaceEntrySearchCorpus(
+  entries: readonly WorkspaceEntry[],
+): WorkspaceEntrySearchCorpus {
+  const fingerprint = workspaceEntriesFingerprint(entries);
+  if (cachedEntrySearchCorpus && cachedEntriesFingerprint === fingerprint) {
+    return cachedEntrySearchCorpus;
+  }
+  cachedEntriesFingerprint = fingerprint;
+  cachedEntrySearchCorpus = buildWorkspaceEntrySearchCorpus(entries);
+  return cachedEntrySearchCorpus;
+}
+
+export function searchWorkspaceEntries(
+  entries: readonly WorkspaceEntry[],
+  query: string,
+  limit = MATCH_QUERY_NAV_LIMIT,
+): WorkspaceEntry[] {
+  return searchWorkspaceEntryCorpus(getCachedWorkspaceEntrySearchCorpus(entries), query, limit);
+}
+
+function searchWorkspaceEntryCorpus(
+  entryCorpus: WorkspaceEntrySearchCorpus,
+  query: string,
+  limit = MATCH_QUERY_NAV_LIMIT,
+): WorkspaceEntry[] {
+  const normalizedQuery = normalize(query);
+  if (!normalizedQuery) {
+    return entryCorpus.entries.slice(0, EMPTY_QUERY_NAV_LIMIT);
+  }
+
+  return searchWorkspaceCorpus(entryCorpus.corpus, normalizedQuery, {
+    intent: 'omnibar',
+    limit,
+    scopes: ['page', 'folder'],
+  })
+    .map((result) => entryCorpus.byId.get(result.document.id))
+    .filter((entry): entry is WorkspaceEntry => entry !== undefined);
+}
+
+export function splitTextByQueryMatches(text: string, query: string): HighlightSegment[] {
+  const terms = queryTerms(query);
+  if (terms.length === 0 || text.length === 0) return [{ text, match: false, start: 0 }];
+
+  const regex = new RegExp(`(${terms.map(escapeRegExp).join('|')})`, 'gi');
+  const segments: HighlightSegment[] = [];
+  let lastIndex = 0;
+  for (const match of text.matchAll(regex)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, index), match: false, start: lastIndex });
+    }
+    segments.push({ text: match[0], match: true, start: index });
+    lastIndex = index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex), match: false, start: lastIndex });
+  }
+  return segments.length > 0 ? segments : [{ text, match: false, start: 0 }];
+}
+
+interface WorkspaceSearchApiResponse {
+  ok?: boolean;
+  error?: string;
+  results?: Array<{
+    kind?: string;
+    path?: string;
+    title?: string;
+    snippet?: string;
+    score?: number;
+  }>;
+}
+
+function toWorkspaceSearchEntry(
+  row: NonNullable<WorkspaceSearchApiResponse['results']>[number],
+): WorkspaceSearchEntry | null {
+  if ((row.kind !== 'page' && row.kind !== 'folder') || typeof row.path !== 'string') return null;
+  const name = workspaceSearchBasename(row.path);
+  return {
+    kind: row.kind === 'page' ? 'file' : 'folder',
+    path: row.path,
+    name,
+    ...(row.title && { title: row.title }),
+    ...(row.snippet && { snippet: row.snippet }),
+    ...(typeof row.score === 'number' && { score: row.score }),
+  };
+}
+
+export async function fetchWorkspaceSearchEntries(
+  query: string,
+  options: { signal?: AbortSignal; limit?: number } = {},
+): Promise<WorkspaceSearchEntry[]> {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return [];
+
+  const response = await fetch('/api/search', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      query: normalizedQuery,
+      intent: 'full_text',
+      scopes: ['page', 'folder', 'content'],
+      limit: options.limit ?? API_SEARCH_LIMIT,
+    }),
+    signal: options.signal,
+  });
+  if (!response.ok) {
+    throw new Error(`Search failed with status ${response.status}`);
+  }
+
+  const payload = (await response.json()) as WorkspaceSearchApiResponse;
+  if (payload.ok !== true) {
+    throw new Error(payload.error ?? 'Search failed');
+  }
+
+  return (payload.results ?? []).map(toWorkspaceSearchEntry).filter((entry) => !!entry);
+}
+
+export function matchesCommandQuery(
+  label: string,
+  query: string,
+  keywords: readonly string[] = [],
+): boolean {
+  const normalizedQuery = normalize(query);
+  if (!normalizedQuery) return true;
+  const haystack = normalize([label, ...keywords].join(' '));
+  return haystack.includes(normalizedQuery);
+}

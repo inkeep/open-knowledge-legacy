@@ -41,9 +41,11 @@ describe('runSeed — happy path', () => {
       expect(existsSync(join(testDir, folder.path))).toBe(true);
     }
     expect(existsSync(join(testDir, 'log.md'))).toBe(true);
-    expect(readFileSync(join(testDir, OK_DIR, CONFIG_FILENAME), 'utf-8')).toContain(
-      'external-sources/**',
-    );
+    for (const folder of STARTER_FOLDERS) {
+      const fmPath = join(testDir, folder.path, '.ok', 'frontmatter.yml');
+      expect(existsSync(fmPath)).toBe(true);
+      expect(readFileSync(fmPath, 'utf-8')).toContain(folder.title);
+    }
   });
 
   test('applies plan when user confirms Y via stream', async () => {
@@ -108,10 +110,10 @@ describe('runSeed — --root', () => {
       expect(existsSync(join(testDir, folder.path))).toBe(false);
     }
     expect(existsSync(join(testDir, 'brain', 'log.md'))).toBe(true);
-    const config = readFileSync(join(testDir, OK_DIR, CONFIG_FILENAME), 'utf-8');
-    expect(config).toContain('brain/external-sources/**');
-    expect(config).toContain('brain/research/**');
-    expect(config).toContain('brain/articles/**');
+    for (const folder of STARTER_FOLDERS) {
+      const fmPath = join(testDir, 'brain', folder.path, '.ok', 'frontmatter.yml');
+      expect(existsSync(fmPath)).toBe(true);
+    }
   });
 
   test('reuses an existing subfolder without error', async () => {
@@ -150,10 +152,11 @@ describe('runSeed — --root', () => {
     for (const folder of STARTER_FOLDERS) {
       expect(existsSync(join(testDir, 'work', folder.path))).toBe(true);
       expect(existsSync(join(testDir, 'personal', folder.path))).toBe(true);
+      expect(existsSync(join(testDir, 'work', folder.path, '.ok', 'frontmatter.yml'))).toBe(true);
+      expect(existsSync(join(testDir, 'personal', folder.path, '.ok', 'frontmatter.yml'))).toBe(
+        true,
+      );
     }
-    const config = readFileSync(join(testDir, OK_DIR, CONFIG_FILENAME), 'utf-8');
-    expect(config).toContain('work/external-sources/**');
-    expect(config).toContain('personal/external-sources/**');
   });
 
   test('rejects absolute root paths with a failed status', async () => {

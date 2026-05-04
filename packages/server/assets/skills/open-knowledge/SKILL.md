@@ -1,6 +1,6 @@
 ---
 name: open-knowledge
-description: "MUST invoke when the project contains a .ok/ directory — before any read or edit of .md / .mdx files, any mcp__open-knowledge__ tool call, and any write_document / edit_document. Skip if no .ok/ — not an Open Knowledge project. Carries preview-attach (open preview browser at session start; one-shot on `action: attach-preview-once`), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with config.yml metadata, and the anti-pattern table. Authoritative — MCP server instructions and AGENTS.md overlap but do not substitute for the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance carried only here."
+description: "MUST invoke when the project contains a .ok/ directory — before any read or edit of .md / .mdx files, any mcp__open-knowledge__ tool call, and any write_document / edit_document. Skip if no .ok/ — not an Open Knowledge project. Carries preview-attach (open preview browser at session start; one-shot on `action: attach-preview-once`), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with nested `<folder>/.ok/` defaults + templates, and the anti-pattern table. Authoritative — MCP server instructions and AGENTS.md overlap but do not substitute for the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance carried only here."
 compatibility: "Claude Code, Claude Desktop, Claude Cowork, Claude.ai web. Requires Open Knowledge MCP server + code execution."
 metadata:
   version: "0.3.0"
@@ -59,6 +59,8 @@ If the server isn't running, you'll see a `"Hocuspocus server is not running"` e
 ## Writing
 
 Call `write_document` / `edit_document` as soon as you have content. Native `Edit` / `sed` / direct `Write` on in-scope markdown is forbidden — it bypasses the CRDT and loses agent attribution in the shadow repo.
+
+To delete a doc, call `delete_document` — never `rm` / `unlink` / native `Bash` removal on in-scope markdown. The MCP path closes open agent sessions and unloads the doc from Hocuspocus before unlinking; native `rm` desynchronizes those. Deletion is irreversible from this tool — call `save_version` first if you may need to roll back, and `get_backlinks` first if you want to fix the referrers that will become redlinks.
 
 ## Grounding — every factual claim needs a source (MUST)
 
@@ -141,51 +143,105 @@ tags:
 ---
 ```
 
-**Folder-level defaults via `.ok/config.yml` `folders:`.** See next section.
+**Folder-level defaults via opt-in nested `<folder>/.ok/frontmatter.yml`.** See "Folder structure + metadata" below.
 
-## Follow `.ok/config.yml` — it is the project contract
+## Follow project conventions — read folder defaults before writing
 
-**Read `.ok/config.yml` at the start of every session that involves writing to the knowledge base.** It is the single source of truth for:
+Before creating or editing docs in a folder, look at `list_documents(<folder>)` (or `exec("ls <folder>")`) and skim:
 
-- **Folder structure intent** — the `folders:` block tells you which folders exist, what each one contains, and what tags its files should carry. Every `exec("ls <folder>")` / `read_document` / `search` call merges these defaults with per-file frontmatter automatically, but you should also read config.yml directly when orienting so you can *place new docs in the right folder* and *write them in the voice + shape the project expects*.
-- **Per-folder instructions** — each `folders:` entry's `description:` field is the canonical place for "what does this folder contain + how should agents work inside it." Treat the description as a binding instruction, not flavor text. If a folder's description says "preserve verbatim, no analysis" (e.g. `external-sources/`), don't synthesize into those files; takeaways belong elsewhere.
-- **Content scope** — `content.dir` defines the content root. `.gitignore` and `.okignore` files (gitignore syntax, nested at any depth) define which paths are excluded from the document index. Anything excluded is regular source code, not a knowledge-base doc.
+- **`frontmatter_defaults`** — the merged folder defaults (title shape, description, tags) that any new doc here will inherit. Surfaces nested `<folder>/.ok/frontmatter.yml` cascade walked root → leaf, leaf wins per-key.
+- **`templates_available`** — the menu of starter shapes for `write_document({ template })`. Each entry has `name`, `title`, `description`, and `scope` (`local` / `inherited` / `descendant`). Pick one that matches the doc's purpose.
+- **Content scope** — `content.dir` (in `.ok/config.yml`) defines the content root. `.gitignore` and `.okignore` files (gitignore syntax, nested at any depth) define which paths are excluded from the document index. Anything excluded is regular source code, not a knowledge-base doc.
 
-If a project uses `ok seed` to scaffold the Karpathy three-layer layout (`external-sources/` → `research/` → `articles/`), each folder's description in `config.yml` encodes the layer's rules. Projects with custom layouts put their own discipline in their own descriptions. Either way: **follow what config.yml says.**
+If a project uses `ok seed` to scaffold the Karpathy three-layer layout (`external-sources/` → `research/` → `articles/`), the seed encodes layer rules in the project config so each layer's defaults show up in `list_documents` enrichment for that folder. Projects with custom layouts put their own discipline in their own folder defaults. Either way: **read the folder before writing**.
 
-## Folder structure + metadata — edit `.ok/config.yml`
+## Folder structure + metadata — nested `<folder>/.ok/`
 
-When you create or restructure folders, you SHOULD add a matching entry to the `folders:` key in `.ok/config.yml` with a glob + frontmatter defaults. This is how per-folder title/description/tags land without duplicating frontmatter on every child file.
+Folder defaults and templates live in opt-in nested `.ok/` directories — sparse, lazy-create, auto-clean. **Most folders have NO `.ok/`**. A folder gets one only when it declares its own frontmatter defaults or carries templates.
 
-Example:
-
-```yaml
-folders:
-  - match: 'articles/characters/team-avatar/**'
-    frontmatter:
-      title: Team Avatar
-      description: Core Team Avatar character articles
-      tags: [characters, team-avatar]
-  - match: 'articles/characters/fire-nation/**'
-    frontmatter:
-      title: Fire Nation Characters
-      description: Antagonists and Fire Nation cast
-      tags: [characters, fire-nation]
+```
+content-root/
+├── .ok/                        ← project root .ok/ (config.yml, cache, etc.)
+├── meetings/
+│   ├── .ok/                    ← opt-in: this folder declares defaults + templates
+│   │   ├── frontmatter.yml
+│   │   └── templates/
+│   │       ├── prep-notes.md
+│   │       └── post-notes.md
+│   └── 2026-05-01.md
+└── research/                   ← no .ok/ — declares nothing, inherits root cascade
+    └── auth-providers.md
 ```
 
-Rules:
+### Editing folder defaults
 
-- Rules apply in declaration order; later matches override earlier scalars.
-- Tags concat + dedup across all matching rules; first-occurrence preserved.
-- File's own frontmatter always wins per-scalar; folder defaults fill in blanks.
-- Folder metadata lives in `config.yml` only — NOT in an `INDEX.md` / `README.md` hub file inside the folder.
+Use the `set_folder_rule` MCP tool. It writes nested `<folder>/.ok/frontmatter.yml`:
 
-Prefer enriching `config.yml` over creating hub files. The merge is computed on every `exec("ls <folder>")` / `read_document` / `search` call and is never written back to disk.
+```ts
+set_folder_rule({
+  rules: [
+    { match: "meetings/**", frontmatter: { title: "Meetings", tags: ["meeting"] } },
+    { match: "meetings/prep-notes/**", frontmatter: { tags: ["meeting", "prep"] } },
+  ],
+})
+```
+
+Each `match` glob must resolve to a SINGLE target folder (leading literal segments + trailing `*`/`**`). Multi-folder globs like `specs/*/evidence/**` are rejected with `MULTI_FOLDER_GLOB` — split into one rule per folder.
+
+To remove a folder rule, pass an empty `frontmatter: {}` — the file is deleted and `.ok/` is auto-cleaned if no other tenant remains.
+
+Cascade rules (D6 — asymmetric per scalar vs list semantics):
+
+- **Scalars** (`title`, `description`): walk root → leaf, last-wins per key (leaf replaces ancestor).
+- **Tags**: union-and-dedup along the chain, first-occurrence preserved. Root `tags: [kb]` plus a leaf `tags: [spec]` produces `[kb, spec]` at the leaf — tags accumulate naturally; you don't need to redeclare ancestor tags at each level.
+- **File frontmatter** wins per-scalar over folder defaults; file tags union with the cascade.
+
+### Creating templates
+
+Templates are markdown starter shapes. Use `write_template`:
+
+```ts
+write_template({
+  folder: "meetings/",
+  name: "prep-notes",
+  body: "# {Meeting Title}\n\n**Attendees:** \n**Date:** \n\n## Agenda\n- \n",
+  frontmatter: {
+    title: "Meeting Prep Notes",          // MUST be present (D14 — hard error if missing)
+    description: "Use before a meeting.", // SHOULD be present (D14 — soft warning)
+    tags: ["meeting", "prep"],
+  },
+})
+```
+
+`title` is the menu surface — agents pick by title, so it's required at write time (`TEMPLATE_TITLE_REQUIRED` if missing). `description` is recommended for menu disambiguation but produces only a warning when absent.
+
+**Substitution allowlist (D5).** Template bodies MAY use exactly two server-side substitutions: `{{date}}` (today's ISO-8601 date) and `{{user}}` (calling principal display name). Any other `{{...}}` token is rejected at write time with `TEMPLATE_UNKNOWN_VARIABLE`. Plain placeholder text in `{shape}` form (e.g., `{Meeting Title}`) is LITERAL — agents fill those in via subsequent `edit_document` calls. Substitution happens at instantiation time only; templates on disk show the raw `{{date}}` token.
+
+To delete a template: `delete_template({ folder, name })` — auto-cleans empty `.ok/templates/` and `.ok/`.
+
+### Creating a doc from a template
+
+```ts
+// 1. Inspect the menu
+list_documents("meetings/", { depth: 1 })
+//    → templates_available: [{ name: "prep-notes", title: ..., scope: "local" }, ...]
+
+// 2. Instantiate (template + markdown are mutually exclusive — pass one)
+write_document({
+  docName: "meetings/2026-05-02-roadmap-sync",
+  template: "prep-notes",
+  position: "replace",
+})
+```
+
+Templates resolve via leaf → root walk-up at the target's parent folder, with closest-wins on filename collision (D7). The `scope` field has two values: `"local"` (template lives in this folder's `.ok/templates/`) and `"inherited"` (template lives in an ancestor's). Descendant templates do NOT appear in the parent's array — they surface only inside `subfolders[].templates_available` when `list_documents` is called with `depth > 1`.
+
+**`template` and `markdown` are mutually exclusive** (D21). Passing both errors with `TEMPLATE_AND_MARKDOWN_BOTH_SET`. The template body becomes the new doc's body verbatim (after `{{date}}`/`{{user}}` substitution); fill placeholders via subsequent `edit_document` calls.
 
 ## Organization
 
 - **Folders are the organizational unit.** Group related docs in a shared folder.
-- **Folder-level metadata lives in `config.yml`** under `folders:` (see section above).
+- **Folder-level metadata lives in nested `<folder>/.ok/frontmatter.yml`** (sparse, opt-in, auto-clean).
 - **Don't create `INDEX.md` / `README.md` hub files** solely to catalog children — `exec("ls <folder>")` returns the same view live, with per-file frontmatter + backlink counts.
 - If a hub doc exists from prior work, keep it updated as children change — but don't create new ones.
 
@@ -220,7 +276,8 @@ The skill carries the trigger ("KB content changed this turn — go look"). The 
 | Cite a web source you just fetched              | inline `[source](https://...)` because YOU did the fetch (not the user)            | `ingest` it — agent-initiated fetches are not exempt from the closed-loop rule    |
 | Finish a turn that changed KB content           | move on without checking for a log                                                 | check for a `log.md` and follow its contract per Log discipline                    |
 | Add an image                                    | empty alt `![](./x.png)` or generic alt `![image](./x)`                            | meaningful alt + source caption below                                             |
-| Catalog folder contents                         | create `INDEX.md` hub file                                                         | add `folders:` entry in `.ok/config.yml`                              |
+| Catalog folder contents                         | create `INDEX.md` hub file                                                         | `set_folder_rule({ rules: [{ match, frontmatter }] })` writes `<folder>/.ok/frontmatter.yml` |
+| Delete a markdown doc                           | `Bash: rm` / `unlink` / native deletion on in-scope `.md`                          | `delete_document` — `save_version` first if rollback may be needed                |
 | Fork a skill and expect no stomp                | Edit installed SKILL.md                                                            | `npx skills remove` before CLI upgrade                                            |
 
 ## Workflow tools — when to invoke them
@@ -241,7 +298,7 @@ Typical day-2 flow: user shares a URL → `ingest` (preserve) → user asks "now
 
 **Do not chain silently.** After `ingest`, ask the user whether to proceed to `research`. After `research`, let the user decide whether the findings are ready to `consolidate`. Each tool completes on its own terms — the user drives the transitions.
 
-**Project scaffolding is a CLI operation (optional).** Users who want the Karpathy three-layer layout as their folder structure can run `ok seed` once from a terminal. That command scaffolds `external-sources/` + `research/` + `articles/`, seeds an append-only `log.md` at the project root, and writes matching `config.yml` `folders:` entries so agents see layer descriptions at every `exec("ls <folder>")` call. It is **not required**: the three workflow tools above work against any folder structure the project already uses (`specs/`, `docs/`, `reports/`, or anything else). Only mention `ok seed` if the user explicitly asks for a starter layout or wants the Karpathy pattern specifically.
+**Project scaffolding is a CLI operation (optional).** Users who want the Karpathy three-layer layout as their folder structure can run `ok seed` once from a terminal. That command scaffolds `external-sources/` + `research/` + `articles/`, seeds an append-only `log.md` at the project root, and registers per-layer folder defaults so agents see layer descriptions at every `list_documents(<folder>)` / `exec("ls <folder>")` call. It is **not required**: the three workflow tools above work against any folder structure the project already uses (`specs/`, `docs/`, `reports/`, or anything else). Only mention `ok seed` if the user explicitly asks for a starter layout or wants the Karpathy pattern specifically.
 
 ## Server lifecycle
 
@@ -249,6 +306,6 @@ If `write_document` or `edit_document` returns a "Hocuspocus server is not runni
 
 ## Scope recap
 
-When MCP is connected, the server's `instructions` echo the **resolved** `content.dir` for this session — treat that and `.ok/config.yml` as two views of the same rules. `.gitignore` and `.okignore` (at the project root and at any folder depth) define exclusions.
+When MCP is connected, the server's `instructions` echo the **resolved** `content.dir` for this session — that's where Open Knowledge looks for documents. `.gitignore` and `.okignore` (at the project root and at any folder depth) define exclusions. Folder defaults + templates live in nested `<folder>/.ok/frontmatter.yml` + `<folder>/.ok/templates/` files — NOT in `.ok/config.yml`.
 
 Default mental model (no jargon): **every `.md` and `.mdx` under `content.dir`** not excluded by `.gitignore` or `.okignore` is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. Read `.okignore` (and any nested `.okignore` files) once per turn to know what's excluded.

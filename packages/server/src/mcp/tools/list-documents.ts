@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { type DirectoryMeta, enrichDirectoryRecursive } from '../../content/enrichment.ts';
 import { buildListResolver, type PreviewUrlDeps } from './preview-url.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
@@ -12,10 +13,17 @@ import {
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] List available documents from the Hocuspocus server.',
-  'Returns document names, optionally filtered by directory.',
+  'Returns document names, optionally filtered by directory. When `dir` is set,',
+  'also surfaces folder-level metadata: `frontmatter_defaults` (merged folder',
+  'defaults that new docs in this folder will inherit) and `templates_available`',
+  '(menu of starter shapes for `write_document({ template })`). Pass `depth: N`',
+  'to also enrich subfolders up to N levels deep — mirrors `find -maxdepth N`.',
   '',
   '**Parameters:**',
   '- `dir` (optional) — Filter to documents in this directory',
+  '- `depth` (optional, default `1`) — Subfolder enrichment depth. `1` = this',
+  "  folder only; `2` = direct children's folder metadata too; `Infinity` =",
+  "  full subtree. Walk-up ancestors' templates always show regardless.",
 ].join('\n');
 
 interface DocumentsPayload {
@@ -33,9 +41,17 @@ export function register(server: ServerInstance, deps: ListDocumentsDeps): void 
     DESCRIPTION,
     {
       dir: z.string().optional().describe('Optional directory to filter documents'),
+      depth: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          'Subfolder enrichment depth (find -maxdepth semantics). Default 1. Only meaningful when `dir` is also set.',
+        ),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { dir?: string; cwd?: string }) => {
+    async (args: { dir?: string; depth?: number; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
@@ -60,7 +76,26 @@ export function register(server: ServerInstance, deps: ListDocumentsDeps): void 
           ...(resolved ? { previewUrlSource: resolved.source } : {}),
         };
       });
-      const structured = { ...data, documents, ui, cwd };
+
+      let folder: DirectoryMeta | undefined;
+      if (args.dir) {
+        const depth = args.depth ?? 1;
+        try {
+          folder = await enrichDirectoryRecursive(args.dir, depth, {
+            projectDir: cwd,
+          });
+        } catch {
+          folder = undefined;
+        }
+      }
+
+      const structured = {
+        ...data,
+        documents,
+        ui,
+        cwd,
+        ...(folder ? { folder } : {}),
+      };
       return textPlusStructured(JSON.stringify(structured, null, 2), structured);
     },
   );

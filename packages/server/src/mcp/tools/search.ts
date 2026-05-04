@@ -138,14 +138,12 @@ export async function buildSearchResult(
   const groups = groupByFile(visible);
 
   const metaByPath = new Map<string, EnrichedMeta>();
-  const folderRules = config.folders;
   await Promise.all(
     groups.map(async (g) => {
       try {
         const meta = await enrichPath(g.path, {
           projectDir: cwd,
           serverUrl: resolvedServerUrl,
-          folderRules,
         });
         metaByPath.set(g.path, meta);
       } catch {}

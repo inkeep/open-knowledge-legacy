@@ -3,6 +3,10 @@ import { lazy, Suspense, useDeferredValue, useEffect, useRef, useState } from 'r
 import { usePanelRef } from 'react-resizable-panels';
 import { AssetPreview } from '@/components/AssetPreview';
 import { DocPanel, type PanelTab } from '@/components/DocPanel';
+import {
+  consumePendingDocPanelTabRequest,
+  subscribeToDocPanelTabRequests,
+} from '@/components/doc-panel-events';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { EmptyEditorState } from '@/components/EmptyEditorState';
 import { FolderOverview } from '@/components/FolderOverview';
@@ -82,6 +86,28 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
       }
     }
   }, [autoCollapse, docPanelLayout, panelRef]);
+
+  useEffect(() => {
+    const openRequestedTab = (tab: PanelTab) => {
+      onActiveTabChange(tab);
+      if (isSheetMode) {
+        setSheetOpen(true);
+      } else {
+        userCollapsedRef.current = false;
+        panelRef.current?.expand();
+      }
+    };
+
+    const pendingTab = consumePendingDocPanelTabRequest();
+    if (pendingTab) {
+      openRequestedTab(pendingTab);
+    }
+
+    return subscribeToDocPanelTabRequests((tab) => {
+      consumePendingDocPanelTabRequest();
+      openRequestedTab(tab);
+    });
+  }, [isSheetMode, onActiveTabChange, panelRef]);
 
   useEffect(() => {
     if (docPanelExpandSignal === 0) return;

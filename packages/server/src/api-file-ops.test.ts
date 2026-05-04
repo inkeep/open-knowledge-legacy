@@ -1,7 +1,4 @@
-import { describe as _bunDescribe, afterEach, expect, test } from 'bun:test';
-
-const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
-
+import { afterEach, describe, expect, test } from 'bun:test';
 import {
   existsSync,
   mkdirSync,

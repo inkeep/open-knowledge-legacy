@@ -27,7 +27,6 @@ describe('handleSeedPlan', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.plan.created.length).toBeGreaterThan(0);
-      expect(result.plan.configEdits.length).toBeGreaterThan(0);
     }
   });
 
@@ -99,7 +98,7 @@ describe('handleSeedApply', () => {
   test('returns {ok:false, no-project} when no project is bound', async () => {
     const applyResult = await handleSeedApply(
       { resolveProjectRoot: () => undefined },
-      { created: [], skipped: [], configEdits: [], warnings: [] },
+      { created: [], skipped: [], warnings: [] },
     );
     expect(applyResult.ok).toBe(false);
     if (!applyResult.ok) {
@@ -115,7 +114,7 @@ describe('handleSeedApply', () => {
           throw new Error('kaboom');
         },
       },
-      { created: [], skipped: [], configEdits: [], warnings: [] },
+      { created: [], skipped: [], warnings: [] },
     );
     expect(applyResult.ok).toBe(false);
     if (!applyResult.ok) {

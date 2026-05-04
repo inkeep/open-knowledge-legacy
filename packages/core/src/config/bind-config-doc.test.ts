@@ -44,7 +44,6 @@ describe('bindConfigDoc — current()', () => {
     expect(config.content).toBeDefined();
     expect(config.server).toBeDefined();
     expect(config.mcp).toBeDefined();
-    expect(config.folders).toEqual([]);
     binding.dispose();
   });
 

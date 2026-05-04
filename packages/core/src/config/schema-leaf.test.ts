@@ -22,11 +22,6 @@ describe('resolveLeafSchema', () => {
     const leaf = resolveLeafSchema(ConfigSchema, ['nonExistentSection']);
     expect(leaf).toBeUndefined();
   });
-
-  test('handles array-typed leaf (folders)', () => {
-    const leaf = resolveLeafSchema(ConfigSchema, ['folders']);
-    expect(leaf).toBeDefined();
-  });
 });
 
 describe('getLeafFieldMeta', () => {
@@ -36,15 +31,6 @@ describe('getLeafFieldMeta', () => {
       scope: 'either',
       agentSettable: true,
       defaultScope: 'user',
-    });
-  });
-
-  test('returns metadata for the folders array leaf', () => {
-    const meta = getLeafFieldMeta(ConfigSchema, ['folders']);
-    expect(meta).toEqual({
-      scope: 'either',
-      agentSettable: true,
-      defaultScope: 'project',
     });
   });
 

@@ -1,25 +1,22 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { OK_DIR } from '@inkeep/open-knowledge-core';
-import { parseDocument } from 'yaml';
-import { STARTER_FOLDERS, starterFolderRule } from './starter.ts';
-import type { ConfigEdit, FileEntry, ScaffoldPlan, SeedOptions, SkipEntry } from './types.ts';
-import { SEED_CONFIG_FILENAME, SeedPrerequisiteError, SeedRootDirError } from './types.ts';
+import {
+  STARTER_FOLDER_FRONTMATTER_FILENAME,
+  STARTER_FOLDERS,
+  STARTER_TEMPLATES,
+} from './starter.ts';
+import type { FileEntry, ScaffoldPlan, SeedOptions, SkipEntry } from './types.ts';
+import { SeedPrerequisiteError, SeedRootDirError } from './types.ts';
 
 const LOG_MD_FILENAME = 'log.md';
 
-function readExistingFolderMatches(configYmlRaw: string | null): string[] {
-  if (!configYmlRaw) return [];
-  const doc = parseDocument(configYmlRaw);
-  const folders = doc.get('folders');
-  if (!folders || typeof folders !== 'object') return [];
-  const asJson = (folders as { toJSON?: () => unknown }).toJSON?.() ?? folders;
-  if (!Array.isArray(asJson)) return [];
-  return asJson
-    .map((entry) =>
-      entry && typeof entry === 'object' ? (entry as { match?: unknown }).match : undefined,
-    )
-    .filter((m): m is string => typeof m === 'string');
+function frontmatterTemplateId(folderPath: string): string {
+  return `${folderPath}/.ok/frontmatter.yml`;
+}
+
+function templateFileTemplateId(folderPath: string, templateName: string): string {
+  return `${folderPath}/.ok/templates/${templateName}.md`;
 }
 
 function normalizeRootDir(rootDir: string | undefined, projectDir: string): string {
@@ -63,7 +60,6 @@ export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
 
   const created: FileEntry[] = [];
   const skipped: SkipEntry[] = [];
-  const configEdits: ConfigEdit[] = [];
   const warnings: string[] = [];
 
   if (rootDir !== '') {
@@ -77,35 +73,54 @@ export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
 
   for (const folder of STARTER_FOLDERS) {
     const folderPath = joinRelative(rootDir, folder.path);
-    const absPath = join(projectDir, folderPath);
-    if (existsSync(absPath)) {
+    const folderAbs = join(projectDir, folderPath);
+    if (existsSync(folderAbs)) {
       skipped.push({ path: folderPath, reason: 'already-exists' });
     } else {
       created.push({ path: folderPath, kind: 'folder' });
     }
-  }
 
-  const configPath = join(okDir, SEED_CONFIG_FILENAME);
-  let configYmlRaw: string | null = null;
-  try {
-    configYmlRaw = existsSync(configPath) ? readFileSync(configPath, 'utf-8') : null;
-  } catch (err) {
-    warnings.push(
-      `Could not read ${OK_DIR}/${SEED_CONFIG_FILENAME}: ${err instanceof Error ? err.message : String(err)}. Treating as absent for plan computation.`,
-    );
-  }
-
-  const existingMatches = new Set(readExistingFolderMatches(configYmlRaw));
-  for (const folder of STARTER_FOLDERS) {
-    const scopedMatch = joinRelative(rootDir, folder.match);
-    if (existingMatches.has(scopedMatch)) {
-      skipped.push({ path: `${SEED_CONFIG_FILENAME}#${scopedMatch}`, reason: 'already-exists' });
+    const okSubDir = `${folderPath}/.ok`;
+    const okSubAbs = join(projectDir, okSubDir);
+    if (existsSync(okSubAbs)) {
+      skipped.push({ path: okSubDir, reason: 'already-exists' });
     } else {
-      const scopedFolder = { ...folder, match: scopedMatch };
-      configEdits.push({
-        configPath,
-        folderMatch: scopedMatch,
-        entry: starterFolderRule(scopedFolder),
+      created.push({ path: okSubDir, kind: 'folder' });
+    }
+
+    const fmPath = `${okSubDir}/${STARTER_FOLDER_FRONTMATTER_FILENAME}`;
+    const fmAbs = join(projectDir, fmPath);
+    if (existsSync(fmAbs)) {
+      skipped.push({ path: fmPath, reason: 'already-exists' });
+    } else {
+      created.push({
+        path: fmPath,
+        kind: 'file',
+        template: frontmatterTemplateId(folder.path),
+      });
+    }
+
+    const tplDir = `${okSubDir}/templates`;
+    const tplDirAbs = join(projectDir, tplDir);
+    if (existsSync(tplDirAbs)) {
+      skipped.push({ path: tplDir, reason: 'already-exists' });
+    } else {
+      created.push({ path: tplDir, kind: 'folder' });
+    }
+
+    const tplFile = `${tplDir}/${folder.starterTemplate}.md`;
+    const tplFileAbs = join(projectDir, tplFile);
+    if (existsSync(tplFileAbs)) {
+      skipped.push({ path: tplFile, reason: 'already-exists' });
+    } else if (STARTER_TEMPLATES[folder.starterTemplate] === undefined) {
+      warnings.push(
+        `No starter template body registered for "${folder.starterTemplate}". The folder will land without a template.`,
+      );
+    } else {
+      created.push({
+        path: tplFile,
+        kind: 'file',
+        template: templateFileTemplateId(folder.path, folder.starterTemplate),
       });
     }
   }
@@ -118,5 +133,5 @@ export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
     created.push({ path: logRelPath, kind: 'file', template: LOG_MD_FILENAME });
   }
 
-  return { created, skipped, configEdits, warnings };
+  return { created, skipped, warnings };
 }

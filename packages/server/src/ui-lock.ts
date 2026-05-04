@@ -23,6 +23,7 @@ export function acquireUiLock(
     port: number;
     worktreeRoot: string;
     kind?: LockKind;
+    parentPid?: number;
     capabilities?: string[];
   },
 ): string {

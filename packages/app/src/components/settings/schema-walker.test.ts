@@ -56,10 +56,6 @@ describe('resolveLeafSchema against ConfigSchema', () => {
     expect(getEnumOptions(leaf)).toEqual(['light', 'dark', 'system']);
   });
 
-  test('descends to an array leaf', () => {
-    expect(getLeafTypeTag(requireLeaf(['folders']))).toBe('array');
-  });
-
   test('returns undefined for non-existent path', () => {
     expect(resolveLeafSchema(ConfigSchema, ['does', 'not', 'exist'])).toBeUndefined();
   });
@@ -70,10 +66,6 @@ describe('getFieldDefault against ConfigSchema', () => {
     expect(getFieldDefault(requireLeaf(['content', 'dir']))).toBe('.');
     expect(getFieldDefault(requireLeaf(['server', 'host']))).toBe('localhost');
     expect(getFieldDefault(requireLeaf(['mcp', 'tools', 'search', 'maxResults']))).toBe(50);
-  });
-
-  test('returns array defaults', () => {
-    expect(getFieldDefault(requireLeaf(['folders']))).toEqual([]);
   });
 
   test('returns undefined for fields without .default()', () => {
