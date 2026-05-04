@@ -24,9 +24,10 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as wait } from 'node:timers/promises';
 import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
@@ -36,6 +37,8 @@ import {
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
+  createWorkspaceSearchCorpus,
+  createWorkspaceSearchDocument,
   DEFAULT_ATTACHMENT_FOLDER_PATH,
   DEFAULT_DEDUP_MODE,
   getHeadingSlug,
@@ -45,7 +48,12 @@ import {
   prependFrontmatter,
   readFmMap,
   SYSTEM_DOC_NAME,
+  searchWorkspaceCorpus,
   stripFrontmatter,
+  type WorkspaceSearchCorpus,
+  type WorkspaceSearchDocument,
+  type WorkspaceSearchIntent,
+  type WorkspaceSearchScope,
 } from '@inkeep/open-knowledge-core';
 import { writeConfigPatch } from '@inkeep/open-knowledge-core/server';
 import {
@@ -728,6 +736,14 @@ export interface ApiExtensionOptions {
   installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
   forceUnloadDocument?: (document: Document) => Promise<void>;
 }
+
+interface WorkspaceSearchCacheEntry {
+  fingerprint: string;
+  corpus?: WorkspaceSearchCorpus;
+  pending?: Promise<WorkspaceSearchCorpus>;
+}
+
+const workspaceSearchCaches = new Map<string, WorkspaceSearchCacheEntry>();
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -4003,6 +4019,236 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  function deriveFolderSearchDocuments(
+    pages: readonly WorkspaceSearchDocument[],
+  ): WorkspaceSearchDocument[] {
+    const folderModified = new Map<string, number>();
+    for (const page of pages) {
+      const segments = page.path.split('/').filter(Boolean);
+      segments.pop();
+      for (let i = 1; i <= segments.length; i++) {
+        const folderPath = segments.slice(0, i).join('/');
+        folderModified.set(
+          folderPath,
+          Math.max(folderModified.get(folderPath) ?? 0, page.modifiedTs),
+        );
+      }
+    }
+    return [...folderModified.entries()].map(([path, modifiedTs]) =>
+      createWorkspaceSearchDocument({ kind: 'folder', path, modifiedTs }),
+    );
+  }
+
+  function buildSearchSnippet(content: string, query: string): string | undefined {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery || !content) return undefined;
+    const normalizedContent = content.toLowerCase();
+    const index = normalizedContent.indexOf(normalizedQuery);
+    if (index < 0) return undefined;
+    const start = Math.max(0, index - 80);
+    const end = Math.min(content.length, index + normalizedQuery.length + 120);
+    const prefix = start > 0 ? '...' : '';
+    const suffix = end < content.length ? '...' : '';
+    return `${prefix}${content.slice(start, end).replace(/\s+/g, ' ').trim()}${suffix}`;
+  }
+
+  function parseSearchIntent(value: unknown): WorkspaceSearchIntent {
+    if (value === 'autocomplete' || value === 'full_text' || value === 'omnibar') return value;
+    return 'omnibar';
+  }
+
+  function parseSearchScopes(value: unknown): WorkspaceSearchScope[] | undefined {
+    const rawScopes =
+      typeof value === 'string' ? value.split(',') : Array.isArray(value) ? value : undefined;
+    if (!rawScopes) return undefined;
+    const scopes = rawScopes.filter(
+      (scope): scope is WorkspaceSearchScope =>
+        scope === 'page' || scope === 'folder' || scope === 'content',
+    );
+    return scopes.length > 0 ? scopes : undefined;
+  }
+
+  class SearchRequestError extends Error {
+    constructor(
+      readonly status: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  }
+
+  async function readSearchRequest(req: IncomingMessage): Promise<{
+    query: string;
+    intent: WorkspaceSearchIntent;
+    scopes?: WorkspaceSearchScope[];
+    limit?: number;
+  }> {
+    if (req.method === 'GET') {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const limit = url.searchParams.get('limit');
+      return {
+        query: url.searchParams.get('query') ?? '',
+        intent: parseSearchIntent(url.searchParams.get('intent')),
+        scopes: parseSearchScopes(url.searchParams.get('scope') ?? url.searchParams.get('scopes')),
+        limit: limit === null ? undefined : Number(limit),
+      };
+    }
+
+    let body: Buffer;
+    try {
+      body = await readBody(req);
+    } catch {
+      throw new SearchRequestError(413, 'Payload too large');
+    }
+
+    let parsed: {
+      query?: unknown;
+      intent?: unknown;
+      scope?: unknown;
+      scopes?: unknown;
+      limit?: unknown;
+    };
+    try {
+      const value = JSON.parse(body.toString()) as unknown;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new SearchRequestError(400, 'Invalid JSON body');
+      }
+      parsed = value as typeof parsed;
+    } catch (err) {
+      if (err instanceof SearchRequestError) throw err;
+      throw new SearchRequestError(400, 'Invalid JSON body');
+    }
+    return {
+      query: typeof parsed.query === 'string' ? parsed.query : '',
+      intent: parseSearchIntent(parsed.intent),
+      scopes: parseSearchScopes(parsed.scopes ?? parsed.scope),
+      limit: typeof parsed.limit === 'number' ? parsed.limit : Number(parsed.limit),
+    };
+  }
+
+  async function buildWorkspaceSearchDocumentsFromIndex(): Promise<WorkspaceSearchDocument[]> {
+    const pages: WorkspaceSearchDocument[] = [];
+    for (const [docName, entry] of getFileIndex()) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
+      let content = '';
+      let title = docName;
+      try {
+        content = await readFile(entry.canonicalPath, 'utf-8');
+        title = extractPageTitle(content, docName);
+      } catch (err) {
+        console.warn(`[search] Failed to index ${docName}:`, err);
+      }
+      pages.push(
+        createWorkspaceSearchDocument({
+          kind: 'page',
+          path: docName,
+          title,
+          content,
+          modifiedTs: Date.parse(entry.modified),
+        }),
+      );
+    }
+    return [...pages, ...deriveFolderSearchDocuments(pages)];
+  }
+
+  function workspaceSearchFingerprint(): string {
+    return [...getFileIndex()]
+      .filter(([docName]) => !isSystemDoc(docName) && !isConfigDoc(docName))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(
+        ([docName, entry]) =>
+          `${docName}\u0000${entry.modified}\u0000${entry.size}\u0000${entry.canonicalPath}\u0000${entry.inode}\u0000${entry.aliases.join(',')}`,
+      )
+      .join('\u0001');
+  }
+
+  async function getWorkspaceSearchCorpus(): Promise<WorkspaceSearchCorpus> {
+    const cacheKey = `${contentDir}\u0000${projectDir ?? ''}`;
+    const fingerprint = workspaceSearchFingerprint();
+    const workspaceSearchCache = workspaceSearchCaches.get(cacheKey);
+    if (workspaceSearchCache?.fingerprint === fingerprint && workspaceSearchCache.corpus) {
+      return workspaceSearchCache.corpus;
+    }
+    if (workspaceSearchCache?.fingerprint === fingerprint && workspaceSearchCache.pending) {
+      return workspaceSearchCache.pending;
+    }
+
+    const pending = buildWorkspaceSearchDocumentsFromIndex().then((documents) =>
+      createWorkspaceSearchCorpus(documents),
+    );
+    workspaceSearchCaches.set(cacheKey, { fingerprint, pending });
+    try {
+      const corpus = await pending;
+      if (workspaceSearchCaches.get(cacheKey)?.pending === pending) {
+        workspaceSearchCaches.set(cacheKey, { fingerprint, corpus });
+      }
+      return corpus;
+    } catch (err) {
+      if (workspaceSearchCaches.get(cacheKey)?.pending === pending) {
+        workspaceSearchCaches.delete(cacheKey);
+      }
+      throw err;
+    }
+  }
+
+  function prewarmWorkspaceSearchCache(): void {
+    if (process.env.NODE_ENV === 'test') return;
+    for (const delayMs of [0, 1000, 3000]) {
+      setTimeout(() => {
+        void getWorkspaceSearchCorpus().catch((err) => {
+          console.warn('[search] Failed to prewarm workspace search cache:', err);
+        });
+      }, delayMs);
+    }
+  }
+
+  prewarmWorkspaceSearchCache();
+
+  async function handleSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const startedAt = performance.now();
+      const request = await readSearchRequest(req);
+      if (request.query.length > 200) {
+        json(res, 400, { ok: false, error: 'Query is too long' });
+        return;
+      }
+      const corpus = await getWorkspaceSearchCorpus();
+      const results = searchWorkspaceCorpus(corpus, request.query, {
+        intent: request.intent,
+        scopes: request.scopes,
+        limit: request.limit,
+      });
+      json(res, 200, {
+        ok: true,
+        query: request.query,
+        intent: request.intent,
+        results: results.map((result) => ({
+          kind: result.document.kind,
+          path: result.document.path,
+          title: result.document.title,
+          score: result.score,
+          signals: result.signals,
+          snippet:
+            result.document.kind === 'page'
+              ? buildSearchSnippet(result.document.content, request.query)
+              : undefined,
+        })),
+        elapsedMs: Math.max(0, performance.now() - startedAt),
+      });
+    } catch (err) {
+      if (err instanceof SearchRequestError) {
+        json(res, err.status, { ok: false, error: err.message });
+        return;
+      }
+      console.error('[search]', err);
+      json(res, 500, { ok: false, error: 'Failed to search workspace' });
+    }
+  }
+
   async function handleSuggestLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -5235,6 +5481,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/orphans': handleOrphans,
     '/api/hubs': handleHubs,
     '/api/pages': handlePages,
+    '/api/search': handleSearch,
     '/api/suggest-links': handleSuggestLinks,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,

@@ -31,6 +31,7 @@ const EXEMPT_HANDLERS = new Set([
   'handleBacklinkCounts',
   'handleForwardLinks',
   'handleLinkGraph',
+  'handleSearch',
   'handleDeadLinks',
   'handleOrphans',
   'handleHubs',
