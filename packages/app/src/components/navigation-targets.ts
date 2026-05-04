@@ -1,4 +1,4 @@
-import { toWikiLinkSlug } from '@inkeep/open-knowledge-core';
+import { type InlineAssetMediaKind, toWikiLinkSlug } from '@inkeep/open-knowledge-core';
 import { normalizeDocNameInput } from '@/lib/doc-paths';
 import { computeAncestors } from './file-tree-utils';
 
@@ -19,6 +19,12 @@ export type ResolvedNavigationTarget =
       kind: 'folder';
       target: string;
       folderPath: string;
+    }
+  | {
+      kind: 'asset';
+      target: string;
+      assetPath: string;
+      mediaKind: InlineAssetMediaKind;
     }
   | {
       kind: 'missing';
@@ -124,6 +130,7 @@ export function docNameForNavigationTarget(target: ResolvedNavigationTarget): st
       return target.docName;
     case 'missing':
       return target.target;
+    case 'asset':
     case 'folder':
       return null;
   }

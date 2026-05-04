@@ -93,6 +93,7 @@ export function EditorHeader({
   const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
   const sourceDisabled = !activeDocName || !isConnected;
   const isFolderTarget = activeTarget?.kind === 'folder';
+  const isAssetTarget = activeTarget?.kind === 'asset';
   const isNewDoc = activeTarget?.kind === 'missing';
   const activeDocExt = (activeDocName && pageMeta.get(activeDocName)?.docExt) || '.md';
   const displayName = isFolderTarget
@@ -102,6 +103,10 @@ export function EditorHeader({
       : '';
 
   const index = activeDocName?.lastIndexOf('/') ?? -1;
+  const assetPath = isAssetTarget ? activeTarget.assetPath : '';
+  const assetSlash = assetPath.lastIndexOf('/');
+  const assetPrefix = assetSlash === -1 ? '' : assetPath.slice(0, assetSlash);
+  const assetFileName = assetSlash === -1 ? assetPath : assetPath.slice(assetSlash + 1);
 
   const pathPrefix =
     activeDocName && index !== -1 ? `${activeDocName.substring(0, index + 1)}` : '';
@@ -296,6 +301,18 @@ export function EditorHeader({
             <FolderOpen className="size-4 shrink-0" />
             <span className="truncate">{displayName}</span>
           </span>
+        ) : isAssetTarget ? (
+          <div className="flex min-w-0 items-center gap-2 overflow-hidden text-sm">
+            <span className="flex min-w-0 items-center overflow-hidden">
+              {assetPrefix && (
+                <>
+                  <span className="truncate text-muted-foreground/60">{assetPrefix}</span>
+                  <span className="shrink-0 px-2 text-muted-foreground/60">/</span>
+                </>
+              )}
+              <span className="shrink-0 font-medium text-foreground">{assetFileName}</span>
+            </span>
+          </div>
         ) : activeDocName ? (
           <div className="flex min-w-0 items-center overflow-hidden">
             {/* Path prefix — shrinks first so filename stays visible */}

@@ -5,6 +5,7 @@ export default {
   ignoreDependencies: [
     'lint-staged', // not sure if it's false positive
   ],
+  ignoreBinaries: ['printf'],
   ignoreIssues: {
     'packages/app/src/components/ui/*': ['exports'],
     'docs/source.config.ts': ['exports'],
@@ -20,16 +21,9 @@ export default {
     'docs/content/guides/component-blocks.mdx': ['files'],
     'docs/content/guides/assets-and-embeds.mdx': ['files'],
   },
-  ignoreBinaries: ['printf'],
   workspaces: {
     'packages/app': {
-      entry: [
-        'src/**/*.test.{ts,tsx}',
-        'tests/**/*.{test,e2e}.ts',
-        'tests/integration/idb-preload.ts',
-        'tests/perf/profile.ts',
-        'tests/perf/lib/*.ts',
-      ],
+      entry: ['src/**/*.test.{ts,tsx}', 'tests/**/*.{test,e2e}.ts', 'tests/perf/lib/*.ts'],
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',

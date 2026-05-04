@@ -32,7 +32,7 @@ export async function startConfigFileWatcher(
   });
 
   await new Promise<void>((resolve) => {
-    watcher.once('ready', () => resolve());
+    watcher.once('ready', resolve);
   });
 
   let lastContent: string | null = null;

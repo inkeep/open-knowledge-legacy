@@ -85,6 +85,20 @@ describe('snapshotsEqual', () => {
     };
     expect(snapshotsEqual(a, b)).toBe(false);
   });
+
+  it('returns false when referenced asset paths differ', () => {
+    const a: PageListCacheSnapshot = {
+      pages: new Set(['x']),
+      folderPaths: new Set(),
+      assetPaths: new Set(['docs/image.png']),
+    };
+    const b: PageListCacheSnapshot = {
+      pages: new Set(['x']),
+      folderPaths: new Set(),
+      assetPaths: new Set(['docs/other.png']),
+    };
+    expect(snapshotsEqual(a, b)).toBe(false);
+  });
 });
 
 describe('getPageListCache', () => {

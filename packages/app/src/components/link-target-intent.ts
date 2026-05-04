@@ -48,6 +48,7 @@ export function resolveLinkTargetIntent(
       folderPaths: options.folderPaths,
       pagesBySlug: options.pagesBySlug,
     });
+    if (resolvedTarget.kind === 'asset') continue;
     if (resolvedTarget.kind === 'missing') {
       missingTarget ??= resolvedTarget;
       continue;
@@ -60,21 +61,23 @@ export function resolveLinkTargetIntent(
     };
   }
 
-  const finalMissingTarget =
+  const resolvedFallback =
     missingTarget ??
     resolveNavigationTarget(target, {
       pages: options.pages,
       folderPaths: options.folderPaths,
       pagesBySlug: options.pagesBySlug,
     });
-  if (finalMissingTarget.kind !== 'missing') {
+  if (resolvedFallback.kind !== 'missing' && resolvedFallback.kind !== 'asset') {
     return {
       kind: 'navigate',
-      displayState: finalMissingTarget.kind === 'folder' ? 'folder' : 'resolved',
-      resolvedTarget: finalMissingTarget,
-      hashDocName: finalMissingTarget.target,
+      displayState: resolvedFallback.kind === 'folder' ? 'folder' : 'resolved',
+      resolvedTarget: resolvedFallback,
+      hashDocName: resolvedFallback.target,
     };
   }
+  const finalMissingTarget: MissingTarget =
+    resolvedFallback.kind === 'asset' ? { kind: 'missing', target } : resolvedFallback;
 
   const seed = options.createDialogSeed ?? docNameToDialogSeed(finalMissingTarget.target);
   return {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { resolveFileTreeSelection } from './file-tree-selection';
+import { resolveFileTreeSelection, resolveFileTreeSelectionAction } from './file-tree-selection';
 
 describe('resolveFileTreeSelection', () => {
   test('keeps a document row active for doc targets', () => {
@@ -68,6 +68,50 @@ describe('resolveFileTreeSelection', () => {
       selectedFilePath: null,
       selectedFolderPath: null,
       navigationPath: null,
+    });
+  });
+});
+
+describe('resolveFileTreeSelectionAction', () => {
+  test('routes asset rows to the standalone asset hash', () => {
+    expect(
+      resolveFileTreeSelectionAction('docs/photo.png', [
+        {
+          kind: 'asset',
+          path: 'docs/photo.png',
+          assetExt: '.png',
+          mediaKind: 'image',
+          size: 0,
+          modified: '',
+        },
+      ]),
+    ).toEqual({
+      kind: 'asset',
+      hash: '#/__asset__/docs/photo.png',
+    });
+  });
+
+  test('routes known document rows to document navigation', () => {
+    expect(
+      resolveFileTreeSelectionAction('docs/guide.md', [
+        {
+          kind: 'document',
+          docName: 'docs/guide',
+          size: 0,
+          modified: '',
+        },
+      ]),
+    ).toEqual({
+      kind: 'document-or-folder',
+      path: 'docs/guide',
+    });
+  });
+
+  test('drops transient unknown document selections while allowing folders', () => {
+    expect(resolveFileTreeSelectionAction('docs/missing.md', [])).toEqual({ kind: 'none' });
+    expect(resolveFileTreeSelectionAction('docs/', [])).toEqual({
+      kind: 'document-or-folder',
+      path: 'docs',
     });
   });
 });

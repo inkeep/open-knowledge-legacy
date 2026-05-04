@@ -79,7 +79,7 @@ export function classifyMarkdownHref(
 export function classifyWikiLinkTarget(
   target: string,
   anchor: string | null,
-): DocLinkTarget | ExternalLinkTarget | null {
+): DocLinkTarget | ExternalLinkTarget | AssetLinkTarget | null {
   const trimmed = target.trim();
   if (!trimmed) return null;
 
@@ -88,6 +88,11 @@ export function classifyWikiLinkTarget(
       kind: 'external',
       url: anchor ? `${trimmed}#${anchor}` : trimmed,
     };
+  }
+
+  const ext = extractAssetExtension(trimmed);
+  if (ext && ext !== 'md' && ext !== 'mdx') {
+    return { kind: 'asset', url: trimmed, ext };
   }
 
   return {
