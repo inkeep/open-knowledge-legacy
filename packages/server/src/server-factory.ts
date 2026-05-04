@@ -18,7 +18,7 @@ import {
   resolveConfigPath,
   writeConfigPatch,
 } from '@inkeep/open-knowledge-core/server';
-import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { resolveGitDir, resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
@@ -44,12 +44,7 @@ import {
   startWatcher,
   type WatcherHandle,
 } from './file-watcher.ts';
-import {
-  type HeadWatcherHandle,
-  readBranchFromHead,
-  resolveGitDir,
-  startHeadWatcher,
-} from './head-watcher.ts';
+import { type HeadWatcherHandle, readBranchFromHead, startHeadWatcher } from './head-watcher.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
 import { recoverPendingManagedRename } from './managed-rename-journal.ts';

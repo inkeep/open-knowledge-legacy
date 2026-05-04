@@ -3,7 +3,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { readBranchFromHead, resolveGitDir } from './head-watcher';
+import { resolveGitDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { readBranchFromHead } from './head-watcher';
 
 let tmpDir: string;
 

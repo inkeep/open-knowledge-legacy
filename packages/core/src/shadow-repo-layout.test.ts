@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -15,8 +15,10 @@ import {
   formatRenameSubject,
   formatRollbackSubject,
   formatWipSubject,
+  GitDirAccessError,
   getShadowRepoPath,
   getWipRefPattern,
+  MalformedGitPointerError,
   type OkActorEntry,
   parseCheckpoint,
   parseContributors,
@@ -24,6 +26,8 @@ import {
   parseOkActors,
   parseWriterId,
   readContributors,
+  resolveGitDir,
+  resolveShadowDir,
 } from './shadow-repo-layout.ts';
 
 let tmp: string;
@@ -253,6 +257,178 @@ describe('getWipRefPattern', () => {
   });
 });
 
+describe('resolveGitDir', () => {
+  test('returns .git path when .git is a directory', () => {
+    const project = resolve(tmp, 'project');
+    mkdirSync(resolve(project, '.git'), { recursive: true });
+    expect(resolveGitDir(project)).toBe(resolve(project, '.git'));
+  });
+
+  test('resolves worktree pointer when .git is a file with valid gitdir:', () => {
+    const project = resolve(tmp, 'worktree');
+    const realGitDir = resolve(tmp, 'real-git');
+    mkdirSync(project, { recursive: true });
+    mkdirSync(realGitDir, { recursive: true });
+    writeFileSync(resolve(project, '.git'), `gitdir: ${realGitDir}\n`);
+    expect(resolveGitDir(project)).toBe(realGitDir);
+  });
+
+  test('returns null when .git is absent', () => {
+    const project = resolve(tmp, 'no-git');
+    mkdirSync(project, { recursive: true });
+    expect(resolveGitDir(project)).toBeNull();
+  });
+
+  test('returns null when .git is a file without gitdir: prefix', () => {
+    const project = resolve(tmp, 'malformed');
+    mkdirSync(project, { recursive: true });
+    writeFileSync(resolve(project, '.git'), 'not a gitdir pointer\n');
+    expect(resolveGitDir(project)).toBeNull();
+  });
+
+  test('resolves a relative gitdir: pointer against the project root', () => {
+    const project = resolve(tmp, 'relative-wt');
+    const realGitDir = resolve(tmp, 'real-git-relative');
+    mkdirSync(project, { recursive: true });
+    mkdirSync(realGitDir, { recursive: true });
+    writeFileSync(resolve(project, '.git'), 'gitdir: ../real-git-relative\n');
+    expect(resolveGitDir(project)).toBe(realGitDir);
+  });
+});
+
+describe('resolveShadowDir', () => {
+  test('main worktree: returns <projectRoot>/.git/ok bit-identical to legacy', () => {
+    const project = resolve(tmp, 'project');
+    mkdirSync(resolve(project, '.git'), { recursive: true });
+    expect(resolveShadowDir(project)).toBe(resolve(project, '.git/ok'));
+  });
+
+  test('linked worktree: appends ok to the resolved gitdir', () => {
+    const project = resolve(tmp, 'wt');
+    const adminDir = resolve(tmp, 'real-git/worktrees/wt');
+    mkdirSync(project, { recursive: true });
+    mkdirSync(adminDir, { recursive: true });
+    writeFileSync(resolve(project, '.git'), `gitdir: ${adminDir}\n`);
+    expect(resolveShadowDir(project)).toBe(resolve(adminDir, 'ok'));
+  });
+
+  test('throws MalformedGitPointerError when pointer references a missing admin dir', () => {
+    const project = resolve(tmp, 'stale');
+    mkdirSync(project, { recursive: true });
+    const missingTarget = resolve(tmp, 'gone-admin');
+    writeFileSync(resolve(project, '.git'), `gitdir: ${missingTarget}\n`);
+    let caught: unknown;
+    try {
+      resolveShadowDir(project);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(MalformedGitPointerError);
+    const e = caught as MalformedGitPointerError;
+    expect(e.gitPointerPath).toBe(resolve(project, '.git'));
+    expect(e.resolvedTarget).toBe(missingTarget);
+    expect(e.message).toContain(missingTarget);
+    expect(e.message).toContain('git worktree prune');
+  });
+
+  test('throws MalformedGitPointerError when .git is a file without a valid gitdir: line', () => {
+    const project = resolve(tmp, 'garbage-pointer');
+    mkdirSync(project, { recursive: true });
+    writeFileSync(resolve(project, '.git'), 'not a gitdir pointer\n');
+    let caught: unknown;
+    try {
+      resolveShadowDir(project);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(MalformedGitPointerError);
+    const e = caught as MalformedGitPointerError;
+    expect(e.gitPointerPath).toBe(resolve(project, '.git'));
+    expect(e.resolvedTarget).toBe('');
+    expect(e.message).toContain('git worktree prune');
+  });
+
+  test('threads the underlying readFileSync error as `cause` when the .git pointer is unreadable', () => {
+    const project = resolve(tmp, 'unreadable');
+    mkdirSync(project, { recursive: true });
+    const gitPath = resolve(project, '.git');
+    writeFileSync(gitPath, 'gitdir: /tmp/whatever\n');
+    chmodSync(gitPath, 0o000);
+    let stillReadable = false;
+    try {
+      readFileSync(gitPath, 'utf-8');
+      stillReadable = true;
+    } catch {}
+    if (stillReadable) {
+      chmodSync(gitPath, 0o644);
+      return;
+    }
+    let caught: unknown;
+    try {
+      resolveShadowDir(project);
+    } catch (err) {
+      caught = err;
+    } finally {
+      chmodSync(gitPath, 0o644);
+    }
+    expect(caught).toBeInstanceOf(MalformedGitPointerError);
+    const e = caught as MalformedGitPointerError & { cause?: unknown };
+    expect(e.cause).toBeDefined();
+    const causeCode = (e.cause as NodeJS.ErrnoException | undefined)?.code;
+    expect(['EACCES', 'EPERM']).toContain(causeCode);
+  });
+
+  test('throws GitDirAccessError (not MalformedGitPointerError) when statSync fails with non-ENOENT', () => {
+    const project = resolve(tmp, 'unstattable');
+    mkdirSync(project, { recursive: true });
+    writeFileSync(resolve(project, '.git'), 'gitdir: /tmp/whatever\n');
+    chmodSync(project, 0o000);
+    let stillStattable = false;
+    try {
+      readFileSync(resolve(project, '.git'), 'utf-8');
+      stillStattable = true;
+    } catch {}
+    if (stillStattable) {
+      chmodSync(project, 0o755);
+      return;
+    }
+    let caught: unknown;
+    try {
+      resolveShadowDir(project);
+    } catch (err) {
+      caught = err;
+    } finally {
+      chmodSync(project, 0o755);
+    }
+    expect(caught).toBeInstanceOf(GitDirAccessError);
+    expect(caught).not.toBeInstanceOf(MalformedGitPointerError);
+    const e = caught as GitDirAccessError & { cause?: unknown };
+    expect(e.gitPath).toBe(resolve(project, '.git'));
+    expect(e.cause).toBeDefined();
+    const causeCode = (e.cause as NodeJS.ErrnoException | undefined)?.code;
+    expect(['EACCES', 'EPERM']).toContain(causeCode);
+    expect(e.message).toContain('Check filesystem permissions');
+    expect(e.message).not.toContain('git worktree prune');
+    expect(e.message).toContain(`(${causeCode})`);
+  });
+
+  test('falls through to legacy <projectRoot>/.git/ok when .git is truly absent', () => {
+    const project = resolve(tmp, 'no-git');
+    mkdirSync(project, { recursive: true });
+    expect(resolveShadowDir(project)).toBe(resolve(project, '.git/ok'));
+  });
+
+  test('does not throw on a healthy .git file pointing at an existing populated admin dir', () => {
+    const project = resolve(tmp, 'healthy-wt');
+    const adminDir = resolve(tmp, 'real-git/worktrees/healthy-wt');
+    mkdirSync(project, { recursive: true });
+    mkdirSync(adminDir, { recursive: true });
+    writeFileSync(resolve(adminDir, 'HEAD'), 'ref: refs/heads/main\n');
+    writeFileSync(resolve(project, '.git'), `gitdir: ${adminDir}\n`);
+    expect(() => resolveShadowDir(project)).not.toThrow();
+  });
+});
+
 describe('getShadowRepoPath', () => {
   test('returns null when no shadow repo exists', () => {
     expect(getShadowRepoPath(tmp)).toBe(null);
@@ -283,6 +459,80 @@ describe('getShadowRepoPath', () => {
     const project = resolve(tmp, 'project');
     mkdirSync(resolve(project, '.git/ok'), { recursive: true });
     expect(getShadowRepoPath(project)).toBe(null);
+  });
+
+  test('returns null on stale .git pointer instead of throwing — preserves string|null contract', () => {
+    const project = resolve(tmp, 'stale-probe');
+    mkdirSync(project, { recursive: true });
+    writeFileSync(resolve(project, '.git'), `gitdir: ${resolve(tmp, 'gone')}\n`);
+    expect(() => resolveShadowDir(project)).toThrow(MalformedGitPointerError);
+    expect(getShadowRepoPath(project)).toBe(null);
+  });
+
+  test('returns null when .git is a file with malformed pointer text — preserves string|null contract', () => {
+    const project = resolve(tmp, 'garbage-probe');
+    mkdirSync(project, { recursive: true });
+    writeFileSync(resolve(project, '.git'), 'not a gitdir pointer\n');
+    expect(() => resolveShadowDir(project)).toThrow(MalformedGitPointerError);
+    expect(getShadowRepoPath(project)).toBe(null);
+  });
+
+  test('swallows GitDirAccessError, returns null — preserves string|null contract on EACCES', () => {
+    const project = resolve(tmp, 'eaccess-probe');
+    mkdirSync(project, { recursive: true });
+    writeFileSync(resolve(project, '.git'), 'gitdir: /tmp/whatever\n');
+    chmodSync(project, 0o000);
+    let stillStattable = false;
+    try {
+      readFileSync(resolve(project, '.git'), 'utf-8');
+      stillStattable = true;
+    } catch {}
+    if (stillStattable) {
+      chmodSync(project, 0o755);
+      return;
+    }
+    try {
+      expect(() => resolveShadowDir(project)).toThrow(GitDirAccessError);
+      expect(getShadowRepoPath(project)).toBe(null);
+    } finally {
+      chmodSync(project, 0o755);
+    }
+  });
+});
+
+describe('GitDirAccessError', () => {
+  test('extends Error with named class and gitPath field', () => {
+    const cause = new Error('boom') as NodeJS.ErrnoException;
+    cause.code = 'EACCES';
+    const err = new GitDirAccessError('/tmp/proj/.git', { cause });
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toBeInstanceOf(GitDirAccessError);
+    expect(err.name).toBe('GitDirAccessError');
+    expect(err.gitPath).toBe('/tmp/proj/.git');
+    expect((err as { cause?: unknown }).cause).toBe(cause);
+  });
+
+  test('message includes errno code from cause when available', () => {
+    const cause = new Error('boom') as NodeJS.ErrnoException;
+    cause.code = 'EACCES';
+    const err = new GitDirAccessError('/tmp/proj/.git', { cause });
+    expect(err.message).toContain('/tmp/proj/.git');
+    expect(err.message).toContain('(EACCES)');
+    expect(err.message).toContain('Check filesystem permissions');
+  });
+
+  test('message omits the errno parenthetical when cause has no code field', () => {
+    const err = new GitDirAccessError('/tmp/proj/.git', { cause: new Error('unknown') });
+    expect(err.message).not.toContain('(undefined)');
+    expect(err.message).not.toContain('()');
+    expect(err.message).toContain('Check filesystem permissions');
+  });
+
+  test('constructs cleanly when cause is undefined entirely', () => {
+    const err = new GitDirAccessError('/tmp/proj/.git');
+    expect(err.message).toContain('/tmp/proj/.git');
+    expect(err.message).not.toContain('(undefined)');
+    expect((err as { cause?: unknown }).cause).toBeUndefined();
   });
 });
 

@@ -1,4 +1,8 @@
 export type { Principal } from '@inkeep/open-knowledge-core';
+export {
+  GitDirAccessError,
+  MalformedGitPointerError,
+} from '@inkeep/open-knowledge-core/shadow-repo-layout';
 export { AgentFocusBroadcaster } from './agent-focus.ts';
 export { AGENT_ID_RE, toBroadcasterKey, validateAgentId } from './agent-id.ts';
 export { AgentPresenceBroadcaster } from './agent-presence.ts';
@@ -171,6 +175,11 @@ export {
   type ReconciliationMetrics,
   resetMetrics,
 } from './metrics.ts';
+export {
+  MISSING_OK_CONFIG_MESSAGE,
+  MissingOkConfigError,
+  type MissingOkConfigKind,
+} from './missing-ok-config-error.ts';
 export {
   createPersistenceExtension,
   type PersistenceHandle,
