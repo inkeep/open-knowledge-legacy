@@ -1,5 +1,6 @@
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { resolveGitDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 
 type BatchKind = 'within-branch' | 'cross-branch' | 'detached-head';
 
@@ -29,23 +30,6 @@ const QUIET_WINDOW_MS = 100;
 const BATCH_TIMEOUT_MS = 30_000;
 
 const WATCHED_FILES = new Set(['HEAD', 'MERGE_HEAD', 'ORIG_HEAD', 'index.lock']);
-
-export function resolveGitDir(projectRoot: string): string | null {
-  const gitPath = resolve(projectRoot, '.git');
-  try {
-    const stat = statSync(gitPath);
-    if (stat.isDirectory()) return gitPath;
-    if (stat.isFile()) {
-      const content = readFileSync(gitPath, 'utf-8').trim();
-      const match = content.match(/^gitdir:\s*(.+)$/);
-      if (match) {
-        const resolved = resolve(projectRoot, match[1]);
-        return resolved;
-      }
-    }
-  } catch {}
-  return null;
-}
 
 function readHeadSha(gitDir: string): string | null {
   try {

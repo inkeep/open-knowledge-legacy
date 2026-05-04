@@ -347,6 +347,10 @@ describe('bootStartServer (integration)', () => {
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-boot-'));
+    const okDir = resolve(tmpDir, '.ok');
+    mkdirSync(okDir, { recursive: true });
+    writeFileSync(resolve(okDir, 'config.yml'), '', 'utf-8');
+    writeFileSync(resolve(okDir, '.gitignore'), '', 'utf-8');
     booted = null;
   });
 
@@ -621,6 +625,11 @@ describe('bootStartServer — ensureProjectGit wiring (US-004)', () => {
   });
 
   test('skipAutoInit:true suppresses ensureProjectGit (no project .git/HEAD created)', async () => {
+    const okDir = resolve(tmpDir, '.ok');
+    mkdirSync(okDir, { recursive: true });
+    writeFileSync(resolve(okDir, 'config.yml'), '', 'utf-8');
+    writeFileSync(resolve(okDir, '.gitignore'), '', 'utf-8');
+
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
@@ -725,6 +734,10 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-banner-'));
+    const okDir = resolve(tmpDir, '.ok');
+    mkdirSync(okDir, { recursive: true });
+    writeFileSync(resolve(okDir, 'config.yml'), '', 'utf-8');
+    writeFileSync(resolve(okDir, '.gitignore'), '', 'utf-8');
     booted = null;
     uiHandle = null;
   });

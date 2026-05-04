@@ -14,3 +14,4 @@ export {
   writeUserMcpConfigs,
 } from './commands/init.ts';
 export { type LoadConfigResult, loadConfig } from './config/loader.ts';
+export { initContent } from './content/init.ts';

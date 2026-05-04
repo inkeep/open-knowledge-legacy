@@ -21,6 +21,7 @@
  */
 
 import { rename, writeFile } from 'node:fs/promises';
+import { initContent } from '@inkeep/open-knowledge';
 import {
   type BootedServer,
   type BootServerOptions,
@@ -176,6 +177,10 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
         skipAutoInit: false,
         ensureProjectGitFn: () =>
           server.ensureProjectGit(msg.opts.projectDir ?? msg.opts.contentDir),
+        autoInitFn: () => {
+          const result = initContent(msg.opts.projectDir ?? msg.opts.contentDir);
+          return result.created.length > 0 || result.updated.length > 0;
+        },
       });
       const readyMsg: UtilityReadyMessage = {
         type: 'ready',

@@ -1,12 +1,36 @@
+import { existsSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
+import { resolve } from 'node:path';
+import { OK_DIR } from '@inkeep/open-knowledge-core';
+import { resolveGitDirDetailed } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import type { Config } from './config/schema.ts';
+import { normalizeFsPath } from './fs-traced.ts';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';
 import { createMcpHttpHandler } from './mcp-http.ts';
 import { mountMcpAndApi } from './mcp-mount.ts';
+import { MissingOkConfigError } from './missing-ok-config-error.ts';
 import type { EnsureProjectGitResult } from './project-git.ts';
 import { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
-import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
+import { initTelemetry, shutdownTelemetry, withSpan } from './telemetry.ts';
+
+function computeWorktreeAttributes(projectDir: string): {
+  kind: 'main' | 'linked';
+  gitdir: string | null;
+} {
+  const result = resolveGitDirDetailed(projectDir);
+  switch (result.kind) {
+    case 'directory':
+      return { kind: 'main', gitdir: result.path };
+    case 'linked':
+      return { kind: 'linked', gitdir: result.path };
+    case 'malformed-pointer':
+      return { kind: 'linked', gitdir: null };
+    case 'inaccessible':
+    case 'absent':
+      return { kind: 'main', gitdir: null };
+  }
+}
 
 const DEFAULT_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
 const DESTROY_STEP_TIMEOUT_MS = 5000;
@@ -59,6 +83,20 @@ export interface BootedServer {
 }
 
 export async function bootServer(opts: BootServerOptions): Promise<BootedServer> {
+  initTelemetry();
+
+  const { kind: worktreeKind, gitdir: worktreeGitdir } = computeWorktreeAttributes(
+    opts.projectDir ?? opts.contentDir,
+  );
+  const spanAttributes: Record<string, string> = { 'ok.worktree.kind': worktreeKind };
+  if (worktreeGitdir !== null) {
+    spanAttributes['ok.worktree.gitdir'] = normalizeFsPath(worktreeGitdir);
+  }
+
+  return withSpan('ok.boot', { attributes: spanAttributes }, async () => bootServerInner(opts));
+}
+
+async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
   const skipAutoInit = opts.skipAutoInit ?? false;
   const attachUi = opts.attachUiSibling ?? true;
   const idleMsOption = opts.idleShutdownMs;
@@ -69,8 +107,6 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
       ? process.env.OK_LOCK_KIND
       : undefined;
   const lockKind = opts.lockKind ?? envLockKind ?? 'interactive';
-
-  initTelemetry();
 
   const { createServer: createHttpServer } = await import('node:http');
   const { updateServerLockPort } = await import('./server-lock.ts');
@@ -89,6 +125,19 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     } catch (err) {
       log.warn({ err }, 'autoInitFn failed');
     }
+  }
+
+  const okDir = resolve(opts.contentDir, OK_DIR);
+  const configPath = resolve(okDir, 'config.yml');
+  if (!existsSync(configPath)) {
+    const okDirExists = existsSync(okDir);
+    throw new MissingOkConfigError(okDirExists ? 'config' : 'okdir', opts.contentDir);
+  }
+  const gitignorePath = resolve(okDir, '.gitignore');
+  if (!existsSync(gitignorePath)) {
+    console.warn(
+      `[boot] Note: ${OK_DIR}/.gitignore is missing — per-machine state files in ${OK_DIR}/ may show up as untracked changes. Run \`ok init\` to add the recommended ignore entries.`,
+    );
   }
 
   const serverInstance = createServer({

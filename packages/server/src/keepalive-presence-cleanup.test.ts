@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
+import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { WebSocket as WsClient } from 'ws';
 import { toBroadcasterKey } from './agent-id.ts';
 import { type BootedServer, bootServer } from './boot.ts';
@@ -28,6 +29,10 @@ async function bootTestServer(
 ): Promise<{ booted: BootedServer; contentDir: string }> {
   const contentDir = mkdtempSync(join(tmpdir(), 'ok-keepalive-test-'));
   writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
+  const okDir = join(contentDir, OK_DIR);
+  mkdirSync(okDir, { recursive: true });
+  writeFileSync(join(okDir, 'config.yml'), '', 'utf-8');
+  writeFileSync(join(okDir, '.gitignore'), '', 'utf-8');
   const booted = await bootServer({
     config: ConfigSchema.parse({}),
     contentDir,

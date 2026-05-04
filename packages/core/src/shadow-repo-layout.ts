@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export type WriterClassification =
@@ -18,12 +18,109 @@ export interface ParsedWriter {
 const WRITER_ID_RE =
   /^(agent-[^/]+|principal-[^/]+|file-system|git-upstream|openknowledge-service)$/;
 
+export type ResolvedGitDir =
+  | { kind: 'directory'; path: string }
+  | { kind: 'linked'; path: string }
+  | { kind: 'absent' }
+  | { kind: 'malformed-pointer'; gitPath: string; target: string; cause?: unknown }
+  | { kind: 'inaccessible'; gitPath: string; cause: unknown };
+
+export function resolveGitDirDetailed(projectRoot: string): ResolvedGitDir {
+  const gitPath = resolve(projectRoot, '.git');
+  let stat: ReturnType<typeof statSync>;
+  try {
+    stat = statSync(gitPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'absent' };
+    return { kind: 'inaccessible', gitPath, cause: err };
+  }
+  if (stat.isDirectory()) return { kind: 'directory', path: gitPath };
+  if (stat.isFile()) {
+    let content: string;
+    try {
+      content = readFileSync(gitPath, 'utf-8').trim();
+    } catch (err) {
+      return { kind: 'malformed-pointer', gitPath, target: '', cause: err };
+    }
+    const match = content.match(/^gitdir:\s*(.+)$/);
+    if (!match) return { kind: 'malformed-pointer', gitPath, target: '' };
+    return { kind: 'linked', path: resolve(projectRoot, match[1]) };
+  }
+  return { kind: 'absent' };
+}
+
+export function resolveGitDir(projectRoot: string): string | null {
+  const result = resolveGitDirDetailed(projectRoot);
+  if (result.kind === 'directory' || result.kind === 'linked') return result.path;
+  return null;
+}
+
 export function resolveShadowDir(projectRoot: string): string {
-  return resolve(projectRoot, '.git/ok');
+  const result = resolveGitDirDetailed(projectRoot);
+  switch (result.kind) {
+    case 'directory':
+      return resolve(result.path, 'ok');
+    case 'linked':
+      if (!existsSync(result.path)) {
+        throw new MalformedGitPointerError(resolve(projectRoot, '.git'), result.path);
+      }
+      return resolve(result.path, 'ok');
+    case 'malformed-pointer':
+      throw new MalformedGitPointerError(result.gitPath, result.target, { cause: result.cause });
+    case 'inaccessible':
+      throw new GitDirAccessError(result.gitPath, { cause: result.cause });
+    case 'absent':
+      return resolve(projectRoot, '.git/ok');
+  }
+}
+
+export class MalformedGitPointerError extends Error {
+  readonly gitPointerPath: string;
+  readonly resolvedTarget: string;
+  constructor(gitPointerPath: string, resolvedTarget: string, options?: { cause?: unknown }) {
+    const targetClause = resolvedTarget
+      ? `references a missing or unreadable gitdir at ${resolvedTarget}`
+      : 'is unreadable or has no valid gitdir: pointer';
+    super(
+      `\`.git\` pointer at ${gitPointerPath} ${targetClause}. Run \`git worktree prune\` from the source repo and try again.`,
+      options,
+    );
+    this.name = 'MalformedGitPointerError';
+    this.gitPointerPath = gitPointerPath;
+    this.resolvedTarget = resolvedTarget;
+  }
+}
+
+export class GitDirAccessError extends Error {
+  readonly gitPath: string;
+  constructor(gitPath: string, options?: { cause?: unknown }) {
+    const codeClause =
+      options?.cause !== undefined &&
+      options.cause !== null &&
+      typeof options.cause === 'object' &&
+      'code' in options.cause &&
+      typeof (options.cause as { code: unknown }).code === 'string'
+        ? ` (${(options.cause as { code: string }).code})`
+        : '';
+    super(
+      `Cannot access \`.git\` at ${gitPath}${codeClause}. Check filesystem permissions and that the volume is mounted.`,
+      options,
+    );
+    this.name = 'GitDirAccessError';
+    this.gitPath = gitPath;
+  }
 }
 
 export function getShadowRepoPath(projectRoot: string): string | null {
-  const path = resolveShadowDir(projectRoot);
+  let path: string;
+  try {
+    path = resolveShadowDir(projectRoot);
+  } catch (err) {
+    if (err instanceof MalformedGitPointerError) return null;
+    if (err instanceof GitDirAccessError) return null;
+    throw err;
+  }
   return existsSync(resolve(path, 'HEAD')) ? path : null;
 }
 

@@ -649,7 +649,7 @@ function registerIpcHandlers() {
   });
 
   handle('ok:project:open', async (_event, request) => {
-    await openProject(request.path);
+    await openProjectOrFallbackToNavigator(request.path);
     return undefined;
   });
 

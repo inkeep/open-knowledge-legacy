@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { HocuspocusProvider } from '@hocuspocus/provider';
+import { OK_DIR } from '@inkeep/open-knowledge-core';
 import {
   type BootedServer,
   bootServer,
@@ -23,6 +24,10 @@ let lockPath = '';
 beforeAll(async () => {
   contentDir = realpathSync(mkdtempSync(join(tmpdir(), 'ok-idle-multi-')));
   await ensureProjectGit(contentDir);
+  const okDir = join(contentDir, OK_DIR);
+  mkdirSync(okDir, { recursive: true });
+  writeFileSync(join(okDir, 'config.yml'), '', 'utf-8');
+  writeFileSync(join(okDir, '.gitignore'), '', 'utf-8');
   booted = await bootServer({
     config: ConfigSchema.parse({}),
     contentDir,
