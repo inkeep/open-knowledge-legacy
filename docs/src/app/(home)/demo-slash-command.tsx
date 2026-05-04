@@ -8,6 +8,10 @@ import Suggestion, { type SuggestionKeyDownProps, type SuggestionProps } from '@
 import { useEffect, useId, useRef } from 'react';
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
 
+/* ---------------------------------------------------------------------------
+ * Menu items
+ * --------------------------------------------------------------------------- */
+
 interface SlashCommandItem {
   name: string;
   label: string;

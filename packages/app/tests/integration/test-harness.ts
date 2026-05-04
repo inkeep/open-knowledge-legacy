@@ -1,3 +1,22 @@
+/**
+ * Tier 1 integration test harness.
+ *
+ * Spins up a real Hocuspocus server on a random OS-assigned port with all
+ * production extensions (persistence, API, agent sessions, file watcher).
+ * Connects a real HocuspocusProvider client over WebSocket with setupObservers()
+ * wired — the exact same observer code path as the browser.
+ *
+ * Key design decisions:
+ *   - getFreePort() pre-allocates a port because Hocuspocus Server.listen(port)
+ *     has `if(port)` guard that's falsy for 0.
+ *   - debounce: 200 for fast disk tests (D8)
+ *   - Real @parcel/watcher for full production path
+ *   - Content-based polling with timeout for disk assertions (D4)
+ *   - Per-test docName via randomUUID() for test isolation (R1/R5)
+ *   - Client lifecycle in test body via try/finally — NOT via beforeEach/afterEach
+ *     (required for test.concurrent() correctness per R8a)
+ */
+
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { type AddressInfo, createServer as createNetServer, type Socket } from 'node:net';
@@ -664,6 +683,14 @@ export interface ItemOriginProbe {
   capturedContent(): string;
   undoStackLength(): number;
   getCapturedOrigins(): ReadonlySet<unknown>;
+  /** Assert that every captured origin is in the `trackedOrigins` set
+   *  provided at construction. Throws if a stray origin appears — which
+   *  would indicate origin-laundering (a non-tracked origin's Items ended
+   *  up in the UM stack, e.g., user content under a different session's origin).
+   *
+   *  Safe to call when no items have been captured (silently returns).
+   *  Call AFTER convergence, not mid-sequence — the UM may legitimately
+   *  capture items from a tracked origin that hasn't fully settled yet. */
   assertOnlyTrackedOrigins(): void;
   cleanup(): void;
 }

@@ -1,3 +1,17 @@
+/**
+ * Menu template unit tests — exercise `buildMenuTemplate(deps)` as a pure
+ * function over the injected `MenuDeps`, no real Electron runtime needed.
+ *
+ * `buildMenuTemplate` is the "exported-for-testing" seam in `menu.ts`; these
+ * tests pin down (a) the recents-submenu shape on 0 / N entries + top-10
+ * clamp, (b) the Clear-Menu click wiring, and (c) the macOS branch of the
+ * File / Window submenus (close vs quit, Window `zoom`/`front` vs `close`).
+ *
+ * We don't mount a real menu — Electron's `Menu.setApplicationMenu` is
+ * exercised in packaged-build Playwright smoke (M2). The value here is
+ * regression detection on the template shape: if a future edit breaks the
+ * top-10 clamp or the isMac branch, these tests fail with a precise diff.
+ */
 import { describe, expect, mock, test } from 'bun:test';
 import type { MenuItemConstructorOptions } from 'electron';
 import { buildMenuTemplate, type MenuDeps } from '../../src/main/menu.ts';

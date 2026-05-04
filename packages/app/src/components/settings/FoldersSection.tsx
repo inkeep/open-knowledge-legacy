@@ -1,3 +1,25 @@
+/**
+ * Folders section — schema-driven editor for the `folders[]` array.
+ *
+ * Uses RHF's `useFieldArray` over the same `useConfigForm(binding)` harness
+ * that owns scalar fields. Per-row commit fires `commitField('folders')`,
+ * which writes the WHOLE `folders[]` array atomically — matches
+ * `applyFolderRulesUpsert`'s all-or-nothing semantics (no per-row partial
+ * success machinery).
+ *
+ * New rows with empty `match` fail Zod `FolderRuleSchema.match.min(1)`
+ * client-side; the rejection mirrors into `form.setError('folders.${i}.match', ...)`
+ * via the harness, and the row stays in error state until the user types a
+ * valid value. No Y.Text mutation lands until match is non-empty.
+ *
+ * Reorder via `move(from, to)` commits — folder rule order is load-bearing
+ * (later rules override earlier scalars). Removal via `remove(i)` commits.
+ *
+ * `'use no memo'` opts the render-prop bodies out of React Compiler
+ * memoization for the same reason as scalar SettingsField — destructuring
+ * `ctl` (which has `.ref`) is flagged as ref-access during render.
+ */
+
 import type { Config, FolderRule } from '@inkeep/open-knowledge-core';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import {

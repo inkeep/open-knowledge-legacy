@@ -1,3 +1,38 @@
+/**
+ * Source-view clipboard extension — `EditorView.domEventHandlers` for copy,
+ * cut, and paste per precedent #19(c).
+ *
+ * CodeMirror 6 has no equivalent to PM's `clipboardTextSerializer` /
+ * `clipboardSerializer` hooks, so we override the DOM events directly.
+ * This is the only view where DOM-level override is acceptable (WYSIWYG
+ * uses PM's hooks instead per precedent #19(b)). User-facing behavior is
+ * symmetric across both views:
+ *
+ *   - Copy/cut write text/plain = markdown source AND text/html = canonical
+ *     rendered HTML (via the shared mdast-to-html module). Cross-view
+ *     byte-identical output.
+ *
+ *   - Paste routes through a 5-branch dispatcher parallel to WYSIWYG's
+ *     5-branch (A/B/C/D/E). Source's insertion IS markdown text, so the
+ *     markdown-first tiebreak (Branch B), the Branch C `data-pm-slice`
+ *     check, and Branch E all resolve to "let CM6 default text/plain
+ *     verbatim insert run" — the dispatcher's value here is structural,
+ *     not behavioral. The tiebreak fires AHEAD of Branch C and Branch D
+ *     for the narrow case where external markdown carries a rich-HTML
+ *     preview; without it Branch D's `htmlToMdast` would normalize bytes
+ *     that the user pasted as canonical markdown.
+ *
+ *   - Cmd+Shift+V detected via `pasteShiftHeld(event)` (keyboard-event
+ *     tracker — ClipboardEvent does not expose shiftKey natively).
+ *
+ *   - Large-paste chunked insert: payloads >500KB bypass the CM6 dispatch
+ *     and land via `chunkedYTextInsert` directly. A Y.RelativePosition is
+ *     pinned before the first chunk so concurrent peers writing at offsets
+ *     ≤ writeIndex during rAF yields do not shift the target. Mid-stream
+ *     failure surfaces as a structured `clipboard-chunked-insert-failed`
+ *     event with partial-progress fields.
+ */
+
 import type { Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import {

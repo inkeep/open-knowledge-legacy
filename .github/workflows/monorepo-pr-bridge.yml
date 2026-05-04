@@ -76,7 +76,7 @@ jobs:
               ".github/scripts/bridge-public-pr-to-monorepo.mjs": "copybara/public-open-knowledge-overlay/.github/scripts/bridge-public-pr-to-monorepo.mjs"
             }
           # Drop pre-cutover internal-only paths from the bridged diff. Old
-          # `inkeep/open-knowledge` branches predate the agents-private cutover
+          # `inkeep/open-knowledge-legacy` branches predate the agents-private cutover
           # and contain reports/specs/etc. that the public mirror no longer
           # exports; bridging those paths back through this workflow would
           # re-introduce content that is already authoritative on

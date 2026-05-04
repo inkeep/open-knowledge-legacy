@@ -21,6 +21,11 @@ import { isSystemDoc } from './is-system-doc';
 import { setupObservers } from './observers';
 import { BridgeSetupError, invalidateSyncPromise, rejectSyncPromise } from './sync-promise';
 
+/**
+ * Opaque Y.Doc transaction origin applied when the pool replays a buffered
+ * update onto a freshly-recycled provider. Lets tests and future observers
+ * distinguish replay writes from user edits / server sync deliveries.
+ */
 export const TAB_REPLAY_ORIGIN = Object.freeze({ kind: 'tab-replay' } as const);
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
@@ -103,6 +108,16 @@ const MAX_BUFFER_BYTES = 1 * 1024 * 1024;
 
 export const MAX_POOL = 10;
 
+/**
+ * Build the stringified JSON `token` HocuspocusProvider sends on every
+ * connect, or `undefined` when no claim is set. Returning `undefined`
+ * (rather than `'{}'`) keeps the wire shape identical for anonymous
+ * connections — older servers that don't parse the token see no change.
+ *
+ * Exported for the mechanism-only unit tests in `provider-pool.test.ts`.
+ * Callers inside this module pass the current pool state; external
+ * callers should not depend on this symbol.
+ */
 export function buildAuthToken(
   tabIdentity: { principalId: string; tabSessionId: string } | null,
   expectedServerInstanceId: string | null,
@@ -124,6 +139,13 @@ export function buildAuthToken(
 }
 
 export class ProviderPool {
+  /**
+   * Internal mutable map. External callers see the read-only `entries`
+   * getter below — `readonly` on the field would prevent reassignment
+   * but not Map-level mutation (`set`/`delete`/`clear`). The getter
+   * widens the type to `ReadonlyMap` so accidental external writes fail
+   * compile.
+   */
   private readonly _entries = new Map<string, PoolEntry>();
   get entries(): ReadonlyMap<string, PoolEntry> {
     return this._entries;

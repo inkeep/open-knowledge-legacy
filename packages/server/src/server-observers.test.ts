@@ -1,3 +1,24 @@
+/**
+ * Unit tests for the server-authoritative observer bridge (server-observers.ts).
+ *
+ * Tests cover:
+ *   - Settlement-based dispatch on `afterAllTransactions` (precedent #13(b))
+ *   - Baseline-refresh semantics for Path A / Path B / paired-write / self-sync
+ *   - Path A vs Path B dispatch (FR-3(c))
+ *   - Origin-guard truth table (FR-5 — §7d)
+ *   - No infinite loop on self-origin
+ *   - Agent paired-write early-exit
+ *   - Paired-write short-circuit symmetry across Observer A + Observer B
+ *     (bridge-correctness SPEC §6 R0c)
+ *   - Frontmatter sync (Observer B → Y.Map, Observer A reads Y.Map)
+ *   - Cleanup detaches observers and the settlement handler
+ *   - Observer B error-recovery branches
+ *
+ * Uses a synthetic Y.Doc (no Hocuspocus). Observer dispatch happens
+ * synchronously after each `doc.transact()` drain via the new
+ * `afterAllTransactions` settlement listener — tests assert post-transact
+ * state directly with no scheduler flushing.
+ */
 import { describe, expect, test } from 'bun:test';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import {
@@ -25,6 +46,10 @@ import {
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
+/**
+ * Capture the settlement dispatcher's decisions for a single test.
+ * Returned `dispatches` accumulates in the order the settlement handler fires.
+ */
 function createDispatchRecorder() {
   const dispatches: ObserverDispatchKind[] = [];
   const onDispatch = (kind: ObserverDispatchKind): void => {

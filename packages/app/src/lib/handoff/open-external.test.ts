@@ -1,3 +1,15 @@
+/**
+ * Unit tests for the host-aware `openExternal` wrapper.
+ *
+ * Covered surfaces:
+ *   (a) Electron-host path: forwards to `okDesktop.shell.openExternal`;
+ *       resolves to `{ ok: true }` on success, `dispatch-error` on throw.
+ *   (b) Web-host path (no `okDesktop`): creates an anchor, sets href, appends
+ *       to body, calls click(), removes. Returns `{ ok: true }` on success.
+ *   (c) No-DOM fallback: when neither host surface is available, returns
+ *       `dispatch-error` with detail `'no DOM available'` rather than throwing.
+ */
+
 import { describe, expect, mock, test } from 'bun:test';
 import { openExternal } from './open-external.ts';
 

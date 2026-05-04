@@ -1,3 +1,22 @@
+/**
+ * Unit tests for the single outbound dispatch entry point.
+ *
+ * Covered surfaces:
+ *   (a) Happy paths — each of the four `HandoffTarget` values is routed to the
+ *       right primitive with the right URL shape and deps forwarding.
+ *   (b) Exhaustiveness — the `_exhaustive: never` line fires at runtime when a
+ *       caller passes an invalid target (simulates the future case where
+ *       someone adds a union member and forgets the switch case — TypeScript
+ *       would catch this at compile time; the runtime assertion is
+ *       belt-and-suspenders).
+ *   (c) Cursor host gate — web host (no `okDesktop`, no injected spawnCursor)
+ *       returns `web-host-cursor-unsupported` cleanly.
+ *   (d) AC9 assertion — grep of `packages/app/src/components/` must not
+ *       reference `dispatchHandoff`, `dispatchCursor`, or `openExternal`
+ *       outside the `lib/handoff/` module. Deferred to US-011 which introduces
+ *       the component surfaces; covered there.
+ */
+
 import { describe, expect, mock, test } from 'bun:test';
 import type { HandoffPayload, HandoffTarget } from '@inkeep/open-knowledge-core';
 import { dispatchHandoff } from './dispatch.ts';

@@ -1,3 +1,14 @@
+/**
+ * Direct unit tests for the unified disk→CRDT bridge (`applyExternalChange`).
+ *
+ * Covers the 3 internal branches of the throwing helper:
+ *   (a) document-missing → silent early return (no throw, no mutations)
+ *   (b) frontmatter asymmetry → XmlFragment gets body only, Y.Text gets full content
+ *   (c) Y.Text no-op → skip delete/insert when content unchanged
+ *   (d) transaction origin → matches LocalTransactionOrigin shape
+ *
+ * Plus the factory wrapper's error-swallowing contract (S1.R2).
+ */
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { Hocuspocus } from '@hocuspocus/server';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';

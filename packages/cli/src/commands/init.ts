@@ -1,3 +1,17 @@
+/**
+ * `open-knowledge init` — one-shot terminal setup command.
+ *
+ * Does two things:
+ *   1. Scaffolds `.ok/` in the current directory via initContent()
+ *      (same logic the MCP server's init flow used to call — now factored out).
+ *   2. Writes Open Knowledge MCP server entries into every detected editor's
+ *      config file. The CLI owns the `open-knowledge` / `open-knowledge-ui`
+ *      entries and rewrites them to the current defaults on every run.
+ *
+ * Supports Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, and Codex.
+ * Missing editor config roots are skipped so init does not create new user-home
+ * directories for tools that are not installed.
+ */
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import type {

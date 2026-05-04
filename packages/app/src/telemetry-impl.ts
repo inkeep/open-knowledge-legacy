@@ -1,3 +1,22 @@
+/**
+ * OpenTelemetry SDK initialization — loaded lazily from `telemetry.ts`
+ * only when `VITE_OTEL_ENABLED === 'true'`. The dynamic import keeps this
+ * file (and its ~45 KB gzipped OTel dependencies) out of the main bundle.
+ *
+ * Instrumentations (minimum viable set per local-dev research):
+ *   - DocumentLoadInstrumentation     — page-load navigation timing
+ *   - FetchInstrumentation            — /api/* requests, auto-injects traceparent
+ *   - UserInteractionInstrumentation  — click / submit spans
+ *
+ * Skipped on purpose:
+ *   - ZoneContextManager — 40 KB gzipped, not needed for React 19 / async-await.
+ *   - auto-instrumentations-web meta package — pulls in XHR we don't use.
+ *   - @opentelemetry/instrumentation-xml-http-request — app is fetch-only.
+ *
+ * Hocuspocus WebSocket trace propagation: see `editor/collab-otel.ts` —
+ * the browser's native WebSocket API cannot set headers, so we inject
+ * traceparent as a URL query param at HocuspocusProvider construction.
+ */
 import { trace } from '@opentelemetry/api';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { registerInstrumentations } from '@opentelemetry/instrumentation';

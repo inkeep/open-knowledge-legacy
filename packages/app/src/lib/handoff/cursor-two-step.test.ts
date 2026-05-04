@@ -1,3 +1,19 @@
+/**
+ * Unit tests for Cursor's two-step dispatcher.
+ *
+ * Covered surfaces:
+ *   (a) Web-host short-circuit (E4 DIRECTED): no spawn, no URL fired — returns
+ *       `web-host-cursor-unsupported` cleanly as defense-in-depth.
+ *   (b) Electron happy path: spawnCursor called with projectDir; settle delay
+ *       scaled by isCursorRunning probe (warm=1000ms, cold=1500ms); then
+ *       openExternal fires the cursor:// prompt URL exactly once.
+ *   (c) Electron failure paths: spawn returns each `{ok:false, reason}` variant
+ *       → mapped to the right HandoffOutcome failure reason with descriptive
+ *       detail.
+ *   (d) Settle-delay semantics: injected `sleep` receives the expected delay
+ *       based on isCursorRunning probe outcome.
+ */
+
 import { describe, expect, mock, test } from 'bun:test';
 import type { HandoffPayload } from '@inkeep/open-knowledge-core';
 import { CURSOR_SETTLE_MS_COLD, CURSOR_SETTLE_MS_WARM, dispatchCursor } from './cursor-two-step.ts';

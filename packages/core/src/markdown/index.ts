@@ -1,3 +1,17 @@
+/**
+ * MarkdownManager — wraps the unified + remark pipeline with a stable
+ * parse/serialize API (`parse(markdown) → JSONContent`, `serialize(json) → string`).
+ *
+ * Constructed with `{ extensions }`, the TipTap extension list used to derive
+ * the target ProseMirror schema.
+ *
+ * Handler organization:
+ *   - Tier A passthrough + Tier B basic coverage: this file.
+ *   - Position-slice walker for source-form recovery: `position-slice.ts`.
+ *   - Full PM↔mdast handler table: `handlers.ts`.
+ *   - Serialize-side fidelity overrides: `to-markdown-handlers.ts`.
+ */
+
 import {
   type FromProseMirrorOptions,
   fromPmMark,

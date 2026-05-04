@@ -1,3 +1,23 @@
+/**
+ * Unit tests for the pure install-detection primitive powering the
+ * Open-in-Agent dropdown.
+ *
+ * Covered surfaces:
+ *   (a) `schemeStatesToTargetStates` — per-scheme → per-target mapping with
+ *       web-host Cursor override (E4 DIRECTED).
+ *   (b) `initialTargetStates` — pre-probe snapshot shape per host.
+ *   (c) `probeViaElectron` — parallel IPC fan-out with per-scheme rejection
+ *       tolerance.
+ *   (d) `probeViaFetch` — server endpoint + conservative-false defaults on
+ *       network / parse / non-200 failures; AbortError propagates.
+ *   (e) `createProbeCoordinator` — throttle + inflight dedup + subscribe
+ *       semantics + web-host override + change-only notification.
+ *
+ * The Bun test runner runs this file under `packages/app` with the same
+ * `bun test src/` invocation as the existing suite. Nothing real I/O — an
+ * injectable `now()` drives the clock; `probe` is a test-harness function.
+ */
+
 import { describe, expect, test } from 'bun:test';
 import {
   createProbeCoordinator,

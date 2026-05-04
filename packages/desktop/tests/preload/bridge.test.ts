@@ -3,6 +3,19 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInvoker } from '../../src/shared/ipc-invoke.ts';
 
+/**
+ * Preload bridge unit tests.
+ *
+ * The bridge module itself imports `electron` (`contextBridge`, `ipcRenderer`)
+ * which only works inside a real Electron preload context — Bun's test runner
+ * can't load it. So the test exercises the BUILDING BLOCKS the preload uses
+ * (`createInvoker` typed-IPC factory) against a mock ipcRenderer surface.
+ *
+ * Full end-to-end preload behavior is verified in US-013's Playwright smoke
+ * test (`tests/integration/m1-smoke.test.ts`) which launches a real Electron
+ * BrowserWindow.
+ */
+
 describe('createInvoker (typed IPC factory)', () => {
   test('forwards channel + args to ipcRenderer.invoke verbatim', async () => {
     const invoke = mock((channel: string, ...args: unknown[]) =>

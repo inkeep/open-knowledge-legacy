@@ -1,3 +1,23 @@
+/**
+ * US-007: auto-updater unit + integration tests.
+ *
+ * Drives the full `startAutoUpdater(...)` event flow via a fake
+ * `UpdaterLike` (event-stub pattern per evidence/electron-updater-api.md
+ * §4 approach 3) + fake `ipcMain` + fake `WebContents` sink + injected
+ * clock. No Electron runtime needed — tests run under `bun test`.
+ *
+ * Coverage map (AC9, AC18):
+ *   - 6 events wired + dispatch shape (channel names, payloads)
+ *   - 13 ERR_UPDATER_* / HTTP_ERROR_* codes route to classified log
+ *   - Bare Error (no .code) routes to unclassified log
+ *   - Successful check updates lastSuccessfulCheckAt + resets stuckHintShown
+ *   - Stuck-hint fires once per installation; resets on success; re-arms
+ *   - First-launch post-update (Toast B) once per version transition
+ *   - Periodic check singleton via injectable clock
+ *   - Relaunch-now IPC calls quitAndInstall
+ *   - Dev-mode guard skips first-launch check but keeps handlers wired
+ */
+
 import { describe, expect, mock, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import {

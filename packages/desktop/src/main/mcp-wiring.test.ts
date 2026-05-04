@@ -18,6 +18,18 @@ import {
   writeMcpStatusMarker,
 } from './mcp-wiring.ts';
 
+/**
+ * Pure-function coverage for first-launch MCP wiring.
+ *
+ * Every test runs against an injected `FsOps` stub — no real filesystem
+ * touched. `isPublishedCanonical` tests import the real `EDITOR_TARGETS`
+ * from the CLI via relative source path (CLAUDE.md worktree-local
+ * pattern) so fixtures exercise the authoritative `isCompatible`
+ * implementation, not a hand-rolled mirror. Pure-function discipline:
+ * zero `electron` imports, zero `osascript` spawns, zero `node:fs` side
+ * effects.
+ */
+
 const INSTALLED_EXE = '/Applications/Open Knowledge.app/Contents/MacOS/Open Knowledge';
 const INSTALLED_BUNDLE_WRAPPER =
   '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh';

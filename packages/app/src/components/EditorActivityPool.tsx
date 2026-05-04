@@ -1,3 +1,43 @@
+/**
+ * EditorActivityPool — bounded `<Activity>` rendering for the most-recently-active
+ * pooled docs.
+ *
+ * Spec: SPEC.md §9 system design + §10 D1 (hybrid Activity/Suspense) + DX9
+ * (`ACTIVITY_MOUNT_LIMIT = 3` decoupled from `MAX_POOL = 10`) + DX7
+ * (`__system__` defense-in-depth filter).
+ *
+ * Why `ACTIVITY_MOUNT_LIMIT < MAX_POOL`: `setupObservers` (provider-pool.ts)
+ * wires Y.js bidirectional bridges that fire regardless of Activity mode —
+ * they are NOT React effects and do not pause when Activity flips to hidden.
+ * Bounding mounted editors at 3 caps the editor-instance memory cost (≈30-90MB
+ * for TipTap + CodeMirror) without preventing the pool from holding warm
+ * providers (≈5-10MB each) for fast Suspense-gated remount on revisit.
+ *
+ * `TiptapEditor` stays on the initial path; `SourceEditor` is lazy-loaded the
+ * first time a doc actually enters source mode. Large docs additionally defer
+ * the non-active editor until that mode is first visited. After the initial
+ * visits, the doc keeps both editors mounted behind hidden-mode wrappers so
+ * subsequent mode swaps stay CSS-only for that Activity.
+ *
+ * ERROR + SUSPENSE SCOPING (per-Activity, not global).
+ *   Each `<Activity>` wraps its own `<DocumentErrorBoundary>` + `<Suspense>`.
+ *   Rationale: `<Activity mode="hidden">` silences suspends in the hidden
+ *   subtree (good) but does NOT intercept synchronous throws from
+ *   `use(rejectedPromise)` (React 19.2 behavior — verified in regression
+ *   QA-023/024). A single global boundary above the pool caused any hidden
+ *   doc's cached rejection to re-throw into the visible UI when a healthy
+ *   doc was active. Scoping per-Activity confines each error to its own
+ *   subtree — hidden Activities' errors render into hidden DOM
+ *   (`display:none`), and become visible again naturally when the user
+ *   navigates back (QA-024 cached-rejection persistence).
+ *
+ *   `resetKeys={[entry.docName]}` is intentionally stable for each Activity
+ *   instance — auto-reset on navigation is not needed when the boundary is
+ *   per-Activity (visibility is handled by Activity itself). Error clears
+ *   only via (a) imperative "Try again" (recycle), (b) "Back to previous"
+ *   (invalidate + nav), or (c) Activity eviction from the MRU mount list.
+ */
+
 import { Loader2, RefreshCw } from 'lucide-react';
 import {
   Activity,
@@ -22,6 +62,36 @@ import { usePageList } from './PageListContext';
 import { PropertyPanel } from './PropertyPanel';
 import { Button } from './ui/button';
 
+/**
+ * Large-doc threshold in Y.Text characters. Above this, the non-active editor
+ * is defer-mounted on cold load (S1 fix, US-008 / SPEC D12 DIRECTED) instead of
+ * pre-mounting both per precedent #18(b)'s small-to-medium-doc default. Once the
+ * user toggles to the deferred mode, that editor mounts and stays mounted — so
+ * subsequent toggles remain CSS-only and cost nothing.
+ *
+ * Value rationale (500_000 chars ≈ 500 KB plain text):
+ *   - README.md / AGENTS.md / CLAUDE.md (≤150 KB) — BELOW. No change from
+ *     pre-mount-both default; toggle stays instant.
+ *   - PROJECT.md (3.25 MB / 1.49 M chars in this worktree, up to 9.7 MB / 25k
+ *     lines in the SPEC's original measurement) — ABOVE. Cold load skips the
+ *     non-active editor's initial mount+parse; first toggle pays the cost;
+ *     subsequent toggles are instant.
+ *
+ * The threshold is a tuning knob, not a contract — see evidence/s1-diagnosis.md
+ * for the trade-off analysis. Moving it UP regresses the S1 fix for smaller
+ * "large" docs; moving it DOWN unnecessarily delays first-toggle UX for
+ * medium docs where pre-mount-both was already fast enough.
+ *
+ * FIRST-TOGGLE COST (US-008 code-trace, 2026-04-20): On a 3.25 MB PROJECT doc,
+ * the first mode toggle after cold load pays the deferred editor's cold mount
+ * — measured at `toSourceMs=223 ms`. Proportional scaling to the original
+ * 9.7 MB workhorse puts first toggle in the 500–800 ms range. Perceptible but
+ * well below the ~1 s hang threshold. Subsequent toggles remain CSS-only.
+ * Future engineers: do not assume defer-mount is free at the toggle boundary;
+ * it trades cold-load latency for one-time first-toggle latency on the
+ * deferred mode. See `ACTIVITY_MOUNT_LIMIT` below — both constants are parts
+ * of the same Activity-mount hygiene pattern.
+ */
 export const LARGE_DOC_CHAR_THRESHOLD = 500_000;
 
 interface EditorMountGateArgs {

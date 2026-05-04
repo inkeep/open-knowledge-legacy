@@ -1,3 +1,25 @@
+/**
+ * utilityProcess entry — hosts Hocuspocus via `bootServer()` per project window.
+ *
+ * Lifecycle:
+ *   1. Module load: register IPC + signal handlers, start parent-death poll
+ *   2. `init` IPC from main → call `bootServer({ ...opts, attachUiSibling: false, idleShutdownMs: null })`
+ *   3. On `bootedServer.ready` → post `{ type: 'ready', port, apiOrigin }` back to main
+ *   4. On `shutdown` IPC OR SIGTERM/SIGINT OR parent death → drain + exit
+ *
+ * D36 opt-outs: no `ok ui` sibling (BrowserWindow IS the UI), no idle-shutdown
+ * (BrowserWindow lifecycle owns this utility's lifetime).
+ *
+ * D49 parent-death detection: macOS has no PR_SET_PDEATHSIG, so we poll
+ * `process.kill(parentPid, 0)` every 5s. If the parent dies (`EPERM` /
+ * `ESRCH`), self-exit cleanly so the server.lock is released. Linux + Windows
+ * variants are stubbed for M1 (per D51 macOS-only) — see code comments.
+ *
+ * R19 guard: this module MUST NOT import `attachIdleShutdown` from anywhere.
+ * The Biome GritQL rule from US-012 will eventually enforce this; the comment
+ * is the human-side reminder.
+ */
+
 import { rename, writeFile } from 'node:fs/promises';
 import {
   type BootedServer,

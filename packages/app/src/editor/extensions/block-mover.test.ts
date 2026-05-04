@@ -12,6 +12,7 @@ const schema = new Schema({
   marks: {},
 });
 
+/** Create a doc with the given paragraph texts and cursor inside the paragraph at cursorPara. */
 function makeState(paraTexts: string[], cursorPara = 0): EditorState {
   const nodes = paraTexts.map((t) =>
     t.length > 0 ? schema.node('paragraph', null, [schema.text(t)]) : schema.node('paragraph'),

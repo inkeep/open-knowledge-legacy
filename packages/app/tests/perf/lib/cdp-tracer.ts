@@ -1,3 +1,29 @@
+/**
+ * CDP Tracing helper.
+ *
+ * `traceStart(cdp)` opens the Chrome DevTools Protocol Tracing domain with
+ * the category set we care about (long tasks, layout, style recalc,
+ * script execution, paint). `traceEnd(cdp)` flushes the buffer, reads every
+ * `Tracing.dataCollected` chunk, and returns a `TraceSummary` — per-category
+ * aggregates plus the raw event count.
+ *
+ * The summary (not the raw events) is what goes into the scenario result
+ * JSON — raw events routinely exceed 10 MB and drown the artifact.
+ *
+ * Aggregation is a pure function (`aggregateTrace`) so it can be unit-tested
+ * with hand-crafted event arrays — no Playwright/CDP required for coverage.
+ *
+ * Category rationale (reverified against Chrome DevTools Performance panel's
+ * own defaults + `reports/perf-profiling-landscape-2026/evidence/cdp-tracing.md`):
+ *   - cc, gpu: compositor + GPU raster
+ *   - blink.user_timing: our own `performance.measure` marks show up here
+ *   - devtools.timeline: LayoutShift, LargestContentfulPaint, LongTask
+ *   - disabled-by-default-devtools.timeline: MajorGC, MinorGC, ThreadStateSampling
+ *   - v8: JS compilation, GC
+ *   - blink: RunMicrotasks, RunTask, UpdateLayoutTree, Layout, PaintImage
+ *   - loading: Navigation, ResourceSendRequest, ResourceReceiveResponse
+ */
+
 import type { CDPSession } from '@playwright/test';
 
 export interface CdpTraceEvent {

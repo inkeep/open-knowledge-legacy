@@ -1,6 +1,6 @@
 # Contributing to Open Knowledge
 
-Open Knowledge is developed in Inkeep's internal monorepo and mirrored to this public repository with Copybara. Public contributions should still start here: open a pull request against `inkeep/open-knowledge`.
+Open Knowledge is developed in Inkeep's internal monorepo and mirrored to this public repository with Copybara. Public contributions should still start here: open a pull request against `inkeep/open-knowledge-legacy`.
 
 ## How Public PRs Flow
 

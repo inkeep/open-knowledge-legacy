@@ -1,3 +1,22 @@
+/**
+ * Property widgets — controlled inputs for the five frontmatter types.
+ *
+ * Each widget reads `value` (parsed from the YAML region of `Y.Text('source')`
+ * via `bindFrontmatterDoc.current()`) and emits `onCommit(newValue)` on Enter /
+ * blur (or click for boolean). The parent (PropertyRow in PropertyPanel)
+ * routes commits through `bindFrontmatterDoc.patch()`, which edits the YAML
+ * region at the `Pair` level via yaml@2 and replaces the Y.Text byte range
+ * under `FORM_WRITE_ORIGIN`. No HTTP round-trip — the change reaches the
+ * server via the same WebSocket the editor already uses.
+ *
+ * Type picker (TypeIconButton) opens a dropdown listing the five widget types;
+ * selecting a different type triggers a value coercion + commit so the slot
+ * value matches the new shape.
+ *
+ * List values are flat `string[]`. Widgets present arrays as chip inputs
+ * regardless of declared type — value shape wins for rendering (FR6 AC).
+ */
+
 import type { FrontmatterType, FrontmatterValue } from '@inkeep/open-knowledge-core';
 import { format, parse, parseISO } from 'date-fns';
 import { Calendar as CalendarIcon, Hash, List, SquareCheck, Type, X } from 'lucide-react';

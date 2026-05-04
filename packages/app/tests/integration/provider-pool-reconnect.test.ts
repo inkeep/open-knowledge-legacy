@@ -63,6 +63,9 @@ afterEach(async () => {
   }
 }, 30_000);
 
+/** Seed the fixture on disk and wait for the pool's active provider to reach
+ *  synced + zero unsynced changes. Returns the first provider instance so
+ *  tests can assert reference identity after a restart. */
 async function seedAndSyncSingleClient(
   server: RestartableServer,
   pool: ProviderPool,

@@ -1,3 +1,18 @@
+/**
+ * AuthModal — GitHub sign-in dialog.
+ *
+ * Two modes:
+ *   'device'  — Device Flow (default): shows user_code, polls for completion,
+ *               2-minute timeout. Calls POST /api/local-op/auth/login (streaming JSONL).
+ *   'pat'     — PAT fallback: text input, validated via POST /api/local-op/auth/pat.
+ *
+ * Variant props:
+ *   identityPrompt — when true, shows Name + Email fields after sign-in for unset
+ *                    git identity (FR38 re-auth variant).
+ *   reauth        — when true, shows "Re-authenticate" heading instead of "Sign in".
+ *
+ * On success: calls onSuccess({ login, name, avatarUrl }) and closes.
+ */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { type AuthTransport, httpAuthTransport } from '@/lib/transports/auth-transport';
