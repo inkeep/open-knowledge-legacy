@@ -1,5 +1,14 @@
 {
   "title": "Open Knowledge",
   "icon": "LuBookOpen",
-  "pages": ["overview", "guides", "internals"]
+  "pages": [
+    "---GET STARTED---",
+    "...get-started",
+    "---INTEGRATIONS---",
+    "...integrations",
+    "---FEATURES---",
+    "...features",
+    "---REFERENCE---",
+    "...reference"
+  ]
 }
