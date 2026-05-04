@@ -1,3 +1,33 @@
+/**
+ * Project Navigator return-affordance smoke test — drives an Electron launch
+ * with a `lastOpenedProject` so the editor window opens first (Navigator
+ * window is NOT initially present), then triggers `bridge.navigator.open()`
+ * from the editor renderer and asserts that the Navigator window appears.
+ *
+ * Coverage (one test per FR5 branch where the branches are observably distinct):
+ *   1. Editor opens FIRST (lastOpenedProject path).
+ *   2. FR5(c) — closed → create: `bridge.navigator.open()` spawns a navigator window.
+ *   3. FR5(a)/(b) — count never exceeds 1 across re-invokes (poll-based, not
+ *      a fixed sleep). FR5(a) and FR5(b) are not separately distinguishable
+ *      from window-count alone, but the count-stability poll catches the
+ *      regression class both branches are intended to prevent (duplicate spawn).
+ *   4. FR5(d) — closing the navigator leaves the editor window alive.
+ *
+ * The test calls `bridge.navigator.open()` directly via `page.evaluate(...)`
+ * rather than clicking the dropdown trigger — exercising the IPC contract is
+ * the goal here; full DOM-driven affordance coverage (dropdown click,
+ * CommandPalette `Cmd+K` keystroke) belongs to component-level Playwright
+ * runs that also need the `bun run dev` server, not the smoke harness.
+ *
+ * Skip gates mirror `deep-link.e2e.ts` and `mcp-wiring.e2e.ts`:
+ *   - `OK_DESKTOP_E2E_SMOKE !== '1'` — opt-in so `bunx playwright test` on
+ *     the whole repo doesn't try to launch Electron in headless CI.
+ *   - `process.platform !== 'darwin'` — the smoke harness is darwin-only in
+ *     v0; the IPC plumbing is platform-agnostic and remains exercised by the
+ *     Bun unit/integration tests on every platform.
+ *   - `out/main/index.js` missing — `bun run build:desktop` must have run.
+ */
+
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';

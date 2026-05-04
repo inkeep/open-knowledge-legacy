@@ -1,3 +1,28 @@
+/**
+ * Breadcrumb unit tests — pure helpers only (bun:test, no DOM/React).
+ *
+ * Covers two co-located helpers exported from `Breadcrumb.tsx`:
+ *
+ *   1. `computeVisibleEntries` — head-truncation against
+ *      MAX_VISIBLE_SEGMENTS (=4). Branching matrix: ≤ limit passthrough,
+ *      = limit boundary, > limit → [head, ellipsis, ...tail×2], deep chain
+ *      hiddenCount invariant, empty chain.
+ *
+ *   2. `resolveLivePos` — bridge-id-aware live-pos resolver. Three branches:
+ *      (a) plugin not registered (harness env) → return `entry.pos` fallback;
+ *      (b) plugin registered AND bridgeId present in posToId → return live
+ *      pos (the happy path, shifts under collaborative edits);
+ *      (c) plugin registered AND bridgeId absent from posToId → return null
+ *      (remote peer deleted the ancestor between render and click).
+ *
+ *   Branch (c) is the defensive path that prevents the original stale-pos
+ *   bug. Without this test a refactor that flipped it to `return entry.pos`
+ *   would silently pass, because E2E tests don't cover remote-delete races.
+ *
+ * Follows the `entry-label.test.ts` precedent for testing pure selection
+ * helpers (bun:test, factory fns for fixtures, no DOM).
+ */
+
 import { describe, expect, test } from 'bun:test';
 import type { Editor } from '@tiptap/core';
 import { Schema } from '@tiptap/pm/model';

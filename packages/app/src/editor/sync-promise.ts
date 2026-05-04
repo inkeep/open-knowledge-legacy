@@ -1,3 +1,25 @@
+/**
+ * syncPromise — React-19-idiomatic subscription-to-event primitive that bridges
+ * HocuspocusProvider's `synced` event to React Suspense via `use(promise)`.
+ *
+ * Module-level cache by docName. Promise identity is stable across renders —
+ * React Compiler-safe because module state is out of compiler scope, and
+ * `use(promise)` requires the same reference across remounts / StrictMode
+ * double-invoke to avoid infinite suspension.
+ *
+ * Lifecycle:
+ *   - `syncPromise(docName, provider)` creates or returns the cached promise.
+ *     Attaches `synced` + `close` listeners and starts a 30s timeout.
+ *   - On `synced`: resolve + auto-cleanup (listeners off, timeout cleared, cache entry removed).
+ *   - On pre-sync `close`: reject with PreSyncDisconnectError + cleanup.
+ *   - On 30s timeout: reject with SyncTimeoutError + cleanup.
+ *   - `invalidateSyncPromise(docName)` tears the entry down without rejecting
+ *     (provider-pool calls this on destroy/recycle; the next `syncPromise` call
+ *     creates a fresh promise).
+ *
+ * See SPEC.md §9 (Proposed solution) + §10 D2 (hand-rolled use(promise) rationale).
+ */
+
 import type { HocuspocusProvider, onCloseParameters } from '@hocuspocus/provider';
 import { mark } from '@/lib/perf';
 

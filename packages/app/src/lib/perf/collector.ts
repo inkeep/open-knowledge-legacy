@@ -1,3 +1,16 @@
+/**
+ * Dev-only `window.__ok_perf` collector.
+ *
+ * Gated on `!import.meta.env.PROD` so Vite's build-time constant folding drops
+ * the buffer allocation (and the global assignment) from production bundles.
+ * In production `getCollector()` returns `undefined`; `mark()` skips the push.
+ *
+ * The negated-PROD form (rather than DEV) is deliberate: under `bun test`,
+ * neither constant exists and both are `undefined` — `!undefined === true`
+ * keeps the collector live in tests, while `import.meta.env.DEV` would
+ * evaluate falsy and break unit-test verification of collector behavior.
+ */
+
 import type { PerfCollector, PerfMark, WebVitalsMark } from './types';
 
 declare global {

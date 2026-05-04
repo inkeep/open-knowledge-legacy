@@ -1,3 +1,112 @@
+/**
+ * bridge-observer-conversion.test.ts
+ *
+ * FR-1 of specs/2026-04-19-ci-signal-quality/SPEC.md — deterministic PBT
+ * coverage for the conversion paths invoked INSIDE the bridge observers.
+ *
+ * Why this file exists
+ * --------------------
+ * Under the dual-CRDT (Y.XmlFragment + Y.Text) topology, bridge-convergence
+ * fuzz failures surface two unrelated bug classes as indistinguishable red:
+ *
+ *   (a) Conversion bugs — md ⇄ PM → XmlFragment / XmlFragment → Y.Text.
+ *       These are deterministic, always-fail-on-replay, and the md ⇄ PM
+ *       path is design-goal lossless.
+ *
+ *   (b) Architectural residual — three-way CRDT merge races that are
+ *       Khanna-Kunal-Pierce-foundational under the current topology and
+ *       can be made rare but not zero. Non-deterministic on replay.
+ *
+ * This file covers class (a) deterministically at the fidelity tier, so a
+ * conversion regression is caught at PR time with a clean signal rather than
+ * being conflated with architectural flake. Class (b) is no longer in CI at
+ * all — see `bun run measure:fuzz` / `measure:stress` for ad-hoc sampling.
+ *
+ * Coverage map vs the fuzz op vocabulary
+ * --------------------------------------
+ * The bridge-convergence fuzzer has a 10-op vocabulary documented in
+ * `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`:
+ *
+ *   1. wysiwyg-type          — user typing into the WYSIWYG surface
+ *   2. source-type           — user typing into the source (Y.Text) surface
+ *   3. agent-write           — full-document agent write via applyExternalChange
+ *   4. agent-patch           — targeted agent edits via mdManager find/replace
+ *   5. agent-undo            — revert last agent write via applyAgentUndo
+ *   6. external-change       — disk-driven applyExternalChange
+ *   7. sync-pause            — simulate client disconnect
+ *   8. sync-resume           — simulate reconnect + catch-up
+ *   9. wait                  — idle tick for debounce settling
+ *  10. chunked-source-paste  — large Y.Text insert across chunk boundaries
+ *
+ * Conversion-tier coverage in THIS file — describe blocks:
+ *
+ *   Chain A: parseMd → updateYFragment                — covers ops (1), (4)
+ *                                                        (any md → PM → fragment)
+ *   Chain B: serializeFragment → applyFastDiff /      — covers op (2)
+ *            applyIncrementalDiff / mergeThreeWay       (any fragment → serialized → Y.Text diff,
+ *                                                        the three Observer A conversion functions)
+ *   Chain C: paired updateYFragment + applyFastDiff    — covers ops (3), (6)
+ *                                                        (applyExternalChange's inner transact,
+ *                                                        including stripFrontmatter + parseWithFallback)
+ *   Chain D: frontmatter strip/prepend round-trip      — Observer B → Observer A frontmatter path
+ *                                                        (the conversion primitives; metadata-map
+ *                                                        plumbing stays in integration tests)
+ *   Chain E: agent-undo composition                    — covers op (5)
+ *                                                        (post-undo XmlFragment-authoritative
+ *                                                        composition via parseWithFallback →
+ *                                                        updateYFragment → applyFastDiff;
+ *                                                        mirrors applyAgentUndo inner logic)
+ *   Handler-specific survivability                     — wikiLink, jsxComponent, rawMdxFallback
+ *                                                        run through Chain A + Chain C deterministically
+ *   Meta — PBT harness is live                         — NUM_RUNS floor checks (default + stress mode)
+ *   Error-path anchor                                  — BridgeMergeContentLossError importable,
+ *                                                        assertContentPreservation throws on violation
+ *                                                        (deep behavioral coverage lives in core's
+ *                                                        merge-three-way.test.ts; this is the anchor)
+ *
+ * Ops (6)/(7)/(8) are timing/network scheduling — not conversion — so they
+ * have no fidelity-tier analogue; they remain the exclusive domain of
+ * integration/stress tests.
+ *
+ * Op (9) chunked-source-paste — the chunking-boundary behavior (>500KB
+ * Y.Text inserts) is covered by `packages/core/src/utils/chunked-insert.test.ts`
+ * and `packages/app/tests/stress/paste-fidelity.e2e.ts`; the generators in
+ * this file stay below the chunking threshold, so op (9) is NOT directly
+ * exercised here. This is deliberate — chunked-insert is a separate
+ * conversion surface with its own dedicated coverage.
+ *
+ * Deterministic design
+ * --------------------
+ * Every test in this file runs in a SINGLE PROCESS with a SINGLE Y.Doc and
+ * NO networking — it exercises only the pure conversion + in-memory CRDT
+ * mutation. No Hocuspocus, no WebSocket, no multi-client. This is what makes
+ * the test deterministic on replay and appropriate for PBT: seeded fast-check
+ * runs reproduce byte-for-byte. A shrunk counterexample points at a pure
+ * conversion bug, never at a merge race.
+ *
+ * Corresponding production code paths (for reviewers)
+ * ---------------------------------------------------
+ *   - `updateYFragment`   — `@tiptap/y-tiptap` (third-party, but driven here
+ *                           via MarkdownManager.parse + schema.nodeFromJSON)
+ *   - `applyFastDiff`     — `packages/core/src/bridge/apply-diff.ts`
+ *   - `applyExternalChange` — `packages/server/src/external-change.ts`
+ *     (inner pattern — `doc.transact(() => { updateYFragment(...);
+ *      applyFastDiff(ytext, ytext.toString(), fullContent); }, ORIGIN)` —
+ *     is replicated here WITHOUT the Hocuspocus plumbing)
+ *
+ * Invariant oracle definitions
+ * ----------------------------
+ *   I1-via-fragment:    Round-trip through the fragment preserves md content
+ *                       after normalization (trailing-whitespace trim + final
+ *                       newline handling per helpers.normalize).
+ *   fragment↔text-sync: After applyFastDiff, ytext.toString() exactly equals
+ *                       the serialized fragment used as the diff target.
+ *   content-preservation: Non-whitespace tokens present in the input markdown
+ *                       survive the full chain (both in fragment and in ytext).
+ *   handler-specific:   wikiLink/jsxComponent/rawMdxFallback markdown survives
+ *                       the chains under their respective extensions.
+ */
+
 import { describe, expect, test } from 'bun:test';
 import {
   applyFastDiff,

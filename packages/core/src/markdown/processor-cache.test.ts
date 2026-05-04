@@ -1,3 +1,20 @@
+/**
+ * R16 processor-cache behavior (spec 2026-04-16 markdown-pipeline-engineering-health).
+ *
+ * Proves:
+ *   (a) MarkdownManager holds exactly one parse processor and one serialize
+ *       processor across its lifetime — construction builds them, subsequent
+ *       parse/serialize calls reuse them.
+ *   (b) The two mutating attachers (`remarkMdxAgnostic`, `remarkWikiLink`)
+ *       do NOT duplicate entries in `data().micromarkExtensions` even under
+ *       pathological re-attach (e.g., a test harness re-invokes the attacher
+ *       on an already-populated `data()` map).
+ *   (c) Parse output is byte-identical across repeated calls on the same
+ *       MarkdownManager instance (the cached processor is stateless per call).
+ *
+ * Traces QA-004 (Processor caching does not duplicate micromark extensions
+ * on reuse).
+ */
 import { describe, expect, test } from 'bun:test';
 import type { Processor } from 'unified';
 import { sharedExtensions } from '../extensions/shared.ts';

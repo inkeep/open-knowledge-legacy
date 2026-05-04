@@ -1,3 +1,16 @@
+/**
+ * Custom mdast-util-to-markdown handlers for source-form fidelity.
+ *
+ * These handlers override remark-stringify defaults to preserve authoring
+ * form — delimiters, fence chars, bullet markers, etc. — by reading
+ * node.data.* fields populated by the PM→mdast reverse handlers.
+ *
+ * Key overrides from R1 probe (§19.7):
+ * - text handler strips `&` and `<` from the unsafe list (NG5 storage-layer contract)
+ * - link handler writes URLs verbatim (no `&` escaping)
+ * - escapeMark: text with data.escapedChars re-emits backslash sequences
+ */
+
 import type { Nodes, Parents } from 'mdast';
 import type { MdxJsxAttribute, MdxJsxExpressionAttribute, MdxJsxFlowElement } from 'mdast-util-mdx';
 import type { Info, State } from 'mdast-util-to-markdown';

@@ -7,6 +7,12 @@ import {
   type Principal,
 } from '@inkeep/open-knowledge-core';
 
+/**
+ * The shape `setLocalStateField('user', ...)` expects on the per-doc
+ * awareness map. Keeping the `'human'` discriminator literal-narrowed lets
+ * `usePresence`'s `user.type !== 'human'` filter at the consumer side stay
+ * exhaustive — drop the literal and peers silently skip the entry.
+ */
 type AwarenessUserPayload = AwarenessUser & { type: 'human' };
 
 interface BuildAwarenessUserInput {

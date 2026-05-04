@@ -1,3 +1,26 @@
+/**
+ * Regression test for the "phantom principal commit" bug (PR #295).
+ *
+ * When a browser-connected client performs a content-bearing CRDT transaction
+ * that is a semantic no-op at the markdown layer (the canonical case:
+ * y-prosemirror's ySyncPlugin appending an empty <paragraph> on every editor
+ * mount), `onStoreDocument`'s safety-net used to record the browser's
+ * principal as a contributor — producing a phantom commit alongside a later
+ * legitimate agent write at L2 fan-out.
+ *
+ * The fix reorders `onStoreDocument` to compute the markdown and compare it
+ * against `currentBase` (via `normalizeBridge` for trailing-whitespace
+ * tolerance) BEFORE running the safety-net. Semantic no-ops skip both the
+ * disk write AND the principal record; real changes still record per US-024.
+ *
+ * These tests drive the production `onStoreDocument` path via `createServer`
+ * and trigger connection-origin transactions directly on the server-side
+ * Y.Doc. Using the real Hocuspocus plumbing guards the specific ordering of
+ * (a) markdown computation, (b) normalizeBridge-tolerant comparison against
+ * `currentBase`, (c) `recordContributor` call — a future refactor that moves
+ * the safety-net back above the gate silently fails Scenario 1 below.
+ */
+
 import { describe as _bunDescribe, afterEach, beforeEach, expect, test } from 'bun:test';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;

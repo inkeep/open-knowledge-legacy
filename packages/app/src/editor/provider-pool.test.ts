@@ -1,3 +1,12 @@
+/**
+ * Tests for ProviderPool — LRU eviction, active document protection,
+ * capacity management, and lifecycle.
+ *
+ * These tests construct real HocuspocusProvider instances pointing at a
+ * non-existent server. The providers will stay in 'connecting' state but
+ * the pool's LRU logic, Map management, and eviction ordering are all
+ * exercised without needing a running Hocuspocus server.
+ */
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as wait } from 'node:timers/promises';

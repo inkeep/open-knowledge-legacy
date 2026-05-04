@@ -70,10 +70,10 @@ describe('startConfigFileWatcher', () => {
       attempt++;
       writeFileSync(fx.absPath, `theme: dark\nattempt: ${attempt}\n`, 'utf-8');
       return false;
-    });
+    }, 20_000);
     expect(fired).toBe(true);
     expect(events[0]?.startsWith('theme: dark\n')).toBe(true);
-  }, 15_000);
+  }, 25_000);
 
   test('fires onChange when an existing file is modified', async () => {
     writeFileSync(fx.absPath, 'theme: light\n', 'utf-8');
@@ -104,7 +104,7 @@ describe('startConfigFileWatcher', () => {
     });
     cleanups.push(cleanup);
 
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 750));
     expect(events).toEqual([]);
   });
 

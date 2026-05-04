@@ -1,3 +1,25 @@
+/**
+ * Invariant — list nesting double round-trip stable.
+ *
+ * Targets the US-011 / R6d fix: PM `listItem` schema is `paragraph block*`,
+ * so when source mdast has a non-paragraph first child (code block, quote,
+ * thematicBreak, nested list), `nodeType.createAndFill` synthesizes an
+ * empty paragraph to satisfy validation. Without the artifact-strip in the
+ * `listItem` PM→mdast handler, the synthetic paragraph propagated back to
+ * mdast and serialized as `"1. \n\n   <indented-block>"` — which CommonMark
+ * refuses as list continuation, so the block escapes the listItem on
+ * re-parse → second round-trip flattens what the first round-trip nested.
+ *
+ * This PBT generates lists with various non-paragraph first children and
+ * asserts double round-trip stability after first-pass normalization.
+ *
+ * Bug shape per `evidence/r6-failure-modes.md` Finding 3 + iteration 11
+ * diagnosis (progress.txt). Fixed in `packages/core/src/markdown/index.ts`
+ * `buildPmToMdastHandlers.listItem`.
+ *
+ * Tier-2 1K samples; tier-3 10K via `STRESS_FIDELITY=1`.
+ */
+
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
 import { assertAcrossSeeds, mdRoundTrip, normalize, PBT_TIMEOUT_MS } from './helpers';

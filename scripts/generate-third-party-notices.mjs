@@ -1,4 +1,21 @@
 #!/usr/bin/env node
+/**
+ * Generate THIRD_PARTY_NOTICES.md.
+ *
+ * Walks the production-dep closure of every workspace whose code ends up
+ * bundled into a shipped artifact (the npm CLI tarball or the Electron DMG),
+ * extracts each package's license + LICENSE-file text + NOTICE if Apache,
+ * and emits a deterministic markdown notice.
+ *
+ * Modes:
+ *   default          write to <repo-root>/THIRD_PARTY_NOTICES.md
+ *   --check          re-generate in memory, fail if existing file differs
+ *   --out <path>     override output path (used by build wiring)
+ *
+ * Determinism: packages are sorted alphabetically inside each license bucket,
+ * and the file body contains no timestamps. Re-running with no dep changes
+ * yields a byte-identical file.
+ */
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';

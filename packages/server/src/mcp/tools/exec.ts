@@ -1,3 +1,23 @@
+/**
+ * `exec` MCP tool — the enriched bash surface.
+ *
+ * Orchestrates:
+ *   1. parseCommand (shell-quote + allowlist) — primary security boundary
+ *   2. snapshotMtimes (pre) — defense-in-depth baseline
+ *   3. execBash via just-bash + ReadWriteFs (sandbox)
+ *   4. snapshotMtimes (post) + diff — abort on any mutation (FR21)
+ *   5. extractReferencedPaths
+ *   6. enrichPath per path (slim shape for multi-path; rich for single-cat)
+ *   7. Format: raw stdout + markdown `### Referenced files` block +
+ *      structuredContent `{ enrichedPaths, error? }`
+ *
+ * Soft cap: 500 lines / 50 KB with truncation marker (per D9).
+ * Hard cap: 16 MB → `output_overflow` error (StdoutOverflowError).
+ * NG8: binary content (non-text/markdown files in `cat` argv) triggers
+ * a warning banner.
+ *
+ * Spec: SPEC.md FR1 + FR4 + FR5 + FR6 + FR8 + FR14 + FR21 + D10 + D21.
+ */
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';

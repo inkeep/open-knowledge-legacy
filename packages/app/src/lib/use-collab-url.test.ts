@@ -1,3 +1,19 @@
+/**
+ * Tests for the pure `runCollabUrlPoll` primitive behind `useCollabUrl`.
+ *
+ * We exercise:
+ *   (a) happy-path resolve (200 with collabUrl string → onStateChange fires
+ *       once with resolved URL, no further ticks),
+ *   (b) 404 fallback (same-origin defaultCollabWsUrl),
+ *   (c) null-collab retry-until-terminal (one-shot info log, terminal fires
+ *       once wall-clock elapses `terminalAfterMs`),
+ *   (d) cancel() aborts in-flight and prevents subsequent ticks,
+ *   (e) retry-like behavior — caller constructs a fresh loop with new deps
+ *       to reset the wall-clock window (the hook does this via retrySignal).
+ *
+ * Uses a manual scheduler + virtual clock (same pattern as idle-shutdown
+ * and ui safety-net) so tests are deterministic — no real wall-clock waits.
+ */
 import { describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import type { FetchApiConfigResult } from './api-config';

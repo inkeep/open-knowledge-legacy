@@ -1,3 +1,32 @@
+/**
+ * Settings pane.
+ *
+ * Replaces the document view in the main editor area when invoked via Cmd-,,
+ * the App menu, HelpPopover, or CommandPalette. Sub-tabs separate
+ * project ("This project") and user-global ("User") scopes;
+ * each tab acquires its own `HocuspocusProvider` and binds via
+ * `bindConfigDoc`.
+ *
+ * Auto-save: per-control commits via `binding.patch`. Client-side L1
+ * validation gates writes; invalid commits never mutate Y.Text. Per-field
+ * reset writes the schema default. Modified-at-scope indicator shows a
+ * colored bar on `'either'` fields whose value differs from the schema
+ * default.
+ *
+ * Form harness: a single `useForm<Config>` instance owned by
+ * `useConfigForm(binding)` (resolver-less); external Y.Text updates merge
+ * in via `binding.subscribe → form.reset({keepDirtyValues: true,
+ * keepDirty: true, keepTouched: true})`. Each `SettingsField` wraps its
+ * body in a shadcn `FormField` whose render-prop dispatches on the
+ * schema-walker's type tag.
+ *
+ * L3 rejection from non-pane writers (CLI, MCP, hand-edit) surfaces as a
+ * sonner toast + brief field flash.
+ *
+ * The Integrations section hosts an "Install in Claude Desktop" row that
+ * opens `<InstallInClaudeDesktopDialog>`.
+ */
+
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   bindConfigDoc,

@@ -1,3 +1,13 @@
+/**
+ * ConflictStore — persistent storage and resolution logic for merge conflicts.
+ *
+ * Conflicts are stored at <contentDir>/.ok/conflicts.json (schema v1).
+ * Each conflict entry records the file path and optional git object SHAs for
+ * ours/theirs/base, enabling strategy-based resolution.
+ *
+ * US-014: CRUD + resolve strategies ('mine' | 'theirs' | 'content').
+ */
+
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { getLogger } from './logger.ts';

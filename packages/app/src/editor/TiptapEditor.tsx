@@ -41,6 +41,14 @@ import { markUserTyping } from './observers';
 import { TableControlsMenu } from './table-controls/TableControlsMenu';
 import { getEditorView } from './utils/get-editor-view';
 
+/**
+ * Custom cursor renderer. Post-US-005 (multi-agent-presence FR-3 + FR-10),
+ * agents no longer publish per-doc awareness — so this renderer only ever
+ * sees humans. The former `user.type === 'agent'` short-circuit was removed
+ * because it became unreachable after `AwarenessUser.type` narrowed to
+ * `'human'`. NG1 (no fake-cursor animation for agents) is now satisfied
+ * by absence, not by a conditional.
+ */
 function renderCursor(user: Record<string, string>): HTMLElement {
   const cursor = document.createElement('span');
   cursor.classList.add('collaboration-cursor__caret');
