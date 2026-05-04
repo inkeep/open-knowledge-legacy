@@ -1,0 +1,5 @@
+{
+  "title": "Features",
+  "icon": "LuSparkles",
+  "pages": ["editor", "assets-and-embeds", "timeline-and-recovery", "github-sync", "agent-activity"]
+}
