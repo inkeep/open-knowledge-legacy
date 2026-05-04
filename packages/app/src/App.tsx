@@ -1,3 +1,4 @@
+import { mediaKindForSidebarAssetExtension } from '@inkeep/open-knowledge-core';
 import { useEffect, useState } from 'react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { ConnectingBanner } from '@/components/ConnectingBanner';
@@ -17,7 +18,7 @@ import {
   useDocumentTransition,
 } from '@/editor/DocumentContext';
 import { ConfigProvider } from '@/lib/config-provider';
-import { docNameFromHash } from '@/lib/doc-hash';
+import { assetPathFromHash, docNameFromHash } from '@/lib/doc-hash';
 import { mark, ProfilerBoundary } from '@/lib/perf';
 import { isSettingsShortcut, SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 
@@ -30,6 +31,23 @@ function NavigationHandler() {
     onHashChange();
 
     function onHashChange() {
+      const assetPath = assetPathFromHash(window.location.hash);
+      if (assetPath) {
+        const assetExt = assetPath.split('.').pop() ?? '';
+        const mediaKind = mediaKindForSidebarAssetExtension(assetExt);
+        if (!mediaKind) {
+          clearTarget();
+          return;
+        }
+        mark('ok/nav/hash-change', { docName: null, kind: 'asset' });
+        openTargetTransition({
+          kind: 'asset',
+          target: assetPath,
+          assetPath,
+          mediaKind,
+        });
+        return;
+      }
       const docName = docNameFromHash(window.location.hash);
       if (!docName) {
         mark('ok/nav/hash-change', { docName: null, kind: 'clear' });

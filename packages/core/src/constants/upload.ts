@@ -195,3 +195,47 @@ export const WIKI_EMBED_EXTENSIONS: ReadonlySet<string> = new Set([
   'aac',
   'opus',
 ]);
+
+export type InlineAssetMediaKind = 'image' | 'video';
+
+const SIDEBAR_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg'] as const;
+const SIDEBAR_VIDEO_EXTENSIONS = ['mp4'] as const;
+
+function assertSubset(
+  name: string,
+  extensions: readonly string[],
+  canonical: ReadonlySet<string>,
+): void {
+  for (const ext of extensions) {
+    if (!canonical.has(ext)) {
+      throw new Error(`${name}: ${ext} is not present in canonical upload constants`);
+    }
+  }
+}
+
+assertSubset('SIDEBAR_IMAGE_ASSET_EXTENSIONS', SIDEBAR_IMAGE_EXTENSIONS, IMAGE_EXTENSIONS);
+assertSubset('SIDEBAR_VIDEO_ASSET_EXTENSIONS', SIDEBAR_VIDEO_EXTENSIONS, VIDEO_EXTENSIONS);
+
+export const SIDEBAR_IMAGE_ASSET_EXTENSIONS: ReadonlySet<string> = new Set(
+  SIDEBAR_IMAGE_EXTENSIONS,
+);
+export const SIDEBAR_VIDEO_ASSET_EXTENSIONS: ReadonlySet<string> = new Set(
+  SIDEBAR_VIDEO_EXTENSIONS,
+);
+export const SIDEBAR_RENDERABLE_ASSET_EXTENSIONS: ReadonlySet<string> = new Set([
+  ...SIDEBAR_IMAGE_EXTENSIONS,
+  ...SIDEBAR_VIDEO_EXTENSIONS,
+]);
+
+assertSubset(
+  'SIDEBAR_RENDERABLE_ASSET_EXTENSIONS',
+  [...SIDEBAR_RENDERABLE_ASSET_EXTENSIONS],
+  INLINE_RENDERABLE_EXTENSIONS,
+);
+
+export function mediaKindForSidebarAssetExtension(ext: string): InlineAssetMediaKind | null {
+  const normalized = ext.toLowerCase().replace(/^\./, '');
+  if (SIDEBAR_IMAGE_ASSET_EXTENSIONS.has(normalized)) return 'image';
+  if (SIDEBAR_VIDEO_ASSET_EXTENSIONS.has(normalized)) return 'video';
+  return null;
+}

@@ -23,6 +23,15 @@ describe('buildPageNameSet', () => {
     expect(s.size).toBe(2);
   });
 
+  test('indexes referenced assets by path and basename', () => {
+    const s = buildPageNameSet([
+      { kind: 'asset', docName: '/docs/public/Wide.png', title: 'Wide.png' },
+    ]);
+    expect(s.has('/docs/public/wide.png')).toBe(true);
+    expect(s.has('docs/public/wide.png')).toBe(true);
+    expect(s.has('wide.png')).toBe(true);
+  });
+
   test('lowercases everything', () => {
     const s = buildPageNameSet([{ docName: 'ReadMe', title: 'The README' }]);
     expect(s.has('readme')).toBe(true);

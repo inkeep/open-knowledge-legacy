@@ -1,5 +1,5 @@
 import type { ContextMenuItem, FileTreeDropTarget } from '@pierre/trees';
-import type { DocEntry } from '@/components/file-tree-utils';
+import { type FileEntry, isAssetEntry } from '@/components/file-tree-utils';
 
 const DEFAULT_TREE_EXTENSION = '.md';
 const TREE_EXTENSION_PATTERN = /\.(md|mdx)$/i;
@@ -13,6 +13,10 @@ export function docNameToTreePath(
 
 export function treeFilePathToDocName(treePath: string): string {
   return stripTrailingSlash(treePath).replace(TREE_EXTENSION_PATTERN, '');
+}
+
+export function fileEntryToTreePath(entry: FileEntry): string {
+  return isAssetEntry(entry) ? entry.path : docNameToTreePath(entry.docName, entry.docExt);
 }
 
 function detectTreePathExtension(treePath: string): string | undefined {
@@ -35,22 +39,23 @@ export function treePathToAppPath(treePath: string): string {
     : treeFilePathToDocName(treePath);
 }
 
-export function documentsToTreePaths(documents: readonly DocEntry[]): string[] {
-  return documents.map((doc) => docNameToTreePath(doc.docName, doc.docExt));
+export function documentsToTreePaths(documents: readonly FileEntry[]): string[] {
+  return documents.map(fileEntryToTreePath);
 }
 
 export function treePathSignature(paths: readonly string[]): string {
   return [...paths].sort().join('\0');
 }
 
-export function documentsTreePathSignature(documents: readonly DocEntry[]): string {
+export function documentsTreePathSignature(documents: readonly FileEntry[]): string {
   return treePathSignature(documentsToTreePaths(documents));
 }
 
-export function collectTreeFolderPathsFromDocuments(documents: readonly DocEntry[]): string[] {
+export function collectTreeFolderPathsFromDocuments(documents: readonly FileEntry[]): string[] {
   const folderPaths = new Set<string>();
-  for (const doc of documents) {
-    const segments = doc.docName.split('/').filter(Boolean);
+  for (const entry of documents) {
+    const path = isAssetEntry(entry) ? entry.path : entry.docName;
+    const segments = path.split('/').filter(Boolean);
     for (let i = 1; i < segments.length; i++) {
       folderPaths.add(`${segments.slice(0, i).join('/')}/`);
     }

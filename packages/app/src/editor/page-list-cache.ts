@@ -1,6 +1,7 @@
 export interface PageListCacheSnapshot {
   readonly pages: ReadonlySet<string>;
   readonly folderPaths: ReadonlySet<string>;
+  readonly assetPaths?: ReadonlySet<string>;
   readonly pagesBySlug: ReadonlyMap<string, string>;
 }
 
@@ -24,7 +25,11 @@ export function snapshotsEqual(
 ): boolean {
   if (prev === null) return false;
   if (prev === next) return true;
-  return setsEqual(prev.pages, next.pages) && setsEqual(prev.folderPaths, next.folderPaths);
+  return (
+    setsEqual(prev.pages, next.pages) &&
+    setsEqual(prev.folderPaths, next.folderPaths) &&
+    setsEqual(prev.assetPaths ?? new Set(), next.assetPaths ?? new Set())
+  );
 }
 
 export function buildPagesBySlugIndex(

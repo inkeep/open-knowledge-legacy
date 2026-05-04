@@ -69,6 +69,12 @@ import {
 } from './agent-sessions.ts';
 import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
 import { isAllowedApiOrigin } from './api-origin.ts';
+import {
+  collectReferencedAssets,
+  mediaKindForAssetPath,
+  toContentRelativePath,
+} from './asset-references.ts';
+import { assetContentTypeForPath } from './asset-serve-middleware.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
   createInstalledAgentsProbe,
@@ -278,7 +284,6 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
-
 const SAFE_FILENAME_CHARS = /[^\p{L}\p{N}\p{M}\p{Extended_Pictographic}.\-_ ]/gu;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — sanitize must strip control bytes.
 const STRIP_ON_SIGHT = /[/\\\x00-\x1f\x7f]/g;
@@ -812,6 +817,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   } = options;
 
   const localOpGuard = createConcurrencyGuard();
+  let referencedAssetsCache: {
+    signature: string;
+    assets: ReturnType<typeof collectReferencedAssets>;
+  } | null = null;
+
+  function referencedAssetsSignature(index: ReadonlyMap<string, FileIndexEntry>): string {
+    return [...index.entries()]
+      .map(
+        ([docName, entry]) =>
+          `${docName}\0${entry.canonicalPath}\0${entry.size}\0${entry.modified}\0${entry.aliases.join('\0')}`,
+      )
+      .sort()
+      .join('\n');
+  }
 
   const installedAgentsCache = createInstalledAgentsProbe({
     probe: installedAgentsProbe ?? createOsProbe(process.platform),
@@ -1754,8 +1773,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const index = getFileIndex();
       const documents: {
+        kind: 'document' | 'asset';
         docName: string;
         docExt: string;
+        path?: string;
+        assetExt?: string;
+        mediaKind?: 'image' | 'video';
+        referencedBy?: string[];
         size: number;
         modified: string;
         isSymlink: boolean;
@@ -1769,6 +1793,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const docExt = getDocExtension(docName);
 
         documents.push({
+          kind: 'document',
           docName,
           docExt,
           size: entry.size,
@@ -1782,6 +1807,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           if (dir && !alias.startsWith(`${dir}/`) && alias !== dir) continue;
           const targetRelPath = relative(contentDir, entry.canonicalPath);
           documents.push({
+            kind: 'document',
             docName: alias,
             docExt,
             size: entry.size,
@@ -1791,6 +1817,48 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             targetPath: targetRelPath,
           });
         }
+      }
+
+      let assets: ReturnType<typeof collectReferencedAssets> = [];
+      try {
+        const assetSignature = referencedAssetsSignature(index);
+        if (referencedAssetsCache?.signature !== assetSignature) {
+          referencedAssetsCache = {
+            signature: assetSignature,
+            assets: collectReferencedAssets({
+              contentDir,
+              fileIndex: index,
+              readMarkdown: (path) => {
+                try {
+                  return readFileSync(path, 'utf-8');
+                } catch {
+                  return null;
+                }
+              },
+            }),
+          };
+        }
+        assets = referencedAssetsCache?.assets ?? [];
+      } catch (err) {
+        referencedAssetsCache = null;
+        console.warn('[document-list] asset collection failed; returning documents only:', err);
+      }
+      for (const asset of assets) {
+        if (dir && !asset.path.startsWith(`${dir}/`) && asset.path !== dir) continue;
+        documents.push({
+          kind: 'asset',
+          docName: asset.path,
+          docExt: asset.assetExt,
+          path: asset.path,
+          assetExt: asset.assetExt,
+          mediaKind: asset.mediaKind,
+          referencedBy: asset.referencedBy,
+          size: asset.size,
+          modified: asset.modified,
+          isSymlink: false,
+          canonicalDocName: null,
+          targetPath: null,
+        });
       }
 
       documents.sort((a, b) => a.docName.localeCompare(b.docName));
@@ -3275,6 +3343,75 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       pathSeparator: sep,
       symlinkResolved,
     });
+  }
+
+  async function handleAsset(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const assetPath = url.searchParams.get('path');
+      if (!assetPath || assetPath.includes('\0')) {
+        json(res, 400, { ok: false, error: 'Missing asset path' });
+        return;
+      }
+      const contentType = assetContentTypeForPath(assetPath);
+      if (!contentType || !mediaKindForAssetPath(assetPath)) {
+        json(res, 415, { ok: false, error: 'Unsupported asset type' });
+        return;
+      }
+      const resolvedContentDir = realpathSync(contentDir);
+      const requestedPath = resolve(resolvedContentDir, assetPath);
+      let canonicalPath: string;
+      try {
+        canonicalPath = realpathSync(requestedPath);
+      } catch {
+        json(res, 404, { ok: false, error: 'Asset not found' });
+        return;
+      }
+      if (!isWithinContentDir(canonicalPath, resolvedContentDir)) {
+        json(res, 400, { ok: false, error: 'Invalid asset path' });
+        return;
+      }
+      let stat: ReturnType<typeof statSync>;
+      try {
+        stat = statSync(canonicalPath);
+      } catch {
+        json(res, 404, { ok: false, error: 'Asset not found' });
+        return;
+      }
+      if (!stat.isFile()) {
+        json(res, 404, { ok: false, error: 'Asset not found' });
+        return;
+      }
+      const relativePath = toContentRelativePath(resolvedContentDir, canonicalPath);
+      if (relativePath !== assetPath.split('\\').join('/')) {
+        json(res, 400, { ok: false, error: 'Invalid asset path' });
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Length': String(stat.size),
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'inline',
+        'Cache-Control': 'no-store',
+      });
+      try {
+        await pipeline(createReadStream(canonicalPath), res);
+      } catch (streamError) {
+        console.error('[asset]', streamError);
+        if (!res.headersSent) {
+          json(res, 500, { ok: false, error: 'Failed to read asset' });
+        } else if (!res.destroyed) {
+          res.destroy(streamError instanceof Error ? streamError : undefined);
+        }
+      }
+    } catch (err) {
+      console.error('[asset]', err);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
   }
 
   const RESCUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -5120,6 +5257,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/server-info': handleServerInfo,
     '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
+    '/api/asset': handleAsset,
     '/api/workspace': handleWorkspace,
     '/api/sync/status': handleSyncStatus,
     '/api/sync/trigger': handleSyncTrigger,

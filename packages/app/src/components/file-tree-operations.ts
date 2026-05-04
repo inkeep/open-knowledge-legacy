@@ -1,4 +1,4 @@
-import type { DocEntry } from '@/components/file-tree-utils';
+import { type FileEntry, isAssetEntry } from '@/components/file-tree-utils';
 
 export interface RenamedDocMapping {
   fromDocName: string;
@@ -33,24 +33,28 @@ export function buildRenamedNodePath(target: FileTreeTarget, nextName: string): 
 }
 
 export function applyRenameToDocuments(
-  documents: DocEntry[],
+  documents: FileEntry[],
   renamed: RenamedDocMapping[],
-): DocEntry[] {
+): FileEntry[] {
   if (renamed.length === 0) return documents;
   const renamedMap = new Map(renamed.map((entry) => [entry.fromDocName, entry.toDocName]));
-  return documents.map((doc) => ({
-    ...doc,
-    docName: renamedMap.get(doc.docName) ?? doc.docName,
-  }));
+  return documents.map((doc) =>
+    isAssetEntry(doc)
+      ? doc
+      : {
+          ...doc,
+          docName: renamedMap.get(doc.docName) ?? doc.docName,
+        },
+  );
 }
 
 export function applyDeleteToDocuments(
-  documents: DocEntry[],
+  documents: FileEntry[],
   deletedDocNames: string[],
-): DocEntry[] {
+): FileEntry[] {
   if (deletedDocNames.length === 0) return documents;
   const deleted = new Set(deletedDocNames);
-  return documents.filter((doc) => !deleted.has(doc.docName));
+  return documents.filter((doc) => isAssetEntry(doc) || !deleted.has(doc.docName));
 }
 
 export function remapActiveDocName(

@@ -16,6 +16,7 @@ interface PageListContextValue {
   pageTitles: ReadonlyMap<string, string>;
   pageMeta: ReadonlyMap<string, PageMeta>;
   folderPaths: Set<string>;
+  assetPaths: Set<string>;
   loading: boolean;
   error: string | null;
   refetch: () => void;
@@ -30,6 +31,11 @@ interface PageSummary {
   size: number;
   modified: string;
   docExt?: string;
+}
+
+interface DocumentListEntry {
+  kind?: 'document' | 'asset';
+  path?: string;
 }
 
 export function mergePageSets(
@@ -72,21 +78,40 @@ async function loadPages(): Promise<PageSummary[]> {
   if (!r.ok) {
     throw new Error(`/api/pages responded with ${r.status}`);
   }
-  const data = (await r.json()) as { ok?: boolean; pages?: PageSummary[] };
+  const data: { ok?: boolean; pages?: PageSummary[] } = await r.json();
   if (Array.isArray(data.pages)) {
     return data.pages;
   }
   return [];
 }
 
+async function loadReferencedAssetPaths(): Promise<string[]> {
+  const r = await fetch('/api/documents');
+  if (!r.ok) {
+    throw new Error(`/api/documents responded with ${r.status}`);
+  }
+  const data: { ok?: boolean; documents?: DocumentListEntry[] } = await r.json();
+  if (!Array.isArray(data.documents)) return [];
+  return data.documents
+    .filter((entry): entry is DocumentListEntry & { kind: 'asset'; path: string } => {
+      return entry.kind === 'asset' && typeof entry.path === 'string' && entry.path.length > 0;
+    })
+    .map((entry) => entry.path);
+}
+
 function logLoadPagesError(err: unknown) {
   console.error('[PageListContext] Failed to load pages:', err);
+}
+
+function logLoadAssetsError(err: unknown) {
+  console.warn('[PageListContext] Failed to load referenced assets:', err);
 }
 
 export function PageListProvider({ children }: { children: ReactNode }) {
   const [serverPages, setServerPages] = useState(new Set<string>());
   const [serverPageTitles, setServerPageTitles] = useState(new Map<string, string>());
   const [serverPageMeta, setServerPageMeta] = useState(new Map<string, PageMeta>());
+  const [serverAssetPaths, setServerAssetPaths] = useState(new Set<string>());
   const [optimisticPages, setOptimisticPages] = useState(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -95,8 +120,14 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   function refetch() {
     const requestId = ++latestRequestIdRef.current;
     setLoading(true);
-    void loadPages()
-      .then((pageSummaries) => {
+    void Promise.all([
+      loadPages(),
+      loadReferencedAssetPaths().catch((err) => {
+        logLoadAssetsError(err);
+        return [] as string[];
+      }),
+    ])
+      .then(([pageSummaries, assetPaths]) => {
         if (requestId !== latestRequestIdRef.current) return;
         const pageNames = new Set(pageSummaries.map((page) => page.docName));
         setServerPages(pageNames);
@@ -114,6 +145,7 @@ export function PageListProvider({ children }: { children: ReactNode }) {
             ),
           ),
         );
+        setServerAssetPaths(new Set(assetPaths));
         setOptimisticPages((prev) => pruneConfirmedOptimisticPages(prev, pageNames));
         setError(null);
       })
@@ -163,12 +195,13 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   const pages = mergePageSets(serverPages, optimisticPages);
   const pageTitles = mergePageTitles(serverPageTitles, optimisticPages);
   const pageMeta: ReadonlyMap<string, PageMeta> = serverPageMeta;
+  const assetPaths = serverAssetPaths;
   const folderPaths = deriveKnownFolderPaths(pages);
   const pagesBySlug = buildPagesBySlugIndex(pages, toWikiLinkSlug);
 
   useEffect(() => {
-    setPageListCache({ pages, folderPaths, pagesBySlug });
-  }, [pages, folderPaths, pagesBySlug]);
+    setPageListCache({ pages, folderPaths, pagesBySlug, assetPaths });
+  }, [pages, folderPaths, pagesBySlug, assetPaths]);
 
   return (
     <PageListContext
@@ -178,6 +211,7 @@ export function PageListProvider({ children }: { children: ReactNode }) {
         pageTitles,
         pageMeta,
         folderPaths,
+        assetPaths,
         loading,
         error,
         refetch,

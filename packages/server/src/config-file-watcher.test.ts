@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync }
 import { rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   type ConfigFileWatcherUnsubscribe,
   startConfigFileWatcher,
@@ -33,7 +34,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<bo
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (predicate()) return true;
-    await new Promise((r) => setTimeout(r, 25));
+    await wait(25);
   }
   return predicate();
 }
@@ -104,7 +105,7 @@ describe('startConfigFileWatcher', () => {
     });
     cleanups.push(cleanup);
 
-    await new Promise((r) => setTimeout(r, 750));
+    await wait(750);
     expect(events).toEqual([]);
   });
 
@@ -125,7 +126,7 @@ describe('startConfigFileWatcher', () => {
     expect(fired).toBe(true);
     expect(events.at(-1)).toBe('theme: dark\n');
 
-    await new Promise((r) => setTimeout(r, 200));
+    await wait(200);
     expect(events.length).toBeGreaterThan(0);
     expect(events.length).toBeLessThanOrEqual(2);
   }, 15_000);
@@ -140,7 +141,7 @@ describe('startConfigFileWatcher', () => {
     cleanups.push(cleanup);
 
     unlinkSync(fx.absPath);
-    await new Promise((r) => setTimeout(r, 250));
+    await wait(250);
     expect(events).toEqual([]);
   });
 

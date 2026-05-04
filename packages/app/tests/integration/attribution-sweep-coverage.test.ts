@@ -26,6 +26,7 @@ const REQUIRED_HANDLERS = [
 const EXEMPT_HANDLERS = new Set([
   'handleDocumentRead',
   'handleDocumentList',
+  'handleAsset',
   'handleBacklinks',
   'handleBacklinkCounts',
   'handleForwardLinks',

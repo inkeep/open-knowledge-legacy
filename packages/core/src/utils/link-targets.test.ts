@@ -94,6 +94,14 @@ describe('classifyWikiLinkTarget', () => {
       url: 'https://example.com/docs#section',
     });
   });
+
+  test('classifies image wiki targets as assets', () => {
+    expect(classifyWikiLinkTarget('/docs/public/Wide.png', null)).toEqual({
+      kind: 'asset',
+      url: '/docs/public/Wide.png',
+      ext: 'png',
+    });
+  });
 });
 
 describe('resolveAssetProjectPath', () => {

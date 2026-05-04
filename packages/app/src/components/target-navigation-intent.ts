@@ -16,6 +16,7 @@ function getTargetDisplayState(resolvedTarget: ResolvedNavigationTarget): Target
     case 'folder-index':
       return 'folder';
     case 'missing':
+    case 'asset':
       return 'missing';
   }
 }

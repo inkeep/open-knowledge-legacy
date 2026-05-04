@@ -1,9 +1,12 @@
 import { WikiLink as BaseWikiLink, classifyWikiLinkTarget } from '@inkeep/open-knowledge-core';
 import { createElement } from 'react';
+import { hashFromAssetPath } from '../../lib/doc-hash';
 import { getInteractionLayer } from '../interaction-layer-host';
 import { openHashHrefInNewTab, openInternalHashHrefInNewTab } from '../internal-link-helpers';
+import { getPageListCache } from '../page-list-cache';
 import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { WikiLinkPropPanel } from './WikiLinkPropPanel';
+import { resolveWikiLinkAssetTarget } from './wiki-link-helpers';
 import { configureWikiLinkSuggestion, wikiLinkSuggestionKey } from './wiki-link-suggestion';
 
 let __wikiLinkNodeIdCounter = 0;
@@ -59,8 +62,15 @@ function buildWikiLinkChipDom(params: {
   return { dom };
 }
 
-export const WikiLink = BaseWikiLink.extend({
+export const WikiLink = BaseWikiLink.extend<{ docName: string }>({
   priority: 200,
+
+  addOptions() {
+    return {
+      ...this.parent?.(),
+      docName: '',
+    };
+  },
 
   addNodeView() {
     return ({ editor, node, getPos }) => {
@@ -91,7 +101,6 @@ export const WikiLink = BaseWikiLink.extend({
             }),
         },
         handlePrimary: ({ newTab }) => {
-          if (!newTab) return false;
           const live = currentNode.attrs;
           const liveTarget = typeof live.target === 'string' ? live.target : '';
           if (!liveTarget) return false;
@@ -99,12 +108,27 @@ export const WikiLink = BaseWikiLink.extend({
           const classified = classifyWikiLinkTarget(liveTarget, liveAnchor);
           if (!classified) return false;
           if (classified.kind === 'doc') {
+            if (!newTab) return false;
             openInternalHashHrefInNewTab({
               docName: classified.docName,
               anchor: classified.anchor,
             });
             return true;
           }
+          if (classified.kind === 'asset') {
+            const assetPath =
+              resolveWikiLinkAssetTarget(
+                classified.url,
+                getPageListCache()?.assetPaths ?? new Set<string>(),
+              ) ?? classified.url.replace(/^\//, '');
+            if (newTab) {
+              openHashHrefInNewTab(hashFromAssetPath(assetPath));
+            } else {
+              window.location.hash = hashFromAssetPath(assetPath);
+            }
+            return true;
+          }
+          if (!newTab) return false;
           if (!isSafeNavigationUrl(classified.url)) return false;
           openHashHrefInNewTab(classified.url);
           return true;

@@ -157,7 +157,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
             },
             extensions: [
               ...sharedExtensions.map((ext) => {
-                if (ext.name === 'link') {
+                if (ext.name === 'link' || ext.name === 'wikiLink') {
                   return ext.configure({ docName: provider.configuration.name ?? '' });
                 }
                 return ext;

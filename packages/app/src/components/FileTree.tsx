@@ -44,6 +44,7 @@ import {
   docNameToTreePath,
   documentsToTreePaths,
   documentsTreePathSignature,
+  fileEntryToTreePath,
   folderPathToTreeDirectoryPath,
   normalizeTreePathForKind,
   relativePathForTreeItem,
@@ -60,8 +61,16 @@ import {
   type RenamedDocMapping,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
-import { resolveFileTreeSelection } from '@/components/file-tree-selection';
-import type { DocEntry } from '@/components/file-tree-utils';
+import {
+  resolveFileTreeSelection,
+  resolveFileTreeSelectionAction,
+} from '@/components/file-tree-selection';
+import {
+  type DocumentEntry,
+  type FileEntry,
+  isAssetEntry,
+  isDocumentEntry,
+} from '@/components/file-tree-utils';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import {
@@ -261,6 +270,7 @@ interface FileTreeMenuProps {
   onDelete: (target: FileTreeTarget) => void;
   onExpandSubtree: (treePath: string) => void;
   onCollapseSubtree: (treePath: string) => void;
+  isAsset: boolean;
 }
 
 function asDirectoryHandle(
@@ -281,6 +291,7 @@ function FileTreeMenu({
   onDelete,
   onExpandSubtree,
   onCollapseSubtree,
+  isAsset,
 }: FileTreeMenuProps) {
   const target = treeItemToTarget(item);
   const isFolder = item.kind === 'directory';
@@ -358,16 +369,18 @@ function FileTreeMenu({
             <DropdownMenuSeparator />
           </>
         ) : null}
-        <DropdownMenuItem
-          disabled={anyActionBusy}
-          onSelect={() => {
-            closeForInlineSurface();
-            model.startRenaming(item.path);
-          }}
-        >
-          <Pencil aria-hidden="true" />
-          Rename
-        </DropdownMenuItem>
+        {!isAsset ? (
+          <DropdownMenuItem
+            disabled={anyActionBusy}
+            onSelect={() => {
+              closeForInlineSurface();
+              model.startRenaming(item.path);
+            }}
+          >
+            <Pencil aria-hidden="true" />
+            Rename
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSub>
           <DropdownMenuSubTrigger>
             <Copy aria-hidden="true" />
@@ -401,7 +414,7 @@ function FileTreeMenu({
         </DropdownMenuSub>
         <DropdownMenuSeparator />
         <RevealInFileManagerMenuItem item={item} workspace={workspace} onClose={close} />
-        {!isFolder && (
+        {!isFolder && !isAsset && (
           <OpenInAgentContextSubmenu
             input={handoffInput}
             installStates={handoff.installStates}
@@ -409,18 +422,22 @@ function FileTreeMenu({
             dispatch={handoff.dispatch}
           />
         )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          variant="destructive"
-          disabled={anyActionBusy}
-          onSelect={() => {
-            close();
-            onDelete(target);
-          }}
-        >
-          <Trash2 aria-hidden="true" />
-          Delete
-        </DropdownMenuItem>
+        {!isAsset ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={anyActionBusy}
+              onSelect={() => {
+                close();
+                onDelete(target);
+              }}
+            >
+              <Trash2 aria-hidden="true" />
+              Delete
+            </DropdownMenuItem>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -441,7 +458,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     navigateTo(targetPath);
     notifySidebarFileSelected();
   }
-  const [documents, setDocuments] = useState<DocEntry[]>([]);
+  const [documents, setDocuments] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyPath, setBusyPath] = useState<string | null>(null);
@@ -450,6 +467,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
   const documentsRef = useRef(documents);
   const activeDocNameRef = useRef(activeDocName);
+  const assetTreePaths = new Set(
+    documents.filter(isAssetEntry).map((entry) => fileEntryToTreePath(entry)),
+  );
+  const assetTreePathsRef = useRef(assetTreePaths);
   const activeAncestorTreePathsRef = useRef<string[]>([]);
   const pendingCreateRef = useRef<PendingCreate | null>(null);
   const skipNextResetSignatureRef = useRef<string | null>(null);
@@ -468,11 +489,15 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const activeTreePath = selectedFilePath
     ? docNameToTreePath(
         selectedFilePath,
-        documents.find((d) => d.docName === selectedFilePath)?.docExt,
+        documents.find(
+          (d): d is DocumentEntry => isDocumentEntry(d) && d.docName === selectedFilePath,
+        )?.docExt,
       )
     : selectedFolderPath
       ? folderPathToTreeDirectoryPath(selectedFolderPath)
-      : null;
+      : activeTarget?.kind === 'asset'
+        ? activeTarget.assetPath
+        : null;
 
   const handoffInstallStates = useInstalledAgents().states;
   const { dispatch: dispatchHandoff } = useHandoffDispatch();
@@ -520,7 +545,8 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     renderRowDecoration: ({ item }) => {
       if (item.kind !== 'file') return null;
       const doc = documentsRef.current.find(
-        (entry) => docNameToTreePath(entry.docName, entry.docExt) === item.path,
+        (entry): entry is DocumentEntry =>
+          isDocumentEntry(entry) && docNameToTreePath(entry.docName, entry.docExt) === item.path,
       );
       if (doc?.isSymlink) {
         return {
@@ -549,16 +575,18 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     : computeTreeAncestorPaths(activeTreePath ?? activeNavigationPath);
   const activeAncestorTreePathsSignature = activeAncestorTreePaths.join('\0');
 
-  const resetModelToDocuments = (nextDocuments?: readonly DocEntry[]) => {
+  const resetModelToDocuments = (nextDocuments?: readonly FileEntry[]) => {
     const nextPaths = documentsToTreePaths(nextDocuments ?? documentsRef.current);
     model.resetPaths(nextPaths, {
       initialExpandedPaths: activeAncestorTreePathsRef.current,
     });
   };
 
-  const markNextDocumentsAsApplied = (nextDocuments: readonly DocEntry[]) => {
+  const markNextDocumentsAsApplied = (nextDocuments: readonly FileEntry[]) => {
     skipNextResetSignatureRef.current = documentsTreePathSignature(nextDocuments);
   };
+
+  const isAssetTreePath = (treePath: string) => assetTreePathsRef.current.has(treePath);
 
   useEffect(() => {
     let active = true;
@@ -725,20 +753,29 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
         const docName = data.docName ?? createPath.replace(/\.md$/i, '');
         setDocuments((current) => {
-          if (current.some((doc) => doc.docName === docName)) return current;
+          if (current.some((doc) => !isAssetEntry(doc) && doc.docName === docName)) return current;
           const next = [
             ...current,
             {
+              kind: 'document',
               docName,
               modified: new Date().toISOString(),
               size: 0,
-            } satisfies DocEntry,
+            } satisfies FileEntry,
           ];
           markNextDocumentsAsApplied(next);
           return next;
         });
         navigateTo(docName);
         emitDocumentsChanged(['files', 'backlinks', 'graph']);
+        pendingCreateRef.current = null;
+        setBusyPath(null);
+        return;
+      }
+
+      if (!event.isFolder && isAssetTreePath(sourceTreePath)) {
+        toast.error('Assets cannot be renamed from the sidebar');
+        resetModelToDocuments();
         pendingCreateRef.current = null;
         setBusyPath(null);
         return;
@@ -795,6 +832,12 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       })
       .filter((operation) => !!operation);
     if (operations.length === 0) return;
+
+    if (operations.some((operation) => isAssetTreePath(operation.sourcePath))) {
+      toast.error('Assets cannot be moved from the sidebar');
+      resetModelToDocuments();
+      return;
+    }
 
     setBusyPath(operations[0]?.sourcePath ?? null);
     setError(null);
@@ -893,21 +936,30 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   useLayoutEffect(() => {
     documentsRef.current = documents;
     activeDocNameRef.current = activeDocName;
+    assetTreePathsRef.current = assetTreePaths;
     busyPathRef.current = busyPath;
     treePathsRef.current = treePaths;
     folderTreePathsRef.current = folderTreePaths;
     activeAncestorTreePathsRef.current = activeAncestorTreePaths;
     handleSelectionChangeRef.current = (selectedPaths) => {
       if (suppressSelectionRef.current) return;
-      const selected = selectedPaths[0];
-      if (!selected) return;
-      const appPath = treePathToAppPath(selected);
-      const isFolder = selected.endsWith('/');
-      if (!isFolder && !documentsRef.current.some((d) => d.docName === appPath)) {
-        console.debug('[FileTree] Dropped selection for unknown docName:', appPath);
+      const action = resolveFileTreeSelectionAction(selectedPaths[0], documentsRef.current);
+      if (action.kind === 'none') {
+        const selected = selectedPaths[0];
+        if (selected) {
+          console.debug(
+            '[FileTree] Dropped selection for unknown docName:',
+            treePathToAppPath(selected),
+          );
+        }
         return;
       }
-      navigateToWithPulse(appPath);
+      if (action.kind === 'asset') {
+        window.location.hash = action.hash;
+        notifySidebarFileSelected();
+        return;
+      }
+      navigateToWithPulse(action.path);
     };
     handleRenameRef.current = handleTreeRename;
     handleDropCompleteRef.current = handleDropComplete;
@@ -994,6 +1046,11 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       return;
     }
     const docName = treeFilePathToDocName(path);
+    const entry = documentsRef.current.find((item) => fileEntryToTreePath(item) === path);
+    if (entry && isAssetEntry(entry)) {
+      cancelCurrentHoverPrewarm();
+      return;
+    }
     if (hoveredPrewarmDocRef.current === docName) return;
     cancelCurrentHoverPrewarm();
     hoveredPrewarmDocRef.current = docName;
@@ -1060,6 +1117,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
             onDelete={setDeleteTarget}
             onExpandSubtree={expandSubtree}
             onCollapseSubtree={collapseSubtree}
+            isAsset={assetTreePaths.has(item.path)}
           />
         )}
       />
