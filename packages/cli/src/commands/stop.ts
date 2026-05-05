@@ -1,6 +1,8 @@
 import { type Config, resolveContentDir, resolveLockDir } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
+import { discoverLockDirs } from '../utils/process-scan.ts';
 import { inspectLock, type LockState } from './lock-state.ts';
+import { runPs } from './ps.ts';
 
 interface StopTargetPlan {
   name: 'server' | 'ui';
@@ -77,15 +79,86 @@ export function runStop(deps: RunStopDeps): StopOutcome {
   return { stopped, failed, hadTargets: true };
 }
 
+async function findLockDirByNumber(n: number): Promise<string | null> {
+  const lockDirs = await discoverLockDirs();
+  let pidMatch: string | null = null;
+  for (const lockDir of lockDirs) {
+    const server = inspectLock(lockDir, 'server');
+    const ui = inspectLock(lockDir, 'ui');
+    if (server.status === 'alive' && server.lock.port === n) return lockDir;
+    if (ui.status === 'alive' && ui.lock.port === n) return lockDir;
+    if (pidMatch === null) {
+      if (server.status === 'alive' && server.lock.pid === n) pidMatch = lockDir;
+      else if (ui.status === 'alive' && ui.lock.pid === n) pidMatch = lockDir;
+    }
+  }
+  return pidMatch;
+}
+
+function executeStop(lockDir: string): StopOutcome {
+  const outcome = runStop({ lockDir });
+  if (outcome.failed.length > 0) process.exitCode = 1;
+  return outcome;
+}
+
 export function stopCommand(getConfig: () => Config): Command {
   return new Command('stop')
-    .description('Stop the running open-knowledge server and UI (live only)')
-    .action(() => {
-      const config = getConfig();
-      const lockDir = resolveLockDir(resolveContentDir(config, process.cwd()));
-      const outcome = runStop({ lockDir });
-      if (outcome.failed.length > 0) {
-        process.exitCode = 1;
+    .description(
+      'Stop open-knowledge server(s). With no argument: stops the server for the current directory. ' +
+        'Pass a port number, a directory path, or "all" to target globally.',
+    )
+    .argument('[target...]', 'port number, directory path (spaces OK), or "all"')
+    .action(async (parts: string[]) => {
+      const target = parts.length === 0 ? undefined : parts.join(' ');
+
+      if (target === undefined) {
+        const config = getConfig();
+        const lockDir = resolveLockDir(resolveContentDir(config, process.cwd()));
+        const outcome = runStop({ lockDir, log: () => {} });
+        if (outcome.hadTargets) {
+          if (outcome.stopped.length > 0) {
+            const rendered = outcome.stopped
+              .map((t) => `${t.name} (pid=${t.pid}, port=${t.port})`)
+              .join(', ');
+            console.log(`Stopped: ${rendered}`);
+          }
+          if (outcome.failed.length > 0) process.exitCode = 1;
+        } else {
+          await runPs({});
+        }
+        return;
       }
+
+      if (target === 'all') {
+        const lockDirs = await discoverLockDirs();
+        if (lockDirs.length === 0) {
+          console.log('No running open-knowledge servers found.');
+          return;
+        }
+        let stopped = 0;
+        for (const lockDir of lockDirs) {
+          const server = inspectLock(lockDir, 'server');
+          const ui = inspectLock(lockDir, 'ui');
+          if (server.status !== 'alive' && ui.status !== 'alive') continue;
+          executeStop(lockDir);
+          stopped++;
+        }
+        if (stopped === 0) console.log('No running open-knowledge servers found.');
+        return;
+      }
+
+      if (/^\d+$/.test(target)) {
+        const n = Number.parseInt(target, 10);
+        const lockDir = await findLockDirByNumber(n);
+        if (lockDir === null) {
+          console.log(`No running open-knowledge server found with port or PID ${n}.`);
+          return;
+        }
+        executeStop(lockDir);
+        return;
+      }
+
+      const lockDir = resolveLockDir(target);
+      executeStop(lockDir);
     });
 }
