@@ -171,6 +171,25 @@ describe('custom-node regression gate — every promoted mdast type emits semant
       expect(html).not.toMatch(/<Tag /);
     });
 
+    test('mark (Obsidian-style highlight) emits <mark>text</mark>', () => {
+      const html = mdastToHtml({
+        type: 'root',
+        children: [
+          {
+            type: 'paragraph',
+            children: [
+              {
+                type: 'mark',
+                children: [{ type: 'text', value: 'hello' }],
+                // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast mirroring fromPmMark output
+              } as any,
+            ],
+          },
+        ],
+      });
+      expect(html).toContain('<mark>hello</mark>');
+    });
+
     test('rawMdxFallback emits parse-error comment + <pre> with class + data-raw-mdx-fallback markers', () => {
       const html = mdastToHtml({
         type: 'root',

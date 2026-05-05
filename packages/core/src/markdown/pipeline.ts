@@ -9,6 +9,7 @@ import type { Root as MdastRoot } from 'mdast';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 import remarkGithubAlerts from 'remark-github-alerts';
+import remarkMath from 'remark-math';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { type Processor, unified } from 'unified';
@@ -18,9 +19,12 @@ import './mdast-augmentation.ts';
 import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
 import { calloutTransformerPlugin, REMARK_GITHUB_ALERTS_OPTIONS } from './callout-transformer.ts';
 import { detailsAccordionPromoterPlugin } from './details-accordion-promoter.ts';
+import { highlightPromoterPlugin } from './highlight-promoter.ts';
 import { imagePromoterPlugin } from './image-promoter.ts';
+import { mathPromoterPlugin } from './math-promoter.ts';
 import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
+import { singleDollarMathPromoterPlugin } from './single-dollar-math-promoter.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
 
 interface PipelineOptions {
@@ -55,12 +59,16 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkMdxAgnostic)
     .use(remarkGfm)
+    .use(remarkMath, { singleDollarTextMath: false })
     .use(remarkWikiLink)
     .use(remarkGithubAlerts, REMARK_GITHUB_ALERTS_OPTIONS)
     .use(calloutTransformerPlugin)
     .use(restoreFromMdx) // Phase A
     .use(detailsAccordionPromoterPlugin)
     .use(imagePromoterPlugin)
+    .use(mathPromoterPlugin)
+    .use(singleDollarMathPromoterPlugin)
+    .use(highlightPromoterPlugin)
     .use(mergedPostParseWalkerPlugin) // Phase B
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
     .use(remarkProseMirror, {
@@ -75,6 +83,7 @@ export function createSerializeProcessor(opts: PipelineOptions): Processor {
   const processor = unified()
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkGfm)
+    .use(remarkMath, { singleDollarTextMath: false })
     .use(remarkMdxAgnostic)
     .use(remarkWikiLink)
     .use(remarkStringify, {

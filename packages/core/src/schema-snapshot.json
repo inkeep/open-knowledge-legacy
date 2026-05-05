@@ -152,6 +152,23 @@
       "inline": true,
       "atom": false
     },
+    "mathInline": {
+      "attrs": {
+        "formula": {
+          "hasDefault": true
+        },
+        "id": {
+          "hasDefault": true
+        },
+        "language": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true
+    },
     "wikiLink": {
       "attrs": {
         "target": {
@@ -423,6 +440,7 @@
     "jsxComponent",
     "rawMdxFallback",
     "jsxInline",
+    "mathInline",
     "wikiLink",
     "wikiLinkEmbed",
     "list",

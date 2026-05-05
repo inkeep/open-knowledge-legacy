@@ -83,4 +83,16 @@ export const codeLanguages: LanguageDescription[] = [
       return new LanguageSupport(StreamLanguage.define(go));
     },
   }),
+  LanguageDescription.of({
+    name: 'math',
+    alias: ['latex', 'tex'],
+    extensions: ['tex', 'latex'],
+    load: async () => {
+      const [{ StreamLanguage, LanguageSupport }, { stex }] = await Promise.all([
+        import('@codemirror/language'),
+        import('@codemirror/legacy-modes/mode/stex'),
+      ]);
+      return new LanguageSupport(StreamLanguage.define(stex));
+    },
+  }),
 ];

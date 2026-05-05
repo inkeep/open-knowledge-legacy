@@ -28,7 +28,9 @@ function toHastHasHandler(type: PromotedMdastType): boolean {
   return (customNodeHandlers as AnyHandlerMap)[type] != null;
 }
 
-const parseFixtures: Record<PromotedMdastType, { md: string; expectedPmType: string }> = {
+type ParseFixture = { md: string; expectedPmType: string } | { md: string; expectedPmMark: string };
+
+const parseFixtures: Record<PromotedMdastType, ParseFixture> = {
   wikiLink: { md: '[[TargetPage]]', expectedPmType: 'wikiLink' },
   wikiLinkEmbed: { md: '![[photo.png]]', expectedPmType: 'jsxComponent' },
   mdxJsxFlowElement: { md: '<MyComponent/>', expectedPmType: 'jsxComponent' },
@@ -37,6 +39,7 @@ const parseFixtures: Record<PromotedMdastType, { md: string; expectedPmType: str
     md: '<Foo>abc</Bar>',
     expectedPmType: 'rawMdxFallback',
   },
+  mark: { md: '==hello==', expectedPmMark: 'highlight' },
 };
 
 function findPmNode(json: JSONContent, type: string): boolean {
@@ -47,16 +50,27 @@ function findPmNode(json: JSONContent, type: string): boolean {
   return false;
 }
 
+function findPmMark(json: JSONContent, markType: string): boolean {
+  if ((json.marks ?? []).some((m) => m.type === markType)) return true;
+  for (const child of json.content ?? []) {
+    if (findPmMark(child, markType)) return true;
+  }
+  return false;
+}
+
 function parsePathCoverage(type: PromotedMdastType): boolean {
   const mgr = new MarkdownManager({ extensions: sharedExtensions });
-  const { md, expectedPmType } = parseFixtures[type];
+  const fixture = parseFixtures[type];
   let json: JSONContent;
   try {
-    json = mgr.parseWithFallback(md);
+    json = mgr.parseWithFallback(fixture.md);
   } catch {
     return false;
   }
-  return findPmNode(json, expectedPmType);
+  if ('expectedPmType' in fixture) {
+    return findPmNode(json, fixture.expectedPmType);
+  }
+  return findPmMark(json, fixture.expectedPmMark);
 }
 
 describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
@@ -127,6 +141,11 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         value: '<Unclosed',
         data: { reason: 'test', originalSpan: { start: 0, end: 9 } },
       },
+      mark: {
+        type: 'mark',
+        children: [{ type: 'text', value: 'hi' }],
+        data: { sourceForm: 'markdown' },
+      },
     };
 
     for (const type of PROMOTED_MDAST_TYPES) {
@@ -181,6 +200,11 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         type: 'rawMdxFallback',
         value: '<Unclosed',
         data: { reason: 'test', originalSpan: { start: 0, end: 9 } },
+      },
+      mark: {
+        type: 'mark',
+        children: [{ type: 'text', value: 'hi' }],
+        data: { sourceForm: 'markdown' },
       },
     };
 

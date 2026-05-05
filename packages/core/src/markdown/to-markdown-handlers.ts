@@ -15,6 +15,12 @@ import type { Nodes, Parents } from 'mdast';
 import type { MdxJsxAttribute, MdxJsxExpressionAttribute, MdxJsxFlowElement } from 'mdast-util-mdx';
 import type { Info, State } from 'mdast-util-to-markdown';
 
+declare module 'mdast-util-to-markdown' {
+  interface ConstructNameMap {
+    mark: 'mark';
+  }
+}
+
 type MdastToMarkdownHandlerFor<N extends Nodes['type']> = (
   node: Extract<Nodes, { type: N }>,
   parent: Parents | undefined,
@@ -275,11 +281,38 @@ export const toMarkdownHandlers = {
     return `${openTag}\n\n${childContent}\n\n${closeTag}`;
   },
 
+  mark(node, _parent, state, info) {
+    const sourceForm = (node as { data?: { sourceForm?: string } }).data?.sourceForm;
+    const tracker = state.createTracker(info);
+    const exit = state.enter('mark');
+    if (sourceForm === 'mdx') {
+      let value = tracker.move('<Highlight>');
+      value += state.containerPhrasing(node as Parents, {
+        before: value,
+        after: '<',
+        ...tracker.current(),
+      });
+      value += tracker.move('</Highlight>');
+      exit();
+      return value;
+    }
+    let value = tracker.move('==');
+    value += state.containerPhrasing(node as Parents, {
+      before: value,
+      after: '==',
+      ...tracker.current(),
+    });
+    value += tracker.move('==');
+    exit();
+    return value;
+  },
+
   mdxJsxTextElement(node) {
     const raw = node.data?.sourceRaw;
     if (typeof raw === 'string') return raw;
     const name = node.name ?? '';
-    return `<${name}/>`;
+    const attrs = serializeMdxJsxAttrs(node.attributes ?? []);
+    return attrs ? `<${name} ${attrs} />` : `<${name}/>`;
   },
 
   rawMdxFallback(node) {

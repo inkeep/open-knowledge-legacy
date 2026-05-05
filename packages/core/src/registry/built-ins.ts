@@ -396,6 +396,33 @@ const wikiEmbedAudioProps: PropDef[] = [
   },
 ];
 
+const mathProps: PropDef[] = [
+  {
+    name: 'formula',
+    type: 'string',
+    required: true,
+    autoFocus: true,
+    description: 'LaTeX math source (rendered with KaTeX in the browser)',
+  },
+  {
+    name: 'id',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'HTML id attribute for deep-linking (e.g. `#eq-pythagoras`)',
+  },
+  {
+    name: 'language',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description:
+      'Forward-compat hint for the math source language (default `latex`). Reserved for future MathJax / Typst / AsciiMath substrates.',
+  },
+];
+const dollarMathProps: PropDef[] = [mathProps[0]];
+const mathFenceProps: PropDef[] = [mathProps[0]];
+
 function escapeHtmlAttr(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -494,6 +521,19 @@ export const builtInComponents: JsxComponentMeta[] = [
       'Standalone expand/collapse via native HTML5 <details>/<summary>. Group siblings with the `name` prop for exclusive-accordion UX.',
     searchTerms: ['toggle', 'accordion', 'expandable', 'details', 'disclosure', 'collapse', 'fold'],
     serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx, accordionProps),
+  },
+  {
+    name: 'Math',
+    surface: 'canonical',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: mathProps,
+    icon: 'Sigma',
+    category: 'content',
+    displayName: 'Math',
+    description: 'Block math equation rendered with KaTeX from a LaTeX source string',
+    searchTerms: ['math', 'latex', 'equation', 'formula', 'katex', 'tex'],
+    serialize: (node, ctx) => emitMdxJsx('Math', node, ctx, mathProps),
   },
 
   {
@@ -667,6 +707,50 @@ export const builtInComponents: JsxComponentMeta[] = [
             closer: '</details>',
           },
         },
+      };
+    },
+  },
+  {
+    name: 'DollarMath',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: dollarMathProps,
+    icon: 'Sigma',
+    category: 'content',
+    displayName: 'Dollar Math',
+    description:
+      'Block math via `$$…$$` syntax — read-only compat. Preserves `$$…$$` form on round-trip; insert a fresh Math block for the full prop surface (id, language).',
+    rendersAs: 'Math',
+    translateProps: (props) => props,
+    serialize: (node) => {
+      const p = node.attrs.props as { formula?: string } | undefined;
+      return {
+        type: 'math' as const,
+        value: p?.formula ?? '',
+      };
+    },
+  },
+  {
+    name: 'MathFence',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: mathFenceProps,
+    icon: 'Sigma',
+    category: 'content',
+    displayName: 'Math Fence',
+    description:
+      'Block math via ` ```math ` fenced code syntax — read-only compat. Preserves the fence form on round-trip; insert a fresh Math block for the full prop surface (id, language).',
+    rendersAs: 'Math',
+    translateProps: (props) => props,
+    serialize: (node) => {
+      const p = node.attrs.props as { formula?: string } | undefined;
+      return {
+        type: 'code' as const,
+        lang: 'math',
+        meta: null,
+        value: p?.formula ?? '',
       };
     },
   },

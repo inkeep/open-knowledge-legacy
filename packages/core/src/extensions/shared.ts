@@ -14,6 +14,7 @@ import { JsxInline } from './jsx-inline.ts';
 import { LinkFidelity } from './link-fidelity.ts';
 import { LinkRefDefFidelity } from './link-ref-def-fidelity.ts';
 import { List, ListItem } from './list.ts';
+import { MathInline } from './math-inline.ts';
 import { RawMdxFallback } from './raw-mdx-fallback.ts';
 import { SourceLiteralMark } from './source-literal-mark.ts';
 import { ThematicBreakFidelity } from './thematic-break-fidelity.ts';
@@ -24,6 +25,7 @@ export const sharedExtensions = [
   JsxComponent,
   RawMdxFallback,
   JsxInline,
+  MathInline,
   WikiLink,
   WikiLinkEmbed,
   List,

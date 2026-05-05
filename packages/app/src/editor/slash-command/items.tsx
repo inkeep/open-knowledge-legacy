@@ -4,14 +4,17 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  Highlighter,
   List,
   ListOrdered,
   ListTodo,
   Minus,
   Quote,
+  Sigma,
   Table2,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { setPendingAutoOpen } from './component-items';
 
 export interface SlashCommandItem {
   name: string;
@@ -213,6 +216,38 @@ export const slashCommandItems: SlashCommandItem[] = [
         </div>
       ),
     },
+  },
+  {
+    name: 'highlight',
+    label: 'Highlight',
+    icon: Highlighter,
+    category: 'basic',
+    command: (editor) => editor.chain().focus().toggleHighlight().run(),
+    aliases: ['mark', 'yellow', '=='],
+    preview: {
+      description: 'Highlight selected text with a yellow background.',
+      render: () => (
+        <p className="text-sm leading-6">
+          The <mark className="rounded px-0.5">important phrase</mark> stands out from the
+          surrounding prose.
+        </p>
+      ),
+    },
+  },
+  {
+    name: 'inlineMath',
+    label: 'Inline Math',
+    icon: Sigma,
+    category: 'insert',
+    command: (editor) => {
+      const insertPos = editor.state.selection.from;
+      editor.chain().focus().insertMathInline('').run();
+      setPendingAutoOpen(insertPos);
+      requestAnimationFrame(() => {
+        editor.commands.setNodeSelection(insertPos);
+      });
+    },
+    aliases: ['math', 'latex', 'equation', 'formula', 'katex', 'inlinemath'],
   },
 ];
 
