@@ -193,5 +193,15 @@
     "componentName": "Math-with-id",
     "blockForm": "<Math formula=\"a^2 + b^2 = c^2\" id=\"pythagoras\" />\n",
     "notes": "FR-M1: id attr for deep-link anchor (e.g. #pythagoras) on a block math node"
+  },
+  {
+    "componentName": "Mermaid-basic",
+    "blockForm": "<Mermaid chart=\"graph TD; A-->B;\" />\n",
+    "notes": "Re-introduces Mermaid (2026-04-21 stub deleted; now ships with mermaid-js renderer)"
+  },
+  {
+    "componentName": "Mermaid-with-id",
+    "blockForm": "<Mermaid chart=\"graph TD; A-->B;\" id=\"sys-arch\" />\n",
+    "notes": "id attr for deep-link anchor (e.g. #sys-arch) on a Mermaid block"
   }
 ]

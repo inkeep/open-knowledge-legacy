@@ -207,8 +207,15 @@ function readNoticeText(pkgDir) {
   return readTextOrNull(findFileCaseInsensitive(pkgDir, NOTICE_FILENAMES));
 }
 
-function normalizeSpdx(licenseField) {
-  if (!licenseField) return 'UNKNOWN';
+const SPDX_OVERRIDES = {
+  khroma: 'MIT',
+};
+
+function normalizeSpdx(licenseField, pkgName) {
+  if (!licenseField) {
+    if (pkgName && Object.hasOwn(SPDX_OVERRIDES, pkgName)) return SPDX_OVERRIDES[pkgName];
+    return 'UNKNOWN';
+  }
   if (typeof licenseField === 'string') return licenseField.trim();
   if (Array.isArray(licenseField)) {
     return licenseField
@@ -414,7 +421,7 @@ function build() {
     const key = `${pkg.name}@${pkg.version}`;
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
-    const spdx = normalizeSpdx(pkg.license || pkg.licenses);
+    const spdx = normalizeSpdx(pkg.license || pkg.licenses, pkg.name);
     const category = categorize(spdx);
     const entry = {
       pkg,

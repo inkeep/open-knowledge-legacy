@@ -7,11 +7,11 @@ import {
 } from './component-items';
 
 describe('getComponentItems (descriptor-driven slash menu)', () => {
-  test('returns exactly the canonical descriptors (5-pack + Math + Pdf)', () => {
+  test('returns exactly the canonical descriptors (5-pack + Math + Mermaid + Pdf)', () => {
     const items = getComponentItems();
     const labels = items.map((i) => i.label).sort();
     expect(labels).toEqual(
-      ['Accordion', 'Audio', 'Callout', 'Image', 'Math', 'PDF', 'Video'].sort(),
+      ['Accordion', 'Audio', 'Callout', 'Image', 'Math', 'Mermaid', 'PDF', 'Video'].sort(),
     );
   });
 

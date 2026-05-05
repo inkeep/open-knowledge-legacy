@@ -1,0 +1,38 @@
+import { describe, expect, test } from 'bun:test';
+import { renderToString } from 'react-dom/server';
+import { MermaidView } from './Mermaid.tsx';
+
+describe('MermaidView — placeholder branch', () => {
+  test('empty chart renders the placeholder shell', () => {
+    const html = renderToString(<MermaidView chart="" />);
+    expect(html).toContain('class="mermaid mermaid-placeholder"');
+    expect(html).toContain('data-component-type="mermaid"');
+  });
+
+  test('whitespace-only chart treated as empty', () => {
+    const html = renderToString(<MermaidView chart="   " />);
+    expect(html).toContain('mermaid-placeholder');
+  });
+
+  test('undefined chart treated as empty', () => {
+    const html = renderToString(<MermaidView />);
+    expect(html).toContain('mermaid-placeholder');
+  });
+
+  test('id prop reaches the placeholder DOM (deep-link anchor)', () => {
+    const html = renderToString(<MermaidView chart="" id="sys-arch" />);
+    expect(html).toContain('id="sys-arch"');
+  });
+});
+
+describe('MermaidView — pre-render mount state', () => {
+  test('non-empty chart starts in idle/rendering state under renderToString', () => {
+    const html = renderToString(<MermaidView chart="graph TD; A-->B;" />);
+    expect(html).toContain('data-component-type="mermaid"');
+  });
+
+  test('id prop carries through pre-render state', () => {
+    const html = renderToString(<MermaidView chart="graph TD; A-->B;" id="diag-1" />);
+    expect(html).toContain('id="diag-1"');
+  });
+});

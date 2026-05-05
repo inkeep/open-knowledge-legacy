@@ -3,6 +3,7 @@ import { Audio } from './Audio.tsx';
 import { Callout } from './Callout.tsx';
 import { Image } from './Image.tsx';
 import { MathView } from './Math.tsx';
+import { MermaidView } from './Mermaid.tsx';
 import { Pdf } from './Pdf.tsx';
 import { Video } from './Video.tsx';
 
@@ -19,5 +20,6 @@ export const componentMap: Record<string, React.ComponentType<any>> = {
   Pdf,
   Accordion,
   Math: MathView,
+  Mermaid: MermaidView,
   '*': UnregisteredBadgeRender,
 };
