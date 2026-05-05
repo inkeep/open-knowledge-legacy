@@ -38,6 +38,8 @@ export const PROMOTED_MDAST_TYPES = [
   'tag',
   'comment',
   'commentBlock',
+  'footnoteReference',
+  'footnoteDefinition',
 ] as const;
 
 export type PromotedMdastType = (typeof PROMOTED_MDAST_TYPES)[number];

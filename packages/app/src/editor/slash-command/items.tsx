@@ -13,6 +13,7 @@ import {
   Minus,
   Quote,
   Sigma,
+  Superscript,
   Table2,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -250,6 +251,50 @@ export const slashCommandItems: SlashCommandItem[] = [
           A line with{' '}
           <span className="italic text-muted-foreground/70">an author-private note</span> rendered
           alongside the regular prose.
+        </p>
+      ),
+    },
+  },
+  {
+    name: 'footnote',
+    label: 'Footnote',
+    icon: Superscript,
+    category: 'insert',
+    command: (editor) => {
+      let maxId = 0;
+      editor.state.doc.descendants((node) => {
+        if (node.type.name === 'footnoteDefinition') {
+          const id = String(node.attrs.identifier ?? '');
+          const n = Number.parseInt(id, 10);
+          if (!Number.isNaN(n) && n > maxId) maxId = n;
+        }
+        return true;
+      });
+      const next = String(maxId + 1);
+      const docEnd = editor.state.doc.content.size;
+      editor
+        .chain()
+        .focus()
+        .insertFootnoteReference(next)
+        .insertContentAt(docEnd + 1, {
+          type: 'footnoteDefinition',
+          attrs: { identifier: next, label: next },
+          content: [{ type: 'paragraph' }],
+        })
+        .run();
+    },
+    aliases: ['fn', 'ref', '[^'],
+    preview: {
+      description: 'Insert a footnote reference + matching definition stub.',
+      render: () => (
+        <p className="text-sm leading-6">
+          A line with a footnote
+          <sup className="footnote-ref">
+            <a className="footnote-ref-link" href="#fn-1">
+              [1]
+            </a>
+          </sup>{' '}
+          and a definition shown below.
         </p>
       ),
     },

@@ -7,6 +7,7 @@ import { slashCommandItems } from '../slash-command/items';
 import { BlockMover } from './block-mover';
 import { BridgeIdPlugin } from './bridge-id-plugin';
 import { BlockDragHandle } from './drag-handle';
+import { FootnoteAnchorScroll } from './footnote-anchor-scroll';
 import { HeadingAnchors } from './heading-anchors';
 import { InternalLink } from './internal-link';
 import { JsxComponent } from './jsx-component';
@@ -54,6 +55,7 @@ export const sharedExtensions = [
   }),
   HeadingAnchors,
   TagClickPlugin,
+  FootnoteAnchorScroll,
   BlockDragHandle,
   BlockMover,
   SourceDirtyObserver,
