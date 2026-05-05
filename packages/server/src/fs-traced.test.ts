@@ -24,25 +24,29 @@ describe('classifyFsPath', () => {
     );
   });
 
-  test('.ok/server.lock buckets as "lock" (lock check fires before ok-internal)', () => {
-    expect(classifyFsPath(`${root}${sep}.ok${sep}server.lock`)).toBe('lock');
-    expect(classifyFsPath(`${root}${sep}.ok${sep}ui.lock`)).toBe('lock');
+  test('.ok/local/server.lock buckets as "lock" (lock check fires before ok-internal)', () => {
+    expect(classifyFsPath(`${root}${sep}.ok${sep}local${sep}server.lock`)).toBe('lock');
+    expect(classifyFsPath(`${root}${sep}.ok${sep}local${sep}ui.lock`)).toBe('lock');
   });
 
-  test('.ok/principal.json buckets as "principal"', () => {
-    expect(classifyFsPath(`${root}${sep}.ok${sep}principal.json`)).toBe('principal');
+  test('.ok/local/principal.json buckets as "principal"', () => {
+    expect(classifyFsPath(`${root}${sep}.ok${sep}local${sep}principal.json`)).toBe('principal');
   });
 
-  test('.ok/conflicts/* buckets as "conflict"', () => {
-    expect(classifyFsPath(`${root}${sep}.ok${sep}conflicts${sep}foo.md`)).toBe('conflict');
-    expect(classifyFsPath(`${root}${sep}.ok${sep}conflict.json`)).toBe('conflict');
+  test('conflicts.json or paths under conflicts/ bucket as "conflict"', () => {
+    expect(classifyFsPath(`${root}${sep}.ok${sep}local${sep}conflicts.json`)).toBe('conflict');
+    expect(classifyFsPath(`${root}${sep}.ok${sep}local${sep}conflicts${sep}foo.md`)).toBe(
+      'conflict',
+    );
   });
 
-  test('.ok/* general writes bucket as "ok-internal"', () => {
+  test('.ok/local/* general writes bucket as "ok-internal"', () => {
     expect(classifyFsPath(`${root}${sep}.ok${sep}config.yml`)).toBe('ok-internal');
-    expect(classifyFsPath(`${root}${sep}.ok${sep}cache${sep}foo.json`)).toBe('ok-internal');
-    expect(classifyFsPath(`${root}${sep}.ok${sep}state.json`)).toBe('ok-internal');
-    expect(classifyFsPath(`${root}${sep}.ok${sep}sync-state.json`)).toBe('ok-internal');
+    expect(classifyFsPath(`${root}${sep}.ok${sep}local${sep}cache${sep}foo.json`)).toBe(
+      'ok-internal',
+    );
+    expect(classifyFsPath(`${root}${sep}.ok${sep}local${sep}state.json`)).toBe('ok-internal');
+    expect(classifyFsPath(`${root}${sep}.ok${sep}local${sep}sync-state.json`)).toBe('ok-internal');
   });
 
   test('.md/.mdx writes UNDER .ok/ bucket as "ok-internal" (not content-md)', () => {

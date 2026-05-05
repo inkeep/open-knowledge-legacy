@@ -197,7 +197,8 @@ describe('ContentFilter', () => {
       expect(filter.isDirExcluded('coverage')).toBe(true);
       expect(filter.isDirExcluded('.git')).toBe(true);
       expect(filter.isDirExcluded('.ok')).toBe(true);
-      expect(filter.isDirExcluded('.ok/cache')).toBe(true);
+      expect(filter.isDirExcluded('.ok/local')).toBe(true);
+      expect(filter.isDirExcluded('.ok/local/cache')).toBe(true);
       expect(filter.isDirExcluded('docs')).toBe(false);
       expect(filter.isDirExcluded('src')).toBe(false);
     });

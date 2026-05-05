@@ -7,7 +7,8 @@ export const SKILL_INSTALL_EVENTS_FILE_REL = ['.ok', 'skill-install-events.jsonl
 export type SkillInstallEventSurface =
   | 'server-build-and-open'
   | 'electron-build-and-open'
-  | 'cli-npx-skills-add';
+  | 'cli-npx-skills-add'
+  | 'desktop-direct';
 
 export type SkillInstallEventOutcome = 'installed' | 'built' | 'skip-current' | 'failed';
 

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
+import { getLocalDir } from '@inkeep/open-knowledge-server';
 import { sendToRenderer } from '../shared/ipc-send.ts';
 
 async function pollLockReleasedDefault(lockDir: string, deadlineMs: number): Promise<boolean> {
@@ -183,7 +184,7 @@ export class WindowManager {
     }
     const projectName = basename(projectPath);
 
-    const lockDir = resolve(projectPath, '.ok');
+    const lockDir = getLocalDir(projectPath);
 
     const candidate = this.tryAttachExistingServer(lockDir);
     const attached =

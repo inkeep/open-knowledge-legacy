@@ -297,7 +297,7 @@ describe('WindowManager', () => {
     const promise = wm.createProjectWindow({ projectPath: '/tmp/clean-run' });
     expect(env.utilities.length).toBe(0); // not forked yet
     await wait(5);
-    expect(runClean).toHaveBeenCalledWith({ lockDir: '/tmp/clean-run/.ok' });
+    expect(runClean).toHaveBeenCalledWith({ lockDir: '/tmp/clean-run/.ok/local' });
     env.utilities[0]?.fire({ type: 'ready', port: 51006, apiOrigin: 'http://localhost:51006' });
     await promise;
   });

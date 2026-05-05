@@ -8,7 +8,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { basename, sep } from 'node:path';
 import type { Attributes } from '@opentelemetry/api';
 import { withSpan, withSpanSync } from './telemetry.ts';
@@ -26,7 +26,12 @@ export function classifyFsPath(p: string): string {
   if (p.includes(`${sep}.git${sep}`)) return 'git';
   if (basename(p).endsWith('.lock') || basename(p) === 'lock') return 'lock';
   if (basename(p) === 'principal.json') return 'principal';
-  if (p.includes(`${sep}.ok${sep}conflict`)) return 'conflict';
+  if (
+    p.includes(`${sep}.ok${sep}`) &&
+    (basename(p) === 'conflicts.json' || p.includes(`${sep}conflicts${sep}`))
+  ) {
+    return 'conflict';
+  }
   if (p.includes(`${sep}.ok${sep}`)) return 'ok-internal';
   if (p.endsWith('.md') || p.endsWith('.mdx')) return 'content-md';
   return 'other';
@@ -78,12 +83,6 @@ export async function tracedMkdir(
 ): Promise<string | undefined> {
   return withSpan('fs.mkdir', { attributes: buildAttrs('mkdir', path) }, async () => {
     return mkdir(path, options);
-  });
-}
-
-export async function tracedUnlink(path: string): Promise<void> {
-  return withSpan('fs.unlink', { attributes: buildAttrs('unlink', path) }, async () => {
-    await unlink(path);
   });
 }
 

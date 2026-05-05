@@ -4,6 +4,4 @@ export { OK_DIR } from '@inkeep/open-knowledge-core';
 
 export const CONFIG_FILENAME = 'config.yml';
 
-export const CACHE_DIR = 'cache';
-
 export const PACKAGE_VERSION = pkgJson.version;

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import { OK_DIR } from '@inkeep/open-knowledge-core';
+import { LOCAL_DIR, OK_DIR } from '@inkeep/open-knowledge-core';
 import {
   type BootedServer,
   bootServer,
@@ -38,7 +38,7 @@ beforeAll(async () => {
     attachUiSibling: false,
     idleShutdownMs: IDLE_SHUTDOWN_MS,
   });
-  lockPath = resolve(contentDir, '.ok', 'server.lock');
+  lockPath = resolve(contentDir, OK_DIR, LOCAL_DIR, 'server.lock');
 });
 
 afterAll(async () => {

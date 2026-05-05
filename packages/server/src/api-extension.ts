@@ -138,6 +138,7 @@ import {
   isOrphanMode,
 } from './backlink-index.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
+import { getLocalDir } from './config/paths.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
 import type { ContentFilter } from './content-filter.ts';
 import {
@@ -5011,7 +5012,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     dir: string,
   ): Promise<{ port: number } | { error: string }> {
     const absDir = resolve(expandTilde(dir));
-    const lockDir = resolve(absDir, '.ok');
+    const lockDir = getLocalDir(absDir);
 
     const existingUi = readUiLock(lockDir);
     if (existingUi && existingUi.port > 0) {

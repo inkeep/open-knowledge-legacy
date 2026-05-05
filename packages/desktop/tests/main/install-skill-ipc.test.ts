@@ -1,13 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import {
-  legacySidecarPath,
-  readTargetVersion,
-  writeTargetVersion,
-} from '@inkeep/open-knowledge-server';
+import { join } from 'node:path';
+import { readTargetVersion, writeTargetVersion } from '@inkeep/open-knowledge-server';
 import { handleBuildAndOpen } from '../../src/main/ipc/install-skill.ts';
 
 interface FakeApp {
@@ -137,30 +132,6 @@ describe('handleBuildAndOpen — force bypass (FR12)', () => {
     }
     expect(shell.openPath).toHaveBeenCalledTimes(1);
     expect(await readTargetVersion(home, 'claude-cowork')).toBe(currentVersion);
-  });
-});
-
-describe('handleBuildAndOpen — legacy sidecar migration (D7)', () => {
-  test('legacy ~/.ok/skill-installed-version migrates on first invocation', async () => {
-    const currentVersion = await readServerVersion();
-    await mkdir(dirname(legacySidecarPath(home)), { recursive: true });
-    await writeFile(legacySidecarPath(home), `${currentVersion}\n`, 'utf-8');
-    const shell = makeFakeShell();
-
-    const result = await handleBuildAndOpen({
-      app: makeFakeApp(downloads),
-      shell,
-      home,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(await readTargetVersion(home, 'cli-hosts')).toBe(currentVersion);
-    let legacyExists = false;
-    try {
-      readFileSync(legacySidecarPath(home), 'utf-8');
-      legacyExists = true;
-    } catch {}
-    expect(legacyExists).toBe(false);
   });
 });
 

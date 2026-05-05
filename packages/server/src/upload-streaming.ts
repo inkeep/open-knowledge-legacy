@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { Transform, type TransformCallback } from 'node:stream';
+import { getLocalDir } from './config/paths.ts';
 import { tracedLinkSync, tracedMkdirSync, tracedUnlinkSync } from './fs-traced.ts';
 
 import { getLogger } from './logger.ts';
@@ -34,7 +35,7 @@ export class HashingPassThrough extends Transform {
 }
 
 export function tmpUploadDir(contentDir: string): string {
-  return resolve(contentDir, '.ok', 'tmp');
+  return resolve(getLocalDir(contentDir), 'tmp');
 }
 
 export function mintTempUploadPath(contentDir: string): string {

@@ -2,7 +2,6 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildSkillZip,
-  migrateLegacySidecar,
   readServerPackageVersion,
   readTargetRecordedAt,
   readTargetVersion,
@@ -50,12 +49,6 @@ export async function handleBuildAndOpen(deps: InstallSkillIpcDeps): Promise<Bui
       { homedir: () => home },
     );
   };
-
-  try {
-    await migrateLegacySidecar(home);
-  } catch (err) {
-    console.warn('[skill-install] legacy sidecar migration failed:', err);
-  }
 
   let downloadsDir: string;
   try {
@@ -121,7 +114,7 @@ export async function handleBuildAndOpen(deps: InstallSkillIpcDeps): Promise<Bui
 
   if (builtVersion) {
     try {
-      await writeTargetVersion(home, 'claude-cowork', builtVersion);
+      await writeTargetVersion(home, 'claude-cowork', builtVersion, 'electron-build-and-open');
     } catch (err) {
       console.warn('[skill-install] state write failed:', err);
     }

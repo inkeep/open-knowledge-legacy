@@ -7,7 +7,12 @@ import { closeSync, existsSync as fsExistsSync, mkdirSync as fsMkdirSync, openSy
 import type { Server as HttpServer } from 'node:http';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import type { BootedServer, Config, PinoLogger } from '@inkeep/open-knowledge-server';
+import {
+  type BootedServer,
+  type Config,
+  getLocalDir,
+  type PinoLogger,
+} from '@inkeep/open-knowledge-server';
 import { Command, InvalidArgumentError } from 'commander';
 import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 import {
@@ -217,7 +222,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
       };
 
   let agentEditOpened = false;
-  const lockDirForUiLookup = resolve(contentDir, OK_DIR);
+  const lockDirForUiLookup = getLocalDir(contentDir);
   const onAgentWrite = config.server.openOnAgentEdit
     ? () => {
         if (agentEditOpened) return;

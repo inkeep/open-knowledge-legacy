@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import type { CC1Broadcaster } from './cc1-broadcast.ts';
+import { getLocalDir } from './config/paths.ts';
 import { ConflictStore } from './conflict-storage.ts';
 import type { ContentFilter } from './content-filter.ts';
 import { type ClassifiedError, classifyGitError } from './error-classification.ts';
@@ -166,7 +167,7 @@ export class SyncEngine {
     this.onStateChange = options.onStateChange;
     this.setBatchInProgress = options.setBatchInProgress;
     this.onAutoDisable = options.onAutoDisable;
-    this.statePath = resolve(this.contentDir, '.ok', 'sync-state.json');
+    this.statePath = resolve(getLocalDir(this.contentDir), 'sync-state.json');
     this.conflictStore = new ConflictStore(this.contentDir, this.projectDir, this.currentBranch);
   }
 

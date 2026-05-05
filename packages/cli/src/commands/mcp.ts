@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { type Config, resolveContentDir, resolveLockDir } from '@inkeep/open-knowledge-server';
+import { type Config, getLocalDir, resolveContentDir } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { OK_DIR } from '../constants.ts';
 import { parseSpawnTimeoutEnv, startMcpShim } from '../mcp/shim.ts';
@@ -35,7 +35,7 @@ export function mcpCommand(getConfig: () => Config): Command {
         const timeoutMs = parseSpawnTimeoutEnv(process.env.OK_MCP_SPAWN_TIMEOUT_MS);
 
         await startMcpShim({
-          lockDir: resolveLockDir(contentDir),
+          lockDir: getLocalDir(contentDir),
           contentDir,
           host: startupConfig.server.host,
           portOverride: opts.port,

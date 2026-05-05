@@ -30,7 +30,8 @@ describe('initContent', () => {
 
     const okDir = join(testDir, OK_DIR);
     expect(existsSync(okDir)).toBe(true);
-    expect(existsSync(join(okDir, 'cache'))).toBe(true);
+    expect(existsSync(join(okDir, 'local'))).toBe(false);
+    expect(existsSync(join(okDir, 'cache'))).toBe(false);
     expect(existsSync(join(okDir, '.gitignore'))).toBe(true);
     expect(existsSync(join(okDir, 'config.yml'))).toBe(true);
 
@@ -62,12 +63,7 @@ describe('initContent', () => {
     const okDir = join(testDir, OK_DIR);
 
     const gitignore = readFileSync(join(okDir, '.gitignore'), 'utf-8');
-    expect(gitignore).toContain('cache/');
-    expect(gitignore).toContain('server.lock');
-    expect(gitignore).toContain('ui.lock');
-    expect(gitignore).toContain('sync-state.json');
-    expect(gitignore).toContain('principal.json');
-    expect(gitignore).toContain('last-spawn-error.log');
+    expect(gitignore).toContain('local/');
 
     const configYml = readFileSync(join(okDir, 'config.yml'), 'utf-8');
     expect(configYml).toContain('Open Knowledge — project configuration');
@@ -114,7 +110,7 @@ describe('initContent', () => {
     expect(configYml).toContain('articles');
   });
 
-  it('appends missing scaffold entries to a stale .gitignore (upgrade path)', () => {
+  it('appends `local/` to a stale legacy .gitignore (upgrade path)', () => {
     const okDir = join(testDir, OK_DIR);
     mkdirSync(okDir, { recursive: true });
     const stale = `cache/\nserver.lock\nui.lock\nsync-state.json\n`;
@@ -123,9 +119,7 @@ describe('initContent', () => {
     const result = initContent(testDir);
 
     const after = readFileSync(join(okDir, '.gitignore'), 'utf-8');
-    expect(after).toBe(
-      `cache/\nserver.lock\nui.lock\nsync-state.json\nprincipal.json\nstate.json\nlast-spawn-error.log\n`,
-    );
+    expect(after).toBe(`cache/\nserver.lock\nui.lock\nsync-state.json\nlocal/\n`);
     expect(result.updated).toContain('.gitignore');
     expect(result.created).not.toContain('.gitignore');
   });
@@ -140,8 +134,7 @@ describe('initContent', () => {
 
     const after = readFileSync(join(okDir, '.gitignore'), 'utf-8');
     expect(after).toContain('my-custom-ignore.tmp');
-    expect(after).toContain('principal.json');
-    expect(after).toContain('last-spawn-error.log');
+    expect(after).toContain('local/');
   });
 
   it('does not duplicate .gitignore entries on repeated initContent calls', () => {
@@ -150,17 +143,8 @@ describe('initContent', () => {
     initContent(testDir);
 
     const gitignore = readFileSync(join(testDir, OK_DIR, '.gitignore'), 'utf-8');
-    for (const entry of [
-      'cache/',
-      'server.lock',
-      'ui.lock',
-      'sync-state.json',
-      'principal.json',
-      'last-spawn-error.log',
-    ]) {
-      const matches = gitignore.split('\n').filter((l) => l.trim() === entry).length;
-      expect(matches).toBe(1);
-    }
+    const matches = gitignore.split('\n').filter((l) => l.trim() === 'local/').length;
+    expect(matches).toBe(1);
   });
 });
 

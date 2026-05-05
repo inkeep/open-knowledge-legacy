@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve, sep } from 'node:path';
+import { getLocalDir } from './config/paths.ts';
 import {
   tracedMkdirSync,
   tracedRenameSync,
@@ -49,7 +50,7 @@ interface ManagedRenameRecoveryResult {
 type MaybePromise<T> = T | Promise<T>;
 
 function journalDir(contentDir: string): string {
-  return resolve(contentDir, '.ok');
+  return getLocalDir(contentDir);
 }
 
 export function managedRenameJournalPath(contentDir: string): string {
