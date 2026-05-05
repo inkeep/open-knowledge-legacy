@@ -24,7 +24,7 @@ export type ResolvedNavigationTarget =
       kind: 'asset';
       target: string;
       assetPath: string;
-      mediaKind: InlineAssetMediaKind;
+      mediaKind: InlineAssetMediaKind | null;
     }
   | {
       kind: 'missing';

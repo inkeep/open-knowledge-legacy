@@ -18,7 +18,10 @@ beforeAll(async () => {
       '',
       '[linked image](./media/diagram.png)',
       '<img src="/docs/media/root.png" alt="Root referenced asset" />',
+      '<a href="./media/spec.pdf">Spec</a>',
+      '[table](./media/data.csv)',
       '![[media/wiki-embed.jpg]]',
+      '[[media/wiki-file.pdf]]',
       '[remote image](https://example.com/remote.png)',
       '',
     ].join('\n'),
@@ -27,6 +30,9 @@ beforeAll(async () => {
   writeFileSync(join(contentDir, 'docs', 'media', 'diagram.png'), 'png bytes');
   writeFileSync(join(contentDir, 'docs', 'media', 'root.png'), 'root png bytes');
   writeFileSync(join(contentDir, 'docs', 'media', 'wiki-embed.jpg'), 'jpg bytes');
+  writeFileSync(join(contentDir, 'docs', 'media', 'spec.pdf'), 'pdf bytes');
+  writeFileSync(join(contentDir, 'docs', 'media', 'data.csv'), 'csv bytes');
+  writeFileSync(join(contentDir, 'docs', 'media', 'wiki-file.pdf'), 'wiki pdf bytes');
   writeFileSync(join(contentDir, 'docs', 'media', 'unreferenced.png'), 'unused bytes');
 
   server = await createTestServer({ contentDir, keepContentDir: false });
@@ -48,7 +54,7 @@ describe('/api/documents sidebar asset rows', () => {
         docName: string;
         path?: string;
         assetExt?: string;
-        mediaKind?: string;
+        mediaKind?: string | null;
         referencedBy?: string[];
       }>;
     };
@@ -82,6 +88,33 @@ describe('/api/documents sidebar asset rows', () => {
       docName: 'docs/media/wiki-embed.jpg',
       assetExt: '.jpg',
       mediaKind: 'image',
+      referencedBy: ['docs/guide'],
+    });
+
+    const htmlHrefAsset = body.documents.find((entry) => entry.path === 'docs/media/spec.pdf');
+    expect(htmlHrefAsset).toMatchObject({
+      kind: 'asset',
+      docName: 'docs/media/spec.pdf',
+      assetExt: '.pdf',
+      mediaKind: null,
+      referencedBy: ['docs/guide'],
+    });
+
+    const markdownLinkAsset = body.documents.find((entry) => entry.path === 'docs/media/data.csv');
+    expect(markdownLinkAsset).toMatchObject({
+      kind: 'asset',
+      docName: 'docs/media/data.csv',
+      assetExt: '.csv',
+      mediaKind: null,
+      referencedBy: ['docs/guide'],
+    });
+
+    const wikiLinkAsset = body.documents.find((entry) => entry.path === 'docs/media/wiki-file.pdf');
+    expect(wikiLinkAsset).toMatchObject({
+      kind: 'asset',
+      docName: 'docs/media/wiki-file.pdf',
+      assetExt: '.pdf',
+      mediaKind: null,
       referencedBy: ['docs/guide'],
     });
 
