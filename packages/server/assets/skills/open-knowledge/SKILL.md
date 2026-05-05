@@ -11,7 +11,7 @@ metadata:
 
 Open Knowledge (OK) is a markdown-CRDT collaboration platform exposed via MCP. This skill carries the behavioral rules agents need to use it fluently. Every section is a MUST unless marked otherwise.
 
-> Skill version: tracks `@inkeep/open-knowledge-server` package version. Check `cat ~/.ok/skill-state/cli-hosts` to see what's installed locally.
+> Skill version: tracks `@inkeep/open-knowledge-server` package version. Check `cat ~/.ok/skill-state.yml` to see what's installed locally.
 
 ## STOP — native tools on in-scope `.md` / `.mdx`
 

@@ -296,20 +296,15 @@ export {
   type SkillInstallEventSurface,
 } from './skill-install-events.ts';
 export {
-  LEGACY_SIDECAR_FILENAME,
-  legacySidecarPath,
-  migrateLegacySidecar,
   readAllTargets,
   readServerPackageVersion,
   readSkillInstallStateSnapshot,
   readTargetRecordedAt,
   readTargetVersion,
-  SKILL_STATE_DIR_REL,
   SKILL_STATE_TARGETS,
   type SkillInstallStateSnapshot,
   type SkillStateLogger,
   type SkillStateTarget,
-  targetStatePath,
   writeTargetVersion,
 } from './skill-state.ts';
 export {

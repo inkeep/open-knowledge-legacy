@@ -8,7 +8,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { basename, sep } from 'node:path';
 import type { Attributes } from '@opentelemetry/api';
 import { withSpan, withSpanSync } from './telemetry.ts';
@@ -78,12 +78,6 @@ export async function tracedMkdir(
 ): Promise<string | undefined> {
   return withSpan('fs.mkdir', { attributes: buildAttrs('mkdir', path) }, async () => {
     return mkdir(path, options);
-  });
-}
-
-export async function tracedUnlink(path: string): Promise<void> {
-  return withSpan('fs.unlink', { attributes: buildAttrs('unlink', path) }, async () => {
-    await unlink(path);
   });
 }
 

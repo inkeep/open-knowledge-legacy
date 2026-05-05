@@ -322,6 +322,20 @@ export {
   workspaceSearchBasename,
   workspaceSearchPathSegments,
 } from './search/workspace-search.ts';
+export {
+  emptySkillState,
+  SKILL_STATE_FILENAME,
+  SKILL_STATE_REL,
+  SKILL_STATE_SCHEMA_VERSION,
+  SKILL_STATE_SURFACES,
+  SKILL_STATE_TARGETS,
+  SKILL_STATE_VERSION_RE,
+  type SkillState,
+  SkillStateSchema,
+  type SkillStateSurface,
+  type SkillStateTarget,
+  type SkillStateTargetEntry,
+} from './skill-state/schema.ts';
 export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {
   AgentFlashEntry,
@@ -339,6 +353,11 @@ export type {
   ShadowContributor,
   TimelineEntry,
 } from './types/timeline.ts';
+export {
+  type AtomicWriteFsAdapter,
+  type AtomicWriteOptions,
+  atomicWriteFile,
+} from './util/atomic-yaml-write.ts';
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export { ChunkedInsertError, chunkedYTextInsert } from './utils/chunked-insert.ts';
 export { createCodeFenceTracker } from './utils/code-fence-tracker.ts';

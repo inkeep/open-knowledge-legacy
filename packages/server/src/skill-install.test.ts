@@ -95,13 +95,9 @@ function freshHome(): string {
   return mkdtempSync(join(tmpdir(), 'ok-skill-install-'));
 }
 
-const SIDECAR_REL = ['.ok', 'skill-state', 'cli-hosts'] as const;
-const LEGACY_SIDECAR_REL = ['.ok', 'skill-installed-version'] as const;
-function sidecarPathFor(home: string): string {
-  return join(home, ...SIDECAR_REL);
-}
-function legacySidecarPathFor(home: string): string {
-  return join(home, ...LEGACY_SIDECAR_REL);
+const YAML_REL = ['.ok', 'skill-state.yml'] as const;
+function yamlPathFor(home: string): string {
+  return join(home, ...YAML_REL);
 }
 
 const CENTRAL_SKILL_REL = ['.agents', 'skills', 'open-knowledge'] as const;
@@ -116,33 +112,33 @@ function writeCentralSkill(home: string): void {
 }
 
 function writeSidecar(home: string, content: string): void {
-  const dir = join(home, '.ok', 'skill-state');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(sidecarPathFor(home), content, 'utf-8');
-}
-
-function writeLegacySidecar(home: string, content: string): void {
   const dir = join(home, '.ok');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(legacySidecarPathFor(home), content, 'utf-8');
+  const trimmed = content.replace(/\n+$/, '');
+  const yaml = [
+    'schema: 1',
+    'targets:',
+    '  cli-hosts:',
+    `    version: ${JSON.stringify(trimmed)}`,
+    `    recordedAt: ${JSON.stringify(new Date().toISOString())}`,
+    '',
+  ].join('\n');
+  writeFileSync(yamlPathFor(home), yaml, 'utf-8');
 }
 
 function readSidecarIfExists(home: string): string | null {
+  let raw: string;
   try {
-    return readFileSync(sidecarPathFor(home), 'utf-8');
+    raw = readFileSync(yamlPathFor(home), 'utf-8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
   }
-}
-
-function readLegacySidecarIfExists(home: string): string | null {
-  try {
-    return readFileSync(legacySidecarPathFor(home), 'utf-8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
-  }
+  const m = raw.match(/cli-hosts:\s*[\r\n]+\s*version:\s*"?([^\n"]+?)"?\s*[\r\n]/);
+  if (!m) return null;
+  const version = m[1]?.trim() ?? '';
+  if (version.length === 0) return null;
+  return `${version}\n`;
 }
 
 let currentVersion: string;
@@ -346,70 +342,6 @@ describe('installUserSkill — HOME propagates to subprocess env', () => {
   });
 });
 
-describe('installUserSkill — legacy sidecar migration', () => {
-  test('legacy file present + valid version → moved to new path; legacy gone', async () => {
-    const home = freshHome();
-    writeLegacySidecar(home, `${currentVersion}\n`);
-    writeCentralSkill(home);
-    const { spawn, calls } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
-
-    const result = await installUserSkill({ home, spawn });
-
-    expect(result).toBe('skip-current');
-    expect(calls.length).toBe(0);
-    expect(readLegacySidecarIfExists(home)).toBeNull();
-    expect(readSidecarIfExists(home)).toBe(`${currentVersion}\n`);
-  });
-
-  test('legacy file absent → no-op; fresh install proceeds', async () => {
-    const home = freshHome();
-    const { spawn, calls } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
-
-    const result = await installUserSkill({ home, spawn });
-
-    expect(result).toBe('installed');
-    expect(calls.length).toBe(1);
-    expect(readLegacySidecarIfExists(home)).toBeNull();
-    expect(readSidecarIfExists(home)).toBe(`${currentVersion}\n`);
-  });
-
-  test('legacy file with invalid content → deleted; fresh install proceeds', async () => {
-    const home = freshHome();
-    writeLegacySidecar(home, 'not-a-version\n');
-    const { spawn, calls } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
-
-    const originalWarn = console.warn;
-    console.warn = () => {};
-    try {
-      const result = await installUserSkill({ home, spawn });
-      expect(result).toBe('installed');
-      expect(calls.length).toBe(1);
-      expect(readLegacySidecarIfExists(home)).toBeNull();
-      expect(readSidecarIfExists(home)).toBe(`${currentVersion}\n`);
-    } finally {
-      console.warn = originalWarn;
-    }
-  });
-
-  test('migration is idempotent: second call after migration is a no-op', async () => {
-    const home = freshHome();
-    writeLegacySidecar(home, `${currentVersion}\n`);
-    writeCentralSkill(home);
-    const { spawn: firstSpawn } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
-    const { spawn: secondSpawn, calls: secondCalls } = makeSpawnFake({
-      outcome: { kind: 'exit', code: 0 },
-    });
-
-    await installUserSkill({ home, spawn: firstSpawn });
-    const result = await installUserSkill({ home, spawn: secondSpawn });
-
-    expect(result).toBe('skip-current');
-    expect(secondCalls.length).toBe(0);
-    expect(readLegacySidecarIfExists(home)).toBeNull();
-    expect(readSidecarIfExists(home)).toBe(`${currentVersion}\n`);
-  });
-});
-
 function host(calls: ReadonlyArray<{ opts: { env?: NodeJS.ProcessEnv } }>): NodeJS.ProcessEnv {
   return (calls[0]?.opts.env ?? {}) as NodeJS.ProcessEnv;
 }
@@ -537,17 +469,31 @@ describe('buildAndOpenSkill — install-state gate', () => {
     }) as unknown as SpawnLike;
   }
   function writeCoworkState(home: string, version: string): void {
-    const dir = join(home, '.ok', 'skill-state');
+    const dir = join(home, '.ok');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'claude-cowork'), `${version}\n`, 'utf-8');
+    const yaml = [
+      'schema: 1',
+      'targets:',
+      '  claude-cowork:',
+      `    version: ${JSON.stringify(version)}`,
+      `    recordedAt: ${JSON.stringify(new Date().toISOString())}`,
+      '',
+    ].join('\n');
+    writeFileSync(join(dir, 'skill-state.yml'), yaml, 'utf-8');
   }
   function readCoworkState(home: string): string | null {
+    let raw: string;
     try {
-      return readFileSync(join(home, '.ok', 'skill-state', 'claude-cowork'), 'utf-8');
+      raw = readFileSync(join(home, '.ok', 'skill-state.yml'), 'utf-8');
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw err;
     }
+    const m = raw.match(/claude-cowork:\s*[\r\n]+\s*version:\s*"?([^\n"]+?)"?\s*[\r\n]/);
+    if (!m) return null;
+    const version = m[1]?.trim() ?? '';
+    if (version.length === 0) return null;
+    return `${version}\n`;
   }
 
   test('recorded claude-cowork matches current → status="skip-current"; no build, no spawn', async () => {

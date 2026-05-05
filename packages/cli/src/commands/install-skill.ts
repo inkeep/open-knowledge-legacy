@@ -49,7 +49,7 @@ function formatSkipCurrentMessage(result: BuildAndOpenSkillResult): string {
   const recordedAt = result.recordedAt ?? 'unknown';
   return [
     info(`Open Knowledge skill ${accent(`v${version}`)} already delivered to Claude Desktop.`),
-    dim(`  Recorded at ${recordedAt} in ~/.ok/skill-state/claude-cowork`),
+    dim(`  Recorded at ${recordedAt} in ~/.ok/skill-state.yml`),
     dim(`  Use ${accent('--force')} to rebuild and re-open the install dialog.`),
   ].join('\n');
 }

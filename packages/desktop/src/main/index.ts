@@ -850,6 +850,7 @@ function bootPrimaryInstance(): void {
         warn: (data, message) => console.warn(message, data),
         info: (data, message) => console.info(message, data),
       },
+      surface: 'desktop-direct',
     }).catch(() => {});
 
     autoUpdaterHandle = await bootAutoUpdater(() => import('electron-updater'), {
