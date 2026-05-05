@@ -15,7 +15,7 @@ interface AssetEntry {
   kind: 'asset';
   path: string;
   assetExt: string;
-  mediaKind: InlineAssetMediaKind;
+  mediaKind: InlineAssetMediaKind | null;
   size: number;
   modified: string;
   referencedBy?: string[];

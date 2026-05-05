@@ -35,10 +35,6 @@ function NavigationHandler() {
       if (assetPath) {
         const assetExt = assetPath.split('.').pop() ?? '';
         const mediaKind = mediaKindForSidebarAssetExtension(assetExt);
-        if (!mediaKind) {
-          clearTarget();
-          return;
-        }
         mark('ok/nav/hash-change', { docName: null, kind: 'asset' });
         openTargetTransition({
           kind: 'asset',

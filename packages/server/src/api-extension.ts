@@ -45,6 +45,7 @@ import {
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
+  INLINE_RENDERABLE_EXTENSIONS,
   type Principal,
   prependFrontmatter,
   readFmMap,
@@ -78,11 +79,7 @@ import {
 } from './agent-sessions.ts';
 import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
 import { isAllowedApiOrigin } from './api-origin.ts';
-import {
-  collectReferencedAssets,
-  mediaKindForAssetPath,
-  toContentRelativePath,
-} from './asset-references.ts';
+import { collectReferencedAssets, toContentRelativePath } from './asset-references.ts';
 import { assetContentTypeForPath } from './asset-serve-middleware.ts';
 import { enrichDirectory } from './content/enrichment.ts';
 import { applyNestedFolderRulesUpsert } from './content/folder-rule-write.ts';
@@ -1806,7 +1803,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         docExt: string;
         path?: string;
         assetExt?: string;
-        mediaKind?: 'image' | 'video';
+        mediaKind?: 'image' | 'video' | null;
         referencedBy?: string[];
         size: number;
         modified: string;
@@ -3442,7 +3439,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const contentType = assetContentTypeForPath(assetPath);
-      if (!contentType || !mediaKindForAssetPath(assetPath)) {
+      const assetExt = extname(assetPath).slice(1).toLowerCase();
+      if (!contentType || !ASSET_EXTENSIONS.has(assetExt)) {
         json(res, 415, { ok: false, error: 'Unsupported asset type' });
         return;
       }
@@ -3475,13 +3473,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Invalid asset path' });
         return;
       }
-      res.writeHead(200, {
+      const headers: Record<string, string> = {
         'Content-Type': contentType,
         'Content-Length': String(stat.size),
         'X-Content-Type-Options': 'nosniff',
-        'Content-Disposition': 'inline',
+        'Content-Disposition': INLINE_RENDERABLE_EXTENSIONS.has(assetExt) ? 'inline' : 'attachment',
         'Cache-Control': 'no-store',
-      });
+      };
+      if (assetExt === 'svg') {
+        headers['Content-Security-Policy'] =
+          "sandbox; default-src 'none'; style-src 'unsafe-inline'";
+      }
+      res.writeHead(200, headers);
       try {
         await pipeline(createReadStream(canonicalPath), res);
       } catch (streamError) {

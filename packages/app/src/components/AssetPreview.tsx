@@ -2,7 +2,7 @@ import type { InlineAssetMediaKind } from '@inkeep/open-knowledge-core';
 
 interface AssetPreviewProps {
   assetPath: string;
-  mediaKind: InlineAssetMediaKind;
+  mediaKind: InlineAssetMediaKind | null;
 }
 
 function assetUrl(assetPath: string): string {
@@ -12,6 +12,9 @@ function assetUrl(assetPath: string): string {
 export function AssetPreview({ assetPath, mediaKind }: AssetPreviewProps) {
   const src = assetUrl(assetPath);
   const fileName = assetPath.split('/').pop() ?? assetPath;
+  const extension = fileName.includes('.')
+    ? (fileName.split('.').pop()?.toUpperCase() ?? 'FILE')
+    : 'FILE';
 
   return (
     <main className="flex h-full min-h-0 flex-col bg-background" aria-label={fileName}>
@@ -23,9 +26,22 @@ export function AssetPreview({ assetPath, mediaKind }: AssetPreviewProps) {
             className="max-h-full max-w-full object-contain"
             draggable={false}
           />
-        ) : (
+        ) : mediaKind === 'video' ? (
           // biome-ignore lint/a11y/useMediaCaption: local preview files do not have sidecar captions.
           <video src={src} controls className="max-h-full max-w-full" />
+        ) : (
+          <div className="flex max-w-sm flex-col items-center gap-3 text-center">
+            <div className="flex size-16 items-center justify-center rounded-md border bg-muted font-medium text-muted-foreground text-sm">
+              {extension}
+            </div>
+            <div className="max-w-full break-words font-medium text-sm">{fileName}</div>
+            <a
+              href={src}
+              className="rounded-md border px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+            >
+              Open file
+            </a>
+          </div>
         )}
       </div>
     </main>

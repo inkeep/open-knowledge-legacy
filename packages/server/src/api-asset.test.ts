@@ -58,7 +58,14 @@ describe('GET /api/asset', () => {
     mkdirSync(join(contentDir, 'docs'), { recursive: true });
     writeFileSync(join(contentDir, 'docs', 'photo.png'), 'fake-png-bytes');
     writeFileSync(join(contentDir, 'docs', 'clip.mp4'), 'fake-mp4-bytes');
+    writeFileSync(join(contentDir, 'docs', 'paper.pdf'), 'fake-pdf-bytes');
+    writeFileSync(
+      join(contentDir, 'docs', 'scripted.svg'),
+      '<svg><script>alert("xss")</script></svg>',
+    );
+    writeFileSync(join(contentDir, 'docs', 'data.csv'), 'a,b\n1,2\n');
     writeFileSync(join(contentDir, 'docs', 'notes.txt'), 'not renderable');
+    writeFileSync(join(contentDir, 'docs', 'page.html'), '<h1>not admitted</h1>');
     mkdirSync(join(contentDir, 'docs', 'directory.png'));
     writeFileSync(join(tmpDir, 'outside.png'), 'outside');
     symlinkSync(join(tmpDir, 'outside.png'), join(contentDir, 'docs', 'escape.png'));
@@ -80,13 +87,49 @@ describe('GET /api/asset', () => {
     expect(await res.text()).toBe('fake-png-bytes');
   });
 
+  test('serves non-image inline assets when they are renderable', async () => {
+    const res = await fetch(assetUrl(harness.baseURL, 'docs/paper.pdf'));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/pdf');
+    expect(res.headers.get('content-disposition')).toBe('inline');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(await res.text()).toBe('fake-pdf-bytes');
+  });
+
+  test('serves SVG with a CSP sandbox for direct navigation', async () => {
+    const res = await fetch(assetUrl(harness.baseURL, 'docs/scripted.svg'));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/svg+xml');
+    expect(res.headers.get('content-disposition')).toBe('inline');
+    expect(res.headers.get('content-security-policy')).toBe(
+      "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+    );
+    expect(await res.text()).toBe('<svg><script>alert("xss")</script></svg>');
+  });
+
+  test('serves admitted non-renderable assets as attachments', async () => {
+    const csvRes = await fetch(assetUrl(harness.baseURL, 'docs/data.csv'));
+    const txtRes = await fetch(assetUrl(harness.baseURL, 'docs/notes.txt'));
+
+    expect(csvRes.status).toBe(200);
+    expect(csvRes.headers.get('content-type')).toBe('text/csv');
+    expect(csvRes.headers.get('content-disposition')).toBe('attachment');
+    expect(await csvRes.text()).toBe('a,b\n1,2\n');
+    expect(txtRes.status).toBe(200);
+    expect(txtRes.headers.get('content-type')).toBe('text/plain');
+    expect(txtRes.headers.get('content-disposition')).toBe('attachment');
+    expect(await txtRes.text()).toBe('not renderable');
+  });
+
   test('rejects missing and null-byte paths', async () => {
     expect((await fetch(`${harness.baseURL}/api/asset`)).status).toBe(400);
     expect((await fetch(`${harness.baseURL}/api/asset?path=docs/photo.png%00`)).status).toBe(400);
   });
 
-  test('rejects unsupported extensions', async () => {
-    const res = await fetch(assetUrl(harness.baseURL, 'docs/notes.txt'));
+  test('rejects unsupported extensions even when they have a known content type', async () => {
+    const res = await fetch(assetUrl(harness.baseURL, 'docs/page.html'));
 
     expect(res.status).toBe(415);
   });

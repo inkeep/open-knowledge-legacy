@@ -1,11 +1,11 @@
 import { realpathSync, type Stats, statSync } from 'node:fs';
 import { extname, normalize, resolve, sep } from 'node:path';
 import {
+  ASSET_EXTENSIONS,
   createCodeFenceTracker,
   type InlineAssetMediaKind,
   mediaKindForSidebarAssetExtension,
   resolveAssetProjectPath,
-  SIDEBAR_RENDERABLE_ASSET_EXTENSIONS,
 } from '@inkeep/open-knowledge-core';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { isWithinContentDir } from './persistence.ts';
@@ -14,7 +14,7 @@ interface ReferencedAssetEntry {
   kind: 'asset';
   path: string;
   assetExt: string;
-  mediaKind: InlineAssetMediaKind;
+  mediaKind: InlineAssetMediaKind | null;
   size: number;
   modified: string;
   referencedBy: string[];
@@ -23,7 +23,8 @@ interface ReferencedAssetEntry {
 const MARKDOWN_LINK_OR_IMAGE_RE =
   /!?\[[^\]\n]*(?:\][^[\]\n]*)?\]\((?:<([^>\n]+)>|([^)\s]+))(?:\s+['"][^'"]*['"])?\)/g;
 const WIKI_LINK_OR_EMBED_RE = /!?\[\[([^[\]|#]+?)(?:#[^\]|]+?)?(?:\|[^\]]+?)?\]\]/g;
-const HTML_SRC_RE = /<(?:img|image|video)\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1/gi;
+const HTML_LINK_ATTR_RE =
+  /<[\w:-]+\b[^>]*?\s+(?:href|src)\s*=\s*(?:"([^"\n]*)"|'([^'\n]*)'|“([^”\n]*)”|([^\s"'=<>`]+))/gi;
 
 function isRemoteOrOpaqueHref(href: string): boolean {
   return (
@@ -69,9 +70,9 @@ function collectHrefsFromLine(line: string, hrefs: Set<string>): void {
     const target = match[1];
     if (target) hrefs.add(target);
   }
-  for (const match of line.matchAll(HTML_SRC_RE)) {
-    const src = match[2];
-    if (src) hrefs.add(src);
+  for (const match of line.matchAll(HTML_LINK_ATTR_RE)) {
+    const href = match[1] ?? match[2] ?? match[3] ?? match[4];
+    if (href) hrefs.add(href);
   }
 }
 
@@ -121,7 +122,7 @@ function resolveReferencedAssetWithinContentDir(args: {
   const href = decodeHrefPath(args.href);
   if (!href || isRemoteOrOpaqueHref(href)) return null;
   const ext = extname(href).slice(1).toLowerCase();
-  if (!SIDEBAR_RENDERABLE_ASSET_EXTENSIONS.has(ext)) return null;
+  if (!ASSET_EXTENSIONS.has(ext)) return null;
 
   const relativeAssetPath = resolveAssetProjectPath(href, args.fromDocName);
   if (!relativeAssetPath) return null;
@@ -195,7 +196,6 @@ export function collectReferencedAssets(args: {
       });
       if (!asset) continue;
       const mediaKind = mediaKindForAssetPath(asset.absolutePath);
-      if (!mediaKind) continue;
       const existing = byPath.get(asset.relativePath);
       if (existing) {
         if (!existing.referencedBy.includes(docName)) existing.referencedBy.push(docName);

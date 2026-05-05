@@ -19,26 +19,41 @@ function withFixture(fn: (dir: string) => void) {
 }
 
 describe('asset reference extraction', () => {
-  test('extracts markdown image, markdown link, and img src hrefs', () => {
+  test('extracts markdown image, markdown link, wiki link, and HTML link hrefs', () => {
     expect(
       extractLocalAssetHrefs(
         [
           '![Alt](./a.png)',
           '[Photo](./b.jpg)',
+          '[PDF](./paper.pdf)',
           '![Spaced](<./my photo.png>)',
           '![[wiki.png]]',
           '[[linked-wiki.jpg]]',
+          '[[linked-wiki.pdf]]',
+          '<a href="./download.csv">Download</a>',
+          '<a href=./unquoted.pdf>Unquoted</a>',
+          '<a href=“./smart.pdf”>Smart</a>',
+          "<a href='./single-quoted.pdf'>Single</a>",
+          '<a data-href="./ignored.pdf">Ignored</a>',
           '<img src="./c.jpeg" />',
+          '<img data-src="./placeholder.png" src="./real.png" />',
           '<image src="./d.png" />',
         ].join('\n'),
       ),
     ).toEqual([
       './a.png',
       './b.jpg',
+      './paper.pdf',
       './my photo.png',
       'wiki.png',
       'linked-wiki.jpg',
+      'linked-wiki.pdf',
+      './download.csv',
+      './unquoted.pdf',
+      './smart.pdf',
+      './single-quoted.pdf',
       './c.jpeg',
+      './real.png',
       './d.png',
     ]);
   });
@@ -68,6 +83,7 @@ describe('asset reference extraction', () => {
     withFixture((dir) => {
       mkdirSync(join(dir, 'docs'));
       writeFileSync(join(dir, 'docs', 'photo.png'), 'png');
+      writeFileSync(join(dir, 'docs', 'paper.pdf'), 'pdf');
       writeFileSync(join(dir, 'docs', 'My Photo.png'), 'png');
 
       expect(
@@ -91,6 +107,13 @@ describe('asset reference extraction', () => {
           href: '<./My%20Photo.png>',
         }),
       ).toBe(realpathSync(resolve(dir, 'docs/My Photo.png')));
+      expect(
+        resolveReferencedAssetPath({
+          contentDir: dir,
+          fromDocName: 'docs/guide',
+          href: './paper.pdf',
+        }),
+      ).toBe(realpathSync(resolve(dir, 'docs/paper.pdf')));
 
       expect(
         resolveReferencedAssetPath({
@@ -119,9 +142,14 @@ describe('asset reference extraction', () => {
     withFixture((dir) => {
       mkdirSync(join(dir, 'docs'), { recursive: true });
       writeFileSync(join(dir, 'docs', 'guide.md'), '![Photo](./photo.png)\n![[embed.jpg]]');
-      writeFileSync(join(dir, 'docs', 'second.md'), '[same](./photo.png)');
+      writeFileSync(
+        join(dir, 'docs', 'second.md'),
+        '[same](./photo.png)\n[paper](./paper.pdf)\n<a href="./data.csv">Data</a>',
+      );
       writeFileSync(join(dir, 'docs', 'photo.png'), 'png');
       writeFileSync(join(dir, 'docs', 'embed.jpg'), 'jpg');
+      writeFileSync(join(dir, 'docs', 'paper.pdf'), 'pdf');
+      writeFileSync(join(dir, 'docs', 'data.csv'), 'csv');
       writeFileSync(join(dir, 'docs', 'orphan.png'), 'png');
       const now = new Date().toISOString();
       const fileIndex = new Map<string, FileIndexEntry>([
@@ -153,10 +181,10 @@ describe('asset reference extraction', () => {
         readMarkdown: (path) =>
           path.endsWith('guide.md')
             ? '![Photo](./photo.png)\n![[embed.jpg]]'
-            : '[same](./photo.png)',
+            : '[same](./photo.png)\n[paper](./paper.pdf)\n<a href="./data.csv">Data</a>',
       });
 
-      expect(assets).toHaveLength(2);
+      expect(assets).toHaveLength(4);
       expect(assets.find((asset) => asset.path === 'docs/photo.png')).toMatchObject({
         kind: 'asset',
         path: 'docs/photo.png',
@@ -170,6 +198,20 @@ describe('asset reference extraction', () => {
         assetExt: '.jpg',
         mediaKind: 'image',
         referencedBy: ['docs/guide'],
+      });
+      expect(assets.find((asset) => asset.path === 'docs/paper.pdf')).toMatchObject({
+        kind: 'asset',
+        path: 'docs/paper.pdf',
+        assetExt: '.pdf',
+        mediaKind: null,
+        referencedBy: ['docs/second'],
+      });
+      expect(assets.find((asset) => asset.path === 'docs/data.csv')).toMatchObject({
+        kind: 'asset',
+        path: 'docs/data.csv',
+        assetExt: '.csv',
+        mediaKind: null,
+        referencedBy: ['docs/second'],
       });
     }));
 
