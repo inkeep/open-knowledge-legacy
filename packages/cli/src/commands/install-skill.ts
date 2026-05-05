@@ -9,8 +9,10 @@ import { accent, dim, error as errorColor, info, success, warning } from '../ui/
 interface InstallSkillCommandOptions {
   out?: string;
   noOpen?: boolean;
+  force?: boolean;
   spawnFn?: SpawnLike;
   platformName?: NodeJS.Platform;
+  home?: string;
 }
 
 interface InstallSkillCliResult extends BuildAndOpenSkillResult {
@@ -42,6 +44,16 @@ function formatBuiltMessage(result: BuildAndOpenSkillResult): string {
   return lines.join('\n');
 }
 
+function formatSkipCurrentMessage(result: BuildAndOpenSkillResult): string {
+  const version = result.skillVersion ?? 'unknown';
+  const recordedAt = result.recordedAt ?? 'unknown';
+  return [
+    info(`Open Knowledge skill ${accent(`v${version}`)} already delivered to Claude Desktop.`),
+    dim(`  Recorded at ${recordedAt} in ~/.ok/skill-state/claude-cowork`),
+    dim(`  Use ${accent('--force')} to rebuild and re-open the install dialog.`),
+  ].join('\n');
+}
+
 function formatInstalledMessage(result: BuildAndOpenSkillResult): string {
   return [
     success(`Built ${result.outputPath}`),
@@ -68,6 +80,9 @@ export async function runInstallSkill(
   if (result.status === 'failed') {
     return { ...result, message: formatFailedMessage(result), exitCode: 1 };
   }
+  if (result.status === 'skip-current') {
+    return { ...result, message: formatSkipCurrentMessage(result), exitCode: 0 };
+  }
   if (result.status === 'installed') {
     return { ...result, message: formatInstalledMessage(result), exitCode: 0 };
   }
@@ -81,10 +96,12 @@ export function installSkillCommand(): Command {
     )
     .option('--out <path>', 'Custom output path (default: ~/Downloads/openknowledge.skill)')
     .option('--no-open', 'Build the file but skip the OS file-association handoff')
-    .action(async (cliOpts: { out?: string; open: boolean }) => {
+    .option('--force', 'Bypass the install-state gate and rebuild unconditionally')
+    .action(async (cliOpts: { out?: string; open: boolean; force?: boolean }) => {
       const result = await runInstallSkill({
         out: cliOpts.out,
         noOpen: !cliOpts.open,
+        force: cliOpts.force ?? false,
       });
       process.stdout.write(`${result.message}\n`);
       if (result.exitCode !== 0) process.exit(result.exitCode);

@@ -26,6 +26,7 @@ import {
 } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { homedir } from 'node:os';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { pipeline } from 'node:stream/promises';
@@ -105,6 +106,7 @@ import {
 } from './page-identity.ts';
 import { readServerLock } from './server-lock.ts';
 import { buildAndOpenSkill } from './skill-install.ts';
+import { readSkillInstallStateSnapshot } from './skill-state.ts';
 import { readUiLock } from './ui-lock.ts';
 import {
   HashingPassThrough,
@@ -5782,12 +5784,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const opts: { noOpen?: boolean; out?: string } = {};
+    const opts: { noOpen?: boolean; out?: string; force?: boolean } = {};
     try {
       const raw = await readBody(req);
       if (raw.length > 0) {
         const parsed = JSON.parse(raw.toString()) as Record<string, unknown>;
         if (typeof parsed.noOpen === 'boolean') opts.noOpen = parsed.noOpen;
+        if (typeof parsed.force === 'boolean') opts.force = parsed.force;
         if (typeof parsed.out === 'string') {
           if (!isSafeLocalPath(parsed.out)) {
             json(res, 400, {
@@ -5807,6 +5810,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const result = await buildAndOpenSkill(opts);
       json(res, 200, result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+    }
+  }
+
+  async function handleSkillInstallState(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const snapshot = await readSkillInstallStateSnapshot(homedir());
+      json(res, 200, { ok: true, ...snapshot }, { 'Cache-Control': 'no-store' });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       json(res, 500, { ok: false, error: { kind: 'internal', message } });
@@ -5898,6 +5916,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
     '/api/installed-agents': handleInstalledAgentsRoute,
     '/api/install-skill': handleInstallSkill,
+    '/api/skill/install-state': handleSkillInstallState,
     '/api/seed/plan': handleSeedPlan,
     '/api/seed/apply': handleSeedApply,
   };

@@ -215,8 +215,15 @@ export interface OkDesktopBridge {
   };
   skill: {
     detectClaudeDesktop(): Promise<boolean>;
-    buildAndOpen(): Promise<
-      | { ok: true; path: string }
+    buildAndOpen(opts?: { force?: boolean }): Promise<
+      | { ok: true; path: string; skipped?: false; version?: string }
+      | {
+          ok: true;
+          path?: undefined;
+          skipped: true;
+          version: string;
+          recordedAt?: string;
+        }
       | {
           ok: false;
           reason: 'build-failed' | 'open-failed' | 'no-downloads-dir';

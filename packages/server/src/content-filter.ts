@@ -121,6 +121,10 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
       const docName = stripDocExtension(relativePath);
       if (isSystemDoc(docName) || isConfigDoc(docName)) return true;
 
+      for (const segment of relativePath.split('/')) {
+        if (BUILTIN_SKIP_DIRS.has(segment)) return true;
+      }
+
       if (!contentOutsideProject && isIgnored(relativePath)) return true;
 
       if (isSupportedDocFile(relativePath)) return false;

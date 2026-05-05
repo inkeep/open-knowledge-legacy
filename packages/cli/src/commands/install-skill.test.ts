@@ -36,7 +36,7 @@ describe('runInstallSkill', () => {
 
   it('builds to the provided --out path and exits without opening (--no-open)', async () => {
     const outPath = join(testDir, 'my-custom.skill');
-    const result = await runInstallSkill({ out: outPath, noOpen: true });
+    const result = await runInstallSkill({ out: outPath, home: testDir, noOpen: true });
 
     expect(result.status).toBe('built');
     expect(result.exitCode).toBe(0);
@@ -54,6 +54,7 @@ describe('runInstallSkill', () => {
     const capture: { command?: string; args?: readonly string[] } = {};
     const result = await runInstallSkill({
       out: outPath,
+      home: testDir,
       platformName: 'darwin',
       spawnFn: makeFakeSpawn(capture),
     });
@@ -72,6 +73,7 @@ describe('runInstallSkill', () => {
     const capture: { command?: string; args?: readonly string[] } = {};
     const result = await runInstallSkill({
       out: outPath,
+      home: testDir,
       platformName: 'win32',
       spawnFn: makeFakeSpawn(capture),
     });
@@ -88,6 +90,7 @@ describe('runInstallSkill', () => {
     const capture: { command?: string; args?: readonly string[] } = {};
     const result = await runInstallSkill({
       out: outPath,
+      home: testDir,
       platformName: 'linux',
       spawnFn: makeFakeSpawn(capture),
     });
@@ -100,6 +103,7 @@ describe('runInstallSkill', () => {
     const outPath = join(testDir, 'aix.skill');
     const result = await runInstallSkill({
       out: outPath,
+      home: testDir,
       platformName: 'aix' as NodeJS.Platform,
       spawnFn: makeFakeSpawn({
         threw: new Error('spawn should not have been called'),
@@ -116,6 +120,7 @@ describe('runInstallSkill', () => {
     const outPath = join(testDir, 'spawn-error.skill');
     const result = await runInstallSkill({
       out: outPath,
+      home: testDir,
       platformName: 'darwin',
       spawnFn: makeFakeSpawn({
         threw: new Error('EACCES: permission denied'),

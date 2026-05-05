@@ -289,6 +289,30 @@ export {
   type SpawnLike,
 } from './skill-install.ts';
 export {
+  recordSkillInstallEvent,
+  SKILL_INSTALL_EVENTS_FILE_REL,
+  type SkillInstallEvent,
+  type SkillInstallEventOutcome,
+  type SkillInstallEventSurface,
+} from './skill-install-events.ts';
+export {
+  LEGACY_SIDECAR_FILENAME,
+  legacySidecarPath,
+  migrateLegacySidecar,
+  readAllTargets,
+  readServerPackageVersion,
+  readSkillInstallStateSnapshot,
+  readTargetRecordedAt,
+  readTargetVersion,
+  SKILL_STATE_DIR_REL,
+  SKILL_STATE_TARGETS,
+  type SkillInstallStateSnapshot,
+  type SkillStateLogger,
+  type SkillStateTarget,
+  targetStatePath,
+  writeTargetVersion,
+} from './skill-state.ts';
+export {
   assertCompatibleStateManifest,
   detectProjectShape,
   type ProjectShape,

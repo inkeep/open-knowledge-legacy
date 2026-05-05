@@ -30,7 +30,8 @@ function fakeInstaller(result: SkillInstallResult): SkillInstaller {
 
 function deps(overrides: Partial<EnsureCoworkSkillDeps> = {}): EnsureCoworkSkillDeps {
   return {
-    skillVersion: '1.2.3',
+    fetchSnapshot: async () => null,
+    fallbackSkillVersion: '1.2.3',
     installer: fakeInstaller({ ok: true, path: '/tmp/openknowledge.skill' }),
     storage: memoryStorage(),
     ...overrides,
@@ -105,13 +106,13 @@ describe('ensureCoworkSkillInstalled — first run', () => {
 });
 
 describe('ensureCoworkSkillInstalled — guard semantics', () => {
-  test('guard set for current skillVersion: short-circuits to already-installed', async () => {
+  test('guard set for current skillVersion: short-circuits to already-installed (local source)', async () => {
     const storage = memoryStorage({ 'ok:skill:cowork:installed:v1.2.3': '1' });
     const installer = fakeInstaller({ ok: true, path: '/tmp/skill' });
 
     const result = await ensureCoworkSkillInstalled(deps({ storage, installer }));
 
-    expect(result).toEqual({ kind: 'already-installed' });
+    expect(result).toEqual({ kind: 'already-installed', source: 'local' });
     expect(installer.install).not.toHaveBeenCalled();
   });
 
@@ -120,7 +121,7 @@ describe('ensureCoworkSkillInstalled — guard semantics', () => {
     const installer = fakeInstaller({ ok: true, path: '/tmp/skill' });
 
     const result = await ensureCoworkSkillInstalled(
-      deps({ skillVersion: '1.2.3', storage, installer }),
+      deps({ fallbackSkillVersion: '1.2.3', storage, installer }),
     );
 
     expect(result.kind).toBe('installed-now');
@@ -129,6 +130,71 @@ describe('ensureCoworkSkillInstalled — guard semantics', () => {
       'ok:skill:cowork:installed:v1.0.0': '1',
       'ok:skill:cowork:installed:v1.2.3': '1',
     });
+  });
+
+  test('server snapshot matches: short-circuits to already-installed (server source)', async () => {
+    const storage = memoryStorage();
+    const installer = fakeInstaller({ ok: true, path: '/tmp/skill' });
+
+    const result = await ensureCoworkSkillInstalled(
+      deps({
+        fetchSnapshot: async () => ({
+          currentVersion: '2.0.0',
+          targets: {
+            'claude-cowork': { version: '2.0.0', recordedAt: '2026-05-04T12:00:00.000Z' },
+          },
+        }),
+        storage,
+        installer,
+      }),
+    );
+
+    expect(result).toEqual({ kind: 'already-installed', source: 'server' });
+    expect(installer.install).not.toHaveBeenCalled();
+    expect(storage.snapshot()).toEqual({});
+  });
+
+  test('server snapshot mismatch: falls through to localStorage / install', async () => {
+    const storage = memoryStorage();
+    const installer = fakeInstaller({ ok: true, path: '/tmp/skill' });
+
+    const result = await ensureCoworkSkillInstalled(
+      deps({
+        fetchSnapshot: async () => ({
+          currentVersion: '2.0.0',
+          targets: {
+            'claude-cowork': { version: '1.5.0', recordedAt: '2026-04-01T00:00:00.000Z' },
+          },
+        }),
+        storage,
+        installer,
+      }),
+    );
+
+    expect(result.kind).toBe('installed-now');
+    expect(installer.install).toHaveBeenCalledTimes(1);
+    expect(storage.snapshot()).toEqual({ 'ok:skill:cowork:installed:v2.0.0': '1' });
+  });
+
+  test('force=true bypasses both server gate and localStorage gate', async () => {
+    const storage = memoryStorage({ 'ok:skill:cowork:installed:v1.2.3': '1' });
+    const installer = fakeInstaller({ ok: true, path: '/tmp/skill' });
+
+    const result = await ensureCoworkSkillInstalled(
+      deps({
+        fetchSnapshot: async () => ({
+          currentVersion: '1.2.3',
+          targets: { 'claude-cowork': { version: '1.2.3', recordedAt: '2026-05-04T00:00:00Z' } },
+        }),
+        storage,
+        installer,
+      }),
+      { force: true },
+    );
+
+    expect(result.kind).toBe('installed-now');
+    expect(installer.install).toHaveBeenCalledTimes(1);
+    expect(installer.install).toHaveBeenCalledWith({ force: true });
   });
 
   test('storage explicitly null: installer runs every time, guard never sets', async () => {
@@ -147,9 +213,49 @@ describe('ensureCoworkSkillInstalled — guard semantics', () => {
       },
     };
 
-    const result = await ensureCoworkSkillInstalled(deps({ storage: throwingStorage, installer }));
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+      const result = await ensureCoworkSkillInstalled(
+        deps({ storage: throwingStorage, installer }),
+      );
+      expect(result.kind).toBe('installed-now');
+      expect(installer.install).toHaveBeenCalledTimes(1);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+});
 
-    expect(result.kind).toBe('installed-now');
-    expect(installer.install).toHaveBeenCalledTimes(1);
+describe('ensureCoworkSkillInstalled — concurrency', () => {
+  test('two concurrent calls share one in-flight install (FR11 coalescing)', async () => {
+    const storage = memoryStorage();
+    let installInvocationCount = 0;
+    type Resolver = (r: SkillInstallResult) => void;
+    let resolver: Resolver | null = null;
+
+    const installer: SkillInstaller = {
+      install: () => {
+        installInvocationCount += 1;
+        return new Promise<SkillInstallResult>((resolve: Resolver) => {
+          resolver = resolve;
+        });
+      },
+    };
+
+    const a = ensureCoworkSkillInstalled(deps({ storage, installer }));
+    const b = ensureCoworkSkillInstalled(deps({ storage, installer }));
+
+    for (let i = 0; i < 10; i += 1) {
+      await Promise.resolve();
+    }
+
+    expect(resolver).not.toBeNull();
+    (resolver as Resolver | null)?.({ ok: true, path: '/tmp/skill' });
+
+    const [resultA, resultB] = await Promise.all([a, b]);
+    expect(resultA.kind).toBe('installed-now');
+    expect(resultB.kind).toBe('installed-now');
+    expect(installInvocationCount).toBe(1);
   });
 });
