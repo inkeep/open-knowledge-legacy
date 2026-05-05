@@ -74,19 +74,15 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
     expect(props?.alias).toBeNull();
   });
 
-  test('US-013 — non-image wikiembed dispatches to PM link-marked text with sourceForm=wikiembed', () => {
+  test('PDF wikiembed dispatches to WikiEmbedPdf descriptor', () => {
     const json = mdManager.parse('![[draft.pdf#page=3|Draft]]');
-    const para = json.content?.[0];
-    expect(para?.type).toBe('paragraph');
-    const text = para?.content?.[0];
-    expect(text?.type).toBe('text');
-    expect(text?.text).toBe('Draft');
-    const linkMark = text?.marks?.find((mk) => mk.type === 'link');
-    expect(linkMark).toBeDefined();
-    expect(linkMark?.attrs?.sourceForm).toBe('wikiembed');
-    expect(linkMark?.attrs?.target).toBe('draft.pdf');
-    expect(linkMark?.attrs?.anchor).toBe('page=3');
-    expect(linkMark?.attrs?.alias).toBe('Draft');
+    const node = json.content?.[0];
+    expect(node?.type).toBe('jsxComponent');
+    expect(node?.attrs?.componentName).toBe('WikiEmbedPdf');
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.target).toBe('draft.pdf');
+    expect(props?.anchor).toBe('page=3');
+    expect(props?.alias).toBe('Draft');
   });
 
   test('US-013 — opaque extensions dispatch to plain link (no sourceForm)', () => {
@@ -112,14 +108,16 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
     expect(props?.src).toBe('/attachments/photo.png');
     expect(props?.target).toBe('photo.png');
 
-    const resolvedLink = mdManager.parse('![[draft.pdf]]', {
+    const resolvedPdf = mdManager.parse('![[draft.pdf]]', {
       resolveEmbed: (target) => (target === 'draft.pdf' ? 'attachments/draft.pdf' : null),
       sourcePath: 'docs/meeting.md',
     });
-    const text = resolvedLink.content?.[0]?.content?.[0];
-    const linkMark = text?.marks?.find((mk) => mk.type === 'link');
-    expect(linkMark?.attrs?.href).toBe('/attachments/draft.pdf');
-    expect(linkMark?.attrs?.target).toBe('draft.pdf');
+    const pdfNode = resolvedPdf.content?.[0];
+    expect(pdfNode?.type).toBe('jsxComponent');
+    expect(pdfNode?.attrs?.componentName).toBe('WikiEmbedPdf');
+    const pdfProps = pdfNode?.attrs?.props as Record<string, unknown> | undefined;
+    expect(pdfProps?.src).toBe('/attachments/draft.pdf');
+    expect(pdfProps?.target).toBe('draft.pdf');
   });
 
   test('US-013 — unresolvable target falls back to literal (broken-ref placeholder)', () => {

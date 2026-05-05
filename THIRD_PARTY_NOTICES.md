@@ -852,6 +852,11 @@ Homepage: https://github.com/dcodeIO/long.js
 
 _(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
+### `pdfjs-dist@5.7.284`
+Homepage: https://mozilla.github.io/pdf.js/
+
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
+
 ### `tunnel-agent@0.6.0`
 Homepage: https://github.com/mikeal/tunnel-agent
 
@@ -1389,6 +1394,11 @@ Copyright (c) 2024 Anthropic, PBC
 Homepage: https://github.com/mswjs/interceptors
 
 Copyright (c) 2018–present Artem Zakharchenko
+
+### `@napi-rs/canvas@0.1.100`
+Homepage: https://github.com/Brooooooklyn/canvas
+
+Copyright (c) 2020 lynweklm@gmail.com
 
 ### `@napi-rs/keyring@1.2.0`
 Homepage: https://github.com/Brooooooklyn/keyring-node

@@ -121,6 +121,7 @@ export { OK_DIR } from './constants/ok-dir.ts';
 export {
   ALLOWED_AUDIO_MIME_TYPES,
   ALLOWED_IMAGE_MIME_TYPES,
+  ALLOWED_PDF_MIME_TYPES,
   ALLOWED_VIDEO_MIME_TYPES,
   ASSET_EXTENSIONS,
   AUDIO_EXTENSIONS,
@@ -136,6 +137,7 @@ export {
   INLINE_RENDERABLE_EXTENSIONS,
   type InlineAssetMediaKind,
   mediaKindForSidebarAssetExtension,
+  PDF_EXTENSIONS,
   SIDEBAR_IMAGE_ASSET_EXTENSIONS,
   SIDEBAR_RENDERABLE_ASSET_EXTENSIONS,
   SIDEBAR_VIDEO_ASSET_EXTENSIONS,
@@ -355,6 +357,7 @@ export {
   resolveAssetProjectPath,
 } from './utils/link-targets.ts';
 export { type BasenameIndex, createBasenameIndex } from './utils/path-resolve.ts';
+export { type PdfAnchorParts, parsePdfAnchor } from './utils/pdf-anchor.ts';
 export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';
 export {
   disambiguateSlug,

@@ -2,10 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { createChildNode, getComponentItems } from './component-items';
 
 describe('getComponentItems (descriptor-driven slash menu)', () => {
-  test('returns exactly the canonical descriptors', () => {
+  test('returns exactly the canonical descriptors (5-pack + Math + Pdf)', () => {
     const items = getComponentItems();
     const labels = items.map((i) => i.label).sort();
-    expect(labels).toEqual(['Accordion', 'Audio', 'Callout', 'Image', 'Math', 'Video']);
+    expect(labels).toEqual(
+      ['Accordion', 'Audio', 'Callout', 'Image', 'Math', 'PDF', 'Video'].sort(),
+    );
   });
 
   test('every entry exposes the SlashCommandItem contract', () => {

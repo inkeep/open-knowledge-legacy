@@ -4,10 +4,10 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the 6 canonical + 8 compat descriptors + wildcard', () => {
+  test('returns the 7 canonical + 9 compat descriptors + wildcard', () => {
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(15);
+    expect(entries.length).toBe(17);
   });
 
   test('get returns registered component by name', () => {
@@ -83,12 +83,12 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains 6 canonical + 8 compat entries (canonical pack + source-form preservation + math syntax compats)', () => {
-    expect(builtInComponents.length).toBe(14);
+  test('contains 7 canonical + 9 compat entries (5-pack + Math + Pdf canonicals; source-form preservation + math syntax + wiki-embed compats)', () => {
+    expect(builtInComponents.length).toBe(16);
     const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
     const compat = builtInComponents.filter((m) => m.surface === 'compat');
-    expect(canonical.length).toBe(6);
-    expect(compat.length).toBe(8);
+    expect(canonical.length).toBe(7);
+    expect(compat.length).toBe(9);
   });
 
   test('all entries have required fields', () => {
@@ -398,7 +398,7 @@ describe('builtInComponents manifest', () => {
 });
 
 describe('placeholder contract — media descriptor src prop invariants', () => {
-  for (const name of ['img', 'video', 'audio'] as const) {
+  for (const name of ['img', 'video', 'audio', 'Pdf'] as const) {
     test(`${name}.src satisfies the placeholder contract`, () => {
       const meta = builtInComponents.find((m) => m.name === name);
       expect(meta).toBeDefined();
@@ -469,6 +469,10 @@ describe('common/advanced split per descriptor', () => {
     Math: {
       common: ['formula'],
       advanced: ['id', 'language'],
+    },
+    Pdf: {
+      common: ['src'],
+      advanced: ['title', 'anchor'],
     },
   };
   for (const [name, split] of Object.entries(expected)) {

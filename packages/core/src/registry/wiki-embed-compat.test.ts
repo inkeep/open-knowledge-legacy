@@ -18,6 +18,9 @@ const wikiEmbedVideo = builtInComponents.find(
 const wikiEmbedAudio = builtInComponents.find(
   (m): m is CompatMeta => m.surface === 'compat' && m.name === 'WikiEmbedAudio',
 );
+const wikiEmbedPdf = builtInComponents.find(
+  (m): m is CompatMeta => m.surface === 'compat' && m.name === 'WikiEmbedPdf',
+);
 
 describe('WikiEmbedImage descriptor — registration', () => {
   test('is registered in builtInComponents as a compat descriptor', () => {
@@ -540,5 +543,137 @@ describe('WikiEmbedAudio.serialize — source-form mdast emit', () => {
     };
     expect(cast.value).toBe('');
     expect(cast.data.target).toBe('');
+  });
+});
+
+describe('WikiEmbedPdf descriptor — registration', () => {
+  test('is registered in builtInComponents as a compat descriptor', () => {
+    expect(wikiEmbedPdf).toBeDefined();
+    expect(wikiEmbedPdf?.surface).toBe('compat');
+  });
+
+  test('rendersAs the canonical `Pdf`', () => {
+    expect(wikiEmbedPdf?.rendersAs).toBe('Pdf');
+  });
+
+  test('declares hasChildren=false and isSelfClosing=true (matches Pdf)', () => {
+    expect(wikiEmbedPdf?.hasChildren).toBe(false);
+    expect(wikiEmbedPdf?.isSelfClosing).toBe(true);
+  });
+
+  test('exposes exactly one editable prop (alias)', () => {
+    expect(wikiEmbedPdf?.props.length).toBe(1);
+    expect(wikiEmbedPdf?.props[0]?.name).toBe('alias');
+    expect(wikiEmbedPdf?.props[0]?.type).toBe('string');
+    expect(wikiEmbedPdf?.props[0]?.required).toBe(false);
+  });
+});
+
+describe('WikiEmbedPdf.translateProps — render-time prop translation', () => {
+  test('alias non-empty → title = alias; anchor passes through', () => {
+    if (!wikiEmbedPdf) throw new Error('descriptor missing');
+    const out = wikiEmbedPdf.translateProps({
+      src: '/spec.pdf',
+      target: 'spec.pdf',
+      alias: 'Spec',
+      anchor: 'page=3',
+    });
+    expect(out.src).toBe('/spec.pdf');
+    expect(out.title).toBe('Spec');
+    expect(out.anchor).toBe('page=3');
+  });
+
+  test('alias empty string → title = target (filename fallback)', () => {
+    if (!wikiEmbedPdf) throw new Error('descriptor missing');
+    const out = wikiEmbedPdf.translateProps({
+      src: '/spec.pdf',
+      target: 'spec.pdf',
+      alias: '',
+      anchor: null,
+    });
+    expect(out.title).toBe('spec.pdf');
+  });
+
+  test('anchor missing → empty string (Pdf.tsx parser handles empty as no params)', () => {
+    if (!wikiEmbedPdf) throw new Error('descriptor missing');
+    const out = wikiEmbedPdf.translateProps({
+      src: '/spec.pdf',
+      target: 'spec.pdf',
+    });
+    expect(out.anchor).toBe('');
+  });
+
+  test('anchor non-string (null) → empty string (defensive coerce)', () => {
+    if (!wikiEmbedPdf) throw new Error('descriptor missing');
+    const out = wikiEmbedPdf.translateProps({
+      src: '/spec.pdf',
+      target: 'spec.pdf',
+      anchor: null,
+    });
+    expect(out.anchor).toBe('');
+  });
+
+  test('combined `page=3&height=600` anchor passes through unchanged', () => {
+    if (!wikiEmbedPdf) throw new Error('descriptor missing');
+    const out = wikiEmbedPdf.translateProps({
+      src: '/spec.pdf',
+      target: 'spec.pdf',
+      alias: null,
+      anchor: 'page=3&height=600',
+    });
+    expect(out.anchor).toBe('page=3&height=600');
+  });
+});
+
+describe('WikiEmbedPdf.serialize — source-form mdast emit', () => {
+  function callSerialize(node: PmNode) {
+    if (!wikiEmbedPdf) throw new Error('descriptor missing');
+    return wikiEmbedPdf.serialize(node, {
+      all: () => [],
+      registry: { getOrWildcard: () => wikiEmbedPdf },
+      serializeChildren: () => '',
+    });
+  }
+
+  test('plain target (no alias, no anchor) → wikiLinkEmbed with target as label', () => {
+    const out = callSerialize(
+      makeMockNode('WikiEmbedPdf', { src: '/spec.pdf', target: 'spec.pdf' }),
+    );
+    const cast = out as unknown as {
+      type: string;
+      value: string;
+      data: { target: string; anchor: string | null; alias: string | null };
+    };
+    expect(cast.type).toBe('wikiLinkEmbed');
+    expect(cast.value).toBe('spec.pdf');
+    expect(cast.data.target).toBe('spec.pdf');
+    expect(cast.data.anchor).toBeNull();
+    expect(cast.data.alias).toBeNull();
+  });
+
+  test('anchor `page=3` round-trips into wikiLinkEmbed.data.anchor', () => {
+    const out = callSerialize(
+      makeMockNode('WikiEmbedPdf', {
+        src: '/spec.pdf',
+        target: 'spec.pdf',
+        alias: null,
+        anchor: 'page=3',
+      }),
+    );
+    const cast = out as unknown as { value: string; data: { anchor: string | null } };
+    expect(cast.value).toBe('spec.pdf#page=3');
+    expect(cast.data.anchor).toBe('page=3');
+  });
+
+  test('combined `page=3&height=600` anchor preserved verbatim', () => {
+    const out = callSerialize(
+      makeMockNode('WikiEmbedPdf', {
+        src: '/spec.pdf',
+        target: 'spec.pdf',
+        anchor: 'page=3&height=600',
+      }),
+    );
+    const cast = out as unknown as { value: string; data: { anchor: string | null } };
+    expect(cast.data.anchor).toBe('page=3&height=600');
   });
 });

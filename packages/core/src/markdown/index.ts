@@ -273,6 +273,7 @@ function extractTextFromMdastNodes(nodes: MdastNodes[]): string {
 import {
   AUDIO_EXTENSIONS,
   IMAGE_EXTENSIONS,
+  PDF_EXTENSIONS,
   VIDEO_EXTENSIONS,
   WIKI_EMBED_EXTENSIONS,
 } from '../constants/upload.ts';
@@ -660,6 +661,21 @@ function buildMdastToPmHandlers(
       ) {
         return n.jsxComponent.createAndFill({
           componentName: 'WikiEmbedAudio',
+          kind: 'element',
+          attributes: [],
+          sourceRaw: '',
+          sourceDirty: false,
+          props: { src: srcOrTarget, title: alias ?? target, target, anchor, alias },
+        });
+      }
+      if (
+        isBlockContext &&
+        PDF_EXTENSIONS.has(ext) &&
+        n.jsxComponent &&
+        registry.has('WikiEmbedPdf')
+      ) {
+        return n.jsxComponent.createAndFill({
+          componentName: 'WikiEmbedPdf',
           kind: 'element',
           attributes: [],
           sourceRaw: '',
