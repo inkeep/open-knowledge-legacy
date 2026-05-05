@@ -54,4 +54,100 @@ describe('computeBodyStats', () => {
     const stats = computeBodyStats('hello 世界 world');
     expect(stats.words).toBeGreaterThanOrEqual(3);
   });
+
+  test('empty MDX callout contributes zero to counts', () => {
+    const md = 'hello\n\nworld\n\n<Callout type="info">\n\n</Callout>\n';
+    const stats = computeBodyStats(md);
+    expect(stats.words).toBe(2);
+    expect(stats.chars).toBe(11);
+  });
+
+  test('MDX callout body counts but tag/attr names do not', () => {
+    const md = '<Callout type="info">\n\nimportant note\n\n</Callout>\n';
+    const stats = computeBodyStats(md);
+    expect(stats.words).toBe(2);
+    expect(stats.chars).toBe('important note'.length);
+  });
+
+  test('link visible text counts, URL does not', () => {
+    const stats = computeBodyStats('see [the docs](https://example.com/path/to/page)');
+    expect(stats.words).toBe(3);
+    expect(stats.chars).toBe('see the docs'.length);
+  });
+
+  test('image alt text does not count', () => {
+    const stats = computeBodyStats('![a long alt description](https://example.com/img.png)');
+    expect(stats).toEqual({ words: 0, chars: 0, tokens: 0 });
+  });
+
+  test('wikilink alias is preferred over target', () => {
+    const stats = computeBodyStats('see [[Some Page|the page]]');
+    expect(stats.words).toBe(3);
+    expect(stats.chars).toBe('see the page'.length);
+  });
+
+  test('wikilink without alias falls back to target name', () => {
+    const stats = computeBodyStats('see [[Some Page]]');
+    expect(stats.words).toBe(3);
+    expect(stats.chars).toBe('see Some Page'.length);
+  });
+
+  test('inline code content counts', () => {
+    const stats = computeBodyStats('use `useEffect` here');
+    expect(stats.words).toBe(3);
+  });
+
+  test('fenced code block content counts toward stats', () => {
+    const md = ['before', '', '```js', 'const x = 1', '```', '', 'after'].join('\n');
+    const stats = computeBodyStats(md);
+    expect(stats.words).toBe(5);
+    expect(stats.chars).toBe('before\nconst x = 1\nafter'.length);
+  });
+
+  test('emphasis and strong markers do not inflate chars', () => {
+    const stats = computeBodyStats('**bold** and *italic*');
+    expect(stats.words).toBe(3);
+    expect(stats.chars).toBe('bold and italic'.length);
+  });
+
+  test('arbitrary MDX components contribute zero when empty', () => {
+    const md = [
+      'hi',
+      '',
+      '<Note>\n\n</Note>',
+      '',
+      '<Tabs defaultValue="a">\n\n<Tab value="a">\n\n</Tab>\n\n</Tabs>',
+      '',
+      '<CustomThingamajig foo="bar" baz={true}>\n\n</CustomThingamajig>',
+    ].join('\n');
+    const stats = computeBodyStats(md);
+    expect(stats.words).toBe(1);
+    expect(stats.chars).toBe(2);
+  });
+
+  test('inline MDX component body counts; tag/attr do not', () => {
+    const md = 'press <Kbd shortcut="cmd+s">save</Kbd> now';
+    const stats = computeBodyStats(md);
+    expect(stats.words).toBe(3);
+    expect(stats.chars).toBe('press save now'.length);
+  });
+
+  test('MDX components with bodies count their inner content only', () => {
+    const md = [
+      '<Card title="Ignored attr">',
+      '',
+      'card body text',
+      '',
+      '</Card>',
+      '',
+      '<Note>',
+      '',
+      'note body',
+      '',
+      '</Note>',
+    ].join('\n');
+    const stats = computeBodyStats(md);
+    expect(stats.words).toBe(5);
+    expect(stats.chars).toBe('card body text\nnote body'.length);
+  });
 });

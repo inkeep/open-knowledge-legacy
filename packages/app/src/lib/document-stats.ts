@@ -1,4 +1,5 @@
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { getSharedMarkdownManager } from '@/editor/utils/md-singleton';
 
 export interface DocumentStats {
   words: number;
@@ -15,6 +16,81 @@ export const EMPTY_STATS: DocumentStats = {
 const NON_SPACE_SCRIPT_RE = /[　-〿぀-ゟ゠-ヿ㐀-䶿一-鿿豈-﫿＀-￯฀-๿ក-៿]/;
 
 const WORD_LIKE_RE = /[\p{L}\p{N}]/u;
+
+interface MdastLikeNode {
+  type: string;
+  value?: string;
+  children?: MdastLikeNode[];
+  data?: { alias?: string | null; [key: string]: unknown };
+}
+
+const VALUE_BEARING_TYPES = new Set(['text', 'inlineCode', 'code', 'tag']);
+
+const SKIP_TYPES = new Set([
+  'html',
+  'definition',
+  'footnoteDefinition',
+  'yaml',
+  'toml',
+  'image',
+  'imageReference',
+  'mdxFlowExpression',
+  'mdxTextExpression',
+  'mdxjsEsm',
+  'rawMdxFallback',
+  'rawMdxFallbackMdast',
+]);
+
+const BLOCK_CONTAINER_TYPES = new Set([
+  'paragraph',
+  'heading',
+  'blockquote',
+  'list',
+  'listItem',
+  'thematicBreak',
+  'table',
+  'tableRow',
+  'tableCell',
+  'mdxJsxFlowElement',
+  'commentBlock',
+]);
+
+function collectVisibleText(node: MdastLikeNode | undefined, parts: string[]): void {
+  if (!node) return;
+  const t = node.type;
+  if (SKIP_TYPES.has(t)) return;
+  if (VALUE_BEARING_TYPES.has(t)) {
+    if (node.value) {
+      parts.push(node.value);
+      if (t === 'code') parts.push('\n');
+    }
+    return;
+  }
+  if (t === 'wikiLink' || t === 'wikiLinkEmbed') {
+    const label = node.data?.alias ?? node.value ?? '';
+    if (label) parts.push(label);
+    return;
+  }
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) collectVisibleText(child, parts);
+    if (BLOCK_CONTAINER_TYPES.has(t) && parts.length > 0) {
+      const last = parts[parts.length - 1];
+      if (last && !last.endsWith('\n')) parts.push('\n');
+    }
+  }
+}
+
+function extractVisibleText(body: string): string {
+  try {
+    const tree = getSharedMarkdownManager().parseToMdast(body) as MdastLikeNode;
+    const parts: string[] = [];
+    collectVisibleText(tree, parts);
+    return parts.join('').trim();
+  } catch (err: unknown) {
+    console.warn('[document-stats] mdast parse failed, falling back to raw text', err);
+    return body.trim();
+  }
+}
 
 function countWordsByWhitespace(text: string): number {
   if (!text) return 0;
@@ -45,10 +121,11 @@ function estimateTokens(text: string): number {
 export function computeBodyStats(fullText: string): DocumentStats {
   if (!fullText) return { words: 0, chars: 0, tokens: 0 };
   const { body } = stripFrontmatter(fullText);
-  const trimmed = body.trim();
-  if (!trimmed) return { words: 0, chars: 0, tokens: 0 };
-  const words = NON_SPACE_SCRIPT_RE.test(trimmed)
-    ? countWordsBySegmenter(trimmed)
-    : countWordsByWhitespace(trimmed);
-  return { words, chars: trimmed.length, tokens: estimateTokens(trimmed) };
+  if (!body.trim()) return { words: 0, chars: 0, tokens: 0 };
+  const visible = extractVisibleText(body);
+  if (!visible) return { words: 0, chars: 0, tokens: 0 };
+  const words = NON_SPACE_SCRIPT_RE.test(visible)
+    ? countWordsBySegmenter(visible)
+    : countWordsByWhitespace(visible);
+  return { words, chars: visible.length, tokens: estimateTokens(visible) };
 }
