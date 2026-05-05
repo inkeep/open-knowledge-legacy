@@ -39,7 +39,6 @@ import {
   ChunkedInsertError,
   chunkedYTextInsert,
   htmlToMdast,
-  markdownToHtml,
   mdastToMarkdown,
 } from '@inkeep/open-knowledge-core';
 import { toast } from 'sonner';
@@ -70,7 +69,20 @@ export function createSourceClipboardExtension(deps: SourceClipboardDeps): Exten
   });
 }
 
-function handleCopyOrCut(event: ClipboardEvent, view: EditorView, kind: 'copy' | 'cut'): boolean {
+export function buildSourceModeHtml(markdown: string): string {
+  const pre = document.createElement('pre');
+  pre.className = 'mdx-component';
+  const code = document.createElement('code');
+  code.textContent = markdown;
+  pre.appendChild(code);
+  return pre.outerHTML;
+}
+
+export function handleCopyOrCut(
+  event: ClipboardEvent,
+  view: EditorView,
+  kind: 'copy' | 'cut',
+): boolean {
   const { from, to } = view.state.selection.main;
   if (from === to) {
     event.preventDefault();
@@ -85,7 +97,7 @@ function handleCopyOrCut(event: ClipboardEvent, view: EditorView, kind: 'copy' |
     const markdown = view.state.sliceDoc(from, to);
     dt.setData('text/plain', markdown);
     try {
-      dt.setData('text/html', markdownToHtml(markdown));
+      dt.setData('text/html', buildSourceModeHtml(markdown));
     } catch (err) {
       logSerializeFail({
         view: 'source',

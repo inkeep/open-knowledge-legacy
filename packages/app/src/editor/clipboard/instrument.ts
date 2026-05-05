@@ -1,4 +1,5 @@
 import { ChunkedInsertError, HtmlPayloadTooLargeError } from '@inkeep/open-knowledge-core';
+import type { UrlPortabilityReason } from './clipboard-sanitize.ts';
 import type { ClipboardSource } from './detect-source.ts';
 
 type ClipboardEventName =
@@ -10,7 +11,9 @@ type ClipboardEventName =
   | 'clipboard-hast-override-invoked'
   | 'clipboard-walker-fallback-fired'
   | 'clipboard-walker-url-blocked'
-  | 'clipboard-walker-unmapped-lucide-detected';
+  | 'clipboard-walker-unmapped-lucide-detected'
+  | 'clipboard-walker-url-source-emitted'
+  | 'clipboard-walker-url-classifier-failed';
 
 type ClipboardView = 'wysiwyg' | 'source';
 
@@ -153,6 +156,46 @@ export function logWalkerUrlBlocked(info: {
       view: info.view,
       attr: info.attr,
       reason: info.reason,
+    }),
+  );
+}
+
+export type WalkerUrlSourceTag = 'img' | 'video' | 'audio' | 'source' | 'a' | 'picture';
+
+export type WalkerUrlSourceClass = 'mdx-component' | 'mdx-inline';
+
+type WalkerUrlClassifierFailedPhase = 'classifier-throw' | 'serializer-null' | 'serializer-throw';
+
+export function logWalkerUrlSourceEmitted(info: {
+  view: ClipboardView;
+  tag: WalkerUrlSourceTag;
+  class: WalkerUrlSourceClass;
+  reason: UrlPortabilityReason;
+}): void {
+  console.warn(
+    JSON.stringify({
+      event: 'clipboard-walker-url-source-emitted' satisfies ClipboardEventName,
+      view: info.view,
+      tag: info.tag,
+      class: info.class,
+      reason: info.reason,
+    }),
+  );
+}
+
+export function logWalkerUrlClassifierFailed(info: {
+  view: ClipboardView;
+  tag: WalkerUrlSourceTag;
+  phase: WalkerUrlClassifierFailedPhase;
+  errorClass?: string;
+}): void {
+  console.warn(
+    JSON.stringify({
+      event: 'clipboard-walker-url-classifier-failed' satisfies ClipboardEventName,
+      view: info.view,
+      tag: info.tag,
+      phase: info.phase,
+      ...(info.errorClass != null ? { errorClass: info.errorClass } : {}),
     }),
   );
 }

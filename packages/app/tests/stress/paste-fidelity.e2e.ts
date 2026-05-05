@@ -154,7 +154,10 @@ test.describe('Copy-side: simulateCopyAndRead captures MIME map', () => {
     expect(out.html).toContain('data-pm-slice');
   });
 
-  test('WYSIWYG copy with wikiLink → text/html preserves chip shape', async ({ page, baseURL }) => {
+  test('WYSIWYG copy with wikiLink → text/html emits cross-pipeline anchor shape', async ({
+    page,
+    baseURL,
+  }) => {
     await fetch(`${baseURL}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -170,8 +173,9 @@ test.describe('Copy-side: simulateCopyAndRead captures MIME map', () => {
     await page.click('.ProseMirror');
     const out = await simulateCopyAndRead(page, 'wysiwyg');
     expect(out.plain).toContain('[[Page|Alias]]');
-    expect(out.html).toContain('data-wiki-link');
+    expect(out.html).toContain('class="wiki-link"');
     expect(out.html).toContain('data-target="Page"');
+    expect(out.html).toContain('href="#page"');
     expect(out.html).not.toContain('<script>');
   });
 
@@ -529,7 +533,9 @@ test.describe('Source-view copy output (FR-4, D4 byte-parity)', () => {
     await expect.poll(() => getYText(page), { timeout: 5_000 }).toContain('[[Page|Alias]]');
   });
 
-  test('QA-036 Source copy returns non-empty text/plain AND text/html', async ({ page }) => {
+  test('Source copy emits source-shaped text/html wrapper alongside text/plain', async ({
+    page,
+  }) => {
     await page.getByRole('radio', { name: /Markdown source/i }).click({ timeout: 10_000 });
     await page.waitForSelector('.cm-content', { timeout: 10_000 });
     await expect(page.locator('.cm-content')).toContainText('Title', { timeout: 5_000 });
@@ -538,11 +544,13 @@ test.describe('Source-view copy output (FR-4, D4 byte-parity)', () => {
     expect(out.plain).toContain('Title');
     expect(out.plain).toContain('[[Page|Alias]]');
     expect(out.html.length).toBeGreaterThan(0);
-    expect(out.html).toContain('<h1');
-    expect(out.html).toContain('wiki-link');
+    expect(out.html).toContain('<pre class="mdx-component">');
+    expect(out.html).toContain('<code>');
+    expect(out.html).toContain('[[Page|Alias]]');
+    expect(out.html).not.toContain('<h1');
   });
 
-  test('QA-012 Source copy and WYSIWYG copy produce equivalent semantic HTML', async ({ page }) => {
+  test('Source copy and WYSIWYG copy carry equivalent text/plain bytes', async ({ page }) => {
     const wysiwygOut = await simulateCopyAndRead(page, 'wysiwyg');
     await page.getByRole('radio', { name: /Markdown source/i }).click({ timeout: 10_000 });
     await page.waitForSelector('.cm-content', { timeout: 10_000 });
@@ -553,8 +561,10 @@ test.describe('Source-view copy output (FR-4, D4 byte-parity)', () => {
     expect(wysiwygOut.plain).toContain('Title');
     expect(sourceOut.plain).toContain('[[Page|Alias]]');
     expect(wysiwygOut.plain).toContain('[[Page|Alias]]');
-    expect(sourceOut.html).toContain('wiki-link');
-    expect(wysiwygOut.html).toContain('wiki-link');
+    expect(sourceOut.html).toContain('<pre class="mdx-component">');
+    expect(sourceOut.html).toContain('[[Page|Alias]]');
+    expect(wysiwygOut.html).toContain('class="wiki-link"');
+    expect(wysiwygOut.html).toContain('data-target="Page"');
     expect(sourceOut.html).not.toContain('data-resolved');
     expect(wysiwygOut.html).not.toContain('data-resolved');
   });
@@ -874,11 +884,15 @@ test.describe('FR-17 + FR-12/FR-15 Source-view clipboard parity', () => {
     expect(sawShift).toBe(true);
   });
 
-  test('QA-037 Source Cmd+X deletes selection AND writes both MIMEs', async ({ page }) => {
+  test('Source Cmd+X deletes selection AND writes both MIMEs in source-shaped HTML', async ({
+    page,
+  }) => {
     const out = await simulateCutAndRead(page, 'source');
     expect(out.plain).toContain('Source Heading');
     expect(out.html.length).toBeGreaterThan(0);
-    expect(out.html).toContain('<h1');
+    expect(out.html).toContain('<pre class="mdx-component">');
+    expect(out.html).toContain('# Source Heading');
+    expect(out.html).not.toContain('<h1');
     await expect(async () => {
       const after = await getYText(page);
       expect(after).not.toContain('Source Heading');
@@ -939,7 +953,8 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     await page.click('.ProseMirror');
     const captured = await simulateCopyAndRead(page, 'wysiwyg');
     expect(captured.html).toContain('data-pm-slice');
-    expect(captured.html).toContain('data-wiki-link');
+    expect(captured.html).toContain('class="wiki-link"');
+    expect(captured.html).toContain('data-target="Page"');
     expect(captured.plain).toContain('[[Page|Alias]]');
 
     await fetch(`${baseURL}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
@@ -1294,10 +1309,10 @@ test.describe('Clipboard component contract — drag-and-drop (US-009)', () => {
     expect(out.html).not.toContain('jsx-component-chrome');
     expect(out.html).not.toContain('jsx-chrome-btn');
 
-    expect(out.html).not.toContain('lucide-chevron-right');
+    expect(out.html).not.toContain('lucide-chevron-down');
     expect(out.html).not.toContain('lucide-info');
     expect(out.html).not.toMatch(/<svg[^>]*class="[^"]*lucide-/);
-    expect(out.html).toContain('›');
+    expect(out.html).toContain('⌄');
     expect(out.html).toContain('ℹ');
   });
 });

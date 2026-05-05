@@ -62,6 +62,23 @@ The lookup is case-insensitive on the basename (matching Obsidian), but the on-d
 - Filenames are sanitized to preserve Unicode code points (letters, digits, punctuation, emoji) while stripping path separators, control bytes, and escape sequences.
 - Path-escape attempts (`..`, absolute paths, symlinks that resolve outside the content directory) are rejected at the upload boundary.
 
+## Sharing across apps
+
+Local-path images (`![chart](./Q3-sales.png)`), wiki-embeds (`![[diagram.png]]`), and any other reference whose URL only resolves on your machine cannot render in apps that don't have access to your filesystem. When you copy a section containing one of these and paste into Gmail, Outlook, Notion, Slack, Discord, or Google Docs, Open Knowledge degrades visibly instead of silently:
+
+- **Non-portable URLs surface as a styled code block.** Recipients see the literal markdown source (e.g. `![chart](./Q3-sales.png)`) in monospace, not a broken-image icon. They can read what the section was meant to include and ask for the file or accept the textual reference.
+- **Inline images in paragraphs surface as inline source.** A paragraph with a local-path image keeps its prose flow — only the `<img>` collapses to inline source markup, the surrounding sentence is unaffected.
+- **Wiki-links surface as anchor links.** `[[OtherDoc]]` cross-app becomes a clickable anchor (`<a href="#otherdoc">OtherDoc</a>`) — the link shape signals that something was referenced, though the fragment href will not resolve in the destination.
+
+Two affordances are preserved across the cross-app boundary, not degradations themselves:
+
+- **Markdown-aware destinations get the source.** Linear, Outline, Obsidian, and similar apps that read `text/plain` first receive clean canonical markdown — the cross-app degradation only affects the `text/html` payload that destinations like Gmail render.
+- **Open Knowledge → Open Knowledge paste round-trips faithfully.** Copying out of one Open Knowledge doc and pasting into another preserves the original markdown image / wiki-link / wiki-embed shape — the cross-app degradation only fires when the receiving app reads `text/html` instead of `text/plain`.
+
+Source-mode copy (the CodeMirror toggle) works the same way: the clipboard's `text/html` payload is always a styled code block of the raw markdown bytes, never the rendered output. Pasting a `# Heading` from source-mode into Gmail produces a code block, not a rendered heading — consistent with VS Code, Obsidian source mode, GitHub textareas, and CodeMirror itself.
+
+If you want recipients to see rendered images cross-app, host the file at a public URL (`https://...`) and reference it that way — public URLs are passed through unchanged. Public IP literals (`https://1.2.3.4/img.png`, `https://[2001:4860:4860::8888]/img.png`) are also passed through; only private, loopback, link-local, and other non-public ranges trigger the source-fallback shape.
+
 ## Limitations and future work
 
 - **Non-image embeds render as plain links today.** Video, audio, and PDF get dedicated inline viewers in the typed component-nodes release. Storage shape won't change.

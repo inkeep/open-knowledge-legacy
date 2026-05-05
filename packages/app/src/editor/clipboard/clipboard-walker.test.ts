@@ -1,13 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import {
   ATTR_BLOCKLIST,
+  applyUrlClassifierPostPass,
+  applyWikiLinkTransform,
   buildInlineStyleFrom,
   CLASS_BLOCKLIST,
   type ComputedStyleLike,
+  chooseEmissionClass,
   glyphForLucide,
   LUCIDE_GLYPH_MAP,
   STYLE_ALLOWLIST,
   stripBlocklistedClasses,
+  type WalkerEnv,
 } from './clipboard-walker.ts';
 
 function fakeStyles(map: Record<string, string>): ComputedStyleLike {
@@ -177,12 +181,14 @@ describe('glyphForLucide — pure lookup for cross-app icon substitution', () =>
   test('returns the glyph for a single-class lucide name', () => {
     expect(glyphForLucide('lucide-info')).toBe('ℹ');
     expect(glyphForLucide('lucide-chevron-right')).toBe('›');
+    expect(glyphForLucide('lucide-chevron-down')).toBe('⌄');
     expect(glyphForLucide('lucide-alert-triangle')).toBe('⚠');
   });
 
   test('handles multi-class strings with the lucide name as prefix', () => {
     expect(glyphForLucide('lucide-info callout-icon')).toBe('ℹ');
     expect(glyphForLucide('lucide-chevron-right accordion-chevron')).toBe('›');
+    expect(glyphForLucide('lucide-chevron-down callout-chevron')).toBe('⌄');
   });
 
   test('handles multi-class strings with the lucide name as suffix', () => {
@@ -212,7 +218,7 @@ describe('glyphForLucide — pure lookup for cross-app icon substitution', () =>
   });
 
   test('LUCIDE_GLYPH_MAP entry count is anchored — adding/removing icons is intentional', () => {
-    expect(Object.keys(LUCIDE_GLYPH_MAP)).toHaveLength(6);
+    expect(Object.keys(LUCIDE_GLYPH_MAP)).toHaveLength(7);
   });
 
   test('every LUCIDE_GLYPH_MAP key matches the lucide-<kebab-name> shape', () => {
@@ -226,5 +232,715 @@ describe('glyphForLucide — pure lookup for cross-app icon substitution', () =>
       expect(typeof value).toBe('string');
       expect(value.length).toBeGreaterThan(0);
     }
+  });
+});
+
+function fakeElementWithClosest(closestResults: Record<string, Element | null>): Element {
+  return {
+    closest: (selector: string) => closestResults[selector] ?? null,
+  } as unknown as Element;
+}
+
+describe('chooseEmissionClass — paragraph-content-model rule', () => {
+  test('returns `mdx-inline` when the element has a <p> ancestor', () => {
+    const fakeP = {} as Element;
+    const el = fakeElementWithClosest({ p: fakeP });
+    expect(chooseEmissionClass(el)).toBe('mdx-inline');
+  });
+
+  test('returns `mdx-component` when the element has no <p> ancestor', () => {
+    const el = fakeElementWithClosest({});
+    expect(chooseEmissionClass(el)).toBe('mdx-component');
+  });
+});
+
+interface FakeNode {
+  tagName: string;
+  attrs: Record<string, string>;
+  textContent: string;
+  parent: FakeRoot | null;
+}
+
+interface FakeRoot {
+  children: FakeNode[];
+  querySelectorAll: (selector: string) => FakeNode[];
+}
+
+function makeFakeNode(
+  tagName: string,
+  attrs: Record<string, string>,
+  textContent: string,
+): FakeNode {
+  return { tagName, attrs, textContent, parent: null };
+}
+
+function makeFakeDoc() {
+  const created: FakeNode[] = [];
+  return {
+    createElement: (tag: string): FakeNode => {
+      const node = makeFakeNode(tag.toLowerCase(), {}, '');
+      created.push(node);
+      return node;
+    },
+    created,
+  };
+}
+
+function adaptFakeForTransform(root: FakeRoot, doc: ReturnType<typeof makeFakeDoc>): Element {
+  const wrap = (node: FakeNode): Element =>
+    ({
+      tagName: node.tagName.toUpperCase(),
+      getAttribute: (name: string) => node.attrs[name] ?? null,
+      setAttribute: (name: string, value: string) => {
+        node.attrs[name] = value;
+      },
+      get textContent() {
+        return node.textContent;
+      },
+      set textContent(v: string) {
+        node.textContent = v;
+      },
+      ownerDocument: { createElement: (tag: string) => wrap(doc.createElement(tag)) },
+      replaceWith: (replacement: { _node?: FakeNode } & Element) => {
+        if (!node.parent) return;
+        const i = node.parent.children.indexOf(node);
+        const repl = (replacement as unknown as { _node?: FakeNode })._node ?? doc.created.at(-1);
+        if (i >= 0 && repl) {
+          node.parent.children[i] = repl;
+          repl.parent = node.parent;
+        }
+      },
+      _node: node,
+    }) as unknown as Element;
+  const wrappedRoot = {
+    querySelectorAll: (selector: string) => {
+      if (selector !== 'span[data-wiki-link]') return [];
+      return root.children
+        .filter((n) => n.tagName === 'span' && Object.hasOwn(n.attrs, 'data-wiki-link'))
+        .map(wrap);
+    },
+  } as unknown as Element;
+  return wrappedRoot;
+}
+
+describe('applyWikiLinkTransform — wiki-link rewrite', () => {
+  test('rewrites span[data-wiki-link] to a fragment-href anchor with the rendered alias text', () => {
+    const span = makeFakeNode(
+      'span',
+      {
+        'data-wiki-link': '',
+        'data-target': 'Other Doc',
+        'data-anchor': '',
+        'data-resolved': 'false',
+      },
+      'Other Doc',
+    );
+    const root: FakeRoot = { children: [span], querySelectorAll: () => [] };
+    span.parent = root;
+    const doc = makeFakeDoc();
+    applyWikiLinkTransform(adaptFakeForTransform(root, doc));
+    expect(root.children).toHaveLength(1);
+    const replaced = root.children[0];
+    expect(replaced.tagName).toBe('a');
+    expect(replaced.attrs.href).toBe('#other-doc');
+    expect(replaced.textContent).toBe('Other Doc');
+    expect(replaced.attrs.class).toBe('wiki-link');
+    expect(replaced.attrs['data-target']).toBe('Other Doc');
+    expect(replaced.attrs['data-anchor']).toBe('');
+    expect(replaced.attrs['data-alias']).toBe('');
+  });
+
+  test('rewrites with anchor to a slug-and-anchor-slug fragment href', () => {
+    const span = makeFakeNode(
+      'span',
+      {
+        'data-wiki-link': '',
+        'data-target': 'Other Doc',
+        'data-anchor': 'Section Name',
+      },
+      'Other Doc#Section Name',
+    );
+    const root: FakeRoot = { children: [span], querySelectorAll: () => [] };
+    span.parent = root;
+    applyWikiLinkTransform(adaptFakeForTransform(root, makeFakeDoc()));
+    const replaced = root.children[0];
+    expect(replaced.attrs.href).toBe('#other-doc-section-name');
+    expect(replaced.textContent).toBe('Other Doc#Section Name');
+    expect(replaced.attrs.class).toBe('wiki-link');
+    expect(replaced.attrs['data-target']).toBe('Other Doc');
+    expect(replaced.attrs['data-anchor']).toBe('Section Name');
+  });
+
+  test('preserves alias text when display text diverges from data-target', () => {
+    const span = makeFakeNode(
+      'span',
+      {
+        'data-wiki-link': '',
+        'data-target': 'Page',
+        'data-anchor': 'Section',
+        'data-alias': 'Custom Alias',
+      },
+      'Custom Alias',
+    );
+    const root: FakeRoot = { children: [span], querySelectorAll: () => [] };
+    span.parent = root;
+    applyWikiLinkTransform(adaptFakeForTransform(root, makeFakeDoc()));
+    const replaced = root.children[0];
+    expect(replaced.attrs.href).toBe('#page-section');
+    expect(replaced.textContent).toBe('Custom Alias');
+    expect(replaced.attrs.class).toBe('wiki-link');
+    expect(replaced.attrs['data-target']).toBe('Page');
+    expect(replaced.attrs['data-anchor']).toBe('Section');
+    expect(replaced.attrs['data-alias']).toBe('Custom Alias');
+  });
+
+  test('skips spans with empty data-target (defensive sanity guard)', () => {
+    const span = makeFakeNode('span', { 'data-wiki-link': '', 'data-target': '' }, '');
+    const root: FakeRoot = { children: [span], querySelectorAll: () => [] };
+    span.parent = root;
+    applyWikiLinkTransform(adaptFakeForTransform(root, makeFakeDoc()));
+    expect(root.children[0]).toBe(span);
+    expect(root.children[0].tagName).toBe('span');
+  });
+
+  test('treats whitespace-only data-anchor as null (matches normalizeNullableString)', () => {
+    const span = makeFakeNode(
+      'span',
+      {
+        'data-wiki-link': '',
+        'data-target': 'Doc',
+        'data-anchor': '   ',
+      },
+      'Doc',
+    );
+    const root: FakeRoot = { children: [span], querySelectorAll: () => [] };
+    span.parent = root;
+    applyWikiLinkTransform(adaptFakeForTransform(root, makeFakeDoc()));
+    expect(root.children[0].attrs.href).toBe('#doc');
+  });
+
+  test('Unicode targets/anchors NFKD-normalize through the slug helper', () => {
+    const span = makeFakeNode(
+      'span',
+      {
+        'data-wiki-link': '',
+        'data-target': 'Café Menu',
+        'data-anchor': 'Pâté Selection',
+      },
+      'Café Menu#Pâté Selection',
+    );
+    const root: FakeRoot = { children: [span], querySelectorAll: () => [] };
+    span.parent = root;
+    applyWikiLinkTransform(adaptFakeForTransform(root, makeFakeDoc()));
+    expect(root.children[0].attrs.href).toBe('#cafe-menu-pate-selection');
+  });
+});
+
+interface PostPassFakeElement {
+  tagName: string;
+  attrs: Record<string, string>;
+  children: PostPassFakeElement[];
+  parent: PostPassFakeElement | null;
+  closestP: PostPassFakeElement | null;
+  textContent: string;
+  swappedMarkdown?: string;
+}
+
+function makePostPassNode(
+  tagName: string,
+  attrs: Record<string, string> = {},
+  children: PostPassFakeElement[] = [],
+): PostPassFakeElement {
+  const node: PostPassFakeElement = {
+    tagName: tagName.toLowerCase(),
+    attrs: { ...attrs },
+    children,
+    parent: null,
+    closestP: null,
+    textContent: '',
+  };
+  for (const c of children) c.parent = node;
+  return node;
+}
+
+function wrapPostPassNode(node: PostPassFakeElement): Element {
+  const wrapped = {
+    get tagName() {
+      return node.tagName.toUpperCase();
+    },
+    getAttribute: (name: string) => node.attrs[name] ?? null,
+    setAttribute: (name: string, value: string) => {
+      node.attrs[name] = value;
+    },
+    set className(value: string) {
+      node.attrs.class = value;
+    },
+    get className() {
+      return node.attrs.class ?? '';
+    },
+    set textContent(value: string) {
+      node.textContent = value;
+      node.swappedMarkdown = value;
+    },
+    get textContent() {
+      return node.textContent;
+    },
+    get children() {
+      return node.children.map(wrapPostPassNode);
+    },
+    closest: (selector: string) => {
+      if (selector === 'p') return node.closestP === null ? null : wrapPostPassNode(node.closestP);
+      return null;
+    },
+    querySelectorAll: (selector: string) => {
+      if (selector === 'source, img') {
+        const matches: PostPassFakeElement[] = [];
+        const walk = (n: PostPassFakeElement) => {
+          for (const c of n.children) {
+            if (c.tagName === 'source' || c.tagName === 'img') matches.push(c);
+            walk(c);
+          }
+        };
+        walk(node);
+        return matches.map(wrapPostPassNode);
+      }
+      return [];
+    },
+    appendChild: (child: { _node?: PostPassFakeElement } & Element) => {
+      const cn = (child as unknown as { _node?: PostPassFakeElement })._node;
+      if (cn) {
+        cn.parent = node;
+        node.children.push(cn);
+      }
+      return child;
+    },
+    replaceWith: (replacement: { _node?: PostPassFakeElement } & Element) => {
+      if (!node.parent) return;
+      const i = node.parent.children.indexOf(node);
+      const repl = (replacement as unknown as { _node?: PostPassFakeElement })._node;
+      if (i >= 0 && repl) {
+        node.parent.children[i] = repl;
+        repl.parent = node.parent;
+      }
+    },
+    ownerDocument: {
+      createElement: (tag: string) => wrapPostPassNode(makePostPassNode(tag)),
+    },
+    _node: node,
+  } as unknown as Element & { _node: PostPassFakeElement };
+  return wrapped;
+}
+
+interface WarningCapture {
+  warnings: string[];
+  restore: () => void;
+}
+
+function captureWarnings(): WarningCapture {
+  const warnings: string[] = [];
+  const orig = console.warn;
+  console.warn = (msg: unknown) => {
+    warnings.push(typeof msg === 'string' ? msg : String(msg));
+  };
+  return { warnings, restore: () => (console.warn = orig) };
+}
+
+describe('applyUrlClassifierPostPass — decision rules', () => {
+  test('no-op when env.serializeElementMarkdown is undefined: no swaps, no telemetry', () => {
+    const liveImg = makePostPassNode('img', { src: './local.jpg' });
+    const cloneImg = makePostPassNode('img', { src: './local.jpg' });
+    const liveRoot = makePostPassNode('div', {}, [liveImg]);
+    const cloneRoot = makePostPassNode('div', {}, [cloneImg]);
+    const env: WalkerEnv = { getComputedStyle: () => ({ getPropertyValue: () => '' }) };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    expect(cloneRoot.children).toHaveLength(1);
+    expect(cloneRoot.children[0]).toBe(cloneImg);
+    expect(cloneRoot.children[0].tagName).toBe('img');
+    const telemetry = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter(
+        (e) =>
+          e.event === 'clipboard-walker-url-classifier-failed' ||
+          e.event === 'clipboard-walker-url-source-emitted',
+      );
+    expect(telemetry).toHaveLength(0);
+  });
+
+  test('recursion-stop: outer-portable + inner-non-portable swaps the INNER element only', () => {
+    const liveImg = makePostPassNode('img', { src: './local.jpg' });
+    const liveA = makePostPassNode('a', { href: 'https://example.com/' }, [liveImg]);
+    const cloneImg = makePostPassNode('img', { src: './local.jpg' });
+    const cloneA = makePostPassNode('a', { href: 'https://example.com/' }, [cloneImg]);
+    const liveRoot = makePostPassNode('div', {}, [liveA]);
+    const cloneRoot = makePostPassNode('div', {}, [cloneA]);
+    const seen: Element[] = [];
+    const env: WalkerEnv = {
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      serializeElementMarkdown: (live) => {
+        seen.push(live);
+        return { kind: 'ok', markdown: '![](./local.jpg)' };
+      },
+    };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    expect(seen).toHaveLength(1);
+    const seenNode = (seen[0] as unknown as { _node: PostPassFakeElement })._node;
+    expect(seenNode).toBe(liveImg);
+    expect(cloneA.children).toHaveLength(1);
+    expect(cloneA.children[0].tagName).toBe('pre');
+    const emitted = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-source-emitted');
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].tag).toBe('img');
+  });
+
+  test('picture precedence: a <picture> with non-portable <source> swaps as `tag: picture`', () => {
+    const liveSource = makePostPassNode('source', { src: './local.webp' });
+    const liveFallback = makePostPassNode('img', { src: './fallback.jpg' });
+    const livePicture = makePostPassNode('picture', {}, [liveSource, liveFallback]);
+    const cloneSource = makePostPassNode('source', { src: './local.webp' });
+    const cloneFallback = makePostPassNode('img', { src: './fallback.jpg' });
+    const clonePicture = makePostPassNode('picture', {}, [cloneSource, cloneFallback]);
+    const liveRoot = makePostPassNode('div', {}, [livePicture]);
+    const cloneRoot = makePostPassNode('div', {}, [clonePicture]);
+    const env: WalkerEnv = {
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      serializeElementMarkdown: () => ({ kind: 'ok', markdown: '![](./local.webp)' }),
+    };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    const emitted = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-source-emitted');
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].tag).toBe('picture');
+  });
+
+  test('picture with malformed descendant URL emits classifier-throw at both picture AND leaf level', () => {
+    const liveSource = makePostPassNode('source', { src: 'http://' });
+    const livePicture = makePostPassNode('picture', {}, [liveSource]);
+    const cloneSource = makePostPassNode('source', { src: 'http://' });
+    const clonePicture = makePostPassNode('picture', {}, [cloneSource]);
+    const liveRoot = makePostPassNode('div', {}, [livePicture]);
+    const cloneRoot = makePostPassNode('div', {}, [clonePicture]);
+    const env: WalkerEnv = {
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      serializeElementMarkdown: () => ({ kind: 'ok', markdown: 'unused' }),
+    };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    const failed = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-classifier-failed');
+    expect(failed).toHaveLength(2);
+    const tags = failed.map((e) => e.tag).sort();
+    expect(tags).toEqual(['picture', 'source']);
+    for (const event of failed) {
+      expect(event.phase).toBe('classifier-throw');
+      expect(event.errorClass).toBe('TypeError');
+    }
+  });
+
+  test('opt-out alignment: live counterparts skip opt-out children when pairing into clone', () => {
+    const liveOptOut = makePostPassNode('div', { 'data-clipboard-omit': 'true' });
+    const liveImg = makePostPassNode('img', { src: './target.jpg' });
+    const liveRoot = makePostPassNode('div', {}, [liveOptOut, liveImg]);
+    const cloneImg = makePostPassNode('img', { src: './target.jpg' });
+    const cloneRoot = makePostPassNode('div', {}, [cloneImg]);
+    let received: PostPassFakeElement | null = null;
+    const env: WalkerEnv = {
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      serializeElementMarkdown: (live) => {
+        received = (live as unknown as { _node: PostPassFakeElement })._node;
+        return { kind: 'ok', markdown: '![](./target.jpg)' };
+      },
+    };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    expect(received).toBe(liveImg);
+  });
+
+  test('serializer-null: classifier-failed telemetry fires with phase=serializer-null when env returns null', () => {
+    const liveImg = makePostPassNode('img', { src: './local.jpg' });
+    const cloneImg = makePostPassNode('img', { src: './local.jpg' });
+    const liveRoot = makePostPassNode('div', {}, [liveImg]);
+    const cloneRoot = makePostPassNode('div', {}, [cloneImg]);
+    const env: WalkerEnv = {
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      serializeElementMarkdown: () => ({ kind: 'no-correspondence' }),
+    };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    expect(cloneRoot.children).toHaveLength(1);
+    expect(cloneRoot.children[0]).toBe(cloneImg);
+    expect(cloneRoot.children[0].tagName).toBe('img');
+    const failed = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-classifier-failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toEqual({
+      event: 'clipboard-walker-url-classifier-failed',
+      view: 'wysiwyg',
+      tag: 'img',
+      phase: 'serializer-null',
+    });
+    const emitted = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-source-emitted');
+    expect(emitted).toHaveLength(0);
+  });
+
+  test('serializer-throw: classifier-failed telemetry attaches errorClass when env returns a failed result', () => {
+    const liveImg = makePostPassNode('img', { src: './local.jpg' });
+    const cloneImg = makePostPassNode('img', { src: './local.jpg' });
+    const liveRoot = makePostPassNode('div', {}, [liveImg]);
+    const cloneRoot = makePostPassNode('div', {}, [cloneImg]);
+    const env: WalkerEnv = {
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      serializeElementMarkdown: () => ({ kind: 'failed', errorClass: 'RangeError' }),
+    };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    expect(cloneRoot.children).toHaveLength(1);
+    expect(cloneRoot.children[0]).toBe(cloneImg);
+    const failed = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-classifier-failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toEqual({
+      event: 'clipboard-walker-url-classifier-failed',
+      view: 'wysiwyg',
+      tag: 'img',
+      phase: 'serializer-throw',
+      errorClass: 'RangeError',
+    });
+  });
+
+  test('serializer-throw: errorClass omitted when classifyError returns undefined', () => {
+    const liveImg = makePostPassNode('img', { src: './local.jpg' });
+    const cloneImg = makePostPassNode('img', { src: './local.jpg' });
+    const liveRoot = makePostPassNode('div', {}, [liveImg]);
+    const cloneRoot = makePostPassNode('div', {}, [cloneImg]);
+    const env: WalkerEnv = {
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      serializeElementMarkdown: () => ({ kind: 'failed', errorClass: undefined }),
+    };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    const failed = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-classifier-failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toEqual({
+      event: 'clipboard-walker-url-classifier-failed',
+      view: 'wysiwyg',
+      tag: 'img',
+      phase: 'serializer-throw',
+    });
+    expect('errorClass' in failed[0]).toBe(false);
+  });
+
+  test('classifier-throw: malformed URL surfaces as classifier-throw with errorClass', () => {
+    const liveImg = makePostPassNode('img', { src: 'http://' });
+    const cloneImg = makePostPassNode('img', { src: 'http://' });
+    const liveRoot = makePostPassNode('div', {}, [liveImg]);
+    const cloneRoot = makePostPassNode('div', {}, [cloneImg]);
+    const env: WalkerEnv = {
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      serializeElementMarkdown: () => ({ kind: 'ok', markdown: '![](http://)' }),
+    };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    expect(cloneRoot.children).toHaveLength(1);
+    expect(cloneRoot.children[0]).toBe(cloneImg);
+    expect(cloneRoot.children[0].tagName).toBe('img');
+    const emitted = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-source-emitted');
+    expect(emitted).toHaveLength(0);
+    const failed = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-classifier-failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].event).toBe('clipboard-walker-url-classifier-failed');
+    expect(failed[0].view).toBe('wysiwyg');
+    expect(failed[0].tag).toBe('img');
+    expect(failed[0].phase).toBe('classifier-throw');
+    expect(failed[0].errorClass).toBe('TypeError');
+  });
+
+  for (const { tag, attr, value, expectedReason, markdown } of [
+    {
+      tag: 'video',
+      attr: 'src',
+      value: './local.mp4',
+      expectedReason: 'relative',
+      markdown: '<video src="./local.mp4"></video>',
+    },
+    {
+      tag: 'audio',
+      attr: 'src',
+      value: './local.mp3',
+      expectedReason: 'relative',
+      markdown: '<audio src="./local.mp3"></audio>',
+    },
+    {
+      tag: 'source',
+      attr: 'src',
+      value: './local.webp',
+      expectedReason: 'relative',
+      markdown: '![](./local.webp)',
+    },
+    {
+      tag: 'a',
+      attr: 'href',
+      value: './local-doc',
+      expectedReason: 'relative',
+      markdown: '[link](./local-doc)',
+    },
+    {
+      tag: 'img',
+      attr: 'src',
+      value: './local.jpg',
+      expectedReason: 'relative',
+      markdown: '![](./local.jpg)',
+    },
+  ] as const) {
+    test(`per-tag swap: <${tag} ${attr}="${value}"> classifies and swaps`, () => {
+      const liveLeaf = makePostPassNode(tag, { [attr]: value });
+      const cloneLeaf = makePostPassNode(tag, { [attr]: value });
+      const liveRoot = makePostPassNode('div', {}, [liveLeaf]);
+      const cloneRoot = makePostPassNode('div', {}, [cloneLeaf]);
+      const env: WalkerEnv = {
+        getComputedStyle: () => ({ getPropertyValue: () => '' }),
+        serializeElementMarkdown: () => ({ kind: 'ok', markdown }),
+      };
+      const cap = captureWarnings();
+      try {
+        applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+      } finally {
+        cap.restore();
+      }
+      const emitted = cap.warnings
+        .map((w) => JSON.parse(w))
+        .filter((e) => e.event === 'clipboard-walker-url-source-emitted');
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0].tag).toBe(tag);
+      expect(emitted[0].reason).toBe(expectedReason);
+    });
+  }
+
+  test('srcset all-or-nothing: a single non-portable candidate triggers <img> swap', () => {
+    const liveImg = makePostPassNode('img', {
+      src: 'https://example.com/photo.jpg',
+      srcset: 'https://example.com/photo.jpg 1x, ./local@2x.jpg 2x',
+    });
+    const cloneImg = makePostPassNode('img', {
+      src: 'https://example.com/photo.jpg',
+      srcset: 'https://example.com/photo.jpg 1x, ./local@2x.jpg 2x',
+    });
+    const liveRoot = makePostPassNode('div', {}, [liveImg]);
+    const cloneRoot = makePostPassNode('div', {}, [cloneImg]);
+    const env: WalkerEnv = {
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      serializeElementMarkdown: () => ({ kind: 'ok', markdown: '![](photo.jpg)' }),
+    };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    const emitted = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-source-emitted');
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].tag).toBe('img');
+    expect(emitted[0].reason).toBe('relative');
+  });
+
+  test('emission class: non-portable URL inside <p> ancestor emits class=mdx-inline', () => {
+    const liveImg = makePostPassNode('img', { src: './local.jpg' });
+    const cloneImg = makePostPassNode('img', { src: './local.jpg' });
+    const livePara = makePostPassNode('p', {}, [liveImg]);
+    const clonePara = makePostPassNode('p', {}, [cloneImg]);
+    cloneImg.closestP = clonePara;
+    const liveRoot = makePostPassNode('div', {}, [livePara]);
+    const cloneRoot = makePostPassNode('div', {}, [clonePara]);
+    const env: WalkerEnv = {
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      serializeElementMarkdown: () => ({ kind: 'ok', markdown: '![](./local.jpg)' }),
+    };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    const emitted = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-source-emitted');
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].class).toBe('mdx-inline');
+  });
+
+  test('emission class: non-portable URL in flow context emits class=mdx-component', () => {
+    const liveImg = makePostPassNode('img', { src: './local.jpg' });
+    const cloneImg = makePostPassNode('img', { src: './local.jpg' });
+    const liveRoot = makePostPassNode('div', {}, [liveImg]);
+    const cloneRoot = makePostPassNode('div', {}, [cloneImg]);
+    const env: WalkerEnv = {
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      serializeElementMarkdown: () => ({ kind: 'ok', markdown: '![](./local.jpg)' }),
+    };
+    const cap = captureWarnings();
+    try {
+      applyUrlClassifierPostPass(wrapPostPassNode(liveRoot), wrapPostPassNode(cloneRoot), env);
+    } finally {
+      cap.restore();
+    }
+    const emitted = cap.warnings
+      .map((w) => JSON.parse(w))
+      .filter((e) => e.event === 'clipboard-walker-url-source-emitted');
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].class).toBe('mdx-component');
   });
 });

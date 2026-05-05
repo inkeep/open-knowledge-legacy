@@ -1,10 +1,32 @@
+/**
+ * Unit tests for the WYSIWYG clipboard serializers.
+ *
+ * The HTML serializer's DOM-traversal happy path requires a real DOM
+ * (DOMParser + document.createDocumentFragment) which bun-test does not
+ * provide; that path is covered by the paste-fidelity E2E suite
+ * (`packages/app/tests/stress/paste-fidelity.e2e.ts`, CB-CONTRACT-1..11).
+ *
+ * Here we cover what bun-test CAN reach without DOM:
+ *   - text serializer happy path + failure-fallthrough;
+ *   - HTML serializer's walker→markdown tier dispatch logic — the
+ *     decision to enter walker, the catch-and-fallthrough on walker
+ *     throw, and the markdown tier's no-schema short-circuit. This pins
+ *     the regression class "catch block removed in a refactor"
+ *     mechanically rather than relying on E2E to surface it.
+ */
+
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import type { Fragment } from '@tiptap/pm/model';
 import { Schema } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 
-import { createClipboardHtmlSerializer, createClipboardTextSerializer } from './serialize.ts';
+import {
+  createClipboardHtmlSerializer,
+  createClipboardTextSerializer,
+  findDescriptorRoot,
+  sliceToDocJson,
+} from './serialize.ts';
 
 const schema = new Schema({
   nodes: {
@@ -59,7 +81,7 @@ describe('createClipboardTextSerializer', () => {
     expect(md.serialize).toHaveBeenCalledTimes(1);
   });
 
-  test('falls through to PM textBetween on serialize throw (FR-11)', () => {
+  test('falls through to PM textBetween on serialize throw', () => {
     const md = fakeMdManager();
     md.serialize = mock(() => {
       throw new Error('boom');
@@ -171,5 +193,190 @@ describe('createClipboardHtmlSerializer — walker→markdown tier dispatch', ()
 
     expect(warnCalls.find((w) => w.includes('walker:'))).toBeUndefined();
     expect(result).toBe(target);
+  });
+});
+
+describe('createClipboardHtmlSerializer — walker env wires markdown reconstruction', () => {
+  let warnCalls: string[];
+  let innerOrigWarn: typeof console.warn;
+  beforeEach(() => {
+    warnCalls = [];
+    innerOrigWarn = console.warn;
+    console.warn = (msg: unknown) => {
+      warnCalls.push(typeof msg === 'string' ? msg : String(msg));
+    };
+  });
+  afterEach(() => {
+    console.warn = innerOrigWarn;
+  });
+
+  test('walker tier receives an env with `serializeElementMarkdown` when view is attached', () => {
+    const view = {
+      posAtDOM: () => 0,
+      state: {
+        schema: {} as Schema,
+        selection: {
+          from: 0,
+          to: 5,
+          content: () => {
+            throw new Error('walker-boom');
+          },
+        },
+        doc: {
+          nodeAt: () => null,
+          slice: () => ({ content: { toJSON: () => [] } }),
+        },
+      },
+    } as unknown as EditorView;
+    const md = fakeMdManager();
+    const handle = createClipboardHtmlSerializer({
+      // biome-ignore lint/suspicious/noExplicitAny: fake md manager shape
+      mdManager: md as any,
+    });
+    handle.setView(view);
+    const target = {} as DocumentFragment;
+    handle.serializer.serializeFragment(
+      { firstChild: null } as unknown as Fragment,
+      undefined,
+      target,
+    );
+    const failEvent = warnCalls.find((w) => w.includes('clipboard-serialize-failed'));
+    expect(failEvent).toBeDefined();
+    expect(failEvent).toContain('walker:walker-boom');
+  });
+});
+
+interface FakeDescriptorElement {
+  parentElement: FakeDescriptorElement | null;
+  classes: Set<string>;
+  attrs: Set<string>;
+}
+
+function makeDescriptorEl(opts?: { classes?: string[]; attrs?: string[] }): FakeDescriptorElement {
+  return {
+    parentElement: null,
+    classes: new Set(opts?.classes ?? []),
+    attrs: new Set(opts?.attrs ?? []),
+  };
+}
+
+function chainDescriptorEls(...els: FakeDescriptorElement[]): FakeDescriptorElement {
+  for (let i = 1; i < els.length; i++) {
+    els[i].parentElement = els[i - 1];
+  }
+  return els[els.length - 1];
+}
+
+function wrapDescriptor(el: FakeDescriptorElement): Element {
+  return {
+    classList: { contains: (c: string) => el.classes.has(c) },
+    hasAttribute: (a: string) => el.attrs.has(a),
+    get parentElement() {
+      return el.parentElement === null ? null : wrapDescriptor(el.parentElement);
+    },
+  } as unknown as Element;
+}
+
+describe('findDescriptorRoot — outermost-wrapper selection', () => {
+  test('(a) bare element with only ProseMirror parent → returns null', () => {
+    const proseMirror = makeDescriptorEl({ classes: ['ProseMirror'] });
+    const img = makeDescriptorEl();
+    const live = chainDescriptorEls(proseMirror, img);
+    expect(findDescriptorRoot(wrapDescriptor(live))).toBeNull();
+  });
+
+  test('(b) single .react-renderer wrapper → returns that wrapper', () => {
+    const proseMirror = makeDescriptorEl({ classes: ['ProseMirror'] });
+    const reactRenderer = makeDescriptorEl({ classes: ['react-renderer'] });
+    const img = makeDescriptorEl();
+    const live = chainDescriptorEls(proseMirror, reactRenderer, img);
+    const root = findDescriptorRoot(wrapDescriptor(live));
+    expect(root).not.toBeNull();
+    expect(root?.classList.contains('react-renderer')).toBe(true);
+  });
+
+  test('(c) nested wrappers → returns the OUTERMOST wrapper (CRITICAL — load-bearing)', () => {
+    const proseMirror = makeDescriptorEl({ classes: ['ProseMirror'] });
+    const reactRenderer = makeDescriptorEl({ classes: ['react-renderer'] });
+    const innerWrapper = makeDescriptorEl({
+      attrs: ['data-node-view-wrapper', 'data-jsx-component'],
+    });
+    const img = makeDescriptorEl();
+    const live = chainDescriptorEls(proseMirror, reactRenderer, innerWrapper, img);
+
+    const root = findDescriptorRoot(wrapDescriptor(live));
+    expect(root).not.toBeNull();
+    expect(root?.classList.contains('react-renderer')).toBe(true);
+    expect(root?.hasAttribute('data-node-view-wrapper')).toBe(false);
+  });
+
+  test('(d) climbing stops at the .ProseMirror boundary', () => {
+    const outerChrome = makeDescriptorEl({ classes: ['react-renderer'] });
+    const proseMirror = makeDescriptorEl({ classes: ['ProseMirror'] });
+    const img = makeDescriptorEl();
+    const live = chainDescriptorEls(outerChrome, proseMirror, img);
+
+    const root = findDescriptorRoot(wrapDescriptor(live));
+    expect(root).toBeNull();
+  });
+
+  test('(e) detached element with no .ProseMirror ancestor → returns null', () => {
+    const detached = makeDescriptorEl();
+    const root = findDescriptorRoot(wrapDescriptor(detached));
+    expect(root).toBeNull();
+  });
+});
+
+describe('sliceToDocJson — inline-first wrapping branch', () => {
+  const inlineImageSchema = new Schema({
+    nodes: {
+      doc: { content: 'block+' },
+      paragraph: {
+        group: 'block',
+        content: 'inline*',
+        toDOM: () => ['p', 0],
+        parseDOM: [{ tag: 'p' }],
+      },
+      image: {
+        group: 'inline',
+        inline: true,
+        atom: true,
+        attrs: { src: { default: '' }, alt: { default: '' } },
+        toDOM: (node) => ['img', { src: node.attrs.src, alt: node.attrs.alt }],
+        parseDOM: [{ tag: 'img' }],
+      },
+      text: { group: 'inline' },
+    },
+  });
+
+  test('inline-first slice → wraps in paragraph, doc JSON contains image atom', () => {
+    const img = inlineImageSchema.node('image', { src: 'cat.png', alt: 'cat' });
+    const paragraph = inlineImageSchema.node('paragraph', null, [img]);
+    const slice = paragraph.slice(0, paragraph.content.size);
+    expect(slice.content.firstChild?.isInline).toBe(true);
+
+    const docJson = sliceToDocJson(slice, inlineImageSchema);
+
+    expect(docJson.type).toBe('doc');
+    const firstBlock = docJson.content?.[0];
+    expect(firstBlock?.type).toBe('paragraph');
+    const firstInline = firstBlock?.content?.[0];
+    expect(firstInline?.type).toBe('image');
+    expect(firstInline?.attrs?.src).toBe('cat.png');
+  });
+
+  test('block-first slice → no wrap, doc JSON nests block directly under doc', () => {
+    const img = inlineImageSchema.node('image', { src: 'cat.png', alt: 'cat' });
+    const paragraph = inlineImageSchema.node('paragraph', null, [img]);
+    const doc = inlineImageSchema.node('doc', null, [paragraph]);
+    const slice = doc.slice(0, doc.content.size);
+    expect(slice.content.firstChild?.isInline).toBe(false);
+    expect(slice.content.firstChild?.type.name).toBe('paragraph');
+
+    const docJson = sliceToDocJson(slice, inlineImageSchema);
+
+    expect(docJson.type).toBe('doc');
+    expect(docJson.content?.[0]?.type).toBe('paragraph');
+    expect(docJson.content?.[0]?.content?.[0]?.type).toBe('image');
   });
 });

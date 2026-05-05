@@ -1,4 +1,5 @@
 import { isRelativeUrl, SAFE_URL_SCHEME_RE } from '@inkeep/open-knowledge-core';
+import * as ipaddr from 'ipaddr.js';
 
 export const URL_SCHEME_ATTRS: ReadonlySet<string> = new Set([
   'href',
@@ -178,4 +179,60 @@ export function convertCssColors(value: string): string {
     const [r, g, b] = modernColorToRgb(fn, c1, c2, c3);
     return alpha === null ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${alpha})`;
   });
+}
+
+const PORTABLE_NAVIGATION_SCHEMES: ReadonlySet<string> = new Set([
+  'mailto',
+  'tel',
+  'sms',
+  'ftp',
+  'ftps',
+]);
+
+export type UrlPortabilityReason =
+  | 'relative'
+  | 'server-absolute'
+  | 'localhost'
+  | 'private-ip'
+  | 'other';
+
+type UrlPortability = { portable: true } | { portable: false; reason: UrlPortabilityReason };
+
+export function classifyUrlPortability(rawUrl: string): UrlPortability {
+  const trimmed = rawUrl.trim();
+
+  if (trimmed.startsWith('#')) return { portable: true };
+
+  if (isRelativeUrl(trimmed)) {
+    if (trimmed.startsWith('/')) return { portable: false, reason: 'server-absolute' };
+    return { portable: false, reason: 'relative' };
+  }
+
+  const parsed = new URL(trimmed);
+  const scheme = parsed.protocol.slice(0, -1).toLowerCase();
+
+  if (PORTABLE_NAVIGATION_SCHEMES.has(scheme)) return { portable: true };
+
+  if (scheme !== 'http' && scheme !== 'https') return { portable: false, reason: 'other' };
+
+  const rawHost = parsed.hostname.toLowerCase();
+  if (rawHost === '') return { portable: false, reason: 'other' };
+  const hostNoDot = rawHost.endsWith('.') ? rawHost.slice(0, -1) : rawHost;
+  if (hostNoDot === 'localhost' || hostNoDot.endsWith('.localhost')) {
+    return { portable: false, reason: 'localhost' };
+  }
+  const host = rawHost.startsWith('[') && rawHost.endsWith(']') ? rawHost.slice(1, -1) : rawHost;
+
+  if (ipaddr.IPv4.isValid(host)) {
+    return ipaddr.IPv4.parse(host).range() === 'unicast'
+      ? { portable: true }
+      : { portable: false, reason: 'private-ip' };
+  }
+  if (ipaddr.IPv6.isValid(host)) {
+    return ipaddr.IPv6.parse(host).range() === 'unicast'
+      ? { portable: true }
+      : { portable: false, reason: 'private-ip' };
+  }
+
+  return { portable: true };
 }

@@ -370,5 +370,6 @@ export {
   getHeadingSlug,
   type HeadingEntry,
   toWikiLinkSlug,
+  wikiLinkHref,
 } from './utils/slug.ts';
 export { expandTagToHierarchy, tagsMatchingPrefix } from './utils/tag-rollup.ts';
