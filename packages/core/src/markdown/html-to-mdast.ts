@@ -5,6 +5,7 @@ import rehypeRemark from 'rehype-remark';
 import remarkGfm from 'remark-gfm';
 import remarkStringify from 'remark-stringify';
 import { type Plugin, unified } from 'unified';
+import { visit } from 'unist-util-visit';
 import { rehypeSkipNotionWhitespace } from './rehype-plugins/skip-notion-whitespace.ts';
 import { rehypeStripCocoaMeta } from './rehype-plugins/strip-cocoa-meta.ts';
 import { rehypeStripGdocsWrapper } from './rehype-plugins/strip-gdocs-wrapper.ts';
@@ -47,6 +48,26 @@ export const cleanupPlugins: Plugin[] = [
   rehypeStripGithubHovercard as Plugin,
 ];
 
+function applyCanonicalSourceFormDefaults(tree: MdastRoot): void {
+  visit(tree, (node) => {
+    if (node.type === 'strong') {
+      node.data ??= {};
+      node.data.sourceDelimiter = '**';
+    } else if (node.type === 'emphasis') {
+      node.data ??= {};
+      node.data.sourceDelimiter = '*';
+    } else if (node.type === 'inlineCode') {
+      node.data ??= {};
+      node.data.sourceFenceChar = '`';
+      node.data.sourceFenceLength = 1;
+    } else if (node.type === 'code') {
+      node.data ??= {};
+      node.data.sourceFenceChar = '`';
+      node.data.sourceFenceLength = 3;
+    }
+  });
+}
+
 export function htmlToMdast(html: string, options?: HtmlToMdastOptions): MdastRoot {
   const maxBytes = options?.maxBytes ?? HTML_MAX_BYTES;
   if (html.length > maxBytes) {
@@ -66,6 +87,7 @@ export function htmlToMdast(html: string, options?: HtmlToMdastOptions): MdastRo
 
   const hastTree = processor.parse(html) as HastRoot;
   const mdast = processor.runSync(hastTree) as unknown as MdastRoot;
+  applyCanonicalSourceFormDefaults(mdast);
   return mdast;
 }
 

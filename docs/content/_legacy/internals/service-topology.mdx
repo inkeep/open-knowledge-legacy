@@ -62,7 +62,9 @@ Three layers, each with its own cadence and responsibility.
 
 The `onStoreDocument` hook fires after Y.Doc changes and flushes the document to disk.
 
-- Y.Doc serialized to markdown — body composed from `Y.XmlFragment`'s ProseMirror serialization; frontmatter read from the YAML region of `Y.Text('source')` directly via `stripFrontmatter(ytext.toString()).frontmatter`. The disk write is `prependFrontmatter(rawFM, body)`, so user-authored YAML formatting (indentation, scalar styles, comments, blank lines) round-trips losslessly
+- Disk bytes read directly from `Y.Text('source')` per the Y.Text-is-truth contract (precedent #38) — `prependFrontmatter(stripFrontmatter(ytext).frontmatter, stripFrontmatter(ytext).body)`, equivalent to `ytext.toString()` byte-for-byte. So both FM (indentation, scalar styles, comments, blank lines) AND body (source-form delimiters like `__foo__`, ATX trailing hashes, indented code blocks) round-trip losslessly. The XmlFragment serialization step that the pre-contract pipeline used was deleted.
+- Quiescence gate (`isDocQuiescent(doc)`): defers the write if `afterAllTransactions` hasn't settled since the last user-origin transaction. After 8 consecutive deferrals (~16 s of sustained typing under the default 2 s debounce) the gate force-flushes anyway and emits `persistence-force-flush-during-burst`. Bounds staleness so collaborative bursts can't leave material work undurable.
+- Pre-write sanity check: asserts `normalizeBridge(ytext) === normalizeBridge(serialize(fragment))`. On mismatch, emits `bridge-invariant-violation` (site `'persistence'`) and writes ytext bytes anyway — Y.Text wins by contract; fragment is wrong and gets re-derived on the next settlement
 - Atomic write: temp file then rename (symlinks preserved -- writes target the canonical path)
 - Write hash registered in writeTracker for feedback prevention
 - Symlink-escape check refuses writes that resolve outside `contentDir`

@@ -19,7 +19,6 @@ import {
   writeConfigPatch,
 } from '@inkeep/open-knowledge-core/server';
 import { resolveGitDir, resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
-import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentPresenceBroadcaster } from './agent-presence.ts';
@@ -36,7 +35,11 @@ import {
 import { applyExternalConfigChange } from './config-persistence.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { getDocExtension } from './doc-extensions.ts';
-import { applyDiskContentToDoc, applyExternalChange } from './external-change.ts';
+import {
+  applyDiskContentToDoc,
+  applyExternalChange,
+  FILE_WATCHER_ORIGIN,
+} from './external-change.ts';
 import {
   assertNeverDiskEvent,
   contentHash,
@@ -420,11 +423,9 @@ export function createServer(options: ServerOptions): ServerInstance {
   function serializeDoc(docName: string): string | null {
     const document = hocuspocus.documents.get(docName);
     if (!document) return null;
-    const xmlFragment = document.getXmlFragment('default');
-    const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
-    const body = mdManager.serialize(json);
-    const fm = stripFrontmatter(document.getText('source').toString()).frontmatter;
-    return prependFrontmatter(fm, body);
+    const ytextSnapshot = document.getText('source').toString();
+    const { frontmatter, body } = stripFrontmatter(ytextSnapshot);
+    return prependFrontmatter(frontmatter, body);
   }
 
   const applyToDoc = (docName: string, content: string): void =>
@@ -440,7 +441,9 @@ export function createServer(options: ServerOptions): ServerInstance {
       const source = document.getText('source').toString();
       if (!source.includes(needle)) continue;
       try {
-        applyDiskContentToDoc(document, source, resolveEmbed, docName);
+        document.transact(() => {
+          applyDiskContentToDoc(document, source, resolveEmbed, docName);
+        }, FILE_WATCHER_ORIGIN);
       } catch (err) {
         log.error(
           { err, docName, assetBasename },

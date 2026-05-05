@@ -24,6 +24,8 @@ import type { Extensions, JSONContent } from '@tiptap/core';
 import { getSchema } from '@tiptap/core';
 import type { Mark as PmMark, Node as PmNode, Schema } from '@tiptap/pm/model';
 import type {
+  AlignType,
+  Blockquote,
   Break,
   Code,
   Definition,
@@ -36,6 +38,7 @@ import type {
   ImageReference,
   InlineCode,
   Link,
+  LinkData,
   LinkReference,
   List,
   ListItem,
@@ -44,6 +47,9 @@ import type {
   Root as MdastRoot,
   Paragraph,
   Strong,
+  Table,
+  TableCell,
+  TableRow,
   Text,
   ThematicBreak,
 } from 'mdast';
@@ -237,25 +243,47 @@ function isEmptyMdastParagraph(node: MdastNodes): boolean {
   return children.every((c) => c.type === 'text' && (c as Text).value === '');
 }
 
-export function wrapAsInlineCode(children: MdastNodes[]): MdastNodes {
+interface InlineCodeFidelityData {
+  sourceFenceChar?: string;
+  sourceFenceLength?: number;
+}
+
+function withInlineCodeData(
+  node: { type: 'inlineCode'; value: string },
+  data: InlineCodeFidelityData | undefined,
+): MdastNodes {
+  if (!data) return node as unknown as MdastNodes;
+  const dataEntry: InlineCodeFidelityData = {};
+  if (data.sourceFenceChar) dataEntry.sourceFenceChar = data.sourceFenceChar;
+  if (typeof data.sourceFenceLength === 'number') {
+    dataEntry.sourceFenceLength = data.sourceFenceLength;
+  }
+  if (Object.keys(dataEntry).length === 0) return node as unknown as MdastNodes;
+  return { ...node, data: dataEntry } as unknown as MdastNodes;
+}
+
+export function wrapAsInlineCode(
+  children: MdastNodes[],
+  data?: InlineCodeFidelityData,
+): MdastNodes {
   if (children.length === 0) {
-    return { type: 'inlineCode', value: '' } as unknown as MdastNodes;
+    return withInlineCodeData({ type: 'inlineCode', value: '' }, data);
   }
   if (children.every((c) => c.type === 'text')) {
     const val = children.map((c) => (c as Text).value).join('');
-    return { type: 'inlineCode', value: val } as unknown as MdastNodes;
+    return withInlineCodeData({ type: 'inlineCode', value: val }, data);
   }
   if (children.length === 1 && 'children' in children[0]) {
     const wrapper = children[0] as MdastNodes & { children: MdastNodes[] };
     return {
       ...wrapper,
-      children: [wrapAsInlineCode(wrapper.children)],
+      children: [wrapAsInlineCode(wrapper.children, data)],
     } as MdastNodes;
   }
-  return {
-    type: 'inlineCode',
-    value: extractTextFromMdastNodes(children),
-  } as unknown as MdastNodes;
+  return withInlineCodeData(
+    { type: 'inlineCode', value: extractTextFromMdastNodes(children) },
+    data,
+  );
 }
 
 function extractTextFromMdastNodes(nodes: MdastNodes[]): string {
@@ -315,10 +343,12 @@ function buildMdastToPmHandlers(
       return n.paragraph.createAndFill(null, flatChildren.length > 0 ? flatChildren : null);
     };
   }
-  if (n.blockquote) handlers.blockquote = toPmNode(n.blockquote);
+  if (n.blockquote) {
+    handlers.blockquote = toPmNode(n.blockquote, (node: Blockquote) => ({
+      sourceMarkerSpacings: node.data?.sourceMarkerSpacings ?? null,
+    }));
+  }
 
-  if (n.table) handlers.table = toPmNode(n.table);
-  if (n.tableRow) handlers.tableRow = toPmNode(n.tableRow);
   if (n.tableCell) {
     const cellHandler =
       (nodeType: (typeof n)[string]) =>
@@ -331,8 +361,37 @@ function buildMdastToPmHandlers(
         return nodeType.createAndFill(null, null);
       };
     handlers.tableCell = cellHandler(n.tableCell);
-    if (n.tableHeader) {
-    }
+  }
+  if (n.tableRow) handlers.tableRow = toPmNode(n.tableRow);
+  if (n.table && n.tableRow && n.tableCell) {
+    handlers.table = (node: Table, _: MdastParent, state: MdastToPmState): PmNode | null => {
+      const alignArray: ReadonlyArray<AlignType> = node.align ?? [];
+      const rows = node.children ?? [];
+      const pmRows: PmNode[] = [];
+      for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+        const rowMdast = rows[rowIdx];
+        if (rowMdast.type !== 'tableRow') continue;
+        const cells = (rowMdast as TableRow).children ?? [];
+        const pmCells: PmNode[] = [];
+        for (let colIdx = 0; colIdx < cells.length; colIdx++) {
+          const cellMdast = cells[colIdx] as TableCell;
+          if (cellMdast.type !== 'tableCell') continue;
+          const inlineChildren = state.all(cellMdast).flat();
+          const wrapped =
+            inlineChildren.length > 0 && n.paragraph
+              ? [n.paragraph.create(null, inlineChildren)]
+              : null;
+          const align = alignArray[colIdx] ?? null;
+          const cellType = rowIdx === 0 && n.tableHeader ? n.tableHeader : n.tableCell;
+          const cellNode = cellType.createAndFill({ align }, wrapped);
+          if (cellNode) pmCells.push(cellNode);
+        }
+        const rowNode = n.tableRow.createAndFill(null, pmCells.length > 0 ? pmCells : null);
+        if (rowNode) pmRows.push(rowNode);
+      }
+      const sourceDashCounts = node.data?.sourceDashCounts ?? null;
+      return n.table.createAndFill({ sourceDashCounts }, pmRows.length > 0 ? pmRows : null);
+    };
   }
 
   if (n.image) {
@@ -342,12 +401,22 @@ function buildMdastToPmHandlers(
         alt: node.alt ?? null,
         title: node.title ?? null,
       });
-    handlers.imageReference = (node: ImageReference) =>
-      n.image.createAndFill({
-        src: '',
-        alt: node.alt ?? null,
-        title: null,
-      });
+    if (n.imageReference) {
+      handlers.imageReference = (node: ImageReference) =>
+        n.imageReference.createAndFill({
+          alt: node.alt ?? '',
+          label: node.label ?? node.identifier ?? '',
+          identifier: node.identifier ?? '',
+          referenceType: node.referenceType ?? 'shortcut',
+        });
+    } else {
+      handlers.imageReference = (node: ImageReference) =>
+        n.image.createAndFill({
+          src: '',
+          alt: node.alt ?? null,
+          title: null,
+        });
+    }
   }
 
   if (m.escapeMark) {
@@ -388,7 +457,14 @@ function buildMdastToPmHandlers(
   }
 
   if (m.code) {
-    handlers.inlineCode = (node: InlineCode) => schema.text(node.value, [m.code.create()]);
+    handlers.inlineCode = (node: InlineCode) =>
+      schema.text(node.value, [
+        m.code.create({
+          sourceFenceChar: node.data?.sourceFenceChar ?? '`',
+          sourceFenceLength:
+            typeof node.data?.sourceFenceLength === 'number' ? node.data.sourceFenceLength : 1,
+        }),
+      ]);
   }
 
   const strikeMark = m.strike ?? m.delete;
@@ -416,6 +492,8 @@ function buildMdastToPmHandlers(
     handlers.heading = toPmNode(n.heading, (node: Heading) => ({
       level: node.depth,
       headingStyle: node.data?.sourceStyle ?? 'atx',
+      sourceTrailingHashes: node.data?.sourceTrailingHashes ?? null,
+      sourceUnderlineLength: node.data?.sourceUnderlineLength ?? null,
     }));
   }
 
@@ -428,6 +506,7 @@ function buildMdastToPmHandlers(
           meta: node.meta ?? null,
           fenceDelimiter: node.data?.sourceFenceChar ?? '`',
           fenceLength: node.data?.sourceFenceLength ?? 3,
+          sourceStyle: node.data?.sourceStyle ?? 'fenced',
         },
         textContent,
       );
@@ -482,6 +561,8 @@ function buildMdastToPmHandlers(
         title: node.title ?? null,
         linkStyle: node.data?.sourceStyle ?? 'inline',
         refLabel: null,
+        sourceUrlForm: node.data?.sourceUrlForm ?? null,
+        sourceTitleMarker: node.data?.sourceTitleMarker ?? null,
       });
       return children.map((child) => child.mark(mark.addToSet(child.marks)));
     };
@@ -518,6 +599,8 @@ function buildMdastToPmHandlers(
     const hasUrlAttr = !!linkDefNode.spec.attrs?.url;
     const hasHrefAttr = !!linkDefNode.spec.attrs?.href;
     const hasIdentifierAttr = !!linkDefNode.spec.attrs?.identifier;
+    const hasSourceLayoutAttr = !!linkDefNode.spec.attrs?.sourceLayout;
+    const hasSourceTitleMarkerAttr = !!linkDefNode.spec.attrs?.sourceTitleMarker;
     handlers.definition = (node: Definition) => {
       const attrs: Record<string, unknown> = {
         title: node.title ?? null,
@@ -530,6 +613,8 @@ function buildMdastToPmHandlers(
       }
       if (hasUrlAttr) attrs.url = node.url ?? '';
       else if (hasHrefAttr) attrs.href = node.url ?? '';
+      if (hasSourceLayoutAttr) attrs.sourceLayout = node.data?.sourceLayout ?? null;
+      if (hasSourceTitleMarkerAttr) attrs.sourceTitleMarker = node.data?.sourceTitleMarker ?? null;
       return linkDefNode.createAndFill(attrs);
     };
   }
@@ -832,26 +917,46 @@ function buildPmToMdastHandlers(schema: Schema): {
   const m = schema.marks;
 
   if (n.paragraph) nodeHandlers.paragraph = fromPmNode('paragraph');
-  if (n.blockquote) nodeHandlers.blockquote = fromPmNode('blockquote');
+  if (n.blockquote) {
+    nodeHandlers.blockquote = fromPmNode('blockquote', (pmNode: PmNode) => {
+      const spacings = pmNode.attrs.sourceMarkerSpacings;
+      const data: { sourceMarkerSpacings?: Array<'single' | 'none'> } = {};
+      if (Array.isArray(spacings) && spacings.length > 0) {
+        data.sourceMarkerSpacings = spacings;
+      }
+      return Object.keys(data).length > 0 ? { data } : {};
+    });
+  }
 
   if (n.heading) {
     nodeHandlers.heading = fromPmNode('heading', (pmNode: PmNode) => ({
       depth: pmNode.attrs.level,
-      data: { sourceStyle: pmNode.attrs.headingStyle },
+      data: {
+        sourceStyle: pmNode.attrs.headingStyle,
+        sourceTrailingHashes: pmNode.attrs.sourceTrailingHashes ?? undefined,
+        sourceUnderlineLength: pmNode.attrs.sourceUnderlineLength ?? undefined,
+      },
     }));
   }
 
   if (n.codeBlock) {
-    nodeHandlers.codeBlock = (pmNode: PmNode) => ({
-      type: 'code' as const,
-      lang: pmNode.attrs.language ?? null,
-      meta: pmNode.attrs.meta ?? null,
-      value: pmNode.textContent ?? '',
-      data: {
-        sourceFenceChar: pmNode.attrs.fenceDelimiter,
-        sourceFenceLength: pmNode.attrs.fenceLength,
-      },
-    });
+    nodeHandlers.codeBlock = (pmNode: PmNode) => {
+      const sourceStyle: 'indented' | 'fenced' =
+        pmNode.attrs.sourceStyle === 'indented' ? 'indented' : 'fenced';
+      const lang = sourceStyle === 'indented' ? null : (pmNode.attrs.language ?? null);
+      const meta = sourceStyle === 'indented' ? null : (pmNode.attrs.meta ?? null);
+      return {
+        type: 'code' as const,
+        lang,
+        meta,
+        value: pmNode.textContent ?? '',
+        data: {
+          sourceFenceChar: pmNode.attrs.fenceDelimiter,
+          sourceFenceLength: pmNode.attrs.fenceLength,
+          sourceStyle,
+        },
+      };
+    };
   }
 
   if (n.thematicBreak) {
@@ -894,7 +999,34 @@ function buildPmToMdastHandlers(schema: Schema): {
     };
   }
 
-  if (n.table) nodeHandlers.table = fromPmNode('table');
+  if (n.table) {
+    nodeHandlers.table = (pmNode: PmNode, _parent, state) => {
+      const childrenMdast = state.all(pmNode);
+      const align: AlignType[] = [];
+      const firstRow = pmNode.firstChild;
+      if (firstRow) {
+        firstRow.forEach((cell) => {
+          const a = cell.attrs.align;
+          align.push(a === 'left' || a === 'right' || a === 'center' ? a : null);
+        });
+      }
+      const rows = childrenMdast.filter(
+        (c): c is TableRow => (c as MdastNodes).type === 'tableRow',
+      );
+      const sourceDashCounts = pmNode.attrs.sourceDashCounts;
+      const data: Table['data'] | undefined =
+        Array.isArray(sourceDashCounts) && sourceDashCounts.length > 0
+          ? { sourceDashCounts: sourceDashCounts as number[] }
+          : undefined;
+      const result: Table = {
+        type: 'table' as const,
+        align,
+        children: rows,
+      };
+      if (data) result.data = data;
+      return result;
+    };
+  }
   if (n.tableRow) nodeHandlers.tableRow = fromPmNode('tableRow');
   if (n.tableCell) nodeHandlers.tableCell = fromPmNode('tableCell');
   if (n.tableHeader) nodeHandlers.tableHeader = fromPmNode('tableCell');
@@ -908,6 +1040,21 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
+  if (n.imageReference) {
+    nodeHandlers.imageReference = (pmNode: PmNode) => {
+      const label = (pmNode.attrs.label as string) ?? '';
+      const identifier = (pmNode.attrs.identifier as string) ?? label;
+      return {
+        type: 'imageReference' as const,
+        alt: (pmNode.attrs.alt as string) ?? '',
+        identifier,
+        label: label || identifier,
+        referenceType:
+          (pmNode.attrs.referenceType as 'full' | 'collapsed' | 'shortcut') ?? 'shortcut',
+      };
+    };
+  }
+
   if (n.htmlBlock) {
     nodeHandlers.htmlBlock = (pmNode: PmNode) => ({
       type: 'html' as const,
@@ -918,13 +1065,26 @@ function buildPmToMdastHandlers(schema: Schema): {
   const linkDefNodeSer = n.linkDefinition ?? n.linkRefDef;
   if (linkDefNodeSer) {
     const linkDefName = n.linkDefinition ? 'linkDefinition' : 'linkRefDef';
-    nodeHandlers[linkDefName] = (pmNode: PmNode) => ({
-      type: 'definition' as const,
-      identifier: pmNode.attrs.identifier ?? pmNode.attrs.label ?? '',
-      label: pmNode.attrs.label ?? pmNode.attrs.identifier ?? '',
-      url: pmNode.attrs.url ?? pmNode.attrs.href ?? '',
-      title: pmNode.attrs.title,
-    });
+    nodeHandlers[linkDefName] = (pmNode: PmNode) => {
+      const data: import('mdast').DefinitionData = {};
+      const layout = pmNode.attrs.sourceLayout;
+      if (layout === 'multiline' || layout === 'inline') {
+        data.sourceLayout = layout;
+      }
+      const marker = pmNode.attrs.sourceTitleMarker;
+      if (marker === 'single' || marker === 'double' || marker === 'paren') {
+        data.sourceTitleMarker = marker;
+      }
+      const result: Definition = {
+        type: 'definition' as const,
+        identifier: pmNode.attrs.identifier ?? pmNode.attrs.label ?? '',
+        label: pmNode.attrs.label ?? pmNode.attrs.identifier ?? '',
+        url: pmNode.attrs.url ?? pmNode.attrs.href ?? '',
+        title: pmNode.attrs.title,
+      };
+      if (Object.keys(data).length > 0) result.data = data;
+      return result;
+    };
   }
 
   if (n.jsxComponent) {
@@ -1071,8 +1231,10 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (m.code) {
-    markHandlers.code = (_mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
-      return wrapAsInlineCode(children);
+    markHandlers.code = (mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
+      const sourceFenceChar = mark.attrs.sourceFenceChar as string | undefined;
+      const sourceFenceLength = mark.attrs.sourceFenceLength as number | undefined;
+      return wrapAsInlineCode(children, { sourceFenceChar, sourceFenceLength });
     };
   }
 
@@ -1144,13 +1306,32 @@ function buildPmToMdastHandlers(schema: Schema): {
           data: { sourceStyle: 'autolink' },
         } as Link;
       }
-      if (style === 'inline' || !style) {
+      if (style === 'gfm-autolink') {
         return {
+          type: 'link' as const,
+          url: mark.attrs.href ?? '',
+          title: null,
+          children,
+          data: { sourceStyle: 'gfm-autolink' },
+        } as Link;
+      }
+      if (style === 'inline' || !style) {
+        const data: LinkData = {};
+        if (mark.attrs.sourceUrlForm === 'angle-bracketed') {
+          data.sourceUrlForm = 'angle-bracketed';
+        }
+        const titleMarker = mark.attrs.sourceTitleMarker;
+        if (titleMarker === 'single' || titleMarker === 'double' || titleMarker === 'paren') {
+          data.sourceTitleMarker = titleMarker;
+        }
+        const result = {
           type: 'link' as const,
           url: mark.attrs.href ?? '',
           title: mark.attrs.title ?? null,
           children,
+          ...(Object.keys(data).length > 0 ? { data } : {}),
         } as Link;
+        return result;
       }
       return {
         type: 'linkReference' as const,

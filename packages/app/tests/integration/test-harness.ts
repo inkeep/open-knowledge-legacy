@@ -29,6 +29,9 @@ export { wait };
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import {
+  type BridgeInvariantViolation,
+  BridgeInvariantViolationError,
+  type InvariantViolation,
   MarkdownManager,
   normalizeBridge,
   prependFrontmatter,
@@ -36,6 +39,9 @@ import {
   sharedExtensions,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
+
+export { type BridgeInvariantViolation, BridgeInvariantViolationError, type InvariantViolation };
+
 import {
   ConfigSchema,
   createMcpHttpHandler,
@@ -604,32 +610,6 @@ const BRIDGE_ENFORCING_NON_PAIRED_ORIGINS: Set<LocalTransactionOrigin> = new Set
   OBSERVER_SYNC_ORIGIN,
 ]);
 
-export interface InvariantViolation {
-  origin: unknown;
-  ytextSnapshot: string;
-  fragmentMdSnapshot: string;
-  unifiedDiff: string;
-  stack: string | undefined;
-}
-
-export class BridgeInvariantViolationError extends Error {
-  readonly violation: InvariantViolation;
-  constructor(info: InvariantViolation) {
-    const originLabel =
-      typeof info.origin === 'string'
-        ? info.origin
-        : ((info.origin as { context?: { origin?: string } })?.context?.origin ?? 'unknown-object');
-    super(
-      `Bridge invariant violated after tx with origin '${originLabel}'.\n` +
-        `  Y.Text (${info.ytextSnapshot.length} chars): ${info.ytextSnapshot.slice(0, 200)}...\n` +
-        `  Fragment (${info.fragmentMdSnapshot.length} chars): ${info.fragmentMdSnapshot.slice(0, 200)}...\n` +
-        `  Diff:\n${info.unifiedDiff}`,
-    );
-    this.name = 'BridgeInvariantViolationError';
-    this.violation = info;
-  }
-}
-
 export function attachBridgeInvariantWatcher(
   doc: Y.Doc,
   opts: {
@@ -641,12 +621,19 @@ export function attachBridgeInvariantWatcher(
   const ytext = doc.getText('source');
   const extraNonPaired = opts.enforcingOrigins;
 
-  const afterTx = (tx: Y.Transaction): void => {
-    const shouldEnforce =
-      isPairedWriteOrigin(tx.origin) ||
-      BRIDGE_ENFORCING_NON_PAIRED_ORIGINS.has(tx.origin as LocalTransactionOrigin) ||
-      extraNonPaired?.has(tx.origin);
-    if (!shouldEnforce) return;
+  const afterAll = (_doc: Y.Doc, transactions: Array<Y.Transaction>): void => {
+    let enforcingTx: Y.Transaction | undefined;
+    for (const tx of transactions) {
+      const shouldEnforce =
+        isPairedWriteOrigin(tx.origin) ||
+        BRIDGE_ENFORCING_NON_PAIRED_ORIGINS.has(tx.origin as LocalTransactionOrigin) ||
+        extraNonPaired?.has(tx.origin);
+      if (shouldEnforce) {
+        enforcingTx = tx;
+        break;
+      }
+    }
+    if (!enforcingTx) return;
 
     const ytextStr = ytext.toString();
     const fm = stripFrontmatter(ytextStr).frontmatter;
@@ -661,7 +648,8 @@ export function attachBridgeInvariantWatcher(
     if (ytextNorm === fragNorm) return;
 
     const info: InvariantViolation = {
-      origin: tx.origin,
+      site: 'test-harness',
+      origin: enforcingTx.origin,
       ytextSnapshot: ytextStr,
       fragmentMdSnapshot: fragMd,
       unifiedDiff: `  ytext: ${ytextNorm.slice(0, 300)}\n  frag:  ${fragNorm.slice(0, 300)}`,
@@ -671,9 +659,9 @@ export function attachBridgeInvariantWatcher(
     throw new BridgeInvariantViolationError(info);
   };
 
-  doc.on('afterTransaction', afterTx);
+  doc.on('afterAllTransactions', afterAll);
   return () => {
-    doc.off('afterTransaction', afterTx);
+    doc.off('afterAllTransactions', afterAll);
   };
 }
 
@@ -683,14 +671,6 @@ export interface ItemOriginProbe {
   capturedContent(): string;
   undoStackLength(): number;
   getCapturedOrigins(): ReadonlySet<unknown>;
-  /** Assert that every captured origin is in the `trackedOrigins` set
-   *  provided at construction. Throws if a stray origin appears — which
-   *  would indicate origin-laundering (a non-tracked origin's Items ended
-   *  up in the UM stack, e.g., user content under a different session's origin).
-   *
-   *  Safe to call when no items have been captured (silently returns).
-   *  Call AFTER convergence, not mid-sequence — the UM may legitimately
-   *  capture items from a tracked origin that hasn't fully settled yet. */
   assertOnlyTrackedOrigins(): void;
   cleanup(): void;
 }

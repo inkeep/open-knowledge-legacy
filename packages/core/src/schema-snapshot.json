@@ -7,13 +7,6 @@
       "inline": false,
       "atom": false
     },
-    "blockquote": {
-      "attrs": {},
-      "content": "block+",
-      "group": "block",
-      "inline": false,
-      "atom": false
-    },
     "doc": {
       "attrs": {},
       "content": "block+",
@@ -25,13 +18,6 @@
       "attrs": {},
       "content": "",
       "group": "inline",
-      "inline": false,
-      "atom": false
-    },
-    "table": {
-      "attrs": {},
-      "content": "tableRow+",
-      "group": "block",
       "inline": false,
       "atom": false
     },
@@ -267,9 +253,26 @@
         },
         "fenceLength": {
           "hasDefault": true
+        },
+        "meta": {
+          "hasDefault": true
+        },
+        "sourceStyle": {
+          "hasDefault": true
         }
       },
       "content": "text*",
+      "group": "block",
+      "inline": false,
+      "atom": false
+    },
+    "blockquote": {
+      "attrs": {
+        "sourceMarkerSpacings": {
+          "hasDefault": true
+        }
+      },
+      "content": "block+",
       "group": "block",
       "inline": false,
       "atom": false
@@ -280,6 +283,12 @@
           "hasDefault": true
         },
         "headingStyle": {
+          "hasDefault": true
+        },
+        "sourceTrailingHashes": {
+          "hasDefault": true
+        },
+        "sourceUnderlineLength": {
           "hasDefault": true
         }
       },
@@ -320,6 +329,12 @@
         },
         "title": {
           "hasDefault": true
+        },
+        "sourceLayout": {
+          "hasDefault": true
+        },
+        "sourceTitleMarker": {
+          "hasDefault": true
         }
       },
       "content": "",
@@ -337,6 +352,37 @@
       "group": "inline",
       "inline": true,
       "atom": false
+    },
+    "table": {
+      "attrs": {
+        "sourceDashCounts": {
+          "hasDefault": true
+        }
+      },
+      "content": "tableRow+",
+      "group": "block",
+      "inline": false,
+      "atom": false
+    },
+    "imageReference": {
+      "attrs": {
+        "alt": {
+          "hasDefault": true
+        },
+        "label": {
+          "hasDefault": true
+        },
+        "identifier": {
+          "hasDefault": true
+        },
+        "referenceType": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true
     },
     "commentBlock": {
       "attrs": {},
@@ -376,7 +422,14 @@
   },
   "marks": {
     "code": {
-      "attrs": {},
+      "attrs": {
+        "sourceFenceChar": {
+          "hasDefault": true
+        },
+        "sourceFenceLength": {
+          "hasDefault": true
+        }
+      },
       "excludes": "",
       "group": "",
       "inclusive": true,
@@ -456,6 +509,12 @@
         },
         "alias": {
           "hasDefault": true
+        },
+        "sourceUrlForm": {
+          "hasDefault": true
+        },
+        "sourceTitleMarker": {
+          "hasDefault": true
         }
       },
       "excludes": "link",
@@ -503,6 +562,7 @@
     "strong",
     "code",
     "codeBlock",
+    "blockquote",
     "heading",
     "thematicBreak",
     "link",
@@ -517,6 +577,7 @@
     "tableHeader",
     "tableCell",
     "image",
+    "imageReference",
     "highlight",
     "comment",
     "commentBlock",

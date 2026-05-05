@@ -22,9 +22,11 @@ import { commentPromoterPlugin } from './comment-promoter.ts';
 import { detailsAccordionPromoterPlugin } from './details-accordion-promoter.ts';
 import { highlightPromoterPlugin } from './highlight-promoter.ts';
 import { imagePromoterPlugin } from './image-promoter.ts';
+import { indentedCodePromoterPlugin } from './indented-code-promoter.ts';
 import { mathPromoterPlugin } from './math-promoter.ts';
 import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
 import { mermaidPromoterPlugin } from './mermaid-promoter.ts';
+import { positionAwareBlankLineJoin } from './position-aware-join.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
 import { singleDollarMathPromoterPlugin } from './single-dollar-math-promoter.ts';
 import { remarkTags } from './tag-to-markdown.ts';
@@ -69,6 +71,7 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     .use(restoreFromMdx) // Phase A
     .use(detailsAccordionPromoterPlugin)
     .use(imagePromoterPlugin)
+    .use(indentedCodePromoterPlugin)
     .use(mathPromoterPlugin)
     .use(singleDollarMathPromoterPlugin)
     .use(highlightPromoterPlugin)
@@ -87,7 +90,7 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
 export function createSerializeProcessor(opts: PipelineOptions): Processor {
   const processor = unified()
     .use(remarkFrontmatter, ['yaml'])
-    .use(remarkGfm)
+    .use(remarkGfm, { tablePipeAlign: false })
     .use(remarkMath, { singleDollarTextMath: false })
     .use(remarkMdxAgnostic)
     .use(remarkWikiLink)
@@ -96,6 +99,7 @@ export function createSerializeProcessor(opts: PipelineOptions): Processor {
       bullet: '-',
       fences: true,
       rule: '-',
+      join: [positionAwareBlankLineJoin],
       ...(opts.toMarkdownHandlers ? { handlers: opts.toMarkdownHandlers } : {}),
     });
   processor.freeze();

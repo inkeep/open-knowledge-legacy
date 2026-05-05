@@ -17,7 +17,7 @@ type ClipboardEventName =
 
 type ClipboardView = 'wysiwyg' | 'source';
 
-type ClipboardOp = 'copy' | 'cut' | 'paste';
+type ClipboardOp = 'copy' | 'cut' | 'paste' | 'drop';
 
 export type ClipboardBranch = 'A' | 'B' | 'C' | 'D' | 'E' | 'shift' | 'codeblock' | 'serialize';
 
@@ -76,7 +76,7 @@ const SLOW_COPY_MS = 100;
 
 export function logIfSlow(start: number, timing: ClipboardTiming): void {
   const elapsed = performance.now() - start;
-  const threshold = timing.op === 'paste' ? SLOW_PASTE_MS : SLOW_COPY_MS;
+  const threshold = timing.op === 'paste' || timing.op === 'drop' ? SLOW_PASTE_MS : SLOW_COPY_MS;
   if (elapsed < threshold) return;
   console.warn(
     JSON.stringify({

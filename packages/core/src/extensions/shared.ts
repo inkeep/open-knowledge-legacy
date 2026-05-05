@@ -1,7 +1,8 @@
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
+import { TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
+import { BlockquoteFidelity } from './blockquote-fidelity.ts';
 import { CodeBlockFidelity } from './code-block-fidelity.ts';
 import { CodeMarkFidelity } from './code-mark-fidelity.ts';
 import { CommentBlock } from './comment-block.ts';
@@ -13,6 +14,7 @@ import { FootnoteReference } from './footnote-reference.ts';
 import { HardBreakFidelity } from './hard-break-fidelity.ts';
 import { HeadingFidelity } from './heading-fidelity.ts';
 import { HtmlBlockFidelity } from './html-block-fidelity.ts';
+import { ImageReferenceFidelity } from './image-reference-fidelity.ts';
 import { JsxComponent } from './jsx-component.ts';
 import { JsxInline } from './jsx-inline.ts';
 import { LinkFidelity } from './link-fidelity.ts';
@@ -21,6 +23,7 @@ import { List, ListItem } from './list.ts';
 import { MathInline } from './math-inline.ts';
 import { RawMdxFallback } from './raw-mdx-fallback.ts';
 import { SourceLiteralMark } from './source-literal-mark.ts';
+import { TableFidelity } from './table-fidelity.ts';
 import { Tag } from './tag.ts';
 import { ThematicBreakFidelity } from './thematic-break-fidelity.ts';
 import { WikiLink } from './wiki-link.ts';
@@ -40,6 +43,7 @@ export const sharedExtensions = [
   StrongFidelity,
   CodeMarkFidelity,
   CodeBlockFidelity,
+  BlockquoteFidelity,
   HeadingFidelity,
   ThematicBreakFidelity,
   LinkFidelity,
@@ -61,18 +65,20 @@ export const sharedExtensions = [
     horizontalRule: false,
     hardBreak: false,
     link: false,
+    blockquote: false,
     dropcursor: {
       color: 'color-mix(in oklch, var(--primary) 50%, transparent)',
       width: 2,
     },
   }),
-  Table.configure({
+  TableFidelity.configure({
     resizable: true,
   }),
   TableRow,
   TableHeader,
   TableCell,
   Image.configure({ inline: true }),
+  ImageReferenceFidelity,
   Highlight,
   CommentMark,
   CommentBlock,

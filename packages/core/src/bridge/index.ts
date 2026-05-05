@@ -13,6 +13,12 @@ export {
   type FrontmatterSnapshot,
   type Unsubscribe as FrontmatterBindingUnsubscribe,
 } from './bind-frontmatter-doc.ts';
+export {
+  type BridgeInvariantSite,
+  type BridgeInvariantViolation,
+  BridgeInvariantViolationError,
+  type InvariantViolation,
+} from './bridge-invariant.ts';
 export { type DiffChange, diffLinesFast } from './diff-lines.ts';
 export {
   applyPatchToFm,
@@ -38,5 +44,10 @@ export {
   type BridgeMergeContentLossWhich,
   mergeThreeWay,
 } from './merge-three-way.ts';
-export { normalizeBridge } from './normalize.ts';
+export {
+  BRIDGE_TOLERANCE_CLASSES,
+  type BridgeToleranceClass,
+  detectAppliedToleranceClasses,
+  normalizeBridge,
+} from './normalize.ts';
 export { defaultScheduler, type Scheduler } from './scheduler.ts';

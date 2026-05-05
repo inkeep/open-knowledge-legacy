@@ -1,10 +1,11 @@
 import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
-import { applyFastDiff, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
 
-import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
+import { updateYFragment } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
+import { composeAndWriteRawBody } from './bridge-intake.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
 import { getLogger } from './logger.ts';
@@ -58,12 +59,9 @@ function applyAgentMarkdownWriteInner(
   },
 ): void {
   try {
-    const xmlFragment = document.getXmlFragment('default');
     const ytext = document.getText('source');
-
-    const currentJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
-    const currentBody = mdManager.serialize(currentJson);
-    const { frontmatter: existingFm } = stripFrontmatter(ytext.toString());
+    const currentYText = ytext.toString();
+    const { frontmatter: existingFm, body: currentBody } = stripFrontmatter(currentYText);
 
     const { frontmatter: payloadFm, body: payloadBody } = stripFrontmatter(markdown);
 
@@ -72,34 +70,24 @@ function applyAgentMarkdownWriteInner(
     switch (position) {
       case 'replace':
         finalFm = payloadFm || existingFm;
-        newBody = payloadBody.trim();
+        newBody = payloadBody;
         break;
       case 'prepend':
         finalFm = existingFm;
-        newBody = `${payloadBody.trim()}\n\n${currentBody}`;
+        newBody = currentBody.length > 0 ? `${payloadBody}\n\n${currentBody}` : payloadBody;
         break;
       case 'append':
         finalFm = existingFm;
-        newBody = currentBody.trim()
-          ? `${currentBody}\n\n${payloadBody.trim()}\n`
-          : `${payloadBody.trim()}\n`;
+        newBody = currentBody.length > 0 ? `${currentBody}\n\n${payloadBody}` : payloadBody;
         break;
     }
-
-    const parsedJson = mdManager.parseWithFallback(newBody, embedResolver);
-    const pmNode = schema.nodeFromJSON(parsedJson);
-    const meta = { mapping: new Map(), isOMark: new Map() };
-    updateYFragment(document, xmlFragment, pmNode, meta);
 
     if (finalFm !== existingFm) {
       recordFrontmatterEditSurface('mcp-write');
     }
 
-    const canonicalBody = mdManager.serialize(
-      yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
-    );
-    const canonicalFull = prependFrontmatter(finalFm, canonicalBody);
-    applyFastDiff(ytext, ytext.toString(), canonicalFull);
+    const newContent = prependFrontmatter(finalFm, newBody);
+    composeAndWriteRawBody(document, newContent, embedResolver);
   } catch (err) {
     log.error(
       { err, docName: document.name, position, markdownLen: markdown.length },
@@ -160,18 +148,12 @@ function applyAgentUndoInner(
     }
 
     const fullMd = ytext.toString();
-    const { body, frontmatter: finalFm } = stripFrontmatter(fullMd);
+    const { body } = stripFrontmatter(fullMd);
 
     const parsedJson = mdManager.parseWithFallback(body, embedResolver);
     const pmNode = schema.nodeFromJSON(parsedJson);
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
-
-    const canonicalBody = mdManager.serialize(
-      yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
-    );
-    const canonicalFull = prependFrontmatter(finalFm, canonicalBody);
-    applyFastDiff(ytext, ytext.toString(), canonicalFull);
   }, undoOrigin);
 
   return undone;
@@ -340,15 +322,33 @@ export class AgentSessionManager {
     return this.sessions.has(this.sessionKey(docName, agentId));
   }
 
+  private async cleanupSession(
+    key: string,
+    session: SessionRecord,
+    context: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      try {
+        session.um.destroy();
+      } catch (err) {
+        log.error({ err, ...context }, '[agent-session] um.destroy() failed');
+      }
+      try {
+        await session.dc.disconnect();
+      } catch (err) {
+        log.error({ err, ...context }, '[agent-session] dc.disconnect() failed');
+      }
+    } finally {
+      this.sessions.delete(key);
+    }
+  }
+
   async closeSession(docName: string, agentId = 'claude-1'): Promise<void> {
     const key = this.sessionKey(docName, agentId);
     const session = this.sessions.get(key);
-    if (session) {
-      session.um.destroy();
-      await session.dc.disconnect();
-      this.sessions.delete(key);
-      log.info({ docName, agentId }, `[agent-session] Closed session for: ${docName} / ${agentId}`);
-    }
+    if (!session) return;
+    await this.cleanupSession(key, session, { docName, agentId });
+    log.info({ docName, agentId }, `[agent-session] Closed session for: ${docName} / ${agentId}`);
   }
 
   async closeAllForAgent(agentId: string): Promise<void> {
@@ -363,13 +363,7 @@ export class AgentSessionManager {
     for (const key of keys) {
       const session = this.sessions.get(key);
       if (!session) continue;
-      try {
-        session.um.destroy();
-        await session.dc.disconnect();
-        this.sessions.delete(key);
-      } catch (err) {
-        log.error({ err, agentId }, `[agent-session] Failed to close session for agent ${agentId}`);
-      }
+      await this.cleanupSession(key, session, { agentId, key });
     }
   }
 
@@ -379,13 +373,7 @@ export class AgentSessionManager {
     for (const key of keys) {
       const session = this.sessions.get(key);
       if (!session) continue;
-      try {
-        session.um.destroy();
-        await session.dc.disconnect();
-        this.sessions.delete(key);
-      } catch (err) {
-        log.error({ err, docName }, `[agent-session] Failed to close session for doc ${docName}`);
-      }
+      await this.cleanupSession(key, session, { docName, key });
     }
   }
 
@@ -398,13 +386,7 @@ export class AgentSessionManager {
     for (const key of keys) {
       const session = this.sessions.get(key);
       if (!session) continue;
-      try {
-        session.um.destroy();
-        await session.dc.disconnect();
-        this.sessions.delete(key);
-      } catch (err) {
-        log.error({ err, key }, `[agent-session] Failed to close session: ${key}`);
-      }
+      await this.cleanupSession(key, session, { key });
     }
   }
 }
