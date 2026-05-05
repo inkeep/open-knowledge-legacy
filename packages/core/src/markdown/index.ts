@@ -28,6 +28,8 @@ import type {
   Code,
   Definition,
   Emphasis,
+  FootnoteDefinition,
+  FootnoteReference,
   Heading,
   Html,
   Image,
@@ -768,7 +770,25 @@ function buildMdastToPmHandlers(
 
   if (!handlers.math) handlers.math = blockUnknownHandler;
   if (!handlers.inlineMath) handlers.inlineMath = inlineUnknownHandler;
-  if (!handlers.footnoteReference) handlers.footnoteReference = inlineUnknownHandler;
+
+  if (n.footnoteReference) {
+    handlers.footnoteReference = (node: FootnoteReference) =>
+      n.footnoteReference.create({
+        identifier: node.identifier,
+        label: node.label ?? node.identifier,
+      });
+  } else if (!handlers.footnoteReference) {
+    handlers.footnoteReference = inlineUnknownHandler;
+  }
+  if (n.footnoteDefinition) {
+    handlers.footnoteDefinition = toPmNode(n.footnoteDefinition, (node: MdastNodes) => {
+      const def = node as FootnoteDefinition;
+      return {
+        identifier: def.identifier,
+        label: def.label ?? def.identifier,
+      };
+    });
+  }
 
   handlers.rawMdxFallbackMdast = (node: {
     type: 'rawMdxFallbackMdast';
@@ -1072,6 +1092,23 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   if (n.commentBlock) {
     nodeHandlers.commentBlock = fromPmNode('commentBlock');
+  }
+
+  if (n.footnoteReference) {
+    nodeHandlers.footnoteReference = (pmNode: PmNode) => {
+      const identifier = String(pmNode.attrs.identifier ?? '');
+      const label = pmNode.attrs.label ? String(pmNode.attrs.label) : identifier;
+      const node: FootnoteReference = { type: 'footnoteReference', identifier, label };
+      return node as unknown as MdastNodes;
+    };
+  }
+  if (n.footnoteDefinition) {
+    nodeHandlers.footnoteDefinition = fromPmNode('footnoteDefinition', (pmNode: PmNode) => ({
+      identifier: String(pmNode.attrs.identifier ?? ''),
+      label: pmNode.attrs.label
+        ? String(pmNode.attrs.label)
+        : String(pmNode.attrs.identifier ?? ''),
+    }));
   }
 
   if (m.link) {

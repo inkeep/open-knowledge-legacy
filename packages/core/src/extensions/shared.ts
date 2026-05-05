@@ -8,6 +8,8 @@ import { CommentBlock } from './comment-block.ts';
 import { CommentMark } from './comment-mark.ts';
 import { EmphasisFidelity, StrongFidelity } from './emphasis-fidelity.ts';
 import { EscapeMark } from './escape-mark.ts';
+import { FootnoteDefinition } from './footnote-definition.ts';
+import { FootnoteReference } from './footnote-reference.ts';
 import { HardBreakFidelity } from './hard-break-fidelity.ts';
 import { HeadingFidelity } from './heading-fidelity.ts';
 import { HtmlBlockFidelity } from './html-block-fidelity.ts';
@@ -70,4 +72,6 @@ export const sharedExtensions = [
   Highlight,
   CommentMark,
   CommentBlock,
+  FootnoteReference,
+  FootnoteDefinition,
 ];

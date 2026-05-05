@@ -1,4 +1,5 @@
 import type { Comment, Element, ElementContent, Properties } from 'hast';
+import type { FootnoteDefinition, FootnoteReference } from 'mdast';
 import type { MdxJsxFlowElement, MdxJsxTextElement } from 'mdast-util-mdx';
 import type { Handler, Handlers } from 'mdast-util-to-hast';
 import { toWikiLinkSlug } from '../utils/slug.ts';
@@ -205,6 +206,66 @@ const tagHandler: Handler = (state, node) => {
   return state.applyData(node, result);
 };
 
+const footnoteReferenceHandler: Handler = (state, node) => {
+  const ref = node as FootnoteReference;
+  const id = ref.identifier;
+  const result: Element = {
+    type: 'element',
+    tagName: 'sup',
+    properties: {
+      id: `fnref-${id}`,
+      dataFootnoteRef: '',
+      dataFootnoteId: id,
+      className: ['footnote-ref'],
+    },
+    children: [
+      {
+        type: 'element',
+        tagName: 'a',
+        properties: { href: `#fn-${id}`, className: ['footnote-ref-link'] },
+        children: [{ type: 'text', value: `[${id}]` }],
+      },
+    ],
+  };
+  state.patch(node, result);
+  return state.applyData(node, result);
+};
+
+const footnoteDefinitionHandler: Handler = (state, node) => {
+  const def = node as FootnoteDefinition;
+  const id = def.identifier;
+  const result: Element = {
+    type: 'element',
+    tagName: 'aside',
+    properties: {
+      id: `fn-${id}`,
+      dataFootnoteDef: '',
+      dataFootnoteId: id,
+      className: ['footnote-def'],
+    },
+    children: [
+      {
+        type: 'element',
+        tagName: 'div',
+        properties: { className: ['footnote-body'] },
+        children: state.all(node) as ElementContent[],
+      },
+      {
+        type: 'element',
+        tagName: 'a',
+        properties: {
+          href: `#fnref-${id}`,
+          className: ['footnote-backref'],
+          ariaLabel: 'Back to reference',
+        },
+        children: [{ type: 'text', value: '↩' }],
+      },
+    ],
+  };
+  state.patch(node, result);
+  return state.applyData(node, result);
+};
+
 const promotedHandlers: Record<PromotedMdastType, Handler> = {
   wikiLink: wikiLinkHandler,
   wikiLinkEmbed: wikiLinkEmbedHandler,
@@ -215,6 +276,8 @@ const promotedHandlers: Record<PromotedMdastType, Handler> = {
   tag: tagHandler,
   comment: commentHandler,
   commentBlock: commentBlockHandler,
+  footnoteReference: footnoteReferenceHandler,
+  footnoteDefinition: footnoteDefinitionHandler,
 };
 
 export const customNodeHandlers: Handlers = promotedHandlers;

@@ -38,6 +38,8 @@ export const PROMOTED_MDAST_TYPES = [
   'tag',
   'comment',
   'commentBlock',
+  'footnoteReference',
+  'footnoteDefinition',
 ] as const;
 
 export type PromotedMdastType = (typeof PROMOTED_MDAST_TYPES)[number];
@@ -105,10 +107,7 @@ export interface MarkMdast {
   type: 'mark';
   // biome-ignore lint/suspicious/noExplicitAny: see RootContentMap note above
   children: Array<any>;
-  data?: {
-    sourceForm?: 'mdx' | 'markdown';
-    [key: string]: unknown;
-  };
+  data?: { sourceRaw?: string; [key: string]: unknown };
   position?: Position;
 }
 

@@ -284,20 +284,8 @@ export const toMarkdownHandlers = {
   },
 
   mark(node, _parent, state, info) {
-    const sourceForm = (node as { data?: { sourceForm?: string } }).data?.sourceForm;
     const tracker = state.createTracker(info);
     const exit = state.enter('mark');
-    if (sourceForm === 'mdx') {
-      let value = tracker.move('<Highlight>');
-      value += state.containerPhrasing(node as Parents, {
-        before: value,
-        after: '<',
-        ...tracker.current(),
-      });
-      value += tracker.move('</Highlight>');
-      exit();
-      return value;
-    }
     let value = tracker.move('==');
     value += state.containerPhrasing(node as Parents, {
       before: value,

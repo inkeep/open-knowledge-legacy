@@ -23,6 +23,7 @@ function toMarkdownHasHandler(type: PromotedMdastType): boolean {
   if (type === 'wikiLink' && wikiLinkToMarkdown.handlers.wikiLink) return true;
   if (type === 'wikiLinkEmbed' && wikiLinkToMarkdown.handlers.wikiLinkEmbed) return true;
   if (type === 'tag' && tagToMarkdown.handlers.tag) return true;
+  if (type === 'footnoteReference' || type === 'footnoteDefinition') return true;
   return false;
 }
 
@@ -45,6 +46,14 @@ const parseFixtures: Record<PromotedMdastType, ParseFixture> = {
   tag: { md: 'See #word now.', expectedPmType: 'tag' },
   comment: { md: '%%hello%%', expectedPmMark: 'comment' },
   commentBlock: { md: '%%\nhello\n%%', expectedPmType: 'commentBlock' },
+  footnoteReference: {
+    md: 'Hi[^1].\n\n[^1]: Body.',
+    expectedPmType: 'footnoteReference',
+  },
+  footnoteDefinition: {
+    md: 'Hi[^1].\n\n[^1]: Body.',
+    expectedPmType: 'footnoteDefinition',
+  },
 };
 
 function findPmNode(json: JSONContent, type: string): boolean {
@@ -149,7 +158,6 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
       mark: {
         type: 'mark',
         children: [{ type: 'text', value: 'hi' }],
-        data: { sourceForm: 'markdown' },
       },
       tag: { type: 'tag', value: 'foo' },
       comment: {
@@ -161,6 +169,17 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         type: 'commentBlock',
         children: [{ type: 'paragraph', children: [{ type: 'text', value: 'hi' }] }],
         data: { sourceForm: 'markdown' },
+      },
+      footnoteReference: {
+        type: 'footnoteReference',
+        identifier: '1',
+        label: '1',
+      },
+      footnoteDefinition: {
+        type: 'footnoteDefinition',
+        identifier: '1',
+        label: '1',
+        children: [{ type: 'paragraph', children: [{ type: 'text', value: 'body' }] }],
       },
     };
 
@@ -221,7 +240,6 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
       mark: {
         type: 'mark',
         children: [{ type: 'text', value: 'hi' }],
-        data: { sourceForm: 'markdown' },
       },
       tag: { type: 'tag', value: 'foo' },
       comment: {
@@ -234,9 +252,22 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         children: [{ type: 'paragraph', children: [{ type: 'text', value: 'hi' }] }],
         data: { sourceForm: 'markdown' },
       },
+      footnoteReference: {
+        type: 'footnoteReference',
+        identifier: '1',
+        label: '1',
+      },
+      footnoteDefinition: {
+        type: 'footnoteDefinition',
+        identifier: '1',
+        label: '1',
+        children: [{ type: 'paragraph', children: [{ type: 'text', value: 'body' }] }],
+      },
     };
 
     for (const type of PROMOTED_MDAST_TYPES) {
+      if (type === 'footnoteReference' || type === 'footnoteDefinition') continue;
+
       let handler: unknown;
       if (type === 'wikiLink') {
         handler = wikiLinkToMarkdown.handlers.wikiLink;
