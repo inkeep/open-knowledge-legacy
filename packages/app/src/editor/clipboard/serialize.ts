@@ -1,11 +1,15 @@
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { markdownToHtml } from '@inkeep/open-knowledge-core';
 import type { JSONContent } from '@tiptap/core';
-import type { Fragment, Schema, Slice } from '@tiptap/pm/model';
-import { DOMSerializer, Slice as SliceCtor } from '@tiptap/pm/model';
+import type { Schema, Slice } from '@tiptap/pm/model';
+import { DOMSerializer, Fragment, Slice as SliceCtor } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
-import { walkLiveDomToInlineStyledFragment } from './clipboard-walker.ts';
-import { logSerializeFail } from './instrument.ts';
+import {
+  type SerializeResult,
+  type WalkerEnv,
+  walkLiveDomToInlineStyledFragment,
+} from './clipboard-walker.ts';
+import { classifyError, logSerializeFail } from './instrument.ts';
 
 interface WysiwygSerializerDeps {
   mdManager: MarkdownManager;
@@ -53,7 +57,8 @@ class MdastClipboardSerializer extends DOMSerializer {
     if (view && view.state.selection.from !== view.state.selection.to) {
       try {
         const slice = view.state.selection.content();
-        const walked = walkLiveDomToInlineStyledFragment(slice, view);
+        const env = buildWalkerEnv(view, this.mdManager);
+        const walked = walkLiveDomToInlineStyledFragment(slice, view, env);
         if (walked.childNodes.length > 0) {
           if (target) {
             for (const child of Array.from(walked.childNodes)) target.appendChild(child);
@@ -104,6 +109,52 @@ function sliceToMarkdown(slice: Slice, schema: Schema, mdManager: MarkdownManage
   return mdManager.serialize(sliceToDocJson(slice, schema));
 }
 
+export function findDescriptorRoot(live: Element): Element | null {
+  let descriptorRoot: Element | null = null;
+  let cur: Element | null = live;
+  while (cur && !cur.classList.contains('ProseMirror')) {
+    if (
+      cur.classList.contains('react-renderer') ||
+      cur.hasAttribute('data-node-view-wrapper') ||
+      cur.hasAttribute('data-jsx-component')
+    ) {
+      descriptorRoot = cur;
+    }
+    cur = cur.parentElement;
+  }
+  return descriptorRoot;
+}
+
+function buildWalkerEnv(view: EditorView, mdManager: MarkdownManager): WalkerEnv {
+  return {
+    getComputedStyle: (el) => window.getComputedStyle(el),
+    serializeElementMarkdown: (live): SerializeResult => {
+      const descriptorRoot = findDescriptorRoot(live);
+      let pos: number;
+      try {
+        const parent = descriptorRoot?.parentElement;
+        if (parent && descriptorRoot) {
+          const idx = Array.from(parent.children).indexOf(descriptorRoot);
+          pos = view.posAtDOM(parent, idx, -1);
+        } else {
+          pos = view.posAtDOM(live, 0);
+        }
+      } catch (err) {
+        return { kind: 'failed', errorClass: classifyError(err) };
+      }
+      if (pos < 0) return { kind: 'no-correspondence' };
+      const node = view.state.doc.nodeAt(pos);
+      if (!node) return { kind: 'no-correspondence' };
+      const slice = view.state.doc.slice(pos, pos + node.nodeSize);
+      try {
+        return { kind: 'ok', markdown: sliceToMarkdown(slice, view.state.schema, mdManager) };
+      } catch (err) {
+        return { kind: 'failed', errorClass: classifyError(err) };
+      }
+    },
+  };
+}
+
 function renderFragmentToHtml(
   fragment: Fragment,
   schema: Schema,
@@ -114,8 +165,17 @@ function renderFragmentToHtml(
   return markdownToHtml(markdown);
 }
 
-function sliceToDocJson(slice: Slice, schema: Schema): JSONContent {
-  const docNode = schema.topNodeType.createAndFill(null, slice.content);
+export function sliceToDocJson(slice: Slice, schema: Schema): JSONContent {
+  let content = slice.content;
+  const first = content.firstChild;
+  if (first?.isInline) {
+    const paragraph = schema.nodes.paragraph;
+    if (paragraph) {
+      const wrapped = paragraph.createAndFill(null, content);
+      if (wrapped) content = Fragment.from(wrapped);
+    }
+  }
+  const docNode = schema.topNodeType.createAndFill(null, content);
   if (!docNode) {
     const empty = schema.topNodeType.createAndFill();
     if (!empty) throw new Error('[clipboard] schema cannot fill topNodeType');

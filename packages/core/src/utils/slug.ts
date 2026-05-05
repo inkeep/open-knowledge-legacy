@@ -28,3 +28,8 @@ export function getHeadingSlug(text: string, slugCounts: Map<string, number>): s
   const baseSlug = toWikiLinkSlug(text);
   return baseSlug ? disambiguateSlug(baseSlug, slugCounts) : '';
 }
+
+export function wikiLinkHref(target: string, anchor: string | null): string {
+  const slug = toWikiLinkSlug(target);
+  return anchor ? `#${slug}-${toWikiLinkSlug(anchor)}` : `#${slug}`;
+}

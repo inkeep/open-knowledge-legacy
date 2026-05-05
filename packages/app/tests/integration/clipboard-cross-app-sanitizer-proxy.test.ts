@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 interface DescriptorFixture {
   name: string;
-  surface: 'canonical' | 'compat';
+  surface: 'canonical' | 'compat' | 'source-fallback';
   html: string;
   visibleText: string;
 }
@@ -56,6 +56,30 @@ const FIXTURES: DescriptorFixture[] = [
     html: '<audio class="ok-audio" src="https://example.com/x.mp3" controls></audio>',
     visibleText: '',
   },
+  {
+    name: 'source-fallback-block-relative-image',
+    surface: 'source-fallback',
+    html: '<pre class="mdx-component"><code>![chart](./Q3-sales.png)</code></pre>',
+    visibleText: '![chart](./Q3-sales.png)',
+  },
+  {
+    name: 'source-fallback-inline-paragraph-image',
+    surface: 'source-fallback',
+    html: '<p>prose <span class="mdx-inline">![alt](./x.jpg)</span> more prose</p>',
+    visibleText: '![alt](./x.jpg)',
+  },
+  {
+    name: 'wiki-link-rewritten-anchor',
+    surface: 'source-fallback',
+    html: '<a class="wiki-link" data-target="OtherDoc" data-anchor="" data-alias="" href="#otherdoc">OtherDoc</a>',
+    visibleText: 'OtherDoc',
+  },
+  {
+    name: 'source-mode-wrapper-multiline-blob',
+    surface: 'source-fallback',
+    html: '<pre class="mdx-component"><code># Heading\n\n- list item\n\n![chart](./x.png)</code></pre>',
+    visibleText: '![chart](./x.png)',
+  },
 ];
 
 function applyDomPurifyStrict(html: string): string {
@@ -107,7 +131,7 @@ const PROFILES: Profile[] = [
   { name: 'github', apply: applyGitHubProxy },
 ];
 
-describe('FR-16 sanitizer-proxy hermetic tests — walker output survives 5 destination profiles', () => {
+describe('sanitizer-proxy hermetic tests — walker output survives 5 destination profiles', () => {
   for (const fixture of FIXTURES) {
     describe(`${fixture.surface} ${fixture.name}`, () => {
       for (const profile of PROFILES) {
@@ -131,7 +155,7 @@ describe('FR-16 sanitizer-proxy hermetic tests — walker output survives 5 dest
     });
   }
 
-  test('FR-20 escape contract: an adversarial `<script>` payload never survives any profile', () => {
+  test('escape contract: an adversarial `<script>` payload never survives any profile', () => {
     const adversarial =
       '<aside class="callout"><span>OK content</span><script>alert(1)</script></aside>';
     for (const profile of PROFILES) {
@@ -167,6 +191,27 @@ describe('FR-16 sanitizer-proxy hermetic tests — walker output survives 5 dest
     expect(out).toContain('markdown-alert');
     expect(out).toContain('Note body');
     expect(out).not.toMatch(/class="random-other"/);
+  });
+
+  test('wiki-link anchor: href="#slug" survives every profile (clickable affordance preserved)', () => {
+    const html = '<a href="#otherdoc-section-name">Other Doc#Section Name</a>';
+    for (const profile of PROFILES) {
+      const out = profile.apply(html);
+      expect(out, profile.name).toContain('href="#otherdoc-section-name"');
+      expect(out, profile.name).toContain('Other Doc#Section Name');
+    }
+  });
+
+  test('source-fallback wrapper: visible markdown source survives even when `class="mdx-component"` is stripped', () => {
+    const html = '<pre class="mdx-component"><code>![chart](./Q3-sales.png)</code></pre>';
+    for (const profile of PROFILES) {
+      const out = profile.apply(html);
+      expect(out, profile.name).toContain('![chart](./Q3-sales.png)');
+    }
+    const slackOut = applySlackProxy(html);
+    expect(slackOut).not.toContain('class="mdx-component"');
+    const githubOut = applyGitHubProxy(html);
+    expect(githubOut).not.toContain('class="mdx-component"');
   });
 
   test('post-walker shape: editor toolbar chrome subtree (data-clipboard-omit) is absent across all profiles', () => {

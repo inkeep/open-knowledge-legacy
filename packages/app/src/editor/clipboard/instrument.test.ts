@@ -4,6 +4,8 @@ import { ChunkedInsertError, HtmlPayloadTooLargeError } from '@inkeep/open-knowl
 import {
   classifyError,
   logUnmappedLucideIcon,
+  logWalkerUrlClassifierFailed,
+  logWalkerUrlSourceEmitted,
   resetUnmappedLucideSeenForTest,
 } from './instrument.ts';
 
@@ -97,5 +99,179 @@ describe('classifyError — taxonomy classifier for `errorClass` telemetry field
     expect(classifyError(null)).toBeUndefined();
     expect(classifyError(undefined)).toBeUndefined();
     expect(classifyError({ message: 'plain object' })).toBeUndefined();
+  });
+});
+
+describe('logWalkerUrlSourceEmitted — source-fallback emission signal', () => {
+  let origWarn: typeof console.warn;
+  let warnings: string[];
+
+  beforeEach(() => {
+    warnings = [];
+    origWarn = console.warn;
+    console.warn = (msg: unknown) => {
+      warnings.push(typeof msg === 'string' ? msg : String(msg));
+    };
+  });
+
+  afterEach(() => {
+    console.warn = origWarn;
+  });
+
+  test('emits one structured JSON line per call with the four required dimensions', () => {
+    logWalkerUrlSourceEmitted({
+      view: 'wysiwyg',
+      tag: 'img',
+      class: 'mdx-inline',
+      reason: 'relative',
+    });
+    expect(warnings).toHaveLength(1);
+    const event = JSON.parse(warnings[0]);
+    expect(event).toEqual({
+      event: 'clipboard-walker-url-source-emitted',
+      view: 'wysiwyg',
+      tag: 'img',
+      class: 'mdx-inline',
+      reason: 'relative',
+    });
+  });
+
+  test('emits independently for distinct (tag, class, reason) tuples', () => {
+    logWalkerUrlSourceEmitted({
+      view: 'wysiwyg',
+      tag: 'img',
+      class: 'mdx-component',
+      reason: 'relative',
+    });
+    logWalkerUrlSourceEmitted({
+      view: 'wysiwyg',
+      tag: 'a',
+      class: 'mdx-inline',
+      reason: 'localhost',
+    });
+    logWalkerUrlSourceEmitted({
+      view: 'wysiwyg',
+      tag: 'video',
+      class: 'mdx-component',
+      reason: 'private-ip',
+    });
+    expect(warnings).toHaveLength(3);
+    const events = warnings.map((w) => JSON.parse(w));
+    expect(events.map((e) => e.tag)).toEqual(['img', 'a', 'video']);
+    expect(events.map((e) => e.class)).toEqual(['mdx-component', 'mdx-inline', 'mdx-component']);
+    expect(events.map((e) => e.reason)).toEqual(['relative', 'localhost', 'private-ip']);
+  });
+
+  test('emitted JSON shape carries exactly event + view + tag + class + reason', () => {
+    logWalkerUrlSourceEmitted({
+      view: 'wysiwyg',
+      tag: 'picture',
+      class: 'mdx-component',
+      reason: 'other',
+    });
+    const event = JSON.parse(warnings[0]);
+    expect(Object.keys(event).sort()).toEqual(['class', 'event', 'reason', 'tag', 'view']);
+  });
+
+  test('source view is supported (palette + future source-mode emitters)', () => {
+    logWalkerUrlSourceEmitted({
+      view: 'source',
+      tag: 'img',
+      class: 'mdx-component',
+      reason: 'relative',
+    });
+    const event = JSON.parse(warnings[0]);
+    expect(event.view).toBe('source');
+  });
+});
+
+describe('logWalkerUrlClassifierFailed — classifier-throw + serializer-null signal', () => {
+  let origWarn: typeof console.warn;
+  let warnings: string[];
+
+  beforeEach(() => {
+    warnings = [];
+    origWarn = console.warn;
+    console.warn = (msg: unknown) => {
+      warnings.push(typeof msg === 'string' ? msg : String(msg));
+    };
+  });
+
+  afterEach(() => {
+    console.warn = origWarn;
+  });
+
+  test('emits with phase=classifier-throw + errorClass when the URL classifier throws', () => {
+    logWalkerUrlClassifierFailed({
+      view: 'wysiwyg',
+      tag: 'img',
+      phase: 'classifier-throw',
+      errorClass: classifyError(new HtmlPayloadTooLargeError('boom')),
+    });
+    expect(warnings).toHaveLength(1);
+    const event = JSON.parse(warnings[0]);
+    expect(event).toEqual({
+      event: 'clipboard-walker-url-classifier-failed',
+      view: 'wysiwyg',
+      tag: 'img',
+      phase: 'classifier-throw',
+      errorClass: 'HtmlPayloadTooLargeError',
+    });
+  });
+
+  test('emits with phase=serializer-null and no errorClass when the markdown serializer fails', () => {
+    logWalkerUrlClassifierFailed({ view: 'wysiwyg', tag: 'img', phase: 'serializer-null' });
+    const event = JSON.parse(warnings[0]);
+    expect(event).toEqual({
+      event: 'clipboard-walker-url-classifier-failed',
+      view: 'wysiwyg',
+      tag: 'img',
+      phase: 'serializer-null',
+    });
+    expect('errorClass' in event).toBe(false);
+  });
+
+  test('omits errorClass when classifyError(err) returns undefined (default `Error` name)', () => {
+    logWalkerUrlClassifierFailed({
+      view: 'wysiwyg',
+      tag: 'a',
+      phase: 'classifier-throw',
+      errorClass: classifyError(new Error('boom')),
+    });
+    const event = JSON.parse(warnings[0]);
+    expect(event).toEqual({
+      event: 'clipboard-walker-url-classifier-failed',
+      view: 'wysiwyg',
+      tag: 'a',
+      phase: 'classifier-throw',
+    });
+    expect('errorClass' in event).toBe(false);
+  });
+
+  test('omits errorClass when caller passes nothing for it (non-Error throws)', () => {
+    logWalkerUrlClassifierFailed({ view: 'wysiwyg', tag: 'source', phase: 'classifier-throw' });
+    const event = JSON.parse(warnings[0]);
+    expect('errorClass' in event).toBe(false);
+    expect(event.event).toBe('clipboard-walker-url-classifier-failed');
+    expect(event.tag).toBe('source');
+    expect(event.phase).toBe('classifier-throw');
+  });
+
+  test('every WalkerUrlSourceTag value is accepted by the emitter signature', () => {
+    const tags = ['img', 'video', 'audio', 'source', 'a', 'picture'] as const;
+    for (const tag of tags) {
+      logWalkerUrlClassifierFailed({ view: 'wysiwyg', tag, phase: 'classifier-throw' });
+    }
+    expect(warnings).toHaveLength(tags.length);
+    const observedTags = warnings.map((w) => JSON.parse(w).tag);
+    expect(observedTags).toEqual([...tags]);
+  });
+
+  test('the three phase literals are the only accepted values (operability discriminator)', () => {
+    logWalkerUrlClassifierFailed({ view: 'wysiwyg', tag: 'img', phase: 'classifier-throw' });
+    logWalkerUrlClassifierFailed({ view: 'wysiwyg', tag: 'img', phase: 'serializer-null' });
+    logWalkerUrlClassifierFailed({ view: 'wysiwyg', tag: 'img', phase: 'serializer-throw' });
+    const phases = warnings.map((w) => JSON.parse(w).phase);
+    expect(phases).toEqual(['classifier-throw', 'serializer-null', 'serializer-throw']);
   });
 });

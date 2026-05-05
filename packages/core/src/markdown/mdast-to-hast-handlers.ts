@@ -2,7 +2,7 @@ import type { Comment, Element, ElementContent, Properties } from 'hast';
 import type { FootnoteDefinition, FootnoteReference } from 'mdast';
 import type { MdxJsxFlowElement, MdxJsxTextElement } from 'mdast-util-mdx';
 import type { Handler, Handlers } from 'mdast-util-to-hast';
-import { toWikiLinkSlug } from '../utils/slug.ts';
+import { wikiLinkHref } from '../utils/slug.ts';
 import type {
   CommentBlockMdast,
   CommentMdast,
@@ -33,11 +33,6 @@ function tryNativeHtmlPrimitive(node: MdxJsxFlowElement | MdxJsxTextElement): El
     }
   }
   return { type: 'element', tagName: name, properties, children: [] };
-}
-
-function wikiLinkHref(target: string, anchor: string | null): string {
-  const slug = toWikiLinkSlug(target);
-  return anchor ? `#${slug}-${toWikiLinkSlug(anchor)}` : `#${slug}`;
 }
 
 const wikiLinkHandler: Handler = (state, node) => {

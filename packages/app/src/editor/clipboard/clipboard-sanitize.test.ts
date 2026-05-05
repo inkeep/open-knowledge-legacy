@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  classifyUrlPortability,
   convertCssColors,
   isDangerousEventHandlerAttr,
   isSafeWalkerUrl,
@@ -402,5 +403,305 @@ describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fa
 describe('OPT_OUT_ATTR — descriptor opt-out marker', () => {
   test('value is exactly `data-clipboard-omit`', () => {
     expect(OPT_OUT_ATTR).toBe('data-clipboard-omit');
+  });
+});
+
+describe('classifyUrlPortability — single-pass classification with reason bucket', () => {
+  describe('portable inputs (reason absent)', () => {
+    test('fragment-only refs return { portable: true }', () => {
+      expect(classifyUrlPortability('#section')).toEqual({ portable: true });
+      expect(classifyUrlPortability('#')).toEqual({ portable: true });
+    });
+
+    test('http(s) public hostnames return { portable: true }', () => {
+      expect(classifyUrlPortability('https://example.com/x')).toEqual({ portable: true });
+      expect(classifyUrlPortability('http://example.com')).toEqual({ portable: true });
+    });
+
+    test('mailto / tel / sms / ftp schemes return { portable: true }', () => {
+      expect(classifyUrlPortability('mailto:user@example.com')).toEqual({ portable: true });
+      expect(classifyUrlPortability('tel:+15551234567')).toEqual({ portable: true });
+      expect(classifyUrlPortability('sms:+15551234567')).toEqual({ portable: true });
+      expect(classifyUrlPortability('ftp://example.com/x')).toEqual({ portable: true });
+      expect(classifyUrlPortability('ftps://example.com/x')).toEqual({ portable: true });
+    });
+
+    test('public IP literals return { portable: true }', () => {
+      expect(classifyUrlPortability('http://1.2.3.4/x')).toEqual({ portable: true });
+      expect(classifyUrlPortability('http://[2001:4860:4860::8888]/x')).toEqual({
+        portable: true,
+      });
+    });
+  });
+
+  describe('non-portable inputs (reason buckets)', () => {
+    test('bare relative paths classify as `relative`', () => {
+      expect(classifyUrlPortability('./photo.jpg')).toEqual({
+        portable: false,
+        reason: 'relative',
+      });
+      expect(classifyUrlPortability('photo.png')).toEqual({
+        portable: false,
+        reason: 'relative',
+      });
+      expect(classifyUrlPortability('../foo/bar.md')).toEqual({
+        portable: false,
+        reason: 'relative',
+      });
+    });
+
+    test('root-relative paths classify as `server-absolute`', () => {
+      expect(classifyUrlPortability('/foo/bar')).toEqual({
+        portable: false,
+        reason: 'server-absolute',
+      });
+      expect(classifyUrlPortability('/api/v1/asset.jpg')).toEqual({
+        portable: false,
+        reason: 'server-absolute',
+      });
+      expect(classifyUrlPortability('/')).toEqual({
+        portable: false,
+        reason: 'server-absolute',
+      });
+    });
+
+    test('protocol-relative URLs (`//host/path`) classify as `server-absolute`', () => {
+      expect(classifyUrlPortability('//example.com/img.jpg')).toEqual({
+        portable: false,
+        reason: 'server-absolute',
+      });
+      expect(classifyUrlPortability('//cdn.example.com/assets/logo.svg')).toEqual({
+        portable: false,
+        reason: 'server-absolute',
+      });
+    });
+
+    test('localhost classifies as `localhost`', () => {
+      expect(classifyUrlPortability('http://localhost/x')).toEqual({
+        portable: false,
+        reason: 'localhost',
+      });
+      expect(classifyUrlPortability('https://localhost:3000/api')).toEqual({
+        portable: false,
+        reason: 'localhost',
+      });
+      expect(classifyUrlPortability('http://LocalHost/x')).toEqual({
+        portable: false,
+        reason: 'localhost',
+      });
+    });
+
+    test('trailing-dot localhost classifies as `localhost`', () => {
+      expect(classifyUrlPortability('http://localhost./x')).toEqual({
+        portable: false,
+        reason: 'localhost',
+      });
+    });
+
+    test('.localhost reserved-TLD subdomains (RFC 6761) classify as `localhost`', () => {
+      expect(classifyUrlPortability('http://foo.localhost/x')).toEqual({
+        portable: false,
+        reason: 'localhost',
+      });
+      expect(classifyUrlPortability('http://foo.bar.localhost/x')).toEqual({
+        portable: false,
+        reason: 'localhost',
+      });
+      expect(classifyUrlPortability('http://foo.localhost./x')).toEqual({
+        portable: false,
+        reason: 'localhost',
+      });
+    });
+
+    test('private/loopback IPs classify as `private-ip`', () => {
+      expect(classifyUrlPortability('http://10.0.0.1/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://172.16.0.1/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://192.168.1.1/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://127.0.0.1/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://127.0.0.255/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://169.254.1.1/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://100.64.0.1/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://224.0.0.1/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://255.255.255.255/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://0.0.0.0/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://198.18.0.1/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://192.0.0.1/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://[::1]/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://[::]/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://[fc00::1]/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://[fe80::1]/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('http://[ff02::1]/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('https://[2001:db8::1]/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('https://[::ffff:192.0.2.1]/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('https://[2002::1]/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('https://[2001:0::]/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+      expect(classifyUrlPortability('https://[64:ff9b::1]/x')).toEqual({
+        portable: false,
+        reason: 'private-ip',
+      });
+    });
+
+    test('non-portable schemes classify as `other`', () => {
+      expect(classifyUrlPortability('blob:https://example.com/abc')).toEqual({
+        portable: false,
+        reason: 'other',
+      });
+      expect(classifyUrlPortability('file:///etc/hosts')).toEqual({
+        portable: false,
+        reason: 'other',
+      });
+      expect(classifyUrlPortability('data:text/plain;base64,SGVsbG8=')).toEqual({
+        portable: false,
+        reason: 'other',
+      });
+      expect(classifyUrlPortability('chrome-extension://abc/x')).toEqual({
+        portable: false,
+        reason: 'other',
+      });
+      expect(classifyUrlPortability('moz-extension://aabb/script.js')).toEqual({
+        portable: false,
+        reason: 'other',
+      });
+      expect(classifyUrlPortability('javascript:alert(1)')).toEqual({
+        portable: false,
+        reason: 'other',
+      });
+      expect(classifyUrlPortability('vbscript:msgbox(1)')).toEqual({
+        portable: false,
+        reason: 'other',
+      });
+    });
+
+    test('novel / future schemes classify as `other` (allowlist posture)', () => {
+      expect(classifyUrlPortability('intent://launch/example')).toEqual({
+        portable: false,
+        reason: 'other',
+      });
+      expect(classifyUrlPortability('zoommtg://example/123')).toEqual({
+        portable: false,
+        reason: 'other',
+      });
+      expect(classifyUrlPortability('view-source:https://example.com')).toEqual({
+        portable: false,
+        reason: 'other',
+      });
+    });
+
+    test('empty + whitespace-only inputs classify as `relative`', () => {
+      expect(classifyUrlPortability('')).toEqual({
+        portable: false,
+        reason: 'relative',
+      });
+      expect(classifyUrlPortability('   ')).toEqual({
+        portable: false,
+        reason: 'relative',
+      });
+    });
+
+    test('query-only refs classify as `relative`', () => {
+      expect(classifyUrlPortability('?q=1')).toEqual({
+        portable: false,
+        reason: 'relative',
+      });
+    });
+  });
+
+  describe('portable shape edge cases', () => {
+    test('leading-whitespace fragment passes (URL preprocessing trims)', () => {
+      expect(classifyUrlPortability('   #section')).toEqual({ portable: true });
+    });
+
+    test('classification is case-insensitive on scheme', () => {
+      expect(classifyUrlPortability('MAILTO:user@example.com')).toEqual({ portable: true });
+      expect(classifyUrlPortability('Tel:+15551234567')).toEqual({ portable: true });
+      expect(classifyUrlPortability('HTTPS://EXAMPLE.COM/path')).toEqual({ portable: true });
+    });
+
+    test('non-default port hostnames pass', () => {
+      expect(classifyUrlPortability('https://example.com:8443/path')).toEqual({ portable: true });
+    });
+
+    test('public IPv6 with port + path passes', () => {
+      expect(classifyUrlPortability('https://[2001:4860:4860::8888]:8080/x.jpg')).toEqual({
+        portable: true,
+      });
+    });
+  });
+
+  describe('malformed inputs throw (caller wraps in try/catch)', () => {
+    test('throws on triple-colon garbage', () => {
+      expect(() => classifyUrlPortability(':::')).toThrow();
+    });
+
+    test('throws on incomplete http://', () => {
+      expect(() => classifyUrlPortability('http://')).toThrow();
+    });
+
+    test('throws on http: without authority', () => {
+      expect(() => classifyUrlPortability('http:')).toThrow();
+    });
   });
 });

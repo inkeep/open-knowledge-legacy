@@ -1,5 +1,15 @@
 import type { Node as PmNode } from '@tiptap/pm/model';
-import { isSafeWalkerUrl } from './clipboard-sanitize.ts';
+import {
+  classifyUrlPortability,
+  isSafeWalkerUrl,
+  type UrlPortabilityReason,
+} from './clipboard-sanitize.ts';
+import {
+  classifyError,
+  logWalkerUrlClassifierFailed,
+  logWalkerUrlSourceEmitted,
+  type WalkerUrlSourceTag,
+} from './instrument.ts';
 
 export const TYPE_TO_TONE: Record<string, { color: string; bg: string }> = {
   note: { color: '#0969da', bg: '#dbeafe' },
@@ -52,29 +62,82 @@ function accordionPalette(props: Record<string, unknown>): Element {
   return details;
 }
 
-function imagePalette(props: Record<string, unknown>): Element {
-  const img = document.createElement('img');
-  if (typeof props.src === 'string' && isSafeWalkerUrl(props.src)) {
-    img.setAttribute('src', props.src);
+export function paletteUrlReason(rawUrl: string): UrlPortabilityReason | null {
+  const result = classifyUrlPortability(rawUrl);
+  return result.portable ? null : result.reason;
+}
+
+function buildPaletteSourceFallback(sourceText: string): Element {
+  const pre = document.createElement('pre');
+  pre.className = 'mdx-component';
+  const code = document.createElement('code');
+  code.textContent = sourceText;
+  pre.appendChild(code);
+  return pre;
+}
+
+function maybeSwapPaletteUrl(
+  src: string,
+  tag: WalkerUrlSourceTag,
+  sourceText: string,
+): Element | null {
+  if (src === '') return null;
+  let reason: UrlPortabilityReason | null;
+  try {
+    reason = paletteUrlReason(src);
+  } catch (err) {
+    const errorClass = classifyError(err);
+    logWalkerUrlClassifierFailed({
+      view: 'wysiwyg',
+      tag,
+      phase: 'classifier-throw',
+      ...(errorClass !== undefined ? { errorClass } : {}),
+    });
+    return null;
   }
+  if (reason === null) return null;
+  logWalkerUrlSourceEmitted({
+    view: 'wysiwyg',
+    tag,
+    class: 'mdx-component',
+    reason,
+  });
+  return buildPaletteSourceFallback(sourceText);
+}
+
+function imagePalette(props: Record<string, unknown>): Element {
+  const alt = typeof props.alt === 'string' ? props.alt : '';
+  const src = typeof props.src === 'string' ? props.src : '';
+  const swap = maybeSwapPaletteUrl(src, 'img', `![${alt}](${src})`);
+  if (swap !== null) return swap;
+  const img = document.createElement('img');
+  if (src && isSafeWalkerUrl(src)) img.setAttribute('src', src);
   if (typeof props.alt === 'string') img.setAttribute('alt', props.alt);
   return img;
 }
 
+function buildMediaSourceText(tag: 'video' | 'audio', src: string): string {
+  const el = document.createElement(tag);
+  el.setAttribute('src', src);
+  return el.outerHTML;
+}
+
 function videoPalette(props: Record<string, unknown>): Element {
+  const src = typeof props.src === 'string' ? props.src : '';
+  const swap = maybeSwapPaletteUrl(src, 'video', buildMediaSourceText('video', src));
+  if (swap !== null) return swap;
   const video = document.createElement('video');
-  if (typeof props.src === 'string' && isSafeWalkerUrl(props.src)) {
-    video.setAttribute('src', props.src);
-  }
+  if (src && isSafeWalkerUrl(src)) video.setAttribute('src', src);
   if (props.controls !== false) video.setAttribute('controls', '');
   return video;
 }
 
 function audioPalette(props: Record<string, unknown>): Element {
+  const src = typeof props.src === 'string' ? props.src : '';
+  const swap = maybeSwapPaletteUrl(src, 'audio', buildMediaSourceText('audio', src));
+  if (swap !== null) return swap;
   const audio = document.createElement('audio');
-  if (typeof props.src === 'string' && isSafeWalkerUrl(props.src)) {
-    audio.setAttribute('src', props.src);
-  }
+  if (src && isSafeWalkerUrl(src)) audio.setAttribute('src', src);
   if (props.controls !== false) audio.setAttribute('controls', '');
   return audio;
 }

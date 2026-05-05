@@ -30,9 +30,11 @@
  * markers so destinations don't see editor-only state.
  */
 
+import { normalizeNullableString, wikiLinkHref } from '@inkeep/open-knowledge-core';
 import type { Slice } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import {
+  classifyUrlPortability,
   convertCssColors,
   isDangerousEventHandlerAttr,
   isSafeWalkerUrl,
@@ -42,9 +44,19 @@ import {
   sanitizeStyleAttrValue,
   URL_BEARING_TEXT_ATTRS,
   URL_SCHEME_ATTRS,
+  type UrlPortabilityReason,
 } from './clipboard-sanitize.ts';
 import { paletteFor } from './clipboard-walker-fallback-palette.ts';
-import { logUnmappedLucideIcon, logWalkerFallback, logWalkerUrlBlocked } from './instrument.ts';
+import {
+  classifyError,
+  logUnmappedLucideIcon,
+  logWalkerFallback,
+  logWalkerUrlBlocked,
+  logWalkerUrlClassifierFailed,
+  logWalkerUrlSourceEmitted,
+  type WalkerUrlSourceClass,
+  type WalkerUrlSourceTag,
+} from './instrument.ts';
 
 export const STYLE_ALLOWLIST = [
   'color',
@@ -103,8 +115,14 @@ export interface ComputedStyleLike {
   getPropertyValue(prop: string): string;
 }
 
-interface WalkerEnv {
+export type SerializeResult =
+  | { kind: 'ok'; markdown: string }
+  | { kind: 'no-correspondence' }
+  | { kind: 'failed'; errorClass: string | undefined };
+
+export interface WalkerEnv {
   getComputedStyle: (el: Element) => ComputedStyleLike;
+  serializeElementMarkdown?: (live: Element) => SerializeResult;
 }
 
 const DEFAULT_ENV: WalkerEnv = {
@@ -168,12 +186,15 @@ export function walkLiveDomToInlineStyledFragment(
 function cloneAndStyle(live: Element, env: WalkerEnv): Element {
   const clone = live.cloneNode(true) as Element;
   walkPair(live, clone, env);
+  applyWikiLinkTransform(clone);
+  applyUrlClassifierPostPass(live, clone, env);
   replaceLucideIconsWithGlyphs(clone);
   return clone;
 }
 
 export const LUCIDE_GLYPH_MAP: Record<string, string> = {
   'lucide-chevron-right': '›', // SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
+  'lucide-chevron-down': '⌄', // DOWN ARROWHEAD — collapsible-open Callout (Callout.tsx switched ChevronRight → ChevronDown for the open state)
   'lucide-info': 'ℹ', // INFORMATION SOURCE
   'lucide-lightbulb': '\u{1F4A1}', // ELECTRIC LIGHT BULB (renders monochrome on legacy)
   'lucide-message-square-warning': '❗', // HEAVY EXCLAMATION MARK SYMBOL
@@ -279,5 +300,229 @@ function walkPair(live: Element, clone: Element, env: WalkerEnv): void {
       continue;
     }
     walkPair(liveKid, cloneKid, env);
+  }
+}
+
+export function applyWikiLinkTransform(root: Element): void {
+  const spans = root.querySelectorAll('span[data-wiki-link]');
+  for (const span of Array.from(spans)) {
+    const target = span.getAttribute('data-target') ?? '';
+    if (!target) continue;
+    const anchor = normalizeNullableString(span.getAttribute('data-anchor'));
+    const alias = normalizeNullableString(span.getAttribute('data-alias'));
+    const href = wikiLinkHref(target, anchor);
+    const a = span.ownerDocument.createElement('a');
+    a.setAttribute('class', 'wiki-link');
+    a.setAttribute('href', href);
+    a.setAttribute('data-target', target);
+    a.setAttribute('data-anchor', anchor ?? '');
+    a.setAttribute('data-alias', alias ?? '');
+    a.textContent = span.textContent ?? '';
+    span.replaceWith(a);
+  }
+}
+
+type WalkerUrlLeafTag = Exclude<WalkerUrlSourceTag, 'picture'>;
+
+const URL_LEAF_TAGS: ReadonlySet<WalkerUrlLeafTag> = new Set<WalkerUrlLeafTag>([
+  'img',
+  'video',
+  'audio',
+  'source',
+  'a',
+]);
+
+function isUrlLeafTag(tag: string): tag is WalkerUrlLeafTag {
+  return (URL_LEAF_TAGS as ReadonlySet<string>).has(tag);
+}
+
+export function chooseEmissionClass(clone: Element): WalkerUrlSourceClass {
+  return clone.closest('p') !== null ? 'mdx-inline' : 'mdx-component';
+}
+
+function createSourceFallbackElement(
+  doc: Document,
+  klass: WalkerUrlSourceClass,
+  markdown: string,
+): Element {
+  if (klass === 'mdx-component') {
+    const pre = doc.createElement('pre');
+    pre.className = 'mdx-component';
+    const code = doc.createElement('code');
+    code.textContent = markdown;
+    pre.appendChild(code);
+    return pre;
+  }
+  const span = doc.createElement('span');
+  span.className = 'mdx-inline';
+  span.textContent = markdown;
+  return span;
+}
+
+function classifyUrlAttr(rawUrl: string): UrlPortabilityReason | null {
+  const result = classifyUrlPortability(rawUrl);
+  return result.portable ? null : result.reason;
+}
+
+function classifySrcset(srcset: string): UrlPortabilityReason | null {
+  for (const raw of srcset.split(',')) {
+    const candidate = raw.trim();
+    if (candidate === '') continue;
+    const url = candidate.split(/\s+/)[0] ?? '';
+    const reason = classifyUrlAttr(url);
+    if (reason !== null) return reason;
+  }
+  return null;
+}
+
+function classifyLeafElement(clone: Element, tag: WalkerUrlLeafTag): UrlPortabilityReason | null {
+  switch (tag) {
+    case 'img':
+    case 'source': {
+      const src = clone.getAttribute('src');
+      if (src !== null) {
+        const reason = classifyUrlAttr(src);
+        if (reason !== null) return reason;
+      }
+      const srcset = clone.getAttribute('srcset');
+      if (srcset !== null) {
+        const reason = classifySrcset(srcset);
+        if (reason !== null) return reason;
+      }
+      return null;
+    }
+    case 'video':
+    case 'audio': {
+      const src = clone.getAttribute('src');
+      if (src !== null) return classifyUrlAttr(src);
+      return null;
+    }
+    case 'a': {
+      const href = clone.getAttribute('href');
+      if (href !== null) return classifyUrlAttr(href);
+      return null;
+    }
+    default: {
+      const _exhaust: never = tag;
+      void _exhaust;
+      return null;
+    }
+  }
+}
+
+function classifyPictureDescendants(clone: Element): UrlPortabilityReason | null {
+  const candidates = clone.querySelectorAll('source, img');
+  for (const c of Array.from(candidates)) {
+    const tag = c.tagName.toLowerCase();
+    if (!isUrlLeafTag(tag)) continue;
+    const reason = classifyLeafElement(c, tag);
+    if (reason !== null) return reason;
+  }
+  return null;
+}
+
+function maybeSwapLeaf(
+  env: WalkerEnv,
+  live: Element,
+  clone: Element,
+  tag: WalkerUrlLeafTag,
+): boolean {
+  let reason: UrlPortabilityReason | null;
+  try {
+    reason = classifyLeafElement(clone, tag);
+  } catch (err) {
+    const errorClass = classifyError(err);
+    logWalkerUrlClassifierFailed({
+      view: 'wysiwyg',
+      tag,
+      phase: 'classifier-throw',
+      ...(errorClass !== undefined ? { errorClass } : {}),
+    });
+    return false;
+  }
+  if (reason === null) return false;
+  return performSwap(env, live, clone, tag, reason);
+}
+
+function maybeSwapPicture(env: WalkerEnv, live: Element, clone: Element): boolean {
+  let reason: UrlPortabilityReason | null;
+  try {
+    reason = classifyPictureDescendants(clone);
+  } catch (err) {
+    const errorClass = classifyError(err);
+    logWalkerUrlClassifierFailed({
+      view: 'wysiwyg',
+      tag: 'picture',
+      phase: 'classifier-throw',
+      ...(errorClass !== undefined ? { errorClass } : {}),
+    });
+    return false;
+  }
+  if (reason === null) return false;
+  return performSwap(env, live, clone, 'picture', reason);
+}
+
+function performSwap(
+  env: WalkerEnv,
+  live: Element,
+  clone: Element,
+  tag: WalkerUrlSourceTag,
+  reason: UrlPortabilityReason,
+): boolean {
+  const result: SerializeResult = env.serializeElementMarkdown
+    ? env.serializeElementMarkdown(live)
+    : { kind: 'no-correspondence' };
+  switch (result.kind) {
+    case 'no-correspondence': {
+      logWalkerUrlClassifierFailed({ view: 'wysiwyg', tag, phase: 'serializer-null' });
+      return false;
+    }
+    case 'failed': {
+      const errorClass = result.errorClass;
+      logWalkerUrlClassifierFailed({
+        view: 'wysiwyg',
+        tag,
+        phase: 'serializer-throw',
+        ...(errorClass !== undefined ? { errorClass } : {}),
+      });
+      return false;
+    }
+    case 'ok': {
+      const klass = chooseEmissionClass(clone);
+      const replacement = createSourceFallbackElement(clone.ownerDocument, klass, result.markdown);
+      clone.replaceWith(replacement);
+      logWalkerUrlSourceEmitted({ view: 'wysiwyg', tag, class: klass, reason });
+      return true;
+    }
+    default: {
+      const _exhaust: never = result;
+      void _exhaust;
+      return false;
+    }
+  }
+}
+
+export function applyUrlClassifierPostPass(live: Element, clone: Element, env: WalkerEnv): void {
+  if (!env.serializeElementMarkdown) return;
+  const tag = clone.tagName.toLowerCase();
+
+  if (tag === 'picture') {
+    if (maybeSwapPicture(env, live, clone)) return;
+  }
+
+  if (isUrlLeafTag(tag)) {
+    if (maybeSwapLeaf(env, live, clone, tag)) return;
+  }
+
+  const liveKidsAll = Array.from(live.children);
+  const cloneKids = Array.from(clone.children);
+  const liveKids: Element[] = [];
+  for (const k of liveKidsAll) {
+    if (k.getAttribute(OPT_OUT_ATTR) === 'true') continue;
+    liveKids.push(k);
+  }
+  const len = Math.min(liveKids.length, cloneKids.length);
+  for (let i = 0; i < len; i++) {
+    applyUrlClassifierPostPass(liveKids[i], cloneKids[i], env);
   }
 }

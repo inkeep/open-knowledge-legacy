@@ -3434,6 +3434,11 @@ Homepage: https://github.com/beaugunderson/ip-address
 
 Copyright (C) 2011 by Beau Gunderson
 
+### `ipaddr.js@2.4.0`
+Homepage: https://github.com/whitequark/ipaddr.js
+
+Copyright (C) 2011-2017 whitequark <whitequark@whitequark.org>
+
 ### `ipaddr.js@1.9.1`
 Homepage: https://github.com/whitequark/ipaddr.js
 
