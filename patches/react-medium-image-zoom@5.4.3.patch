@@ -1,0 +1,13 @@
+diff --git a/dist/Controlled.js b/dist/Controlled.js
+index de2694cf66a747f5daf256416e65fec0bf0c84cd..e8ef51f0df70992f177ab6745270dee8b4f31223 100644
+--- a/dist/Controlled.js
++++ b/dist/Controlled.js
+@@ -391,7 +391,7 @@ class ControlledBase extends React.Component {
+                     modalImg,
+                     modalBtnUnzoom)) : (React.createElement(ZoomContent, { buttonUnzoom: modalBtnUnzoom, modalState: modalState, img: modalImg, isZoomImgLoaded: isZoomImgLoaded, onUnzoom: handleUnzoom }));
+         }
+-        return (React.createElement(WrapElement, { "aria-owns": idModal, "data-rmiz": "", ref: refWrap },
++        return (React.createElement(WrapElement, { "aria-owns": hasImage ? idModal : undefined, "data-rmiz": "", ref: refWrap },
+             React.createElement(WrapElement, { "data-rmiz-content": dataContentState, ref: refContent, style: styleContent }, children),
+             hasImage && (React.createElement(WrapElement, { "data-rmiz-ghost": "", style: styleGhost },
+                 React.createElement("button", { "aria-label": labelBtnZoom, "data-rmiz-btn-zoom": "", onClick: handleZoom, type: "button" },

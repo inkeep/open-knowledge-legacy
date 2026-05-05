@@ -112,6 +112,14 @@ export function computeChange(
   return { from: start, to: oldEnd, text: newVal.slice(start, newEnd) };
 }
 
+const UNREGISTERED_REASON_PREFIX = 'Unregistered component:';
+
+function extractUnregisteredComponentName(reason: string): string | null {
+  if (!reason.startsWith(UNREGISTERED_REASON_PREFIX)) return null;
+  const name = reason.slice(UNREGISTERED_REASON_PREFIX.length).trim();
+  return name.length > 0 ? name : null;
+}
+
 export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
   const cmContainerRef = useRef<HTMLDivElement>(null);
   const cmViewRef = useRef<CMEditorView | null>(null);
@@ -121,6 +129,8 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
   const reason = (node.attrs.reason as string) || 'Parse failed';
   const severity = classifySeverity(reason);
   const style = SEVERITY_STYLES[severity];
+  const unregisteredComponentName =
+    severity === 'info' ? extractUnregisteredComponentName(reason) : null;
 
   const forwardUpdate = (newText: string) => {
     const pos = typeof getPos === 'function' ? getPos() : undefined;
@@ -386,13 +396,25 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     editor.chain().focus().setNodeSelection(p).deleteSelection().run();
   };
 
+  const wrapperClassName = unregisteredComponentName
+    ? `raw-mdx-fallback-wrapper jsx-component-wrapper jsx-component-wrapper--unregistered relative my-2 py-2 rounded border border-dashed ${style.wrapperClass}`
+    : `raw-mdx-fallback-wrapper relative my-2 py-2 rounded border border-dashed ${style.wrapperClass}`;
+  const wildcardChromeProps = unregisteredComponentName
+    ? {
+        'data-jsx-component': '',
+        role: 'group' as const,
+        'aria-label': `Unknown component: ${unregisteredComponentName}`,
+      }
+    : {};
+
   return (
     <NodeViewWrapper
-      className={`raw-mdx-fallback-wrapper relative my-2 py-2 rounded border border-dashed ${style.wrapperClass}`}
+      className={wrapperClassName}
       contentEditable={false}
       data-drag-handle=""
       draggable="true"
       data-severity={severity}
+      {...wildcardChromeProps}
     >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView */}
       <div

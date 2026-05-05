@@ -145,6 +145,15 @@ test('A11Y09: Wildcard block chrome has accessible name', async ({ page, api }) 
   ).toBeVisible({ timeout: 5000 });
   const text = await wildcardBadge.textContent();
   expect(text).toContain('UnknownComponent');
+
+  await expect(
+    wildcardBadge,
+    'wildcard wrapper must carry role="group" so assistive tech treats it as a labeled grouping',
+  ).toHaveAttribute('role', 'group');
+  await expect(
+    wildcardBadge,
+    'wildcard wrapper must expose the unregistered component name via aria-label',
+  ).toHaveAttribute('aria-label', /UnknownComponent/);
 });
 
 test('A11Y10: Zero axe-core violations on 5-pack fixture (excluding color-contrast)', async ({
