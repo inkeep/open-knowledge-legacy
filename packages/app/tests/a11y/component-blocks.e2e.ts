@@ -107,7 +107,7 @@ test('A11Y03: PropPanel Esc key closes and returns focus to block', async ({ pag
 });
 
 test('A11Y05: rawMdxFallback nested CodeMirror has accessible label', async ({ page, api }) => {
-  await setupDoc(page, api, '<BrokenTag attr="\n\nSome broken content\n');
+  await setupDoc(page, api, '<Foo>broken</Bar>\n');
   await page.waitForFunction(() => Boolean(window.__activeEditor?.state.doc.childCount), null, {
     timeout: 5000,
   });
@@ -124,6 +124,8 @@ test('A11Y05: rawMdxFallback nested CodeMirror has accessible label', async ({ p
   if (ariaLabel) {
     expect(ariaLabel.toLowerCase()).toContain('source');
   }
+  const role = await wrapper.getAttribute('role');
+  expect(role, 'rawMdxFallback wrapper must have role="group"').toBe('group');
 });
 
 test.skip('A11Y07: Empty-container placeholder activatable via keyboard — pending compound descriptor', async () => {});

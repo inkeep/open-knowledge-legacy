@@ -2,3 +2,30 @@
 title: Timeline and recovery
 description: Every revision, auto-save, and recovery checkpoint for the current document, with restore.
 ---
+
+The timeline allows you to view the history of changes to the current document. It combines manual saved versions, auto-saves, upstream sync entries, and recovery checkpoints into one readable history.
+
+## What the timeline shows
+
+Open the timeline from the document side panel. Each entry shows who made the change, when it happened, and what kind of change it was.
+
+Timeline entries include:
+
+- **Agent and human edits** with contributor attribution
+- **Saved versions** created by the user with **Save Version**
+- **Upstream sync** entries from Git
+- **Recovery checkpoints** created automatically before operations like rollbacks
+
+## Review changes
+
+Click a timeline entry to expand it. Open Knowledge shows an inline diff so you can compare that version with the current document.
+
+You can switch between unified and split diff layouts from the editor controls.
+
+## Restore a previous version
+
+Use the restore button on a timeline entry to restore the document to the selected version. Restoring is append-only: Open Knowledge creates a new change with the old content instead of deleting history.
+
+## Save a version
+
+Use **Save Version** before major edits, before handing work to an agent, or before pulling in external changes. The saved version snapshots the project state so you can find and restore it later.
