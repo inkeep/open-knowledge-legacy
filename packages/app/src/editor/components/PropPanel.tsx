@@ -6,6 +6,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { uploadFile } from '@/editor/image-upload/upload-file.ts';
 import type { JsxComponentDescriptor } from '@/editor/registry/types.ts';
@@ -79,7 +86,7 @@ export function PropPanel({ descriptor, values, onChange }: PropPanelProps) {
   if (editableProps.length === 0) return null;
 
   return (
-    <div data-prop-panel="" className="flex flex-col gap-2 p-3 text-sm">
+    <div data-prop-panel="" className="flex flex-col gap-4 py-2 text-sm">
       {commonProps.map((propDef) => (
         <PropControl
           key={propDef.name}
@@ -101,7 +108,7 @@ export function PropPanel({ descriptor, values, onChange }: PropPanelProps) {
           >
             <CollapsibleTrigger
               data-prop-panel-advanced-trigger=""
-              className="group flex w-full items-center justify-between rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="group flex w-full items-center justify-between rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground uppercase font-mono"
             >
               <span className="flex items-center gap-1.5">
                 <ChevronDown className="size-3 transition-transform group-data-[state=closed]:-rotate-90" />
@@ -113,7 +120,7 @@ export function PropPanel({ descriptor, values, onChange }: PropPanelProps) {
                 </Badge>
               )}
             </CollapsibleTrigger>
-            <CollapsibleContent className="flex flex-col gap-2 pt-2">
+            <CollapsibleContent className="flex flex-col gap-4 pt-2">
               {advancedProps.map((propDef) => (
                 <PropControl
                   key={propDef.name}
@@ -201,23 +208,27 @@ function PropControl({
 
     case 'enum': {
       const enumId = `prop-${propDef.name}`;
+      const enumValue = (value as string) ?? propDef.enumValues[0] ?? '';
       return (
         <div className="flex flex-col gap-1">
           <label htmlFor={enumId} className="text-xs text-muted-foreground">
             {humanizePropName(propDef.name)}
           </label>
-          <select
-            id={enumId}
-            value={(value as string) ?? propDef.enumValues[0] ?? ''}
-            onChange={(e) => onChange(e.target.value)}
-            className="h-7 rounded border border-input bg-background px-2 text-sm"
-          >
-            {propDef.enumValues.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
+          <Select value={enumValue} onValueChange={onChange}>
+            <SelectTrigger id={enumId} size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            {/* PropPanel renders inside a z-[60] PopoverContent (see
+                JsxComponentView.tsx); both portal to body, so Select's
+                default z-50 loses to the parent Popover. Bump above. */}
+            <SelectContent className="z-70">
+              {propDef.enumValues.map((v) => (
+                <SelectItem key={v} value={v}>
+                  {v}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       );
     }

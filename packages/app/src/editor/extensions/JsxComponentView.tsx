@@ -664,7 +664,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           side={showPlaceholder ? 'bottom' : 'right'}
           align={showPlaceholder ? 'center' : 'start'}
           sideOffset={showPlaceholder ? -4 : 8}
-          className="w-64 p-3 z-[60]"
+          className="w-64 p-3 z-[60] overflow-y-auto subtle-scrollbar max-h-[calc(100vh-2rem)] overscroll-contain"
           onCloseAutoFocus={
             isSelfClosingLeaf
               ? (e) => {
