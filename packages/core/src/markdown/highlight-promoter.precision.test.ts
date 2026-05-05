@@ -173,6 +173,61 @@ describe('highlight-promoter — multi-match', () => {
   });
 });
 
+describe('highlight-promoter — MDX `<mark>` JSX form', () => {
+  test('`<mark>hello</mark>` parses as highlight mark', () => {
+    const json = mdManager.parse('<mark>hello</mark>\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe('hello');
+  });
+
+  test('mid-paragraph `<mark>x</mark>` parses as highlight mark', () => {
+    const json = mdManager.parse('a <mark>x</mark> b\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe('x');
+    expect(plainTextOf(json)).toBe('a x b');
+  });
+
+  test('`<mark>` with surrounding emphasis carries both marks', () => {
+    const json = mdManager.parse('*<mark>x</mark>*\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(1);
+    const markTypes = (marks[0].marks ?? []).map((m) => m.type).sort();
+    expect(markTypes).toEqual(['emphasis', 'highlight']);
+  });
+
+  test('`<mark>**x**</mark>` carries both highlight + strong', () => {
+    const json = mdManager.parse('<mark>**x**</mark>\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe('x');
+    const markTypes = (marks[0].marks ?? []).map((m) => m.type).sort();
+    expect(markTypes).toEqual(['highlight', 'strong']);
+  });
+
+  test('`<mark color="red">` — attributes silently dropped', () => {
+    const json = mdManager.parse('<mark color="red">x</mark>\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe('x');
+    const out = mdManager.serialize(json);
+    expect(out).toBe('==x==\n');
+  });
+
+  test('two `<mark>` on one line', () => {
+    const json = mdManager.parse('<mark>a</mark> and <mark>b</mark>\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(2);
+    expect(marks.map((m) => m.text)).toEqual(['a', 'b']);
+  });
+
+  test('capitalized `<Mark>` does NOT promote (lowercase-only by design)', () => {
+    const json = mdManager.parse('<Mark>x</Mark>\n');
+    expect(collectHighlightedTextNodes(json).length).toBe(0);
+  });
+});
+
 describe('highlight-promoter — protection from code spans + math', () => {
   test('`==text==` inside a code span stays code', () => {
     const json = mdManager.parse('a `==text==` b\n');
@@ -218,6 +273,12 @@ describe('highlight-promoter — round-trip', () => {
     const json = mdManager.parse(src);
     const out = mdManager.serialize(json);
     expect(out).toBe(src);
+  });
+
+  test('`<mark>x</mark>` normalizes to `==x==` on round-trip', () => {
+    const json = mdManager.parse('<mark>x</mark>\n');
+    const out = mdManager.serialize(json);
+    expect(out).toBe('==x==\n');
   });
 
   test('`==text==` inside code span round-trips as code (not highlight)', () => {

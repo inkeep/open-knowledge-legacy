@@ -14,7 +14,7 @@ import type {
   WikiLinkMdast,
 } from './mdast-augmentation.ts';
 
-const HTML_PRIMITIVE_TAGS = new Set(['img', 'video', 'audio']);
+const HTML_PRIMITIVE_TAGS = new Set(['img', 'video', 'audio', 'mark']);
 
 function tryNativeHtmlPrimitive(node: MdxJsxFlowElement | MdxJsxTextElement): Element | null {
   const name = node.name;
@@ -77,6 +77,9 @@ const mdxJsxFlowHandler: Handler = (state, node) => {
   const jsx = node as MdxJsxFlowElement;
   const native = tryNativeHtmlPrimitive(jsx);
   if (native) {
+    if (jsx.children.length > 0) {
+      native.children = state.all(jsx) as ElementContent[];
+    }
     state.patch(node, native);
     return state.applyData(node, native);
   }
@@ -101,6 +104,9 @@ const mdxJsxTextHandler: Handler = (state, node) => {
   const jsx = node as MdxJsxTextElement;
   const native = tryNativeHtmlPrimitive(jsx);
   if (native) {
+    if (jsx.children.length > 0) {
+      native.children = state.all(jsx) as ElementContent[];
+    }
     state.patch(node, native);
     return state.applyData(node, native);
   }

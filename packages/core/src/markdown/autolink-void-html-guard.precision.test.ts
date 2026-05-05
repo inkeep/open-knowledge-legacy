@@ -97,3 +97,33 @@ describe('Guard precision: valid MDX survives protectFromMdx() unchanged', () =>
     }
   });
 });
+
+describe('Guard: `<mark>` paired-JSX exemption paths', () => {
+  test('paired `<mark>text</mark>` opener is not PUA-protected', () => {
+    const protected_ = protectFromMdx('<mark>text</mark>');
+    expect(protected_[0]).toBe('<');
+    expect(protected_).toBe('<mark>text</mark>');
+  });
+
+  test('closer `</mark>` is not PUA-protected', () => {
+    const protected_ = protectFromMdx('</mark>');
+    expect(protected_).toBe('</mark>');
+  });
+
+  test('self-closing `<mark/>` reaches remark-mdx unguarded', () => {
+    const protected_ = protectFromMdx('<mark/>');
+    expect(protected_[0]).toBe('<');
+    expect(protected_).toBe('<mark/>');
+  });
+
+  test('orphan `<mark>` opener (no closer) is PUA-protected', () => {
+    const protected_ = protectFromMdx('<mark>text without closer');
+    expect(protected_[0]).toBe('');
+  });
+
+  test('orphan `<mark>` mid-paragraph is PUA-protected', () => {
+    const protected_ = protectFromMdx('Some prose with <mark> no closer');
+    expect(protected_).toContain('mark>');
+    expect(protected_).not.toContain('<mark>');
+  });
+});
