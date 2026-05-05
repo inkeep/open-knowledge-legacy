@@ -1,4 +1,5 @@
 import { markerFor } from '../lib/doc-markers';
+import { installLongtaskObserver } from '../lib/longtask-observer';
 import { defineScenario } from '../lib/scenario';
 
 const DOC_A = process.env.OK_PERF_DOC_A ?? 'README';
@@ -40,6 +41,8 @@ export default defineScenario({
 
   async run(ctx) {
     const { page, opts } = ctx;
+
+    await installLongtaskObserver(page);
 
     await page.goto(`${opts.target}/#/${encodeURIComponent(DOC_A)}`, {
       waitUntil: 'domcontentloaded',

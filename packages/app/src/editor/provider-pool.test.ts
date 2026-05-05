@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import { randomUUID } from 'node:crypto';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseHocuspocusAuthToken } from '@inkeep/open-knowledge-server';
+import * as Y from 'yjs';
 import type { ClientPersistenceProvider } from './client-persistence';
 import { buildAuthToken, ProviderPool } from './provider-pool';
 import {
@@ -1276,6 +1277,156 @@ function makeFakeNode(): FakeContainer {
   };
   return node;
 }
+
+interface OkPerfCountersShape {
+  providerObserverFires: Record<string, number>;
+}
+
+function readFireCount(docName: string): number {
+  const counters = (globalThis as { __okPerfCounters?: OkPerfCountersShape }).__okPerfCounters;
+  return counters?.providerObserverFires[docName] ?? 0;
+}
+
+function hasFireCountEntry(docName: string): boolean {
+  const counters = (globalThis as { __okPerfCounters?: OkPerfCountersShape }).__okPerfCounters;
+  return counters !== undefined && docName in counters.providerObserverFires;
+}
+
+function resetFireCounts(): void {
+  const counters = (globalThis as { __okPerfCounters?: OkPerfCountersShape }).__okPerfCounters;
+  if (counters) counters.providerObserverFires = {};
+}
+
+describe('US-003 (cap-calibration-probes): observer-fire counter for M5', () => {
+  beforeEach(() => {
+    resetFireCounts();
+  });
+  afterEach(() => {
+    pool?.dispose();
+    resetFireCounts();
+  });
+
+  test('increments on REMOTE transactions (Y.applyUpdate from a peer doc)', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc-remote');
+    if (!entry) throw new Error('expected entry');
+
+    const peerDoc = new Y.Doc();
+    peerDoc.getText('source').insert(0, 'hello-from-peer');
+    const update = Y.encodeStateAsUpdate(peerDoc);
+    Y.applyUpdate(entry.provider.document, update);
+
+    expect(readFireCount('doc-remote')).toBeGreaterThanOrEqual(1);
+  });
+
+  test('does NOT increment on LOCAL transactions (transact)', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc-local');
+    if (!entry) throw new Error('expected entry');
+
+    entry.provider.document.transact(() => {
+      entry.provider.document.getText('source').insert(0, 'local-write');
+    });
+
+    expect(readFireCount('doc-local')).toBe(0);
+  });
+
+  test('counter is per-docName (multiple docs tracked independently)', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const a = pool.open('doc-a');
+    const b = pool.open('doc-b');
+    if (!a || !b) throw new Error('expected entries');
+
+    const peerA = new Y.Doc();
+    peerA.getText('source').insert(0, 'a');
+    Y.applyUpdate(a.provider.document, Y.encodeStateAsUpdate(peerA));
+
+    const peerB = new Y.Doc();
+    peerB.getText('source').insert(0, 'b');
+    Y.applyUpdate(b.provider.document, Y.encodeStateAsUpdate(peerB));
+    peerB.getText('source').insert(1, '2');
+    Y.applyUpdate(b.provider.document, Y.encodeStateAsUpdate(peerB));
+
+    expect(readFireCount('doc-a')).toBe(1);
+    expect(readFireCount('doc-b')).toBeGreaterThanOrEqual(2);
+  });
+
+  test('counter is removed on close (pool teardown path for evict)', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc-evict');
+    if (!entry) throw new Error('expected entry');
+    const peer = new Y.Doc();
+    peer.getText('source').insert(0, 'x');
+    Y.applyUpdate(entry.provider.document, Y.encodeStateAsUpdate(peer));
+    expect(hasFireCountEntry('doc-evict')).toBe(true);
+
+    pool.close('doc-evict');
+
+    expect(hasFireCountEntry('doc-evict')).toBe(false);
+  });
+
+  test('counter is removed on recycle (Try-Again retry path)', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc-recycle');
+    if (!entry) throw new Error('expected entry');
+    pool.setActive('doc-recycle');
+    const peer = new Y.Doc();
+    peer.getText('source').insert(0, 'y');
+    Y.applyUpdate(entry.provider.document, Y.encodeStateAsUpdate(peer));
+    expect(hasFireCountEntry('doc-recycle')).toBe(true);
+
+    pool.recycle('doc-recycle');
+
+    expect(readFireCount('doc-recycle')).toBe(0);
+  });
+
+  test('counter is removed on dispose (pool teardown path for all entries)', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const a = pool.open('doc-disp-a');
+    const b = pool.open('doc-disp-b');
+    if (!a || !b) throw new Error('expected entries');
+    const peer = new Y.Doc();
+    peer.getText('source').insert(0, 'z');
+    Y.applyUpdate(a.provider.document, Y.encodeStateAsUpdate(peer));
+    Y.applyUpdate(b.provider.document, Y.encodeStateAsUpdate(peer));
+    expect(hasFireCountEntry('doc-disp-a')).toBe(true);
+    expect(hasFireCountEntry('doc-disp-b')).toBe(true);
+
+    pool.dispose();
+
+    expect(hasFireCountEntry('doc-disp-a')).toBe(false);
+    expect(hasFireCountEntry('doc-disp-b')).toBe(false);
+  });
+
+  test('existing setupObservers / bridge is NOT modified (regression guard)', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc-nomod');
+    if (!entry) throw new Error('expected entry');
+    expect(entry.bridgeSetupFailed).toBe(false);
+
+    const peer = new Y.Doc();
+    peer.getText('source').insert(0, 'remote');
+    Y.applyUpdate(entry.provider.document, Y.encodeStateAsUpdate(peer));
+
+    expect(entry.bridgeSetupFailed).toBe(false);
+    expect(readFireCount('doc-nomod')).toBeGreaterThanOrEqual(1);
+  });
+
+  test('globalThis.__okPerfCounters surface is reachable and well-shaped', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.open('doc-shape');
+    const peer = new Y.Doc();
+    peer.getText('source').insert(0, 'probe');
+    const entry = pool.entries.get('doc-shape');
+    if (!entry) throw new Error('expected entry');
+    Y.applyUpdate(entry.provider.document, Y.encodeStateAsUpdate(peer));
+
+    const counters = (globalThis as { __okPerfCounters?: OkPerfCountersShape }).__okPerfCounters;
+    expect(counters).toBeDefined();
+    expect(typeof counters?.providerObserverFires).toBe('object');
+    expect(counters?.providerObserverFires['doc-shape']).toBeGreaterThanOrEqual(1);
+  });
+});
 
 describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () => {
   test('close() evicts both TipTap + CM cache entries before destroying the provider', async () => {

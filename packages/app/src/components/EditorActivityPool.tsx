@@ -1,10 +1,7 @@
 /**
  * EditorActivityPool — bounded `<Activity>` rendering for the most-recently-active
- * pooled docs.
- *
- * Spec: SPEC.md §9 system design + §10 D1 (hybrid Activity/Suspense) + DX9
- * (`ACTIVITY_MOUNT_LIMIT = 3` decoupled from `MAX_POOL = 10`) + DX7
- * (`__system__` defense-in-depth filter).
+ * pooled docs. `ACTIVITY_MOUNT_LIMIT = 3` decouples from `MAX_POOL = 10`;
+ * `__system__` is filtered out as a defense-in-depth.
  *
  * Why `ACTIVITY_MOUNT_LIMIT < MAX_POOL`: `setupObservers` (provider-pool.ts)
  * wires Y.js bidirectional bridges that fire regardless of Activity mode —
@@ -23,13 +20,12 @@
  *   Each `<Activity>` wraps its own `<DocumentErrorBoundary>` + `<Suspense>`.
  *   Rationale: `<Activity mode="hidden">` silences suspends in the hidden
  *   subtree (good) but does NOT intercept synchronous throws from
- *   `use(rejectedPromise)` (React 19.2 behavior — verified in regression
- *   QA-023/024). A single global boundary above the pool caused any hidden
- *   doc's cached rejection to re-throw into the visible UI when a healthy
- *   doc was active. Scoping per-Activity confines each error to its own
- *   subtree — hidden Activities' errors render into hidden DOM
- *   (`display:none`), and become visible again naturally when the user
- *   navigates back (QA-024 cached-rejection persistence).
+ *   `use(rejectedPromise)` (React 19.2 behavior). A single global boundary
+ *   above the pool caused any hidden doc's cached rejection to re-throw
+ *   into the visible UI when a healthy doc was active. Scoping per-Activity
+ *   confines each error to its own subtree — hidden Activities' errors
+ *   render into hidden DOM (`display:none`), and become visible again
+ *   naturally when the user navigates back.
  *
  *   `resetKeys={[entry.docName]}` is intentionally stable for each Activity
  *   instance — auto-reset on navigation is not needed when the boundary is
@@ -55,6 +51,7 @@ import { isSystemDoc } from '@/editor/is-system-doc';
 import type { ServerRestartRecoveryState } from '@/editor/provider-pool';
 import { TiptapEditor } from '@/editor/TiptapEditor';
 import { mark, ProfilerBoundary } from '@/lib/perf';
+import { readNumericOverride } from '@/lib/perf/env-override';
 import { DocumentBoundary } from './DocumentBoundary';
 import { DocumentErrorBoundary } from './DocumentErrorBoundary';
 import { EditorSkeleton } from './EditorSkeleton';
@@ -64,35 +61,34 @@ import { Button } from './ui/button';
 
 /**
  * Large-doc threshold in Y.Text characters. Above this, the non-active editor
- * is defer-mounted on cold load (S1 fix, US-008 / SPEC D12 DIRECTED) instead of
- * pre-mounting both per precedent #18(b)'s small-to-medium-doc default. Once the
- * user toggles to the deferred mode, that editor mounts and stays mounted — so
- * subsequent toggles remain CSS-only and cost nothing.
+ * is defer-mounted on cold load instead of pre-mounting both per
+ * precedent #18(b)'s small-to-medium-doc default. Once the user toggles to
+ * the deferred mode, that editor mounts and stays mounted — so subsequent
+ * toggles remain CSS-only and cost nothing.
  *
  * Value rationale (500_000 chars ≈ 500 KB plain text):
  *   - README.md / AGENTS.md / CLAUDE.md (≤150 KB) — BELOW. No change from
  *     pre-mount-both default; toggle stays instant.
- *   - PROJECT.md (3.25 MB / 1.49 M chars in this worktree, up to 9.7 MB / 25k
- *     lines in the SPEC's original measurement) — ABOVE. Cold load skips the
- *     non-active editor's initial mount+parse; first toggle pays the cost;
- *     subsequent toggles are instant.
+ *   - PROJECT.md (multi-MB) — ABOVE. Cold load skips the non-active
+ *     editor's initial mount+parse; first toggle pays the cost; subsequent
+ *     toggles are instant.
  *
- * The threshold is a tuning knob, not a contract — see evidence/s1-diagnosis.md
- * for the trade-off analysis. Moving it UP regresses the S1 fix for smaller
- * "large" docs; moving it DOWN unnecessarily delays first-toggle UX for
- * medium docs where pre-mount-both was already fast enough.
+ * The threshold is a tuning knob, not a contract. Moving it UP regresses
+ * the fix for smaller "large" docs; moving it DOWN unnecessarily delays
+ * first-toggle UX for medium docs where pre-mount-both was already fast
+ * enough.
  *
- * FIRST-TOGGLE COST (US-008 code-trace, 2026-04-20): On a 3.25 MB PROJECT doc,
- * the first mode toggle after cold load pays the deferred editor's cold mount
- * — measured at `toSourceMs=223 ms`. Proportional scaling to the original
- * 9.7 MB workhorse puts first toggle in the 500–800 ms range. Perceptible but
- * well below the ~1 s hang threshold. Subsequent toggles remain CSS-only.
- * Future engineers: do not assume defer-mount is free at the toggle boundary;
- * it trades cold-load latency for one-time first-toggle latency on the
- * deferred mode. See `ACTIVITY_MOUNT_LIMIT` below — both constants are parts
- * of the same Activity-mount hygiene pattern.
+ * FIRST-TOGGLE COST: On a 3.25 MB doc, the first mode toggle after cold
+ * load pays the deferred editor's cold mount — measured at
+ * `toSourceMs ≈ 223 ms`. Proportional scaling to a ~9.7 MB doc puts first
+ * toggle in the 500–800 ms range. Perceptible but well below the ~1 s
+ * hang threshold. Subsequent toggles remain CSS-only. Future engineers:
+ * do not assume defer-mount is free at the toggle boundary; it trades
+ * cold-load latency for one-time first-toggle latency on the deferred
+ * mode. See `ACTIVITY_MOUNT_LIMIT` below — both constants are parts of
+ * the same Activity-mount hygiene pattern.
  */
-export const LARGE_DOC_CHAR_THRESHOLD = 500_000;
+export const LARGE_DOC_CHAR_THRESHOLD = readNumericOverride('LARGE_DOC_CHAR_THRESHOLD', 500_000);
 
 interface EditorMountGateArgs {
   ytextLength: number;
@@ -119,7 +115,20 @@ export function computeEditorMountGate(args: EditorMountGateArgs): EditorMountGa
   return { renderSource, renderVisual, isLarge: true };
 }
 
-export const ACTIVITY_MOUNT_LIMIT = 3;
+interface ShouldEmitFirstToggleArgs {
+  isLarge: boolean;
+  renderSource: boolean;
+  renderVisual: boolean;
+  hasEmittedFirstToggle: boolean;
+}
+
+export function shouldEmitFirstToggle(args: ShouldEmitFirstToggleArgs): boolean {
+  if (args.hasEmittedFirstToggle) return false;
+  if (!args.isLarge) return false;
+  return args.renderSource && args.renderVisual;
+}
+
+export const ACTIVITY_MOUNT_LIMIT = readNumericOverride('ACTIVITY_MOUNT_LIMIT', 3);
 
 export function loadSourceEditorModule() {
   return import('@/editor/SourceEditor');
@@ -454,13 +463,41 @@ function ActivityEntry({
     isSourceMode,
   ]);
 
+  const [hasEmittedFirstToggle, setHasEmittedFirstToggle] = useState(false);
+  useEffect(() => {
+    if (
+      !shouldEmitFirstToggle({
+        isLarge: gate.isLarge,
+        renderSource: gate.renderSource,
+        renderVisual: gate.renderVisual,
+        hasEmittedFirstToggle,
+      })
+    ) {
+      return;
+    }
+    mark('ok/cold/first-toggle', {
+      docName: entry.docName,
+      ytextLength,
+      modeEnteredFirst: isSourceMode ? 'source' : 'visual',
+    });
+    setHasEmittedFirstToggle(true);
+  }, [
+    hasEmittedFirstToggle,
+    gate.isLarge,
+    gate.renderSource,
+    gate.renderVisual,
+    entry.docName,
+    ytextLength,
+    isSourceMode,
+  ]);
+
   return (
     <Activity mode={isActive ? 'visible' : 'hidden'} name={`editor:${entry.docName}`}>
       {/* Per-Activity scroll container with save/restore across Activity
           visibility flips. See ScrollPreservingContainer for the full
           rationale. Hoisting the scroller to EditorArea would make scroll
           state cross-document and collapse scrollHeight on hidden-mode
-          effect cleanup (QA-002 / SPEC US-007/F1). */}
+          effect cleanup. */}
       <ScrollPreservingContainer isActive={isActive}>
         {recoveryView ? (
           <ServerRestartRecoveryPanel view={recoveryView} />
@@ -472,7 +509,7 @@ function ActivityEntry({
             not the globally-active doc. This keeps the error state tied to
             the Activity instance: a healthy doc becoming active does not
             reset an errored doc's boundary, and revisiting an errored doc
-            re-reveals the same error UI (QA-024). */}
+            re-reveals the same error UI. */}
             <DocumentErrorBoundary
               activeDocName={entry.docName}
               previousDocName={previousDocName}
@@ -486,8 +523,8 @@ function ActivityEntry({
             preview to the real editor (different typography + spacing)
             was jarring enough that we dropped the preview in favor of the
             neutral skeleton. See commit history for `FallbackDocumentRender`
-            removal. The perceived-first-paint budget (spec G5 <500ms P95)
-            still applies — the skeleton meets it trivially.
+            removal. The perceived-first-paint budget (<500ms P95) still
+            applies — the skeleton meets it trivially.
           */}
               <Suspense fallback={<EditorSkeleton />}>
                 <DocumentBoundary docName={entry.docName} provider={entry.provider}>
@@ -516,7 +553,7 @@ function ActivityEntry({
                         Hidden in source mode (CodeMirror surfaces raw YAML).
                         The panel itself returns null when the doc has no
                         frontmatter — empty-state shows the toolbar trigger in
-                        EditorHeader instead (see D17). */}
+                        EditorHeader instead. */}
                     {!isSourceMode && <PropertyPanel provider={entry.provider} />}
                     <div className="relative flex-1">
                       {gate.renderSource ? (

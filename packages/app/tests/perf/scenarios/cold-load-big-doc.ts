@@ -1,3 +1,4 @@
+import { installLongtaskObserver, readLongtasks } from '../lib/longtask-observer';
 import { defineScenario } from '../lib/scenario';
 
 const BIG_DOC = process.env.OK_PERF_BIG_DOC ?? 'PROJECT';
@@ -6,32 +7,14 @@ const PM_READY_CHARS = 500;
 
 const PM_READY_TIMEOUT_MS = 90_000;
 
-interface LongTaskRecord {
-  startTime: number;
-  duration: number;
-  name: string;
-}
-
 export default defineScenario({
   name: 'cold-load-big-doc',
-  description:
-    'S1 repro: cold-load a large doc (default PROJECT.md) and measure TTI + longest task.',
+  description: 'Cold-load a large doc (default PROJECT.md) and measure TTI + longest task.',
 
   async run(ctx) {
     const { page, opts } = ctx;
 
-    await page.addInitScript(() => {
-      const store: { startTime: number; duration: number; name: string }[] = [];
-      (globalThis as unknown as { __okScenLongTasks: typeof store }).__okScenLongTasks = store;
-      try {
-        const obs = new PerformanceObserver((list) => {
-          for (const e of list.getEntries()) {
-            store.push({ startTime: e.startTime, duration: e.duration, name: e.name });
-          }
-        });
-        obs.observe({ type: 'longtask', buffered: true });
-      } catch {}
-    });
+    await installLongtaskObserver(page);
 
     const url = `${opts.target}/#/${encodeURIComponent(BIG_DOC)}`;
     const startWall = Date.now();
@@ -63,11 +46,7 @@ export default defineScenario({
     ctx.recordMetric('coldLoadMs', rendered ? coldLoadMs : -1);
     ctx.recordMetric('rendered', rendered);
 
-    const longTasks = await page.evaluate(() => {
-      const store = (globalThis as unknown as { __okScenLongTasks?: LongTaskRecord[] })
-        .__okScenLongTasks;
-      return store ?? [];
-    });
+    const longTasks = await readLongtasks(page);
     const longestTaskMs = longTasks.reduce((m, t) => Math.max(m, t.duration), 0);
     ctx.recordMetric('observedLongTaskCount', longTasks.length);
     ctx.recordMetric('observedLongestTaskMs', Math.round(longestTaskMs));
@@ -78,6 +57,74 @@ export default defineScenario({
         return el ? (el.textContent ?? '').length : 0;
       });
       ctx.recordMetric('proseMirrorTextLen', pmLen);
+    }
+
+    if (rendered) {
+      const clickAt = await page.evaluate(() => performance.now());
+      ctx.recordMetric('firstToggleClickAtPerf', clickAt);
+
+      const sourceToggle = page.locator('[aria-label="Markdown source"]').first();
+      let clicked = false;
+      try {
+        await sourceToggle.waitFor({ state: 'visible', timeout: 5_000 });
+        await sourceToggle.click({ timeout: 5_000 });
+        clicked = true;
+      } catch {
+        ctx.note('firstToggle skipped — Markdown-source toggle not found/clickable');
+        ctx.recordMetric('firstToggleMs', -1);
+        ctx.recordMetric('firstToggleSkipped', 'toggle-not-found');
+      }
+
+      if (clicked) {
+        const FIRST_TOGGLE_TIMEOUT_MS = 10_000;
+        let markStartTime: number | null = null;
+        try {
+          markStartTime = await page.evaluate(
+            ({ minStartTime, timeoutMs }) => {
+              return new Promise<number | null>((resolve) => {
+                const deadline = performance.now() + timeoutMs;
+                const checkExisting = (): number | null => {
+                  const entries = performance.getEntriesByName('ok/cold/first-toggle');
+                  for (const e of entries) {
+                    if (e.startTime >= minStartTime) return e.startTime;
+                  }
+                  return null;
+                };
+                const existing = checkExisting();
+                if (existing !== null) {
+                  resolve(existing);
+                  return;
+                }
+                const interval = setInterval(() => {
+                  const found = checkExisting();
+                  if (found !== null) {
+                    clearInterval(interval);
+                    resolve(found);
+                    return;
+                  }
+                  if (performance.now() > deadline) {
+                    clearInterval(interval);
+                    resolve(null);
+                  }
+                }, 50);
+              });
+            },
+            { minStartTime: clickAt, timeoutMs: FIRST_TOGGLE_TIMEOUT_MS },
+          );
+        } catch {
+          markStartTime = null;
+        }
+
+        if (markStartTime === null) {
+          ctx.recordMetric('firstToggleMs', -1);
+          ctx.recordMetric('firstToggleSkipped', 'both-editors-pre-mounted');
+          ctx.note('firstToggle skipped — no ok/cold/first-toggle mark within 10s (small doc)');
+        } else {
+          const firstToggleMs = Math.max(0, Math.round(markStartTime - clickAt));
+          ctx.recordMetric('firstToggleMs', firstToggleMs);
+          ctx.note(`firstToggleMs=${firstToggleMs}`);
+        }
+      }
     }
   },
 });

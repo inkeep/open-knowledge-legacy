@@ -2807,3 +2807,23 @@ button:active:not(:disabled) {
   outline: 2px solid var(--color-ring);
   outline-offset: 1px;
 }
+
+/* Block-chunked content-visibility:auto for large-doc render. Applied to
+   top-level direct doc children via PM Decoration.node from
+   `chunk-wrapper-decoration.ts`. Chromium ≥85 / Firefox ≥123 / Safari ≥18
+   skip layout/paint for off-viewport blocks; on intersection, the block
+   re-renders within frame budget. `contain-intrinsic-size` reserves space
+   so the scrollbar position stays accurate across viewport edges
+   (preventing scroll-jump on materialize). The 80px default approximates
+   a single text paragraph; lists / tables / headings reserve more
+   accurately via their own computed style once intersected.
+
+   Composes with `.ok-mode-hidden`: when an ancestor is CV:hidden,
+   descendant CV:auto is moot until the ancestor returns to visible.
+
+   Scoped to `.ProseMirror` so source-mode CodeMirror DOM is untouched
+   (CM6 has its own line-oriented viewport rendering). */
+.ProseMirror .ok-chunk-wrapper {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 var(--ok-cv-h, 80px);
+}

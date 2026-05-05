@@ -24,6 +24,7 @@ const editorCtorStartTimes = new WeakMap<object, number>();
 
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { mark } from '@/lib/perf';
+import { wrapExtensionsWithTiming } from '@/lib/perf/cold-mount-instrumentation';
 import { useIdentity } from '../presence/identity';
 import { registerEditor, unregisterEditor } from './active-editor';
 import { buildAwarenessUser } from './awareness-user';
@@ -42,12 +43,10 @@ import { TableControlsMenu } from './table-controls/TableControlsMenu';
 import { getEditorView } from './utils/get-editor-view';
 
 /**
- * Custom cursor renderer. Post-US-005 (multi-agent-presence FR-3 + FR-10),
- * agents no longer publish per-doc awareness — so this renderer only ever
- * sees humans. The former `user.type === 'agent'` short-circuit was removed
- * because it became unreachable after `AwarenessUser.type` narrowed to
- * `'human'`. NG1 (no fake-cursor animation for agents) is now satisfied
- * by absence, not by a conditional.
+ * Custom cursor renderer. Agents do not publish per-doc awareness, so this
+ * renderer only ever sees humans. `AwarenessUser.type` narrows to `'human'`
+ * statically; an explicit `user.type === 'agent'` short-circuit would be
+ * unreachable.
  */
 function renderCursor(user: Record<string, string>): HTMLElement {
   const cursor = document.createElement('span');
@@ -155,7 +154,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
               clipboardSerializer: clipboard.html.serializer,
               handlePaste: (view, event) => clipboard.paste(view, event),
             },
-            extensions: [
+            extensions: wrapExtensionsWithTiming([
               ...sharedExtensions.map((ext) => {
                 if (ext.name === 'link' || ext.name === 'wikiLink') {
                   return ext.configure({ docName: provider.configuration.name ?? '' });
@@ -191,7 +190,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
                   ];
                 },
               }),
-            ],
+            ]),
           });
           return {
             editor: tipTapEditor,

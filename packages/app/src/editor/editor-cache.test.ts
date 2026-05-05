@@ -1518,3 +1518,144 @@ describe('telemetry marks', () => {
     expect(stats.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('US-001 (cap-calibration-probes): cache-hit reparent span marks', () => {
+  beforeEach(() => {
+    __resetCacheForTests();
+    try {
+      performance.clearMarks('ok/cache/reparent-start');
+      performance.clearMarks('ok/cache/reparent-end');
+      performance.clearMeasures('ok/cache/reparent-start');
+      performance.clearMeasures('ok/cache/reparent-end');
+    } catch {}
+  });
+  afterEach(() => __resetCacheForTests());
+
+  test('TipTap cache-hit emits both ok/cache/reparent-start and ok/cache/reparent-end', () => {
+    const h = makeTiptapHarness('doc-a');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    try {
+      performance.clearMeasures('ok/cache/reparent-start');
+      performance.clearMeasures('ok/cache/reparent-end');
+    } catch {}
+    mountTiptapEditor({
+      docName: h.docName,
+      container: makeNode() as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    const starts = performance.getEntriesByName('ok/cache/reparent-start');
+    const ends = performance.getEntriesByName('ok/cache/reparent-end');
+    expect(starts.length).toBeGreaterThanOrEqual(1);
+    expect(ends.length).toBeGreaterThanOrEqual(1);
+    const firstStart = starts[0]?.startTime ?? 0;
+    const firstEnd = ends[0]?.startTime ?? 0;
+    expect(firstEnd).toBeGreaterThanOrEqual(firstStart);
+  });
+
+  test('TipTap cache-MISS does NOT emit reparent marks', () => {
+    const h = makeTiptapHarness('doc-a');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    expect(performance.getEntriesByName('ok/cache/reparent-start').length).toBe(0);
+    expect(performance.getEntriesByName('ok/cache/reparent-end').length).toBe(0);
+  });
+
+  test('TipTap kill-switch / __uncached path does NOT emit reparent marks', () => {
+    const h = makeTiptapHarness('big-doc');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+      sizeStats: { viewCount: 100, bytes: 1_000_000 },
+    });
+    expect(performance.getEntriesByName('ok/cache/reparent-start').length).toBe(0);
+    expect(performance.getEntriesByName('ok/cache/reparent-end').length).toBe(0);
+  });
+
+  test('CM6 cache-hit emits both ok/cache/reparent-start and ok/cache/reparent-end', () => {
+    const h = makeCmHarness('cm-doc-a');
+    mountCmEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    try {
+      performance.clearMeasures('ok/cache/reparent-start');
+      performance.clearMeasures('ok/cache/reparent-end');
+    } catch {}
+    mountCmEditor({
+      docName: h.docName,
+      container: makeNode() as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    const starts = performance.getEntriesByName('ok/cache/reparent-start');
+    const ends = performance.getEntriesByName('ok/cache/reparent-end');
+    expect(starts.length).toBeGreaterThanOrEqual(1);
+    expect(ends.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('CM6 cache-MISS does NOT emit reparent marks', () => {
+    const h = makeCmHarness('cm-doc-a');
+    mountCmEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    expect(performance.getEntriesByName('ok/cache/reparent-start').length).toBe(0);
+    expect(performance.getEntriesByName('ok/cache/reparent-end').length).toBe(0);
+  });
+
+  test('reparent marks fire BEFORE ok/cache/hit (semantic ordering)', () => {
+    const h = makeTiptapHarness('doc-order');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    try {
+      performance.clearMeasures('ok/cache/reparent-start');
+      performance.clearMeasures('ok/cache/reparent-end');
+      performance.clearMeasures('ok/cache/hit');
+    } catch {}
+    mountTiptapEditor({
+      docName: h.docName,
+      container: makeNode() as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    const start = performance.getEntriesByName('ok/cache/reparent-start')[0];
+    const end = performance.getEntriesByName('ok/cache/reparent-end')[0];
+    const hit = performance.getEntriesByName('ok/cache/hit')[0];
+    expect(start).toBeDefined();
+    expect(end).toBeDefined();
+    expect(hit).toBeDefined();
+    if (start && end && hit) {
+      expect(start.startTime).toBeLessThanOrEqual(end.startTime);
+      expect(end.startTime).toBeLessThanOrEqual(hit.startTime);
+    }
+  });
+
+  test('existing ok/cache/hit emission is preserved (regression guard for AC 5)', () => {
+    const h = makeTiptapHarness('doc-preserve');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    try {
+      performance.clearMeasures('ok/cache/hit');
+    } catch {}
+    mountTiptapEditor({
+      docName: h.docName,
+      container: makeNode() as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    expect(performance.getEntriesByName('ok/cache/hit').length).toBeGreaterThanOrEqual(1);
+  });
+});

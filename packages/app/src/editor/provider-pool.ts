@@ -6,6 +6,7 @@ import type {
 } from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
 import * as Y from 'yjs';
+import { readNumericOverride } from '../lib/perf/env-override';
 import { mark } from '../lib/perf/mark';
 import {
   type ClientPersistenceProvider,
@@ -64,6 +65,7 @@ interface ActivePoolEntry extends PoolEntryBase {
   kind: 'active';
   persistence: ClientPersistenceProvider | null;
   observerCleanup: (() => void) | null;
+  observerFireCounterCleanup: (() => void) | null;
   pendingRecycleTimer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -71,10 +73,40 @@ interface TearingDownPoolEntry extends PoolEntryBase {
   kind: 'tearing-down';
   persistence: null;
   observerCleanup: null;
+  observerFireCounterCleanup: null;
   pendingRecycleTimer: null;
 }
 
 type PoolEntry = ActivePoolEntry | TearingDownPoolEntry;
+
+type ObserverCounterMap = { providerObserverFires: Record<string, number> };
+const counterGlobal = globalThis as unknown as { __okPerfCounters?: ObserverCounterMap };
+
+function bumpObserverFire(docName: string): void {
+  if (import.meta.env.PROD === true) return;
+  let bag = counterGlobal.__okPerfCounters;
+  if (!bag) {
+    bag = { providerObserverFires: {} };
+    counterGlobal.__okPerfCounters = bag;
+  }
+  bag.providerObserverFires[docName] = (bag.providerObserverFires[docName] ?? 0) + 1;
+}
+
+function clearObserverFireCounter(docName: string): void {
+  if (import.meta.env.PROD === true) return;
+  const bag = counterGlobal.__okPerfCounters;
+  if (!bag) return;
+  delete bag.providerObserverFires[docName];
+}
+
+function installProviderObserverCounter(doc: Y.Doc, docName: string): () => void {
+  if (import.meta.env.PROD === true) return () => {};
+  const handler = (_doc: Y.Doc, transactions: Y.Transaction[]) => {
+    if (transactions.some((tx) => !tx.local)) bumpObserverFire(docName);
+  };
+  doc.on('afterAllTransactions', handler);
+  return () => doc.off('afterAllTransactions', handler);
+}
 
 type PoolChangeCallback = () => void;
 
@@ -106,7 +138,7 @@ const FORCE_SYNC_INTERVAL_MS = 5_000;
 
 const MAX_BUFFER_BYTES = 1 * 1024 * 1024;
 
-export const MAX_POOL = 10;
+export const MAX_POOL = readNumericOverride('MAX_POOL', 10);
 
 /**
  * Build the stringified JSON `token` HocuspocusProvider sends on every
@@ -514,10 +546,34 @@ export class ProviderPool {
     });
 
     const persistenceServerInstanceId = this.cachedServerInstanceId;
+    const idbAttachStart = import.meta.env.PROD === true ? 0 : performance.now();
     const persistence: ClientPersistenceProvider | null =
       persistenceServerInstanceId !== null && persistenceServerInstanceId.length > 0
         ? this.buildPersistence(persistenceServerInstanceId, docName, provider.document)
         : null;
+    if (import.meta.env.PROD !== true) {
+      if (persistence !== null) {
+        mark(
+          'ok/pool/idb-attach',
+          { docName, serverInstanceId: persistenceServerInstanceId ?? '' },
+          { startTime: idbAttachStart, duration: 0 },
+        );
+        persistence.whenSynced.then(() => {
+          const now = performance.now();
+          mark(
+            'ok/pool/synced-after-idb',
+            { docName, durationMs: Math.round((now - idbAttachStart) * 1000) / 1000 },
+            { startTime: idbAttachStart, duration: now - idbAttachStart },
+          );
+        });
+      } else {
+        mark(
+          'ok/pool/idb-bypass-no-epoch',
+          { docName },
+          { startTime: idbAttachStart, duration: 0 },
+        );
+      }
+    }
 
     const entry: ActivePoolEntry = {
       kind: 'active',
@@ -526,6 +582,7 @@ export class ProviderPool {
       lastServerSyncedSV: null,
       lastDiskAckedSV: null,
       observerCleanup: null,
+      observerFireCounterCleanup: installProviderObserverCounter(provider.document, docName),
       syncState: 'connecting',
       docName,
       lastAccessedAt: Date.now(),
@@ -951,6 +1008,7 @@ export class ProviderPool {
     if (entry.kind === 'tearing-down') return;
 
     const observerCleanup = entry.observerCleanup;
+    const observerFireCounterCleanup = entry.observerFireCounterCleanup;
     const persistence = entry.persistence;
     const pendingRecycleTimer = entry.pendingRecycleTimer;
     const docName = entry.docName;
@@ -959,6 +1017,7 @@ export class ProviderPool {
     torn.kind = 'tearing-down';
     torn.persistence = null;
     torn.observerCleanup = null;
+    torn.observerFireCounterCleanup = null;
     torn.pendingRecycleTimer = null;
 
     if (pendingRecycleTimer) clearTimeout(pendingRecycleTimer);
@@ -966,6 +1025,8 @@ export class ProviderPool {
     invalidateSyncPromise(docName);
     this.fireEvict(docName);
     observerCleanup?.();
+    observerFireCounterCleanup?.();
+    clearObserverFireCounter(docName);
 
     if (persistence !== null) {
       const pendingPersistenceDestroy = persistence.destroy();
