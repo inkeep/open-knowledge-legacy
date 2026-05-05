@@ -24,7 +24,7 @@ function resolveNotarizeCredentials() {
     APPLE_KEYCHAIN,
   } = process.env;
 
-  const hasAnyPassword = Boolean(APPLE_ID || APPLE_APP_SPECIFIC_PASSWORD || APPLE_TEAM_ID);
+  const hasAnyPassword = Boolean(APPLE_ID || APPLE_APP_SPECIFIC_PASSWORD);
   const hasAnyApiKey = Boolean(APPLE_API_KEY || APPLE_API_KEY_ID || APPLE_API_ISSUER);
   const hasAnyKeychain = Boolean(APPLE_KEYCHAIN_PROFILE || APPLE_KEYCHAIN);
 

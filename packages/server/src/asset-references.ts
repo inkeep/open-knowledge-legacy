@@ -52,7 +52,7 @@ function decodeHrefPath(rawHref: string): string {
   }
 }
 
-export function mediaKindForAssetPath(path: string): InlineAssetMediaKind | null {
+function mediaKindForAssetPath(path: string): InlineAssetMediaKind | null {
   const ext = extname(path).slice(1).toLowerCase();
   return mediaKindForSidebarAssetExtension(ext);
 }

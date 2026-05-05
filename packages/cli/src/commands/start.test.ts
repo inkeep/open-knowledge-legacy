@@ -14,6 +14,8 @@ import {
   buildIdleShutdownHandler,
   decideUiSpawn,
   spawnOkUi,
+  startCommand,
+  tryDescribeLockCollision,
   type UiSpawnDecision,
 } from './start.ts';
 import { closeHttpServers, startUiServer, type UiServerHandle } from './ui.ts';
@@ -829,5 +831,173 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
 
     expect(booted.uiSpawnDecision).toEqual({ action: 'spawn', reason: 'absent' });
     expect(booted.resolvedUiPort).toBeNull();
+  });
+});
+
+describe('startCommand — --mode flag wiring', () => {
+  function fakeConfig() {
+    return makeTestConfig();
+  }
+
+  function quietCommand() {
+    const cmd = startCommand(fakeConfig);
+    cmd.exitOverride();
+    cmd.configureOutput({ writeOut: () => {}, writeErr: () => {} });
+    return cmd;
+  }
+
+  test('--mode <value> rejects values outside the browser|app enum (FR13)', () => {
+    const cmd = quietCommand();
+    expect(() => cmd.parse(['--mode', 'desktop'], { from: 'user' })).toThrow(
+      /--mode must be 'browser' or 'app'/,
+    );
+  });
+
+  test("--mode 'browser' parses successfully (no exit)", () => {
+    const cmd = quietCommand();
+    let helpDisplayed = false;
+    try {
+      cmd.parse(['--mode', 'browser', '--help'], { from: 'user' });
+    } catch (err) {
+      helpDisplayed = (err as { code?: string }).code === 'commander.helpDisplayed';
+    }
+    expect(helpDisplayed).toBe(true);
+  });
+
+  test('--mode=app + --open exits with code 2 (FR6 mutual exclusion)', async () => {
+    const cmd = quietCommand();
+
+    let capturedExitCode: number | undefined;
+    let capturedStderr = '';
+    const originalExit = process.exit;
+    const originalStderrWrite = process.stderr.write.bind(process.stderr);
+    process.exit = ((code?: number) => {
+      capturedExitCode = code;
+      throw new Error('exit-stub');
+    }) as never;
+    process.stderr.write = ((chunk: unknown) => {
+      capturedStderr += String(chunk);
+      return true;
+    }) as never;
+
+    try {
+      await cmd.parseAsync(['--mode', 'app', '--open'], { from: 'user' });
+    } catch (err) {
+      if ((err as Error).message !== 'exit-stub') throw err;
+    } finally {
+      process.exit = originalExit;
+      process.stderr.write = originalStderrWrite;
+    }
+
+    expect(capturedExitCode).toBe(2);
+    expect(capturedStderr).toContain('--mode=app');
+    expect(capturedStderr).toContain('--open');
+  });
+
+  test('--mode=app with detection unavailable exits 1 + emits a contextual notFoundMessage (FR5)', async () => {
+    const previousForceBrowser = process.env.OK_FORCE_BROWSER;
+    process.env.OK_FORCE_BROWSER = '1';
+
+    const cmd = quietCommand();
+
+    let capturedExitCode: number | undefined;
+    let capturedStderr = '';
+    const originalExit = process.exit;
+    const originalConsoleError = console.error;
+    process.exit = ((code?: number) => {
+      capturedExitCode = code;
+      throw new Error('exit-stub');
+    }) as never;
+    console.error = (...args: unknown[]) => {
+      capturedStderr += `${args.map(String).join(' ')}\n`;
+    };
+
+    try {
+      await cmd.parseAsync(['--mode', 'app'], { from: 'user' });
+    } catch (err) {
+      if ((err as Error).message !== 'exit-stub') throw err;
+    } finally {
+      process.exit = originalExit;
+      console.error = originalConsoleError;
+      if (previousForceBrowser === undefined) {
+        delete process.env.OK_FORCE_BROWSER;
+      } else {
+        process.env.OK_FORCE_BROWSER = previousForceBrowser;
+      }
+    }
+
+    expect(capturedExitCode).toBe(1);
+    expect(capturedStderr).toContain('OK_FORCE_BROWSER');
+    expect(capturedStderr).toMatch(/disabled|unset/i);
+    expect(capturedStderr).not.toContain('not found');
+  });
+});
+
+describe('tryDescribeLockCollision', () => {
+  function fakeServerModule(opts: {
+    meta?: { kind?: string; pid?: number; port?: number; hostname?: string } | null;
+    throwOnRead?: boolean;
+  }) {
+    class ServerLockCollisionError extends Error {}
+    return {
+      ServerLockCollisionError,
+      readServerLock: () => {
+        if (opts.throwOnRead) throw new Error('synthetic read failure');
+        return opts.meta;
+      },
+    } as unknown as typeof import('@inkeep/open-knowledge-server');
+  }
+
+  test('non-lock-collision error → null (caller falls back to generic)', () => {
+    const fm = fakeServerModule({ meta: null });
+    const result = tryDescribeLockCollision(new TypeError('unrelated'), '/tmp', fm);
+    expect(result).toBeNull();
+  });
+
+  test("kind='interactive' → desktop-running message", () => {
+    const fm = fakeServerModule({ meta: { kind: 'interactive', pid: 42, port: 3000 } });
+    const err = new fm.ServerLockCollisionError();
+    const result = tryDescribeLockCollision(err, '/tmp/proj', fm);
+    expect(result).toContain('desktop is currently running');
+    expect(result).toContain('--cwd');
+  });
+
+  test("kind='mcp-spawned' → MCP idle-shutdown message", () => {
+    const fm = fakeServerModule({ meta: { kind: 'mcp-spawned', pid: 99, port: 3001 } });
+    const err = new fm.ServerLockCollisionError();
+    const result = tryDescribeLockCollision(err, '/tmp/proj', fm);
+    expect(result).toContain('MCP-spawned');
+    expect(result).toContain('idle-shutdown');
+  });
+
+  test('meta returned but kind absent → generic already-running message', () => {
+    const fm = fakeServerModule({ meta: { pid: 1, port: 3000 } });
+    const err = new fm.ServerLockCollisionError();
+    const result = tryDescribeLockCollision(err, '/tmp/proj', fm);
+    expect(result).toContain('already running');
+    expect(result).toContain('ok status');
+  });
+
+  test('meta=null → generic already-running message', () => {
+    const fm = fakeServerModule({ meta: null });
+    const err = new fm.ServerLockCollisionError();
+    const result = tryDescribeLockCollision(err, '/tmp/proj', fm);
+    expect(result).toContain('already running');
+  });
+
+  test('readServerLock throws → null (defense in depth)', () => {
+    const fm = fakeServerModule({ throwOnRead: true });
+    const err = new fm.ServerLockCollisionError();
+    const result = tryDescribeLockCollision(err, '/tmp/proj', fm);
+    expect(result).toBeNull();
+  });
+
+  test('serverModule.ServerLockCollisionError missing → null (back-compat)', () => {
+    const fm = {
+      readServerLock: () => null,
+    } as unknown as typeof import('@inkeep/open-knowledge-server');
+    const err = new Error('any');
+    const result = tryDescribeLockCollision(err, '/tmp/proj', fm);
+    expect(result).toBeNull();
   });
 });

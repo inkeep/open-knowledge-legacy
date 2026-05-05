@@ -22,13 +22,24 @@ Global options available on all commands:
 | `--color`             | Force color output          |
 | `--version`           | Print version               |
 
+## Default behavior (`ok` no args)
+
+On macOS with the desktop app installed in `/Applications/Open Knowledge.app` (or `~/Applications/`) and an interactive terminal, `ok` (no subcommand) launches the desktop app and exits. Otherwise it falls through to `ok start` in browser mode (boots the local server, serves the editor over the browser).
+
+Override the dispatch:
+
+- `OK_FORCE_BROWSER=1 ok` — disable desktop dispatch for this process.
+- `ok start --mode=app` — explicit desktop hand-off; errors if the bundle isn't installed.
+- `ok start --mode=browser` (or omit `--mode`) — explicit browser/server mode.
+
+On Linux, Windows, headless contexts (CI, SSH, non-TTY stdout), and any platform without the macOS desktop bundle, `ok` always falls through to `ok start`.
+
 ## `start`
 
-Start the collaborative editor server. This is the default command when no subcommand is specified.
+Start the collaborative editor server.
 
 ```bash
 npx @inkeep/open-knowledge start [options]
-npx @inkeep/open-knowledge              # equivalent
 ```
 
 | Option                 | Description                                                    |
@@ -36,6 +47,7 @@ npx @inkeep/open-knowledge              # equivalent
 | `--port <port>`        | Server port (overrides config)                                 |
 | `--host <host>`        | Bind address (overrides config)                                |
 | `--open`               | Open the editor in your default browser                        |
+| `--mode <browser\|app>` | Force dispatch mode (defaults to browser; `app` requires desktop bundle and exits if absent — mutually exclusive with `--open`) |
 | `--content-dir <path>` | Content directory to serve                                     |
 | `--no-init`            | Skip `.ok/` scaffolding and parent-repo `git init` |
 

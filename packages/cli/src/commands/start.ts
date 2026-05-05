@@ -8,8 +8,14 @@ import type { Server as HttpServer } from 'node:http';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import type { BootedServer, Config, PinoLogger } from '@inkeep/open-knowledge-server';
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
+import {
+  createRealDetectDeps,
+  detectDesktop,
+  launchDesktop,
+  notFoundMessage,
+} from './desktop-dispatch.ts';
 import { resolveSelfSpawn } from './self-spawn.ts';
 
 const DEFAULT_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
@@ -321,6 +327,172 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
   };
 }
 
+type StartMode = 'browser' | 'app';
+
+interface StartCommandOptions {
+  port?: string | number;
+  host?: string;
+  open?: boolean;
+  init?: boolean;
+  mode?: StartMode;
+}
+
+function parseStartMode(value: string): StartMode {
+  if (value === 'browser' || value === 'app') return value;
+  throw new InvalidArgumentError("--mode must be 'browser' or 'app'");
+}
+
+export async function runStartCommand(config: Config, opts: StartCommandOptions): Promise<void> {
+  const { renderBanner } = await import('../ui/banner.ts');
+  const { dim, error, info, warning } = await import('../ui/colors.ts');
+
+  const cwd = process.cwd();
+
+  if (opts.host !== undefined) config.server.host = opts.host;
+
+  const portFromCli = opts.port !== undefined ? Number(opts.port) : undefined;
+  const portFromEnv = process.env.PORT ? Number(process.env.PORT) : undefined;
+  const port = portFromCli ?? portFromEnv;
+
+  let booted: BootedStartServer;
+  try {
+    booted = await bootStartServer({
+      config,
+      cwd,
+      port,
+      skipAutoInit: opts.init === false,
+    });
+  } catch (err) {
+    const serverModule = await import('@inkeep/open-knowledge-server');
+    const tailored = tryDescribeLockCollision(err, cwd, serverModule);
+    if (tailored !== null) {
+      console.error(error(tailored));
+      process.exit(1);
+    }
+
+    console.error(
+      `${error('Failed to start:')} ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+    );
+    process.exit(1);
+  }
+
+  let shuttingDown = false;
+  const shutdown = async (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(dim(`\nShutting down (${signal})...`));
+    try {
+      await booted.destroy();
+    } catch (err) {
+      console.error(
+        `${error('destroy() failed:')} ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+      );
+      process.exitCode = 1;
+    }
+    process.exit(process.exitCode ?? 0);
+  };
+  process.once('SIGINT', () => {
+    void shutdown('SIGINT');
+  });
+  process.once('SIGTERM', () => {
+    void shutdown('SIGTERM');
+  });
+
+  const apiUrl = `http://${config.server.host}:${booted.port}`;
+  const networkUrl =
+    config.server.host === '0.0.0.0' || config.server.host === '::'
+      ? `http://0.0.0.0:${booted.port}`
+      : undefined;
+
+  const uiPort = booted.resolvedUiPort;
+  const localUrl =
+    uiPort !== null && uiPort > 0 ? `http://${config.server.host}:${uiPort}` : apiUrl;
+
+  console.log(
+    renderBanner({
+      name: 'open-knowledge',
+      version: PACKAGE_VERSION,
+      localUrl,
+      apiUrl: localUrl !== apiUrl ? apiUrl : undefined,
+      networkUrl,
+    }),
+  );
+  if (booted.didAutoInit) {
+    console.log(`  ${info('\u2713')} Scaffolded ${OK_DIR}/ (first run)`);
+    console.log(
+      `  ${dim('Tip: Run `open-knowledge init` to register MCP tools for Claude Code')}\n`,
+    );
+  }
+
+  const DEGRADED_IMPACTS: Record<string, string> = {
+    'shadow-repo': 'Version history and branch-switch safety unavailable',
+    'file-watcher': 'External file changes will not sync to the editor',
+    'head-watcher': 'Git branch switches may cause document inconsistency',
+  };
+  booted.ready
+    .then(async () => {
+      if (booted.degraded.length > 0) {
+        console.log();
+        for (const id of booted.degraded) {
+          const impact = DEGRADED_IMPACTS[id] ?? `${id} (check server logs for details)`;
+          console.warn(`  ${warning('\u26a0')} ${warning(id)}: ${dim(impact)}`);
+        }
+        console.log();
+      }
+
+      if (booted.didAutoInit) {
+        try {
+          const { previewContent, formatPreviewBlock } = await import('../content/preview.ts');
+          const preview = previewContent({
+            projectDir: cwd,
+            contentDir: booted.contentDir,
+          });
+          console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
+        } catch (e) {
+          console.warn(
+            `Content preview unavailable: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+
+      if (opts.open) {
+        const { openBrowser } = await import('../utils/open-browser.ts');
+        openBrowser(localUrl);
+      }
+    })
+    .catch((err) => {
+      console.error(
+        `  ${error('Server initialization failed:')} ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+}
+
+export function tryDescribeLockCollision(
+  err: unknown,
+  cwd: string,
+  serverModule: typeof import('@inkeep/open-knowledge-server'),
+): string | null {
+  const lockErr = serverModule.ServerLockCollisionError;
+  if (lockErr === undefined || !(err instanceof lockErr)) return null;
+
+  try {
+    const lockDir = join(cwd, OK_DIR);
+    const meta = serverModule.readServerLock(lockDir);
+    if (!meta) {
+      return 'Open Knowledge server is already running on this project — check `ok status` or `ok stop`.';
+    }
+    if (meta.kind === 'interactive') {
+      return 'Open Knowledge desktop is currently running on this project. Quit it or use --cwd to point elsewhere.';
+    }
+    if (meta.kind === 'mcp-spawned') {
+      return 'An MCP-spawned server holds this lock; it should release on idle-shutdown (~30 min). Or run `ok stop`.';
+    }
+    return 'Open Knowledge server is already running on this project — check `ok status` or `ok stop`.';
+  } catch {
+    return null;
+  }
+}
+
 export function startCommand(getConfig: () => Config): Command {
   const cmd = new Command('start')
     .description('Start the knowledge base collab server')
@@ -328,123 +500,41 @@ export function startCommand(getConfig: () => Config): Command {
     .option('-H, --host <host>', 'Server host', undefined)
     .option('--open', 'Open browser after start')
     .option('--no-init', `Skip auto-scaffolding of ${OK_DIR}/`)
-    .action(async (opts) => {
-      const { renderBanner } = await import('../ui/banner.ts');
-      const { dim, error, info, warning } = await import('../ui/colors.ts');
-
+    .option('--mode <mode>', "Force dispatch mode: 'browser' or 'app'", parseStartMode)
+    .action(async (opts: StartCommandOptions) => {
       const config = getConfig();
-      const cwd = process.cwd();
 
-      if (opts.host !== undefined) config.server.host = opts.host;
+      if (opts.mode === 'app') {
+        if (opts.open) {
+          process.stderr.write(
+            "error: option '--mode=app' cannot be combined with '--open' (--open opens a browser tab against the local server, which app mode does not boot)\n",
+          );
+          process.exit(2);
+        }
 
-      const portFromCli = opts.port !== undefined ? Number(opts.port) : undefined;
-      const portFromEnv = process.env.PORT ? Number(process.env.PORT) : undefined;
-      const port = portFromCli ?? portFromEnv;
+        const ignored: string[] = [];
+        if (opts.port !== undefined) ignored.push('--port');
+        if (opts.host !== undefined) ignored.push('--host');
+        if (opts.init === false) ignored.push('--no-init');
+        if (ignored.length > 0) {
+          const logLevel = process.env.OK_LOG_LEVEL ?? 'info';
+          if (logLevel === 'debug' || logLevel === 'trace') {
+            console.error(`--mode=app: ignoring ${ignored.join(', ')}`);
+          }
+        }
 
-      let booted: BootedStartServer;
-      try {
-        booted = await bootStartServer({
-          config,
-          cwd,
-          port,
-          skipAutoInit: opts.init === false,
-        });
-      } catch (err) {
-        console.error(
-          `${error('Failed to start:')} ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
-        );
+        const decision = detectDesktop(createRealDetectDeps());
+
+        if (decision.available) {
+          launchDesktop({ spawn: nativeSpawn });
+          return;
+        }
+
+        console.error(notFoundMessage(decision.reason));
         process.exit(1);
       }
 
-      let shuttingDown = false;
-      const shutdown = async (signal: NodeJS.Signals) => {
-        if (shuttingDown) return;
-        shuttingDown = true;
-        console.log(dim(`\nShutting down (${signal})...`));
-        try {
-          await booted.destroy();
-        } catch (err) {
-          console.error(
-            `${error('destroy() failed:')} ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
-          );
-          process.exitCode = 1;
-        }
-        process.exit(process.exitCode ?? 0);
-      };
-      process.once('SIGINT', () => {
-        void shutdown('SIGINT');
-      });
-      process.once('SIGTERM', () => {
-        void shutdown('SIGTERM');
-      });
-
-      const apiUrl = `http://${config.server.host}:${booted.port}`;
-      const networkUrl =
-        config.server.host === '0.0.0.0' || config.server.host === '::'
-          ? `http://0.0.0.0:${booted.port}`
-          : undefined;
-
-      const uiPort = booted.resolvedUiPort;
-      const localUrl =
-        uiPort !== null && uiPort > 0 ? `http://${config.server.host}:${uiPort}` : apiUrl;
-
-      console.log(
-        renderBanner({
-          name: 'open-knowledge',
-          version: PACKAGE_VERSION,
-          localUrl,
-          apiUrl: localUrl !== apiUrl ? apiUrl : undefined,
-          networkUrl,
-        }),
-      );
-      if (booted.didAutoInit) {
-        console.log(`  ${info('\u2713')} Scaffolded ${OK_DIR}/ (first run)`);
-        console.log(
-          `  ${dim('Tip: Run `open-knowledge init` to register MCP tools for Claude Code')}\n`,
-        );
-      }
-
-      const DEGRADED_IMPACTS: Record<string, string> = {
-        'shadow-repo': 'Version history and branch-switch safety unavailable',
-        'file-watcher': 'External file changes will not sync to the editor',
-        'head-watcher': 'Git branch switches may cause document inconsistency',
-      };
-      booted.ready
-        .then(async () => {
-          if (booted.degraded.length > 0) {
-            console.log();
-            for (const id of booted.degraded) {
-              const impact = DEGRADED_IMPACTS[id] ?? `${id} (check server logs for details)`;
-              console.warn(`  ${warning('\u26a0')} ${warning(id)}: ${dim(impact)}`);
-            }
-            console.log();
-          }
-
-          if (booted.didAutoInit) {
-            try {
-              const { previewContent, formatPreviewBlock } = await import('../content/preview.ts');
-              const preview = previewContent({
-                projectDir: cwd,
-                contentDir: booted.contentDir,
-              });
-              console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
-            } catch (e) {
-              console.warn(
-                `Content preview unavailable: ${e instanceof Error ? e.message : String(e)}`,
-              );
-            }
-          }
-
-          if (opts.open) {
-            const { openBrowser } = await import('../utils/open-browser.ts');
-            openBrowser(localUrl);
-          }
-        })
-        .catch((err) => {
-          console.error(
-            `  ${error('Server initialization failed:')} ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
+      await runStartCommand(config, opts);
     });
 
   return cmd;
