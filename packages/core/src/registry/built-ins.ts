@@ -56,10 +56,26 @@ const calloutProps: PropDef[] = [
   {
     name: 'type',
     type: 'enum',
-    enumValues: ['note', 'tip', 'important', 'warning', 'caution'],
+    enumValues: [
+      'note',
+      'tip',
+      'important',
+      'warning',
+      'caution',
+      'abstract',
+      'info',
+      'todo',
+      'success',
+      'question',
+      'failure',
+      'danger',
+      'bug',
+      'example',
+      'quote',
+    ],
     defaultValue: 'note',
     required: false,
-    description: 'GFM alert variant',
+    description: 'Callout variant',
   },
   {
     name: 'title',
@@ -570,8 +586,27 @@ export const builtInComponents: JsxComponentMeta[] = [
     category: 'content',
     displayName: 'Callout',
     description:
-      'GFM alert / admonition with 5 type variants (note, tip, important, warning, caution)',
-    searchTerms: ['note', 'warning', 'tip', 'important', 'caution', 'alert', 'admonition'],
+      'Alert / admonition with 15 type variants — 5 GFM (note, tip, important, warning, caution) plus 10 Obsidian-parity (abstract, info, todo, success, question, failure, danger, bug, example, quote)',
+    searchTerms: [
+      'note',
+      'tip',
+      'important',
+      'warning',
+      'caution',
+      'abstract',
+      'info',
+      'todo',
+      'success',
+      'question',
+      'failure',
+      'danger',
+      'bug',
+      'example',
+      'quote',
+      'alert',
+      'admonition',
+      'callout',
+    ],
     serialize: (node, ctx) => emitMdxJsx('Callout', node, ctx, calloutProps),
   },
 
@@ -708,9 +743,25 @@ export const builtInComponents: JsxComponentMeta[] = [
             defaultOpen?: boolean;
           }
         | undefined;
-      const GFM_ALERT_TYPES = new Set(['note', 'tip', 'important', 'warning', 'caution']);
+      const ACCEPTED_TYPES = new Set([
+        'note',
+        'tip',
+        'important',
+        'warning',
+        'caution',
+        'abstract',
+        'info',
+        'todo',
+        'success',
+        'question',
+        'failure',
+        'danger',
+        'bug',
+        'example',
+        'quote',
+      ]);
       const rawType = props?.type ?? 'note';
-      const type = (GFM_ALERT_TYPES.has(rawType.toLowerCase()) ? rawType : 'note').toUpperCase();
+      const type = (ACCEPTED_TYPES.has(rawType.toLowerCase()) ? rawType : 'note').toUpperCase();
       const suffix = props?.collapsible ? (props.defaultOpen === false ? '-' : '+') : '';
       const titleSegment = props?.title ? ` ${props.title}` : '';
       const marker = {

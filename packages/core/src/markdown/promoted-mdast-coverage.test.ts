@@ -43,6 +43,8 @@ const parseFixtures: Record<PromotedMdastType, ParseFixture> = {
   },
   mark: { md: '==hello==', expectedPmMark: 'highlight' },
   tag: { md: 'See #word now.', expectedPmType: 'tag' },
+  comment: { md: '%%hello%%', expectedPmMark: 'comment' },
+  commentBlock: { md: '%%\nhello\n%%', expectedPmType: 'commentBlock' },
 };
 
 function findPmNode(json: JSONContent, type: string): boolean {
@@ -150,6 +152,16 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         data: { sourceForm: 'markdown' },
       },
       tag: { type: 'tag', value: 'foo' },
+      comment: {
+        type: 'comment',
+        children: [{ type: 'text', value: 'hi' }],
+        data: { sourceForm: 'markdown' },
+      },
+      commentBlock: {
+        type: 'commentBlock',
+        children: [{ type: 'paragraph', children: [{ type: 'text', value: 'hi' }] }],
+        data: { sourceForm: 'markdown' },
+      },
     };
 
     for (const type of PROMOTED_MDAST_TYPES) {
@@ -164,6 +176,7 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
     const minimalState = {
       enter: () => () => {},
       containerPhrasing: () => '',
+      containerFlow: () => '',
       createTracker: () => ({
         move: (s: string) => s,
         current: () => ({}),
@@ -211,6 +224,16 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         data: { sourceForm: 'markdown' },
       },
       tag: { type: 'tag', value: 'foo' },
+      comment: {
+        type: 'comment',
+        children: [{ type: 'text', value: 'hi' }],
+        data: { sourceForm: 'markdown' },
+      },
+      commentBlock: {
+        type: 'commentBlock',
+        children: [{ type: 'paragraph', children: [{ type: 'text', value: 'hi' }] }],
+        data: { sourceForm: 'markdown' },
+      },
     };
 
     for (const type of PROMOTED_MDAST_TYPES) {

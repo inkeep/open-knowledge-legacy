@@ -134,7 +134,7 @@ describe('builtInComponents manifest', () => {
     ).toEqual([]);
   });
 
-  test('Callout has GFM 5-type enum values for type prop', () => {
+  test('Callout has 15 first-class type enum values (GFM 5 + Obsidian-parity 10)', () => {
     const callout = builtInComponents.find((m) => m.name === 'Callout');
     expect(callout).toBeDefined();
     if (!callout) return;
@@ -143,7 +143,23 @@ describe('builtInComponents manifest', () => {
     expect(typeProp?.type).toBe('enum');
     if (typeProp?.type === 'enum') {
       expect([...typeProp.enumValues].sort()).toEqual(
-        ['caution', 'important', 'note', 'tip', 'warning'].sort(),
+        [
+          'abstract',
+          'bug',
+          'caution',
+          'danger',
+          'example',
+          'failure',
+          'important',
+          'info',
+          'note',
+          'question',
+          'quote',
+          'success',
+          'tip',
+          'todo',
+          'warning',
+        ].sort(),
       );
       expect(typeProp.defaultValue).toBe('note');
     }

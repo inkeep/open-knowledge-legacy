@@ -1,11 +1,21 @@
 import {
   AlertOctagon,
   AlertTriangle,
+  BookOpen,
+  Bug,
   ChevronRight,
+  CircleCheck,
+  CircleHelp,
+  CircleX,
+  ClipboardList,
+  FlaskConical,
   Info,
   Lightbulb,
+  ListTodo,
   type LucideIcon,
   MessageSquareWarning,
+  Quote,
+  Zap,
 } from 'lucide-react';
 
 const TYPE_ICON: Record<CalloutType, LucideIcon> = {
@@ -14,9 +24,34 @@ const TYPE_ICON: Record<CalloutType, LucideIcon> = {
   important: MessageSquareWarning,
   warning: AlertTriangle,
   caution: AlertOctagon,
+  abstract: ClipboardList,
+  info: BookOpen,
+  todo: ListTodo,
+  success: CircleCheck,
+  question: CircleHelp,
+  failure: CircleX,
+  danger: Zap,
+  bug: Bug,
+  example: FlaskConical,
+  quote: Quote,
 };
 
-type CalloutType = 'note' | 'tip' | 'important' | 'warning' | 'caution';
+type CalloutType =
+  | 'note'
+  | 'tip'
+  | 'important'
+  | 'warning'
+  | 'caution'
+  | 'abstract'
+  | 'info'
+  | 'todo'
+  | 'success'
+  | 'question'
+  | 'failure'
+  | 'danger'
+  | 'bug'
+  | 'example'
+  | 'quote';
 
 interface CalloutProps {
   type?: CalloutType | string;
@@ -34,6 +69,16 @@ const ICON_OVERRIDES: Record<string, LucideIcon> = {
   MessageSquareWarning,
   AlertTriangle,
   AlertOctagon,
+  ClipboardList,
+  BookOpen,
+  ListTodo,
+  CircleCheck,
+  CircleHelp,
+  CircleX,
+  Zap,
+  Bug,
+  FlaskConical,
+  Quote,
 };
 
 function resolveIcon(icon: string | undefined, type: CalloutType): LucideIcon {
@@ -43,16 +88,26 @@ function resolveIcon(icon: string | undefined, type: CalloutType): LucideIcon {
   return Object.hasOwn(ICON_OVERRIDES, name) ? ICON_OVERRIDES[name] : TYPE_ICON[type];
 }
 
+const ACCEPTED_TYPES: ReadonlySet<string> = new Set<CalloutType>([
+  'note',
+  'tip',
+  'important',
+  'warning',
+  'caution',
+  'abstract',
+  'info',
+  'todo',
+  'success',
+  'question',
+  'failure',
+  'danger',
+  'bug',
+  'example',
+  'quote',
+]);
+
 function normalizeType(raw: CalloutType | string | undefined): CalloutType {
-  if (
-    raw === 'note' ||
-    raw === 'tip' ||
-    raw === 'important' ||
-    raw === 'warning' ||
-    raw === 'caution'
-  ) {
-    return raw;
-  }
+  if (typeof raw === 'string' && ACCEPTED_TYPES.has(raw)) return raw as CalloutType;
   return 'note';
 }
 

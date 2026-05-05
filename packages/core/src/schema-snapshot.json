@@ -337,6 +337,13 @@
       "group": "inline",
       "inline": true,
       "atom": false
+    },
+    "commentBlock": {
+      "attrs": {},
+      "content": "block+",
+      "group": "block",
+      "inline": false,
+      "atom": false
     }
   },
   "marks": {
@@ -445,6 +452,13 @@
       "group": "",
       "inclusive": false,
       "spanning": true
+    },
+    "comment": {
+      "attrs": {},
+      "excludes": "",
+      "group": "",
+      "inclusive": false,
+      "spanning": true
     }
   },
   "extensionOrder": [
@@ -475,6 +489,8 @@
     "tableHeader",
     "tableCell",
     "image",
-    "highlight"
+    "highlight",
+    "comment",
+    "commentBlock"
   ]
 }

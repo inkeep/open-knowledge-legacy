@@ -18,6 +18,8 @@ import type { Info, State } from 'mdast-util-to-markdown';
 declare module 'mdast-util-to-markdown' {
   interface ConstructNameMap {
     mark: 'mark';
+    comment: 'comment';
+    commentBlock: 'commentBlock';
   }
 }
 
@@ -305,6 +307,62 @@ export const toMarkdownHandlers = {
     value += tracker.move('==');
     exit();
     return value;
+  },
+
+  /**
+   * comment (Obsidian-style hidden text): emit `%%children%%` by default;
+   * emit `<Comment>children</Comment>` when the parse-side promoter tagged
+   * `data.sourceForm === 'mdx'`. PM round-trip drops sourceForm (the
+   * `comment` PM mark has no `sourceForm` attr), so PM-mediated saves of
+   * MDX-authored `<Comment>` normalize to `%%…%%` — same one-way
+   * normalization documented for `<Highlight>` → `==…==` and
+   * `$x$` → `$$x$$`.
+   *
+   * Whitespace flanking note: heuristic rules 2/4 in `comment-promoter.ts`
+   * require non-whitespace immediately inside both delimiters. Rely on PM
+   * mark normalization (excludes leading/trailing whitespace from inline
+   * marks) plus the heuristic-walker symmetry on the inbound side.
+   */
+  comment(node, _parent, state, info) {
+    const sourceForm = (node as { data?: { sourceForm?: string } }).data?.sourceForm;
+    const tracker = state.createTracker(info);
+    const exit = state.enter('comment');
+    if (sourceForm === 'mdx') {
+      let value = tracker.move('<Comment>');
+      value += state.containerPhrasing(node as Parents, {
+        before: value,
+        after: '<',
+        ...tracker.current(),
+      });
+      value += tracker.move('</Comment>');
+      exit();
+      return value;
+    }
+    let value = tracker.move('%%');
+    value += state.containerPhrasing(node as Parents, {
+      before: value,
+      after: '%%',
+      ...tracker.current(),
+    });
+    value += tracker.move('%%');
+    exit();
+    return value;
+  },
+
+  commentBlock(node, _parent, state, info) {
+    const sourceForm = (node as { data?: { sourceForm?: string } }).data?.sourceForm;
+    const tracker = state.createTracker(info);
+    const exit = state.enter('commentBlock');
+    if (sourceForm === 'mdx') {
+      // biome-ignore lint/suspicious/noExplicitAny: containerFlow's FlowParents type narrows to a closed set; commentBlock is a custom block-level promoted type that holds flow children, but its augmented mdast type isn't in the FlowParents union. The runtime call is correct.
+      const inner = state.containerFlow(node as any, tracker.current());
+      exit();
+      return `<Comment>\n\n${inner}\n\n</Comment>`;
+    }
+    // biome-ignore lint/suspicious/noExplicitAny: same FlowParents narrowing constraint as the mdx branch above
+    const inner = state.containerFlow(node as any, tracker.current());
+    exit();
+    return `%%\n\n${inner}\n\n%%`;
   },
 
   mdxJsxTextElement(node) {

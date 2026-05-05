@@ -3,6 +3,8 @@ import type { MdxJsxFlowElement, MdxJsxTextElement } from 'mdast-util-mdx';
 import type { Handler, Handlers } from 'mdast-util-to-hast';
 import { toWikiLinkSlug } from '../utils/slug.ts';
 import type {
+  CommentBlockMdast,
+  CommentMdast,
   MarkMdast,
   PromotedMdastType,
   RawMdxFallbackMdast,
@@ -158,6 +160,34 @@ const markHandler: Handler = (state, node) => {
   return state.applyData(node, result);
 };
 
+const commentHandler: Handler = (state, node) => {
+  const result: Element = {
+    type: 'element',
+    tagName: 'span',
+    properties: {
+      className: ['comment-mark'],
+      dataCommentMark: '',
+    },
+    children: state.all(node as CommentMdast) as ElementContent[],
+  };
+  state.patch(node, result);
+  return state.applyData(node, result);
+};
+
+const commentBlockHandler: Handler = (state, node) => {
+  const result: Element = {
+    type: 'element',
+    tagName: 'aside',
+    properties: {
+      className: ['comment-block'],
+      dataCommentBlock: '',
+    },
+    children: state.all(node as CommentBlockMdast) as ElementContent[],
+  };
+  state.patch(node, result);
+  return state.applyData(node, result);
+};
+
 const tagHandler: Handler = (state, node) => {
   const tag = node as TagMdast;
   const value = tag.value;
@@ -183,6 +213,8 @@ const promotedHandlers: Record<PromotedMdastType, Handler> = {
   rawMdxFallback: rawMdxFallbackHandler,
   mark: markHandler,
   tag: tagHandler,
+  comment: commentHandler,
+  commentBlock: commentBlockHandler,
 };
 
 export const customNodeHandlers: Handlers = promotedHandlers;

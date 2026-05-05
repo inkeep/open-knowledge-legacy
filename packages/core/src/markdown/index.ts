@@ -394,6 +394,10 @@ function buildMdastToPmHandlers(
 
   if (m.highlight) handlers.mark = toPmMark(m.highlight);
 
+  if (m.comment) handlers.comment = toPmMark(m.comment);
+
+  if (n.commentBlock) handlers.commentBlock = toPmNode(n.commentBlock);
+
   if (m.emphasis) {
     handlers.emphasis = toPmMark(m.emphasis, (node: Emphasis) => ({
       sourceDelimiter: node.data?.sourceDelimiter ?? '*',
@@ -1060,6 +1064,14 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   if (m.highlight) {
     markHandlers.highlight = fromPmMark('mark');
+  }
+
+  if (m.comment) {
+    markHandlers.comment = fromPmMark('comment');
+  }
+
+  if (n.commentBlock) {
+    nodeHandlers.commentBlock = fromPmNode('commentBlock');
   }
 
   if (m.link) {
