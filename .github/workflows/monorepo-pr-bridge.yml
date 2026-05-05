@@ -69,7 +69,6 @@ jobs:
               "AGENTS.md": "copybara/public-open-knowledge-overlay/AGENTS.md",
               ".gitignore": "copybara/public-open-knowledge-overlay/.gitignore",
               ".github/CODEOWNERS": "copybara/public-open-knowledge-overlay/.github/CODEOWNERS",
-              ".github/workflows/bundle-size.yml": "copybara/public-open-knowledge-overlay/.github/workflows/bundle-size.yml",
               ".github/workflows/ci.yml": "copybara/public-open-knowledge-overlay/.github/workflows/ci.yml",
               ".github/workflows/desktop-build.yml": "copybara/public-open-knowledge-overlay/.github/workflows/desktop-build.yml",
               ".github/workflows/monorepo-pr-bridge.yml": "copybara/public-open-knowledge-overlay/.github/workflows/monorepo-pr-bridge.yml",
