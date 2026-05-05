@@ -17,6 +17,8 @@ const LOWERCASE_HTML_TAG_RE = /<([a-z][a-z0-9]*)(\s[^>]*)?\/?>/g;
 
 const LOWERCASE_JSX_CANONICAL_TAGS = new Set(['img', 'video', 'audio']);
 
+const LOWERCASE_PAIRED_JSX_TAGS = new Set(['mark']);
+
 const UPPERCASE_CLOSE_TAG_INDEX_RE = /<\/([A-Z][A-Za-z0-9.]*)>/g;
 
 function lowerBound(arr: number[], target: number): number {
@@ -76,12 +78,16 @@ export function protectFromMdx(source: string): string {
     return `${GUARD_OPEN}${safe}${GUARD_CLOSE}`;
   });
 
-  result = result.replace(HTML_CLOSE_TAG_RE, (match) => {
+  result = result.replace(HTML_CLOSE_TAG_RE, (match, tag: string) => {
+    if (LOWERCASE_PAIRED_JSX_TAGS.has(tag)) return match;
     return match.replace(/</g, GUARD_OPEN).replace(/>/g, GUARD_CLOSE);
   });
 
   result = result.replace(LOWERCASE_HTML_TAG_RE, (match, tag: string) => {
     if (LOWERCASE_JSX_CANONICAL_TAGS.has(tag) && match.endsWith('/>')) {
+      return match;
+    }
+    if (LOWERCASE_PAIRED_JSX_TAGS.has(tag)) {
       return match;
     }
     if (tag[0] === tag[0].toLowerCase() && tag[0] !== tag[0].toUpperCase()) {
@@ -107,6 +113,18 @@ export function protectFromMdx(source: string): string {
     const lowercaseCanonicalMatch = /^<([a-z][a-z0-9]*)([^>]*)\/>/.exec(lookahead);
     if (lowercaseCanonicalMatch && LOWERCASE_JSX_CANONICAL_TAGS.has(lowercaseCanonicalMatch[1])) {
       return match;
+    }
+
+    const lowercasePairedMatch = /^<([a-z][a-z0-9]*)([\s/>])/.exec(lookahead);
+    if (lowercasePairedMatch && LOWERCASE_PAIRED_JSX_TAGS.has(lowercasePairedMatch[1])) {
+      const pairedTagName = lowercasePairedMatch[1];
+      if (lookahead.startsWith(`<${pairedTagName}/>`)) {
+        return match;
+      }
+      if (result.indexOf(`</${pairedTagName}>`, offset) !== -1) {
+        return match;
+      }
+      return GUARD_OPEN;
     }
 
     const tagMatch = /^<([A-Z][a-zA-Z0-9.]*)[\s/>]/.exec(lookahead);

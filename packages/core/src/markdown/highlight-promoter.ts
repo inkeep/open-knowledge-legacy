@@ -1,4 +1,5 @@
-import type { PhrasingContent, Root, Text } from 'mdast';
+import type { Nodes, Parent, PhrasingContent, Root, Text } from 'mdast';
+import type { MdxJsxTextElement } from 'mdast-util-mdx';
 import { SKIP, visit } from 'unist-util-visit';
 import type { MarkMdast } from './mdast-augmentation.ts';
 
@@ -45,6 +46,20 @@ export function highlightPromoterPlugin() {
       const arr = (parent as { children: PhrasingContent[] }).children;
       arr.splice(index, 1, ...replacements);
       return [SKIP, index + replacements.length];
+    });
+
+    visit(tree, 'mdxJsxTextElement', (node: MdxJsxTextElement, index, parent) => {
+      if (parent === undefined || index === undefined || index === null) return;
+      if (node.name !== 'mark') return;
+
+      const markNode: MarkMdast = {
+        type: 'mark',
+        children: (node.children as Nodes[]) ?? [],
+      };
+
+      const arr = (parent as Parent).children;
+      arr.splice(index, 1, markNode as unknown as (typeof arr)[number]);
+      return index + 1;
     });
   };
 }
