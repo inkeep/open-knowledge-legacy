@@ -344,6 +344,34 @@
       "group": "block",
       "inline": false,
       "atom": false
+    },
+    "footnoteReference": {
+      "attrs": {
+        "identifier": {
+          "hasDefault": true
+        },
+        "label": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true
+    },
+    "footnoteDefinition": {
+      "attrs": {
+        "identifier": {
+          "hasDefault": true
+        },
+        "label": {
+          "hasDefault": true
+        }
+      },
+      "content": "block+",
+      "group": "block",
+      "inline": false,
+      "atom": false
     }
   },
   "marks": {
@@ -491,6 +519,8 @@
     "image",
     "highlight",
     "comment",
-    "commentBlock"
+    "commentBlock",
+    "footnoteReference",
+    "footnoteDefinition"
   ]
 }

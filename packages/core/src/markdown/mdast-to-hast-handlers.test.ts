@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { FootnoteDefinition, FootnoteReference } from 'mdast';
 import type { MdxJsxFlowElement, MdxJsxTextElement } from 'mdast-util-mdx';
 import type { RawMdxFallbackMdast, WikiLinkMdast } from './mdast-augmentation.ts';
 import { mdastToHtml } from './mdast-to-html.ts';
@@ -374,6 +375,78 @@ describe('rawMdxFallback mdast→hast', () => {
     expect(out).toContain('\u2014> escape attempt');
     expect(out).not.toContain('<script>');
     expect(out).toContain('&#x3C;script>');
+  });
+});
+
+describe('footnoteReference mdast→hast', () => {
+  test('renders as <sup id="fnref-N" data-footnote-ref><a href="#fn-N">[N]</a></sup>', () => {
+    const node: FootnoteReference = {
+      type: 'footnoteReference',
+      identifier: '1',
+      label: '1',
+    };
+    const out = html(wrap(node));
+    expect(out).toContain('<sup');
+    expect(out).toContain('id="fnref-1"');
+    expect(out).toContain('data-footnote-ref');
+    expect(out).toContain('data-footnote-id="1"');
+    expect(out).toContain('class="footnote-ref"');
+    expect(out).toContain('href="#fn-1"');
+    expect(out).toContain('class="footnote-ref-link"');
+    expect(out).toContain('>[1]</a>');
+  });
+
+  test('named identifier preserved in href, fnref id, and visible bracket', () => {
+    const node: FootnoteReference = {
+      type: 'footnoteReference',
+      identifier: 'note',
+      label: 'note',
+    };
+    const out = html(wrap(node));
+    expect(out).toContain('id="fnref-note"');
+    expect(out).toContain('data-footnote-id="note"');
+    expect(out).toContain('href="#fn-note"');
+    expect(out).toContain('>[note]</a>');
+  });
+});
+
+describe('footnoteDefinition mdast→hast', () => {
+  test('renders as <aside id="fn-N" data-footnote-def><div class="footnote-body">…</div><a href="#fnref-N">↩</a></aside>', () => {
+    const node: FootnoteDefinition = {
+      type: 'footnoteDefinition',
+      identifier: 'abc',
+      label: 'abc',
+      children: [
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', value: 'Body text.' }],
+        },
+      ],
+    };
+    const out = html(wrap(node));
+    expect(out).toContain('<aside');
+    expect(out).toContain('id="fn-abc"');
+    expect(out).toContain('data-footnote-def');
+    expect(out).toContain('data-footnote-id="abc"');
+    expect(out).toContain('class="footnote-def"');
+    expect(out).toContain('class="footnote-body"');
+    expect(out).toContain('Body text.');
+    expect(out).toContain('href="#fnref-abc"');
+    expect(out).toContain('class="footnote-backref"');
+    expect(out).toContain('↩');
+    expect(out).not.toContain('footnote-marker');
+  });
+
+  test('numeric identifier produces matching anchor target for `<a href="#fn-1">`', () => {
+    const node: FootnoteDefinition = {
+      type: 'footnoteDefinition',
+      identifier: '1',
+      label: '1',
+      children: [{ type: 'paragraph', children: [{ type: 'text', value: 'x' }] }],
+    };
+    const out = html(wrap(node));
+    expect(out).toContain('id="fn-1"');
+    expect(out).toContain('href="#fnref-1"');
   });
 });
 

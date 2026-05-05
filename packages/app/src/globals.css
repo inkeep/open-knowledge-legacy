@@ -1768,6 +1768,92 @@ button:active:not(:disabled) {
   --callout-quote-color: oklch(0.72 0.04 270);
 }
 
+/* ── Footnotes ───────────────────────────────────────────────────────────────
+ *
+ * `footnoteReference` PM atom + `footnoteDefinition` PM block.
+ * Reference: superscript link to the matching definition. Definition:
+ * numbered list at the foot of the document with a back-reference arrow
+ * — Obsidian-parity rendering. Both keyed on the `identifier` attr; the
+ * `<sup><a href="#fn-{id}">` link points to `<aside id="fn-{id}">`, and
+ * the `<a class="footnote-backref" href="#fnref-{id}">` arrow on the
+ * definition points back to the reference's `<sup id="fnref-{id}">`.
+ */
+.footnote-ref {
+  font-size: 0.75em;
+  vertical-align: super;
+  line-height: 0;
+  margin: 0 0.05em;
+}
+.footnote-ref-link {
+  color: var(--primary);
+  text-decoration: none;
+}
+.footnote-ref-link:hover {
+  text-decoration: underline;
+}
+
+/* Counter resets at the editor root so all `.footnote-def` blocks in the
+ * document share one auto-numbering sequence (1., 2., 3., …) regardless
+ * of their identifier strings. */
+.ProseMirror {
+  counter-reset: footnote 0;
+}
+
+.footnote-def {
+  counter-increment: footnote;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0.25rem 0;
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+
+/* Auto-numbered marker: `1.`, `2.`, `3.` — generated from the counter
+ * rather than the identifier string, matching how Obsidian / GFM
+ * renderers display footnotes regardless of the underlying label. */
+.footnote-def::before {
+  content: counter(footnote) ".";
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  min-width: 1.5em;
+}
+
+/* Visual divider above the first footnote in the document — separates
+ * the footnote list from the prose body. The selector targets any
+ * `.footnote-def` that is NOT preceded by another `.footnote-def` (i.e.
+ * the first footnote-def regardless of intervening siblings). Class-
+ * keyed rather than `:first-of-type` because `commentBlock` also renders
+ * as `<aside>` (see `core/src/extensions/comment-block.ts`) — a comment
+ * block before the first footnote would otherwise hide the divider. */
+.footnote-def:not(.footnote-def + .footnote-def) {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.footnote-def .footnote-body {
+  flex: 1;
+}
+.footnote-def .footnote-body > :first-child {
+  margin-top: 0;
+}
+.footnote-def .footnote-body > :last-child {
+  margin-bottom: 0;
+}
+
+.footnote-backref {
+  color: var(--muted-foreground);
+  text-decoration: none;
+  font-size: 0.85em;
+  margin-left: 0.25rem;
+  flex-shrink: 0;
+}
+.footnote-backref:hover {
+  color: var(--primary);
+}
+
 /* Per-type default accent. An inline `--callout-type-color` from the
  * Callout.tsx `color` prop wins over these defaults (inline style has
  * higher specificity than an attribute selector rule). */

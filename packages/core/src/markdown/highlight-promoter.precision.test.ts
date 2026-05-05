@@ -171,13 +171,6 @@ describe('highlight-promoter — multi-match', () => {
     expect(marks[0].text).toBe('a====b');
     expect(mdManager.serialize(json)).toBe('==a====b==\n');
   });
-
-  test('two `<Highlight>` on one line', () => {
-    const json = mdManager.parse('<Highlight>a</Highlight> and <Highlight>b</Highlight>\n');
-    const marks = collectHighlightedTextNodes(json);
-    expect(marks.length).toBe(2);
-    expect(marks.map((m) => m.text)).toEqual(['a', 'b']);
-  });
 });
 
 describe('highlight-promoter — protection from code spans + math', () => {
@@ -194,54 +187,6 @@ describe('highlight-promoter — protection from code spans + math', () => {
 
   test('`==text==` inside a fenced code block stays code', () => {
     const json = mdManager.parse('```\n==text==\n```\n');
-    expect(collectHighlightedTextNodes(json).length).toBe(0);
-  });
-});
-
-describe('highlight-promoter — MDX `<Highlight>` JSX form', () => {
-  test('`<Highlight>hello</Highlight>` parses as highlight mark', () => {
-    const json = mdManager.parse('<Highlight>hello</Highlight>\n');
-    const marks = collectHighlightedTextNodes(json);
-    expect(marks.length).toBe(1);
-    expect(marks[0].text).toBe('hello');
-  });
-
-  test('mid-paragraph `<Highlight>x</Highlight>` parses as highlight mark', () => {
-    const json = mdManager.parse('a <Highlight>x</Highlight> b\n');
-    const marks = collectHighlightedTextNodes(json);
-    expect(marks.length).toBe(1);
-    expect(marks[0].text).toBe('x');
-    expect(plainTextOf(json)).toBe('a x b');
-  });
-
-  test('`<Highlight>` with surrounding emphasis carries both marks', () => {
-    const json = mdManager.parse('*<Highlight>x</Highlight>*\n');
-    const marks = collectHighlightedTextNodes(json);
-    expect(marks.length).toBe(1);
-    const markTypes = (marks[0].marks ?? []).map((m) => m.type).sort();
-    expect(markTypes).toEqual(['emphasis', 'highlight']);
-  });
-
-  test('`<Highlight>` with bold inside `<Highlight>**x**</Highlight>`', () => {
-    const json = mdManager.parse('<Highlight>**x**</Highlight>\n');
-    const marks = collectHighlightedTextNodes(json);
-    expect(marks.length).toBe(1);
-    expect(marks[0].text).toBe('x');
-    const markTypes = (marks[0].marks ?? []).map((m) => m.type).sort();
-    expect(markTypes).toEqual(['highlight', 'strong']);
-  });
-
-  test('`<Highlight color="red">` — attributes silently dropped (NG-H4)', () => {
-    const json = mdManager.parse('<Highlight color="red">x</Highlight>\n');
-    const marks = collectHighlightedTextNodes(json);
-    expect(marks.length).toBe(1);
-    expect(marks[0].text).toBe('x');
-    const out = mdManager.serialize(json);
-    expect(out).toBe('==x==\n');
-  });
-
-  test('lowercase `<highlight>` does NOT promote (case-sensitive)', () => {
-    const json = mdManager.parse('<highlight>x</highlight>\n');
     expect(collectHighlightedTextNodes(json).length).toBe(0);
   });
 });
@@ -273,12 +218,6 @@ describe('highlight-promoter — round-trip', () => {
     const json = mdManager.parse(src);
     const out = mdManager.serialize(json);
     expect(out).toBe(src);
-  });
-
-  test('`<Highlight>x</Highlight>` normalizes to `==x==` on round-trip', () => {
-    const json = mdManager.parse('<Highlight>x</Highlight>\n');
-    const out = mdManager.serialize(json);
-    expect(out).toBe('==x==\n');
   });
 
   test('`==text==` inside code span round-trips as code (not highlight)', () => {
@@ -332,7 +271,7 @@ describe('highlight-promoter — round-trip', () => {
   });
 });
 
-describe('highlight-promoter — direct mdast→markdown (sourceForm dispatch)', () => {
+describe('highlight-promoter — direct mdast→markdown', () => {
   // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation matching the existing precedent
   const minimalState: any = {
     enter: () => () => {},
@@ -347,31 +286,7 @@ describe('highlight-promoter — direct mdast→markdown (sourceForm dispatch)',
     safe: (s: string) => s,
   };
 
-  test('mark with sourceForm=mdx emits `<Highlight>...</Highlight>`', async () => {
-    const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
-    const node = {
-      type: 'mark' as const,
-      children: [{ type: 'text' as const, value: 'hello' }],
-      data: { sourceForm: 'mdx' },
-    };
-    // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
-    const out = (toMarkdownHandlers as any).mark(node, undefined, minimalState, {});
-    expect(out).toBe('<Highlight>hello</Highlight>');
-  });
-
-  test('mark with sourceForm=markdown emits `==…==`', async () => {
-    const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
-    const node = {
-      type: 'mark' as const,
-      children: [{ type: 'text' as const, value: 'hello' }],
-      data: { sourceForm: 'markdown' },
-    };
-    // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
-    const out = (toMarkdownHandlers as any).mark(node, undefined, minimalState, {});
-    expect(out).toBe('==hello==');
-  });
-
-  test('mark with no data field defaults to `==…==`', async () => {
+  test('mark emits `==…==`', async () => {
     const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
     const node = {
       type: 'mark' as const,

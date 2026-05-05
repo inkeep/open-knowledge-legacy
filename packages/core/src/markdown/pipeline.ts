@@ -47,7 +47,7 @@ interface SerializeMdOptions {
 function ensureNonEmptyDoc(tree: MdastRoot): MdastRoot {
   const renderable = tree.children.some((n) => {
     const type = (n as { type: string }).type;
-    return type !== 'yaml' && type !== 'toml' && type !== 'footnoteDefinition';
+    return type !== 'yaml' && type !== 'toml';
   });
   if (renderable) return tree;
   return {
