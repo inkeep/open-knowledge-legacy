@@ -16,9 +16,11 @@ import {
   type OkActorEntry,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import type { JSONContent } from '@tiptap/core';
-import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import type { BacklinkIndex } from './backlink-index.ts';
+import { getMsSinceLastUserTx, isDocQuiescent } from './bridge-quiescence.ts';
+import { assertBridgeInvariant } from './bridge-watchdog.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { type ConfigPersistenceCtx, loadConfigDoc, storeConfigDoc } from './config-persistence.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
@@ -31,7 +33,7 @@ import {
   swapContributors,
 } from './contributor-tracker.ts';
 import { getDocExtension } from './doc-extensions.ts';
-import { applyDiskContentToDoc } from './external-change.ts';
+import { applyDiskContentToDoc, FILE_WATCHER_ORIGIN } from './external-change.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './fs-traced.ts';
 import { getLogger } from './logger.ts';
@@ -40,8 +42,13 @@ import {
   incrementGitAutoSaveFailure,
   incrementGitWriterCommitFailure,
   incrementPersistenceDiskWrite,
+  incrementPersistenceForceFlushDuringBurst,
+  incrementPersistenceReconciliationFailures,
+  incrementPersistenceSanityCheckSerializeFailures,
+  incrementPersistenceSkipNonQuiescent,
 } from './metrics.ts';
 import { classifyDuplication } from './persistence-tripwire.ts';
+import { OBSERVER_SYNC_ORIGIN } from './server-observers.ts';
 import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
 import {
   buildWipTree,
@@ -228,6 +235,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const tripwireResetFailedDocs = new Set<string>();
   const applyDiskContent = options?.applyDiskContentToDoc ?? applyDiskContentToDoc;
   let pendingDeferredStoreFlushMode: 'within-branch' | 'discard-stale' | null = null;
+
+  const QUIESCENCE_MAX_DEFER = 8;
+  const persistenceDeferCounts = new Map<string, number>();
 
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 15_000;
@@ -494,6 +504,27 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     if (commitInFlight) await commitInFlight;
   }
 
+  function reconcileFragmentNow(document: Y.Doc, body: string, documentName: string): void {
+    try {
+      const xmlFragment = document.getXmlFragment('default');
+      const parseOpts = options?.resolveEmbed
+        ? { resolveEmbed: options.resolveEmbed, sourcePath: documentName }
+        : undefined;
+      const parsedJson = mdManager.parseWithFallback(body, parseOpts);
+      const pmNode = schema.nodeFromJSON(parsedJson);
+      document.transact(() => {
+        const meta = { mapping: new Map(), isOMark: new Map() };
+        updateYFragment(document, xmlFragment, pmNode, meta);
+      }, OBSERVER_SYNC_ORIGIN);
+    } catch (err) {
+      incrementPersistenceReconciliationFailures();
+      log.warn(
+        { err, documentName },
+        `[persistence] reconcileFragmentNow failed for ${documentName}`,
+      );
+    }
+  }
+
   let loadDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
   let storeDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
   let commitDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
@@ -535,21 +566,80 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             { documentName, lifecycleStatus },
             `[persistence] Skipped store for ${documentName}: lifecycle=${lifecycleStatus}`,
           );
+          persistenceDeferCounts.delete(documentName);
+          tripwireResetFailedDocs.delete(documentName);
           return;
         }
 
-        const { sv: stateVectorAtRead, json } = captureDocSnapshotForPersistence(document);
+        const quiescent = isDocQuiescent(document);
+        if (!quiescent) {
+          const deferCount = persistenceDeferCounts.get(documentName) ?? 0;
+          if (deferCount < QUIESCENCE_MAX_DEFER) {
+            const ageMs = getMsSinceLastUserTx(document);
+            console.warn(
+              JSON.stringify({
+                event: 'persistence-skip-non-quiescent',
+                'doc.name': documentName,
+                wallClockMsSinceLastTransaction: ageMs ?? null,
+                deferCount,
+              }),
+            );
+            incrementPersistenceSkipNonQuiescent();
+            persistenceDeferCounts.set(documentName, deferCount + 1);
+            return;
+          }
+          console.warn(
+            JSON.stringify({
+              event: 'persistence-force-flush-during-burst',
+              'doc.name': documentName,
+              wallClockMsSinceLastTransaction: getMsSinceLastUserTx(document) ?? null,
+              deferCount,
+            }),
+          );
+          incrementPersistenceForceFlushDuringBurst();
+        }
 
-        const body = mdManager.serialize(json);
+        const { sv: stateVectorAtRead, json } = captureDocSnapshotForPersistence(document);
         const ytextSnapshot = document.getText('source').toString();
-        const { frontmatter } = stripFrontmatter(ytextSnapshot);
+
+        const { frontmatter, body } = stripFrontmatter(ytextSnapshot);
         const markdown = prependFrontmatter(frontmatter, body);
+
+        let normalizeEqual: boolean;
+        try {
+          const fragmentBody = mdManager.serialize(json);
+          const fragmentMarkdown = prependFrontmatter(frontmatter, fragmentBody);
+          normalizeEqual = assertBridgeInvariant(markdown, fragmentMarkdown, {
+            site: 'persistence',
+            docName: documentName,
+            suppressDevThrow: true,
+          });
+        } catch (err) {
+          incrementPersistenceSanityCheckSerializeFailures();
+          console.warn(
+            JSON.stringify({
+              event: 'persistence-sanity-check-serialize-failed',
+              'doc.name': documentName,
+              'error.type': err instanceof Error ? err.constructor.name : typeof err,
+              timestamp: new Date().toISOString(),
+            }),
+          );
+          log.warn(
+            { err, documentName },
+            `[persistence] Sanity-check serialize failed for ${documentName}; proceeding with ytext bytes`,
+          );
+          normalizeEqual = false;
+        }
+        if (!normalizeEqual) {
+          reconcileFragmentNow(document, body, documentName);
+        }
 
         const currentBase = getReconciledBase(documentName);
         const markdownSemanticallyUnchanged =
           currentBase !== undefined && normalizeBridge(markdown) === normalizeBridge(currentBase);
         if (markdownSemanticallyUnchanged) {
           if (contributorCount() > 0) scheduleGitCommit();
+          persistenceDeferCounts.delete(documentName);
           return;
         }
 
@@ -558,6 +648,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             { documentName },
             `[persistence] Skipped phantom write for ${documentName}: empty Y.Doc with no reconciled base`,
           );
+          persistenceDeferCounts.delete(documentName);
           return;
         }
 
@@ -595,7 +686,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
               const diskContent = existsSync(requestedDiskPath)
                 ? readFileSync(requestedDiskPath, 'utf-8')
                 : currentBase;
-              applyDiskContent(document, diskContent);
+              document.transact(() => {
+                applyDiskContent(document, diskContent);
+              }, FILE_WATCHER_ORIGIN);
               tripwireResetFailedDocs.delete(documentName);
             } catch (err) {
               tripwireResetFailedDocs.add(documentName);
@@ -604,6 +697,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
                 `[persistence] Tripwire reset failed for ${documentName}`,
               );
             }
+            persistenceDeferCounts.delete(documentName);
             return;
           }
         }
@@ -660,11 +754,19 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           await tracedRename(tmpPath, canonicalPath);
           registerWrite(canonicalPath, contentHash(markdown));
           incrementPersistenceDiskWrite();
-          onDiskFlush?.(documentName, stateVectorAtRead);
+          try {
+            onDiskFlush?.(documentName, stateVectorAtRead);
+          } catch (flushErr) {
+            log.warn(
+              { err: flushErr, documentName },
+              `[persistence] onDiskFlush callback failed for ${documentName}`,
+            );
+          }
         } catch (e) {
           try {
             tracedUnlinkSync(tmpPath);
           } catch {}
+          persistenceDeferCounts.delete(documentName);
           log.error({ err: e, documentName }, `[persistence] Failed to save ${documentName}`);
           throw e;
         }
@@ -675,6 +777,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
         setReconciledBase(documentName, markdown);
         tripwireResetFailedDocs.delete(documentName);
+        persistenceDeferCounts.delete(documentName);
 
         if (backlinkIndex) {
           backlinkIndex.updateDocumentFromMarkdown(documentName, markdown);
@@ -792,7 +895,6 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           }
 
           const raw = readFileSync(filePath, 'utf-8');
-          const { frontmatter } = stripFrontmatter(raw);
 
           const xmlFragment = document.getXmlFragment('default');
           log.info(
@@ -801,7 +903,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           );
 
           if (xmlFragment.length === 0) {
-            applyDiskContentToDoc(document, raw, options?.resolveEmbed, documentName);
+            document.transact(() => {
+              applyDiskContentToDoc(document, raw, options?.resolveEmbed, documentName);
+            }, FILE_WATCHER_ORIGIN);
             log.info(
               { filePath, children: xmlFragment.length },
               `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
@@ -819,10 +923,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             );
           }
 
-          const normalizedBody = mdManager.serialize(
-            yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
-          );
-          setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
+          setReconciledBase(documentName, raw);
         },
       ).finally(() => {
         loadDurationHist?.record((Date.now() - started) / 1000);

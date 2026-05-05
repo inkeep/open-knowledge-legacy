@@ -11,6 +11,8 @@ export const LinkRefDefFidelity = Node.create({
       label: { default: '' },
       href: { default: '' },
       title: { default: null },
+      sourceLayout: { default: null },
+      sourceTitleMarker: { default: null },
     };
   },
 

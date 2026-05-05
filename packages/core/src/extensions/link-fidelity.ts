@@ -38,6 +38,8 @@ export const LinkFidelity = Link.extend({
       target: { default: null, rendered: false },
       anchor: { default: null, rendered: false },
       alias: { default: null, rendered: false },
+      sourceUrlForm: { default: null, rendered: false },
+      sourceTitleMarker: { default: null, rendered: false },
     };
   },
 });

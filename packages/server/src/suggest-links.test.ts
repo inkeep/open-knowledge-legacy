@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import type * as Y from 'yjs';
 import { AGENT_WRITE_ORIGIN, applyAgentMarkdownWrite } from './agent-sessions.ts';
+import { applyExternalChange } from './external-change.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { installTestLoggers, loggerFactory } from './logger.ts';
 import { suggestLinks } from './suggest-links.ts';
@@ -227,6 +228,72 @@ describe('suggestLinks', () => {
           offset: 0,
         },
       ]);
+    } finally {
+      if (conn) await conn.disconnect();
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('FR-43: doc-start `---` thematic-break form survives via ytext (discriminating)', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-suggest-links-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    let conn: Conn | null = null;
+
+    try {
+      writeFileSync(join(contentDir, 'project-alpha.md'), '# Project Alpha\n', 'utf-8');
+      writeFileSync(join(contentDir, 'notes.md'), 'Stale disk.\n', 'utf-8');
+
+      conn = await hocuspocus.openDirectConnection('notes');
+      const doc = getDoc(conn);
+      applyExternalChange(hocuspocus, 'notes', '---\n# Notes\n\nProject Alpha discussion.\n');
+
+      const yText = doc.getText('source').toString();
+      expect(yText).toBe('---\n# Notes\n\nProject Alpha discussion.\n');
+
+      const result = await suggestLinks({
+        hocuspocus,
+        fileIndex: buildFileIndex(contentDir, ['project-alpha', 'notes']),
+        docName: 'project-alpha',
+      });
+
+      expect(result.mentions).toHaveLength(1);
+      expect(result.mentions[0]?.offset).toBe(13);
+      expect(result.mentions[0]?.source).toBe('notes');
+    } finally {
+      if (conn) await conn.disconnect();
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('FR-43: angle-bracket autolink survives in mention excerpt (live doc body via ytext)', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-suggest-links-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    let conn: Conn | null = null;
+
+    try {
+      writeFileSync(join(contentDir, 'project-alpha.md'), '# Project Alpha\n', 'utf-8');
+      writeFileSync(join(contentDir, 'notes.md'), 'No mention on disk.\n', 'utf-8');
+
+      conn = await hocuspocus.openDirectConnection('notes');
+      const doc = getDoc(conn);
+      doc.transact(() => {
+        applyAgentMarkdownWrite(doc, 'Visit <https://example> for Project Alpha.\n', 'replace');
+      }, AGENT_WRITE_ORIGIN);
+
+      const result = await suggestLinks({
+        hocuspocus,
+        fileIndex: buildFileIndex(contentDir, ['project-alpha', 'notes']),
+        docName: 'project-alpha',
+      });
+
+      expect(result.mentions).toHaveLength(1);
+      const excerpt = result.mentions[0]?.excerpt ?? '';
+      expect(excerpt).toContain('<https://example>');
+      expect(excerpt).not.toContain('](https://example)');
     } finally {
       if (conn) await conn.disconnect();
       rmSync(projectDir, { recursive: true, force: true });

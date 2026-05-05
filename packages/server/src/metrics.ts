@@ -1,3 +1,5 @@
+import type { BridgeToleranceClass, CC1Channel } from '@inkeep/open-knowledge-core';
+
 export interface ReconciliationMetrics {
   reconcileCount: number;
   conflictCount: number;
@@ -11,7 +13,7 @@ export interface ReconciliationMetrics {
   cc1BroadcastCount: number;
   cc1BroadcastDropCount: number;
   cc1SubscriberCount: number;
-  cc1LastSeq: Record<string, number>;
+  cc1LastSeq: Partial<Record<CC1Channel, number>>;
   serverObserverFiresA: number;
   serverObserverFiresB: number;
   serverObserverErrorsA: number;
@@ -19,6 +21,10 @@ export interface ReconciliationMetrics {
   persistenceDiskWrites: number;
   bridgeMergeContentLoss: number;
   bridgeMergeCheckpointCreated: number;
+  bridgeInvariantViolations: number;
+  bridgeInvariantViolationsSuppressed: number;
+  persistenceSkipNonQuiescent: number;
+  persistenceForceFlushDuringBurst: number;
   collabSocketEpipeCount: number;
   collabSocketEconnresetCount: number;
   shadowMigrationLegacyRefsDeleted: number;
@@ -27,6 +33,12 @@ export interface ReconciliationMetrics {
   agentWriteCalls: number;
   summariesProvided: number;
   summariesTruncated: number;
+  agentPatchFindMismatches: number;
+  bridgeToleranceApplied: Partial<Record<BridgeToleranceClass, number>>;
+  observerAPathBFires: number;
+  persistenceReconciliationFailures: number;
+  externalChangeHandlerErrors: number;
+  persistenceSanityCheckSerializeFailures: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -50,6 +62,10 @@ const counters: ReconciliationMetrics = {
   persistenceDiskWrites: 0,
   bridgeMergeContentLoss: 0,
   bridgeMergeCheckpointCreated: 0,
+  bridgeInvariantViolations: 0,
+  bridgeInvariantViolationsSuppressed: 0,
+  persistenceSkipNonQuiescent: 0,
+  persistenceForceFlushDuringBurst: 0,
   collabSocketEpipeCount: 0,
   collabSocketEconnresetCount: 0,
   shadowMigrationLegacyRefsDeleted: 0,
@@ -58,6 +74,12 @@ const counters: ReconciliationMetrics = {
   agentWriteCalls: 0,
   summariesProvided: 0,
   summariesTruncated: 0,
+  agentPatchFindMismatches: 0,
+  bridgeToleranceApplied: {},
+  observerAPathBFires: 0,
+  persistenceReconciliationFailures: 0,
+  externalChangeHandlerErrors: 0,
+  persistenceSanityCheckSerializeFailures: 0,
 };
 
 export function incrementReconcile(): void {
@@ -142,6 +164,47 @@ export function incrementBridgeMergeCheckpointCreated(): void {
   counters.bridgeMergeCheckpointCreated++;
 }
 
+export function incrementBridgeInvariantViolations(): void {
+  counters.bridgeInvariantViolations++;
+}
+
+export function incrementBridgeInvariantViolationsSuppressed(): void {
+  counters.bridgeInvariantViolationsSuppressed++;
+}
+
+export function incrementPersistenceSkipNonQuiescent(): void {
+  counters.persistenceSkipNonQuiescent++;
+}
+
+export function incrementPersistenceForceFlushDuringBurst(): void {
+  counters.persistenceForceFlushDuringBurst++;
+}
+
+export function incrementAgentPatchFindMismatches(): void {
+  counters.agentPatchFindMismatches++;
+}
+
+export function incrementBridgeToleranceApplied(toleranceClass: BridgeToleranceClass): void {
+  counters.bridgeToleranceApplied[toleranceClass] =
+    (counters.bridgeToleranceApplied[toleranceClass] ?? 0) + 1;
+}
+
+export function incrementObserverAPathBFires(): void {
+  counters.observerAPathBFires++;
+}
+
+export function incrementPersistenceReconciliationFailures(): void {
+  counters.persistenceReconciliationFailures++;
+}
+
+export function incrementExternalChangeHandlerErrors(): void {
+  counters.externalChangeHandlerErrors++;
+}
+
+export function incrementPersistenceSanityCheckSerializeFailures(): void {
+  counters.persistenceSanityCheckSerializeFailures++;
+}
+
 export function incrementCollabSocketFilteredError(code: 'EPIPE' | 'ECONNRESET'): void {
   if (code === 'EPIPE') counters.collabSocketEpipeCount++;
   else counters.collabSocketEconnresetCount++;
@@ -167,12 +230,16 @@ export function handleCollabSocketError(err: NodeJS.ErrnoException): boolean {
   return false;
 }
 
-export function setCC1LastSeq(channel: string, seq: number): void {
+export function setCC1LastSeq(channel: CC1Channel, seq: number): void {
   counters.cc1LastSeq[channel] = seq;
 }
 
 export function getMetrics(): ReconciliationMetrics {
-  return { ...counters, cc1LastSeq: { ...counters.cc1LastSeq } };
+  return {
+    ...counters,
+    cc1LastSeq: { ...counters.cc1LastSeq },
+    bridgeToleranceApplied: { ...counters.bridgeToleranceApplied },
+  };
 }
 
 export function resetMetrics(): void {
@@ -196,6 +263,10 @@ export function resetMetrics(): void {
   counters.persistenceDiskWrites = 0;
   counters.bridgeMergeContentLoss = 0;
   counters.bridgeMergeCheckpointCreated = 0;
+  counters.bridgeInvariantViolations = 0;
+  counters.bridgeInvariantViolationsSuppressed = 0;
+  counters.persistenceSkipNonQuiescent = 0;
+  counters.persistenceForceFlushDuringBurst = 0;
   counters.collabSocketEpipeCount = 0;
   counters.collabSocketEconnresetCount = 0;
   counters.shadowMigrationLegacyRefsDeleted = 0;
@@ -204,4 +275,10 @@ export function resetMetrics(): void {
   counters.agentWriteCalls = 0;
   counters.summariesProvided = 0;
   counters.summariesTruncated = 0;
+  counters.agentPatchFindMismatches = 0;
+  counters.bridgeToleranceApplied = {};
+  counters.observerAPathBFires = 0;
+  counters.persistenceReconciliationFailures = 0;
+  counters.externalChangeHandlerErrors = 0;
+  counters.persistenceSanityCheckSerializeFailures = 0;
 }

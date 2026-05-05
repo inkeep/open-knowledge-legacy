@@ -6,8 +6,8 @@ describe('isMarkdown — signal-count heuristic', () => {
     expect(isMarkdown('hello world')).toBe(false);
   });
 
-  test('rejects short prose even with one accidental marker', () => {
-    expect(isMarkdown("Tom's *favorite* movie")).toBe(false);
+  test('FR-38: short prose with single-asterisk emphasis is detected', () => {
+    expect(isMarkdown("Tom's *favorite* movie")).toBe(true);
   });
 
   test('accepts authored markdown with 3+ signals', () => {
@@ -85,8 +85,8 @@ describe('isMarkdown — extended signals (D8 + D18)', () => {
       expect(isMarkdown('this is ~~struck~~ text')).toBe(true);
     });
 
-    test('rejects single asterisks', () => {
-      expect(isMarkdown('this has a single *italic* word')).toBe(false);
+    test('FR-38: single-asterisk emphasis is detected (was: rejected)', () => {
+      expect(isMarkdown('this has a single *italic* word')).toBe(true);
     });
 
     test('three styles count as one signal (not three)', () => {
@@ -212,6 +212,132 @@ describe('isMarkdown — extended signals (D8 + D18)', () => {
       const payload = head + filler + tail;
       expect(payload.length).toBeGreaterThan(256 * 1024);
       expect(isMarkdown(payload)).toBe(false);
+    });
+  });
+});
+
+describe('isMarkdown — FR-38 widened signals', () => {
+  describe('setext heading (FR-38 SETEXT_RE)', () => {
+    test('detects H1 setext (Title\\n=====)', () => {
+      expect(isMarkdown('Title\n=====')).toBe(true);
+    });
+
+    test('detects H2 setext (Subtitle\\n----)', () => {
+      expect(isMarkdown('Subtitle\n----')).toBe(true);
+    });
+
+    test('detects single-char underline (H\\n=)', () => {
+      expect(isMarkdown('H\n=')).toBe(true);
+    });
+
+    test('rejects an underline-shaped line without a preceding content line', () => {
+      expect(isMarkdown('----')).toBe(false);
+    });
+
+    test('rejects prose that contains hyphens but no underline line', () => {
+      expect(isMarkdown('hello -- world')).toBe(false);
+    });
+  });
+
+  describe('single-asterisk emphasis (FR-38 SINGLE_STAR_EM_RE)', () => {
+    test('detects bare `*emphasis*`', () => {
+      expect(isMarkdown('*emphasis*')).toBe(true);
+    });
+
+    test('detects mid-prose `text *foo* text`', () => {
+      expect(isMarkdown('text *foo* text')).toBe(true);
+    });
+
+    test('does NOT match `**bold**` (so STRONG_STAR signal is the sole emphasis source)', () => {
+      const md = '**bold**';
+      expect(isMarkdown(md)).toBe(true);
+    });
+
+    test('rejects mid-word `snake*case*var` (no surrounding whitespace)', () => {
+      expect(isMarkdown('snake*case*var')).toBe(false);
+    });
+  });
+
+  describe('single-underscore emphasis (FR-38 SINGLE_UNDER_EM_RE)', () => {
+    test('detects bare `_emphasis_`', () => {
+      expect(isMarkdown('_emphasis_')).toBe(true);
+    });
+
+    test('detects mid-prose `text _foo_ text`', () => {
+      expect(isMarkdown('text _foo_ text')).toBe(true);
+    });
+
+    test('does NOT match `__bold__` directly (STRONG_UNDER signal is the source)', () => {
+      expect(isMarkdown('__bold__')).toBe(true);
+    });
+
+    test('rejects mid-identifier `snake_case_var`', () => {
+      expect(isMarkdown('snake_case_var')).toBe(false);
+    });
+  });
+
+  describe('tilde fenced code (FR-38 TILDE_FENCE_RE)', () => {
+    test('detects `~~~js\\ncode\\n~~~`', () => {
+      expect(isMarkdown('~~~js\ncode\n~~~')).toBe(true);
+    });
+
+    test('detects bare `~~~` opener at line start', () => {
+      expect(isMarkdown('~~~')).toBe(true);
+    });
+
+    test('rejects strikethrough `~~strike~~` (only 2 tildes)', () => {
+      expect(isMarkdown('~~strike~~')).toBe(true);
+    });
+
+    test('rejects single tilde `~strike~`', () => {
+      expect(isMarkdown('~strike~')).toBe(false);
+    });
+  });
+
+  describe('CommonMark backslash escape (FR-38 BACKSLASH_ESCAPE_RE)', () => {
+    test('detects `\\*not emphasis\\*`', () => {
+      expect(isMarkdown('\\*not emphasis\\*')).toBe(true);
+    });
+
+    test('detects `\\_v\\_` (escaped underscore)', () => {
+      expect(isMarkdown('\\_v\\_')).toBe(true);
+    });
+
+    test('detects double-backslash `\\\\foo`', () => {
+      expect(isMarkdown('\\\\foo')).toBe(true);
+    });
+
+    test('detects escaped hash `\\#hashtag`', () => {
+      expect(isMarkdown('\\#hashtag')).toBe(true);
+    });
+
+    test('detects escaped exclamation `\\!`', () => {
+      expect(isMarkdown('\\!')).toBe(true);
+    });
+
+    test('rejects backslash before non-punct char `\\n word`', () => {
+      expect(isMarkdown('\\n word')).toBe(false);
+    });
+
+    test('rejects pure prose with no backslashes', () => {
+      expect(isMarkdown('hello world')).toBe(false);
+    });
+  });
+
+  describe('combined FR-38 signals + threshold scaling', () => {
+    test('long prose with one accidental `*foo*` is detected (threshold=1 for short input)', () => {
+      expect(isMarkdown('Tom typed *fancy* in his note')).toBe(true);
+    });
+
+    test('long prose without any FR-38 markers stays below threshold', () => {
+      const prose = Array(20).fill('Pure prose without any markdown markers.').join('\n');
+      expect(isMarkdown(prose)).toBe(false);
+    });
+
+    test('30-line prose with FR-38 backslash-escape + setext does not over-trip', () => {
+      const lines = Array(28).fill('Plain prose without markdown shape.');
+      const withTwoSignals = ['Title', '====', ...lines, 'See also \\#tag'].join('\n');
+      expect(isMarkdown(withTwoSignals)).toBe(false);
     });
   });
 });

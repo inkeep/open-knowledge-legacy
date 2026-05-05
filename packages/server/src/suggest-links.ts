@@ -1,15 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import type { Document, Hocuspocus } from '@hocuspocus/server';
-import {
-  prependFrontmatter,
-  resolveInternalHref,
-  stripFrontmatter,
-  toWikiLinkSlug,
-} from '@inkeep/open-knowledge-core';
-import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
+import { resolveInternalHref, stripFrontmatter, toWikiLinkSlug } from '@inkeep/open-knowledge-core';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
-import { mdManager, schema } from './md-manager.ts';
 import { extractPageIdentity, type PageIdentity } from './page-identity.ts';
 
 const log = getLogger('suggest-links');
@@ -496,10 +489,7 @@ function scanMarkdownForMentions(
 }
 
 function serializeLiveDocument(document: Document): string {
-  const xmlFragment = document.getXmlFragment('default');
-  const body = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON());
-  const fm = stripFrontmatter(document.getText('source').toString()).frontmatter;
-  return prependFrontmatter(fm, body);
+  return document.getText('source').toString();
 }
 
 async function readDocumentMarkdown(

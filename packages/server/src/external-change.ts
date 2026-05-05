@@ -1,12 +1,16 @@
 import type { Hocuspocus } from '@hocuspocus/server';
-import { applyFastDiff, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  BridgeInvariantViolationError,
+  BridgeMergeContentLossError,
+  stripFrontmatter,
+} from '@inkeep/open-knowledge-core';
 import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-layout';
-import { updateYFragment } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
+import { composeAndWriteRawBody } from './bridge-intake.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { recordContributor } from './contributor-tracker.ts';
 import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
-import { mdManager, schema } from './md-manager.ts';
+import { incrementExternalChangeHandlerErrors } from './metrics.ts';
 import { setReconciledBase } from './persistence.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
 import { FILE_SYSTEM_WRITER } from './shadow-repo.ts';
@@ -23,25 +27,8 @@ export function applyDiskContentToDoc(
   resolveEmbed?: (basename: string, sourcePath: string) => string | null,
   sourcePath?: string,
 ): void {
-  const { frontmatter, body } = stripFrontmatter(content);
-  const parseOpts = resolveEmbed && sourcePath ? { resolveEmbed, sourcePath } : undefined;
-  const parsedJson = mdManager.parseWithFallback(body, parseOpts);
-  const pmNode = schema.nodeFromJSON(parsedJson);
-  const xmlFragment = document.getXmlFragment('default');
-
-  const canonicalBody = mdManager.serialize(parsedJson);
-  const canonicalContent = prependFrontmatter(frontmatter, canonicalBody);
-
-  document.transact(() => {
-    const meta = { mapping: new Map(), isOMark: new Map() };
-    updateYFragment(document, xmlFragment, pmNode, meta);
-
-    const ytext = document.getText('source');
-    const currentText = ytext.toString();
-    if (currentText !== canonicalContent) {
-      applyFastDiff(ytext, currentText, canonicalContent);
-    }
-  }, FILE_WATCHER_ORIGIN);
+  const embedResolver = resolveEmbed && sourcePath ? { resolveEmbed, sourcePath } : undefined;
+  composeAndWriteRawBody(document, content, embedResolver);
 }
 
 export function applyExternalChange(
@@ -57,7 +44,9 @@ export function applyExternalChange(
   const priorFm = stripFrontmatter(document.getText('source').toString()).frontmatter;
   const { frontmatter: nextFm } = stripFrontmatter(content);
 
-  applyDiskContentToDoc(document, content, resolveEmbed, docName);
+  document.transact(() => {
+    applyDiskContentToDoc(document, content, resolveEmbed, docName);
+  }, FILE_WATCHER_ORIGIN);
 
   if (priorFm !== nextFm) {
     recordFrontmatterEditSurface('file-watcher');
@@ -83,6 +72,13 @@ export function createExternalChangeHandler(
       applyExternalChange(hocuspocus, docName, content, resolveEmbed);
       console.log(`[file-watcher] Applied external change: ${docName}`);
     } catch (err) {
+      if (
+        err instanceof BridgeInvariantViolationError ||
+        err instanceof BridgeMergeContentLossError
+      ) {
+        throw err;
+      }
+      incrementExternalChangeHandlerErrors();
       console.error(`[file-watcher] Failed to apply external change for ${docName}:`, err);
     }
   };

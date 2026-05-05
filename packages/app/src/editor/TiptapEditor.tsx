@@ -32,6 +32,7 @@ import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import {
   createClipboardHtmlSerializer,
   createClipboardTextSerializer,
+  createHandleDrop,
   createHandlePaste,
 } from './clipboard/index.ts';
 import { useDocumentContext } from './DocumentContext';
@@ -99,6 +100,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
       text: createClipboardTextSerializer({ mdManager }),
       html: createClipboardHtmlSerializer({ mdManager }),
       paste: createHandlePaste({ mdManager }),
+      drop: createHandleDrop({ mdManager }),
     };
   });
 
@@ -153,6 +155,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
               clipboardTextSerializer: (slice, view) => clipboard.text(slice, view),
               clipboardSerializer: clipboard.html.serializer,
               handlePaste: (view, event) => clipboard.paste(view, event),
+              handleDrop: (view, event) => clipboard.drop(view, event as DragEvent),
             },
             extensions: wrapExtensionsWithTiming([
               ...sharedExtensions.map((ext) => {

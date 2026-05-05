@@ -84,7 +84,7 @@ describe('reconciliation metrics', () => {
     resetMetrics();
     const m = getMetrics();
     for (const [key, value] of Object.entries(m)) {
-      if (key === 'cc1LastSeq') {
+      if (key === 'cc1LastSeq' || key === 'bridgeToleranceApplied') {
         expect(value).toEqual({});
       } else {
         expect(value).toBe(0);

@@ -15,6 +15,12 @@ const JSX_CAPITAL_OPEN_RE = /<[A-Z]\w*[\s/>]/;
 const JSX_LOWERCASE_ATTR_RE = /<[a-z]+\s+\w+="[^"]*"/;
 const HTML_INLINE_RE = /<[a-z]+>[^<\n]*<\/[a-z]+>/;
 
+const SETEXT_RE = /^.+\n[=-]+$/m;
+const SINGLE_STAR_EM_RE = /(^|\s)\*[^*\s\n][^*\n]*[^*\s\n]\*(\s|$)/m;
+const SINGLE_UNDER_EM_RE = /(^|\s)_[^_\s\n][^_\n]*[^_\s\n]_(\s|$)/m;
+const TILDE_FENCE_RE = /^~~~/m;
+const BACKSLASH_ESCAPE_RE = /\\[\\`*_{}[\]<>()#+\-.!|]/;
+
 const HEURISTIC_SAMPLE_THRESHOLD = 256 * 1024;
 const HEURISTIC_SAMPLE_HALF = 32 * 1024;
 
@@ -41,6 +47,11 @@ export function isMarkdown(text: string): boolean {
   if (JSX_CAPITAL_OPEN_RE.test(sample)) signals++;
   if (JSX_LOWERCASE_ATTR_RE.test(sample)) signals++;
   if (HTML_INLINE_RE.test(sample)) signals++;
+  if (SETEXT_RE.test(sample)) signals++;
+  if (SINGLE_STAR_EM_RE.test(sample)) signals++;
+  if (SINGLE_UNDER_EM_RE.test(sample)) signals++;
+  if (TILDE_FENCE_RE.test(sample)) signals++;
+  if (BACKSLASH_ESCAPE_RE.test(sample)) signals++;
 
   const lineCount = sample.split('\n').length;
   const threshold = Math.min(3, Math.floor(lineCount / 5));

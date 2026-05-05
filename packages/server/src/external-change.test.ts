@@ -11,7 +11,11 @@
  */
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { Hocuspocus } from '@hocuspocus/server';
-import { stripFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  BridgeInvariantViolationError,
+  BridgeMergeContentLossError,
+  stripFrontmatter,
+} from '@inkeep/open-knowledge-core';
 import type * as Y from 'yjs';
 import { applyExternalChange, createExternalChangeHandler } from './external-change.ts';
 
@@ -112,16 +116,15 @@ describe('applyExternalChange — throwing helper', () => {
     await conn.disconnect();
   });
 
-  test('(b5) horizontal-rule canonicalization: doc-start `---` body becomes canonical `***`', async () => {
-    const docName = 'test-thematic-break-canonical';
+  test('(b5) Y.Text-is-truth: doc-start `---` survives in Y.Text (no canonicalize-write-back)', async () => {
+    const docName = 'test-thematic-break-raw';
     const conn = await hp.openDirectConnection(docName);
     const doc = getDoc(conn);
 
     applyExternalChange(hp, docName, '---\n');
 
     const ytext = doc.getText('source').toString();
-    expect(ytext).toContain('***');
-    expect(ytext).not.toContain('---');
+    expect(ytext).toBe('---\n');
 
     await conn.disconnect();
   });
@@ -214,6 +217,79 @@ describe('createExternalChangeHandler — error-swallowing factory', () => {
       expect(callArgs[0]).toContain(docName);
 
       expect(doc.getText('source').toString()).toBe(textBefore);
+
+      doc.getXmlFragment = originalGetXmlFragment;
+      await conn.disconnect();
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  test('factory wrapper re-throws BridgeInvariantViolationError to preserve loud-failure gate', async () => {
+    const errorSpy = mock(() => {});
+    const originalError = console.error;
+    console.error = errorSpy;
+
+    try {
+      const handler = createExternalChangeHandler(hp);
+      const docName = 'test-bridge-violation-rethrow';
+      const conn = await hp.openDirectConnection(docName);
+
+      const doc = getDoc(conn);
+      const originalGetXmlFragment = doc.getXmlFragment.bind(doc);
+      doc.getXmlFragment = () => {
+        throw new BridgeInvariantViolationError({
+          site: 'observer-b',
+          docName,
+          ytextSnapshot: 'left',
+          fragmentMdSnapshot: 'right',
+          unifiedDiff: '',
+          stack: undefined,
+        });
+      };
+
+      await expect(handler(docName, '# Content\n')).rejects.toBeInstanceOf(
+        BridgeInvariantViolationError,
+      );
+
+      expect(errorSpy).not.toHaveBeenCalled();
+
+      doc.getXmlFragment = originalGetXmlFragment;
+      await conn.disconnect();
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  test('factory wrapper re-throws BridgeMergeContentLossError to preserve OK_RETHROW_BRIDGE_LOSS gate', async () => {
+    const errorSpy = mock(() => {});
+    const originalError = console.error;
+    console.error = errorSpy;
+
+    try {
+      const handler = createExternalChangeHandler(hp);
+      const docName = 'test-merge-loss-rethrow';
+      const conn = await hp.openDirectConnection(docName);
+
+      const doc = getDoc(conn);
+      const originalGetXmlFragment = doc.getXmlFragment.bind(doc);
+      doc.getXmlFragment = () => {
+        throw new BridgeMergeContentLossError({
+          baseline: 'base',
+          userText: 'user',
+          agentText: 'agent',
+          result: 'merged',
+          lostSubstrings: ['lost-text'],
+          which: 'user',
+          side: 'left',
+        });
+      };
+
+      await expect(handler(docName, '# Content\n')).rejects.toBeInstanceOf(
+        BridgeMergeContentLossError,
+      );
+
+      expect(errorSpy).not.toHaveBeenCalled();
 
       doc.getXmlFragment = originalGetXmlFragment;
       await conn.disconnect();

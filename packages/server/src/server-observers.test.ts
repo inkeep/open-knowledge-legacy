@@ -147,6 +147,88 @@ describe('Server Observer A — XmlFragment → Y.Text', () => {
     cleanup();
   });
 
+  test('Path B emits observer-a-path-b-fired telemetry (FR-41)', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const before = getMetrics().observerAPathBFires;
+
+    populateFragment(doc, xmlFragment, '# Hello\n\nOriginal\n');
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
+
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+
+    try {
+      doc.transact(() => {
+        ytext.insert(ytext.toString().length, '\nAgent addition\n');
+      }, OBSERVER_SYNC_ORIGIN);
+      populateFragment(doc, xmlFragment, '# Hello\n\nOriginal\n\nUser edit\n');
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    const events = warnings
+      .map((w) => {
+        try {
+          return JSON.parse(w);
+        } catch {
+          return null;
+        }
+      })
+      .filter((e): e is Record<string, unknown> => e !== null);
+    const pathBEvents = events.filter((e) => e.event === 'observer-a-path-b-fired');
+    expect(pathBEvents.length).toBeGreaterThanOrEqual(1);
+    const pathBEvent = pathBEvents[0];
+    expect(pathBEvent).toBeDefined();
+    expect(pathBEvent?.xmlFragmentAdvanced).toBe(true);
+    expect(pathBEvent?.ytextDiverged).toBe(true);
+    expect(typeof pathBEvent?.mergeBytesChanged).toBe('number');
+
+    const keys = Object.keys(pathBEvent ?? {}).sort();
+    expect(keys).toEqual(
+      ['event', 'mergeBytesChanged', 'xmlFragmentAdvanced', 'ytextDiverged'].sort(),
+    );
+
+    expect(getMetrics().observerAPathBFires).toBe(before + pathBEvents.length);
+
+    cleanup();
+  });
+
+  test('Path A does NOT emit observer-a-path-b-fired (only Path B emits)', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const before = getMetrics().observerAPathBFires;
+
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
+
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+
+    try {
+      populateFragment(doc, xmlFragment, '# Hello\n');
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    const events = warnings
+      .map((w) => {
+        try {
+          return JSON.parse(w);
+        } catch {
+          return null;
+        }
+      })
+      .filter((e): e is Record<string, unknown> => e !== null);
+    expect(events.filter((e) => e.event === 'observer-a-path-b-fired')).toHaveLength(0);
+    expect(getMetrics().observerAPathBFires).toBe(before);
+
+    cleanup();
+  });
+
   test('already-in-sync gate: when Y.Text matches XmlFragment, no observer write', () => {
     const { doc, xmlFragment, ytext, recorder } = createTestDoc();
     const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
@@ -209,7 +291,7 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
 
     doc.transact(() => {
       ytext.delete(0, ytext.length);
-      ytext.insert(0, '---\ntitle: My Page\n---\n\n# Hello\n\nWorld\n');
+      ytext.insert(0, '---\ntitle: My Page\n---\n# Hello\n\nWorld\n');
     });
 
     expect(stripFrontmatter(ytext.toString()).frontmatter).toBe('---\ntitle: My Page\n---\n');
@@ -738,6 +820,102 @@ describe('Server Observer B — error recovery paths', () => {
     expect(
       mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON()),
     ).toContain('Extra');
+
+    cleanup();
+  });
+});
+
+describe('Server Observer B — Y.Text-is-truth contract (FR-31)', () => {
+  test('Y.Text bytes preserved verbatim across Observer B (no canonicalize-write-back)', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
+
+    const inputs = [
+      '# Title\n',
+      '__strong via underscores__\n',
+      '_emphasis via underscore_\n',
+      '`inline` code\n',
+      '## H ##\n',
+      'A list:\n\n- one\n- two\n',
+    ];
+
+    for (const md of inputs) {
+      doc.transact(() => {
+        ytext.delete(0, ytext.length);
+        ytext.insert(0, md);
+      });
+      expect(ytext.toString()).toBe(md);
+    }
+
+    cleanup();
+  });
+
+  test('OBSERVER_SYNC_ORIGIN write count is exactly 1 per Observer B fire (Phase 1 only)', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
+
+    let syncOriginWrites = 0;
+    doc.on('afterTransaction', (tx: Y.Transaction) => {
+      if (tx.origin === OBSERVER_SYNC_ORIGIN) syncOriginWrites++;
+    });
+
+    doc.transact(() => {
+      ytext.insert(0, '# H\n\nP\n');
+    });
+
+    expect(syncOriginWrites).toBe(1);
+
+    cleanup();
+  });
+
+  test('watchdog tolerates FM-body boundary blank-line divergence (block-separator-collapse class)', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
+
+    expect(() => {
+      doc.transact(() => {
+        ytext.delete(0, ytext.length);
+        ytext.insert(0, '---\ntitle: foo\n---\n\n# Body\n');
+      });
+    }).not.toThrow();
+
+    cleanup();
+  });
+
+  test('source-mode-style typing produces no mid-burst ytext byte rewrites from Observer B', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
+
+    let observerInducedYTextChange = 0;
+    ytext.observe((_event: Y.YTextEvent, tx: Y.Transaction) => {
+      if (tx.origin === OBSERVER_SYNC_ORIGIN) observerInducedYTextChange++;
+    });
+
+    const buffer: string[] = [];
+    for (const piece of ['# H\n', '\nA', 'B', 'C\n', '\nD\n']) {
+      buffer.push(piece);
+      doc.transact(() => {
+        ytext.delete(0, ytext.length);
+        ytext.insert(0, buffer.join(''));
+      });
+    }
+
+    expect(observerInducedYTextChange).toBe(0);
+    expect(ytext.toString()).toBe(buffer.join(''));
+
+    cleanup();
+  });
+
+  test('Y.Text-is-truth: literal `[[Page` survives without backslash-escape (regression: pre-contract Phase 2 dropped these)', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
+
+    doc.transact(() => {
+      ytext.insert(0, '[[Page\n');
+    });
+
+    expect(ytext.toString()).toBe('[[Page\n');
+    expect(ytext.toString()).not.toContain('\\[');
 
     cleanup();
   });

@@ -87,6 +87,27 @@ Frontmatter lives in the YAML region of `Y.Text('source')` — the same CRDT tex
 
 `edit_document` rejects FM-intersecting find/replace calls with HTTP 400 and a hint pointing at `write_document`. Body edits stay on `edit_document`; frontmatter edits route through `write_document`. Mixing the two in one batch — body edit via `edit_document`, FM rewrite via `write_document` — is the supported pattern.
 
+### Byte-faithful writes (Y.Text-is-truth contract)
+
+The bridge runs under the **Y.Text-is-truth contract** (precedent #38): the bytes an agent sends through `write_document` land in the underlying CRDT verbatim. This matters when the agent has a deliberate source-form preference — a project style guide, a legacy format the team wants preserved, or a deliberate whitespace choice the agent intends to be visible in source mode.
+
+Concretely, the following survive verbatim through `write_document` → CRDT → save → reload:
+
+- Source-form delimiters: `__bold__` vs `**bold**`, `_italic_` vs `*italic*`
+- Ordered-list markers: `1)` vs `1.`
+- Inline code fences: backtick character (`` ` `` vs `~`) and length (1, 2, 3+ backticks)
+- Code block form: indented (4-space) vs fenced (` ``` ` / `~~~`); fence char + length
+- ATX heading trailing hashes: `## H ##` round-trips
+- Setext heading underline length: `===` vs `==========`
+- Blockquote marker spacing: `>foo` vs `> foo`
+- Link URL form: `<https://x>` vs `https://x` vs `[label](https://x)`
+- Link title quote style: `"foo"` vs `'foo'` vs `(foo)`
+- Leading/trailing whitespace in the payload (no `.trim()` is applied — the agent decides)
+
+`edit_document`'s `find` parameter matches against the user-typed source bytes (`ytext.toString()`), not against canonical bytes (`serialize(fragment)`). Tools that compute offsets by re-serializing the fragment will see `agentPatchFindMismatches` rise — the contract is "match what the user typed."
+
+Some equivalence classes are tolerated by the bridge invariant comparator and may be normalized at compare time but NOT actively rewritten in storage: UTF-8 BOM, CRLF line endings, leading newlines, doc-start `---`/`***` thematic break, per-line trailing whitespace. The architectural floor — what the contract cannot preserve through round-trip without schema work — includes blank-line counts beyond 2, raw HTML entity decoding (`&amp;` → `&`), and within-conflict-region char-level merges in collaborative concurrent editing. See `specs/2026-05-01-bridge-ytext-is-truth-contract/SPEC.md` §4d for the full enumeration with future-work pathways.
+
 ### `summary` on write tools
 
 The five write tools — `write_document`, `edit_document`, `rename_document`, `rename_folder`, `rollback_to_version` — accept an optional `summary: string` describing the intent of the edit in outcome phrasing (e.g. `"Fixed token-refresh race"`, not `"Added 3 lines"`). Summaries are persisted per-contributor to the shadow-repo attribution journal and render as bullets on the document's [[timeline|Timeline]] row, so readers can scan recent agent activity without opening each diff.

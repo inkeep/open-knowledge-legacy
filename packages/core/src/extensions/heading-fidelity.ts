@@ -7,6 +7,8 @@ export const HeadingFidelity = Heading.extend({
     return {
       ...this.parent?.(),
       headingStyle: { default: 'atx' },
+      sourceTrailingHashes: { default: null },
+      sourceUnderlineLength: { default: null },
     };
   },
 });

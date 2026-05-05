@@ -18,90 +18,120 @@ interface PasteDispatcherDeps {
   mdManager: MarkdownManager;
 }
 
+type DispatchSurface = 'paste' | 'drop';
+
 export function createHandlePaste(deps: PasteDispatcherDeps) {
-  return (view: EditorView, event: ClipboardEvent): boolean => {
-    const dt = event.clipboardData;
-    if (!dt || dt.types.length === 0) return false;
+  return (view: EditorView, event: ClipboardEvent): boolean =>
+    handleDropOrPaste(view, event, 'paste', deps);
+}
 
-    const start = performance.now();
-    const source = detectSource(dt);
-    const plain = dt.getData('text/plain');
-    const html = dt.getData('text/html');
-
-    if (pasteShiftHeld(event)) {
-      if (plain) insertPlainText(view, plain);
-      logSourceDetected({ view: 'wysiwyg', branch: 'shift', source });
-      logIfSlow(start, { op: 'paste', view: 'wysiwyg', branch: 'shift', source });
-      return true;
-    }
-
-    if (isCursorInCodeBlock(view)) {
-      if (plain) insertPlainText(view, plain);
-      logSourceDetected({ view: 'wysiwyg', branch: 'codeblock', source });
-      logIfSlow(start, { op: 'paste', view: 'wysiwyg', branch: 'codeblock', source });
-      return true;
-    }
-
-    const vscodeData = dt.getData('vscode-editor-data');
-    if (vscodeData && plain && tryBranchA(view, vscodeData, plain, source)) {
-      logSourceDetected({ view: 'wysiwyg', branch: 'A', source });
-      logIfSlow(start, { op: 'paste', view: 'wysiwyg', branch: 'A', source });
-      return true;
-    }
-
-    const gfm = dt.getData('text/x-gfm');
-    if (gfm && tryBranchMarkdown(view, gfm, deps, 'B', source)) {
-      logSourceDetected({ view: 'wysiwyg', branch: 'B', source });
-      logIfSlow(start, { op: 'paste', view: 'wysiwyg', branch: 'B', source });
-      return true;
-    }
-
-    if (plain && html && isMarkdown(plain) && tryBranchMarkdown(view, plain, deps, 'B', source)) {
-      logSourceDetected({ view: 'wysiwyg', branch: 'B', source });
-      logIfSlow(start, { op: 'paste', view: 'wysiwyg', branch: 'B', source });
-      return true;
-    }
-
-    if (html && /data-pm-slice/i.test(html)) {
-      logSourceDetected({
-        view: 'wysiwyg',
-        branch: 'C',
-        source,
-      });
-      logIfSlow(start, { op: 'paste', view: 'wysiwyg', branch: 'C', source });
+export function createHandleDrop(deps: PasteDispatcherDeps) {
+  return (view: EditorView, event: DragEvent): boolean => {
+    if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
       return false;
     }
-
-    if (html && tryBranchHtml(view, html, deps, source)) {
-      logSourceDetected({
-        view: 'wysiwyg',
-        branch: 'D',
-        source,
-      });
-      logIfSlow(start, {
-        op: 'paste',
-        view: 'wysiwyg',
-        branch: 'D',
-        source,
-        htmlBytes: html.length,
-      });
-      return true;
-    }
-
-    if (plain) {
-      if (isMarkdown(plain) && tryBranchMarkdown(view, plain, deps, 'E', 'markdown-text')) {
-        logSourceDetected({ view: 'wysiwyg', branch: 'E', source: 'markdown-text' });
-        logIfSlow(start, { op: 'paste', view: 'wysiwyg', branch: 'E', source: 'markdown-text' });
-        return true;
-      }
-      insertPlainText(view, plain);
-      logSourceDetected({ view: 'wysiwyg', branch: 'E', source: 'plaintext' });
-      logIfSlow(start, { op: 'paste', view: 'wysiwyg', branch: 'E', source: 'plaintext' });
-      return true;
-    }
-
-    return false;
+    return handleDropOrPaste(view, event, 'drop', deps);
   };
+}
+
+function handleDropOrPaste(
+  view: EditorView,
+  event: ClipboardEvent | DragEvent,
+  surface: DispatchSurface,
+  deps: PasteDispatcherDeps,
+): boolean {
+  const dt =
+    surface === 'paste'
+      ? (event as ClipboardEvent).clipboardData
+      : (event as DragEvent).dataTransfer;
+  if (!dt || dt.types.length === 0) return false;
+
+  const start = performance.now();
+  const source = detectSource(dt);
+  const plain = dt.getData('text/plain');
+  const html = dt.getData('text/html');
+
+  if (isShiftHeldForSurface(event, surface)) {
+    if (plain) insertPlainText(view, plain);
+    logSourceDetected({ view: 'wysiwyg', branch: 'shift', source });
+    logIfSlow(start, { op: surface, view: 'wysiwyg', branch: 'shift', source });
+    return true;
+  }
+
+  if (isCursorInCodeBlock(view)) {
+    if (plain) insertPlainText(view, plain);
+    logSourceDetected({ view: 'wysiwyg', branch: 'codeblock', source });
+    logIfSlow(start, { op: surface, view: 'wysiwyg', branch: 'codeblock', source });
+    return true;
+  }
+
+  const vscodeData = dt.getData('vscode-editor-data');
+  if (vscodeData && plain && tryBranchA(view, vscodeData, plain, source)) {
+    logSourceDetected({ view: 'wysiwyg', branch: 'A', source });
+    logIfSlow(start, { op: surface, view: 'wysiwyg', branch: 'A', source });
+    return true;
+  }
+
+  const gfm = dt.getData('text/x-gfm');
+  if (gfm && tryBranchMarkdown(view, gfm, deps, 'B', source)) {
+    logSourceDetected({ view: 'wysiwyg', branch: 'B', source });
+    logIfSlow(start, { op: surface, view: 'wysiwyg', branch: 'B', source });
+    return true;
+  }
+
+  if (plain && html && isMarkdown(plain) && tryBranchMarkdown(view, plain, deps, 'B', source)) {
+    logSourceDetected({ view: 'wysiwyg', branch: 'B', source });
+    logIfSlow(start, { op: surface, view: 'wysiwyg', branch: 'B', source });
+    return true;
+  }
+
+  if (html && /data-pm-slice/i.test(html)) {
+    logSourceDetected({
+      view: 'wysiwyg',
+      branch: 'C',
+      source,
+    });
+    logIfSlow(start, { op: surface, view: 'wysiwyg', branch: 'C', source });
+    return false;
+  }
+
+  if (html && tryBranchHtml(view, html, deps, source)) {
+    logSourceDetected({
+      view: 'wysiwyg',
+      branch: 'D',
+      source,
+    });
+    logIfSlow(start, {
+      op: surface,
+      view: 'wysiwyg',
+      branch: 'D',
+      source,
+      htmlBytes: html.length,
+    });
+    return true;
+  }
+
+  if (plain) {
+    if (isMarkdown(plain) && tryBranchMarkdown(view, plain, deps, 'E', 'markdown-text')) {
+      logSourceDetected({ view: 'wysiwyg', branch: 'E', source: 'markdown-text' });
+      logIfSlow(start, { op: surface, view: 'wysiwyg', branch: 'E', source: 'markdown-text' });
+      return true;
+    }
+    insertPlainText(view, plain);
+    logSourceDetected({ view: 'wysiwyg', branch: 'E', source: 'plaintext' });
+    logIfSlow(start, { op: surface, view: 'wysiwyg', branch: 'E', source: 'plaintext' });
+    return true;
+  }
+
+  return false;
+}
+
+function isShiftHeldForSurface(
+  event: ClipboardEvent | DragEvent,
+  surface: DispatchSurface,
+): boolean {
+  if (surface === 'paste') return pasteShiftHeld(event as ClipboardEvent);
+  return (event as DragEvent).shiftKey === true;
 }
 
 function isCursorInCodeBlock(view: EditorView): boolean {

@@ -29,32 +29,55 @@ Accepts a JSON body:
 }
 ```
 
-The endpoint routes through `applyAgentMarkdownWrite` (XmlFragment-authoritative composition per AGENTS.md precedent #10):
+The endpoint routes through `applyAgentMarkdownWrite` per the **Y.Text-is-truth contract** (AGENTS.md precedent #38). The agent's payload bytes are the source-of-truth — they land in `Y.Text` verbatim (modulo the equivalence classes documented in `normalizeBridge`); the structural view derives from those bytes via `parse`.
 
 1. Opens a `DirectConnection` to the Y.Doc
-2. Reads the current `Y.XmlFragment` — reflects all CRDT-synced content including any concurrent client WYSIWYG typing that has propagated via the tree-sync message. Server-side cross-CRDT sync (precedent #14) runs under a single-writer `afterAllTransactions` settlement dispatch (one fire per outermost `doc.transact()` drain, SPEC 2026-04-16 bridge-correctness §6 R4); the client observer is a baseline-tracking shell that does not write Y.Text.
-3. Serializes XmlFragment to markdown via `yXmlFragmentToProsemirrorJSON` + `MarkdownManager.serialize`
-4. Composes the agent's delta at the markdown level per `position` (`'append'` / `'prepend'` / `'replace'`)
-5. Parses the composed markdown and applies to XmlFragment via `updateYFragment()` — structural diff preserves user-content Items at matching positions
-6. Mirrors the canonical post-fragment markdown to `Y.Text` via `applyFastDiff` (character-level DMP write exported from `@inkeep/open-knowledge-core/bridge`) — minimal mutation, preserves non-agent Y.Text Items and their origins
+2. Reads the current `Y.Text('source')` — `currentYText = ytext.toString()` — to compose against. This is the user-typed source bytes (CRDT-synced from any concurrent CM6 source-mode editor)
+3. Composes the new full body bytes by `position`:
+   - `'replace'` — `payload`
+   - `'append'` — `currentYText + '\n\n' + payload`
+   - `'prepend'` — `payload + '\n\n' + currentYText`
+   No `.trim()`, no normalization. Agent payload is preserved verbatim — leading newlines, trailing whitespace, intentional blank lines all survive (modulo NG1 architectural floor: 3+ blank lines collapse to 2 on the next save)
+4. Routes through the shared `composeAndWriteRawBody(document, newBody, embedResolver)` primitive in `packages/server/src/bridge-intake.ts`, inside one `session.dc.document.transact(..., session.origin)` block under `AGENT_WRITE_ORIGIN` (a paired-write origin per AGENTS.md precedent #1):
+   - **Y.Text side:** `applyFastDiff(ytext, currentYText, newBody)` — character-level DMP write; preserves CRDT Items for unchanged byte ranges
+   - **Fragment side:** `parse(newBody) → updateYFragment(document, fragment, pmNode)` — structural diff preserves user-content Items at matching positions
 
-The XmlFragment-authoritative shape is required to preserve concurrent user WYSIWYG content during agent writes. The prior implementation (`syncTextToFragment`, deleted by the `2026-04-14-bridge-convergence-under-concurrent-writes` spec — FR-9) read `Y.Text` as the authoritative input, which lagged the XmlFragment for client-originated WYSIWYG typing and caused `updateYFragment` to stomp user content (Bug-A, deterministic).
+Both halves of the cross-CRDT write are atomic from any other observer's perspective — the paired-write origin marker tells Observer A and Observer B to short-circuit and refresh their baselines without dispatching the bridge sync (the writer already made both CRDTs consistent).
 
-V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` in the bridge-convergence spec for the template.
+**What the contract preserves on round-trip:** the agent's `__foo__` (vs `**foo**`), `1)` ordered lists (vs `1.`), single backtick on `` `code` `` with no internal backticks, indented vs fenced code blocks, ATX trailing hashes (`## H ##`), setext underline length, blockquote marker spacing (`>foo` vs `> foo`), single-quoted vs double-quoted titles, doc-start `***` vs `---` (modulo `normalizeBridge` tolerance), CRLF line endings (modulo tolerance), UTF-8 BOM (modulo tolerance), and any source-form attr captured by FR-1..FR-25.
+
+**What it does NOT preserve** (architectural floor): blank-line counts beyond 2, raw HTML entity decoding (`&amp;` → `&`), MDX edge cases not represented in the PM tree, and within-conflict-region char-level DMP rewrites in collaborative concurrent editing. See `specs/2026-05-01-bridge-ytext-is-truth-contract/SPEC.md` §4d for the full enumeration with future-work pathways.
 
 ## Source mode live injection
 
 Source mode (CodeMirror) binds `Y.Text('source')` directly via `y-codemirror.next`. Agent writes are visible in real time without any application-level observer:
 
-1. `applyAgentMarkdownWrite` updates `Y.XmlFragment` and mirrors the canonical markdown to `Y.Text` inside one server-side `doc.transact()` block under `AGENT_WRITE_ORIGIN` (a paired-write origin per AGENTS.md precedent #1).
+1. `applyAgentMarkdownWrite` writes the agent's composed body bytes into `Y.Text` (and derives the fragment) inside one server-side `doc.transact(..., AGENT_WRITE_ORIGIN)` block.
 2. The Y.Text mutation propagates to every connected client through the standard CRDT sync.
 3. `y-codemirror.next` applies the incoming delta to the CodeMirror buffer with character-level precision — cursor and selection on the local keystroke side are preserved by the binding.
 
-The server's bidirectional observer sync runs exclusively on the server under the `afterAllTransactions` settlement dispatch (precedent #13(b)). One outermost `doc.transact()` call produces exactly one settlement fire; Observer A (XmlFragment → Y.Text) runs before Observer B (Y.Text → XmlFragment) within each drain, and Observer B canonicalizes `Y.Text` via `applyFastDiff` after `updateYFragment` so the bridge invariant `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` holds at every settlement point. There is no debounce window, no injected `Scheduler`, and no wall-clock timing in either bridge observer file (enforced by the grep gate at `packages/server/src/bridge-no-wallclock.test.ts`).
+The server's cross-CRDT sync runs exclusively on the server under the `afterAllTransactions` settlement dispatch (precedent #13(b)). One outermost `doc.transact()` call produces exactly one settlement fire. **Observer A (XmlFragment → Y.Text) runs before Observer B (Y.Text → XmlFragment)** within each drain so Observer B Phase 1 reads the post-A converged Y.Text. Under the contract, **Observer B is watchdog-only**: Phase 1 derives the fragment from `parse(ytext) → updateYFragment`; Phase 2 asserts the bridge invariant
 
-Paired-write origins (`AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`, `MANAGED_RENAME_ORIGIN`) declare `context.paired: true` at their definition site. Observer A AND Observer B both detect that marker structurally via `isPairedWriteOrigin(transaction.origin)` and refresh their shared baseline synchronously inside the observer callback — the settlement handler then has no work to dispatch for the drain (the paired writer already made both CRDTs consistent).
+```
+normalizeBridge(ytext.toString())
+  === normalizeBridge(prependFrontmatter(fm, mdManager.serialize(fragment)))
+```
+
+and emits / throws on violation — never writes back to Y.Text. The pre-contract canonicalize-write-back step at the Phase 2 site was deleted by spec FR-31; re-adding it is a STOP_IF (see `packages/server/src/server-observers.ts` and the AGENTS.md STOP rules). There is no debounce window, no injected `Scheduler`, and no wall-clock timing in either bridge observer file (enforced by the grep gate at `packages/server/src/bridge-no-wallclock.test.ts`).
+
+Paired-write origins (`AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`, `MANAGED_RENAME_ORIGIN`) declare `context.paired: true` at their definition site. Observer A AND Observer B both detect that marker structurally via `isPairedWriteOrigin(transaction.origin)` and refresh their shared baseline synchronously inside the observer callback — the settlement handler then has no work to dispatch for the drain (the paired writer already made both CRDTs consistent through `composeAndWriteRawBody`).
 
 Client-side keystroke protection is not needed on the bridge layer because the client observer does not write the derived CRDT under precedent #14.
+
+## Find-and-replace (`POST /api/agent-patch`)
+
+`edit_document` (the MCP tool) hits `POST /api/agent-patch`. The handler builds the find-target from `ytext.toString()` — the user-typed source bytes — not from `mdManager.serialize(fragment)`. So the agent's `find` matches against what it would see if it `read_document`'d the file in source mode. Agents that compute offsets against canonical bytes (e.g., by re-serializing fragment) will see `agentPatchFindMismatches` rise; the contract is "match what the user typed."
+
+Frontmatter-intersecting patches return HTTP 400 with `error: "Frontmatter edits are not supported via edit_document; edit frontmatter directly via the property panel binding"` — agents must use `write_document` (full-doc replace, position `'replace'`) for FM rewrites.
+
+## Undo (`POST /api/agent-undo`)
+
+`Y.UndoManager.undo()` mutates `Y.Text` directly — the `trackedOrigins` machinery operates on Y.Text. The handler then runs `parse(ytext) → updateYFragment` for the fragment side inside one `doc.transact(..., session.undoOrigin)` block. Post-undo ytext IS the restored user bytes — there is no canonicalize-write-back step. The pre-contract re-serialize step (which would have re-canonicalized the user's restored bytes) was deleted by spec FR-40.
 
 ## Frontmatter write (CRDT-direct via `bindFrontmatterDoc`)
 

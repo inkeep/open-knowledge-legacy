@@ -8,6 +8,8 @@ export const CodeBlockFidelity = CodeBlock.extend({
       ...this.parent?.(),
       fenceDelimiter: { default: '`' },
       fenceLength: { default: 3 },
+      meta: { default: null },
+      sourceStyle: { default: 'fenced' },
     };
   },
 });

@@ -1,9 +1,6 @@
 import type { Document, Extension } from '@hocuspocus/server';
-import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
-import { mdManager, schema } from './md-manager.ts';
 import type { TagIndex } from './tag-index.ts';
 
 export const LIVE_DERIVED_INDEX_DEBOUNCE_MS = 100;
@@ -28,10 +25,7 @@ function isLocalOriginLike(origin: unknown): origin is LocalOriginLike {
 }
 
 function serializeLiveDocument(document: Document): string {
-  const xmlFragment = document.getXmlFragment('default');
-  const body = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON());
-  const fm = stripFrontmatter(document.getText('source').toString()).frontmatter;
-  return prependFrontmatter(fm, body);
+  return document.getText('source').toString();
 }
 
 export function createLiveDerivedIndexExtension(options: LiveDerivedIndexOptions): Extension {

@@ -162,6 +162,24 @@ describe('closeSession', () => {
   test('is a no-op for non-existent sessions', async () => {
     await expect(manager.closeSession('doc.md', 'agent-nobody')).resolves.toBeUndefined();
   });
+
+  test('always deletes the session entry, even when disconnect throws', async () => {
+    await manager.getSession('doc.md', 'agent-throws');
+    expect(manager.hasSession('doc.md', 'agent-throws')).toBe(true);
+
+    // biome-ignore lint/suspicious/noExplicitAny: test reaches into internal map for failure injection
+    const session = (manager as any).sessions.get(
+      // biome-ignore lint/suspicious/noExplicitAny: test reaches into internal map for failure injection
+      (manager as any).sessionKey('doc.md', 'agent-throws'),
+    );
+    expect(session).toBeDefined();
+    session.dc.disconnect = async () => {
+      throw new Error('SIMULATED: Y.js observers in inconsistent state');
+    };
+
+    await expect(manager.closeSession('doc.md', 'agent-throws')).resolves.toBeUndefined();
+    expect(manager.hasSession('doc.md', 'agent-throws')).toBe(false);
+  });
 });
 
 describe('closeAllForDoc', () => {
@@ -376,5 +394,98 @@ describe('applyAgentUndo — scope drain semantics (V0-14)', () => {
     expect(node?.attrs?.componentName).toBe('WikiEmbedImage');
     expect(node?.attrs?.props?.src).toBe('/attachments/photo.png');
     expect(node?.attrs?.props?.target).toBe('photo.png');
+  });
+});
+
+describe('applyAgentUndo — Y.Text-is-truth contract (FR-40)', () => {
+  test('preserves CRLF line endings across undo (no canonicalize-write-back)', async () => {
+    const session = await manager.getSession('doc-crlf.md', 'agent-crlf');
+    const ytext = session.dc.document.getText('source');
+
+    session.dc.document.transact(() => {
+      applyAgentMarkdownWrite(session.dc.document, '__foo__\r\nLine 2.\r\n', 'replace');
+    }, session.origin);
+    expect(ytext.toString()).toBe('__foo__\r\nLine 2.\r\n');
+
+    session.um.stopCapturing();
+
+    session.dc.document.transact(() => {
+      applyAgentMarkdownWrite(session.dc.document, '# Heading\n', 'replace');
+    }, session.origin);
+
+    const undone = applyAgentUndo(session, 'last');
+    expect(undone).toBe(true);
+
+    expect(ytext.toString()).toBe('__foo__\r\nLine 2.\r\n');
+  });
+
+  test('preserves doc-start `---` (no canonicalize to `***\\n\\n`) across undo', async () => {
+    const session = await manager.getSession('doc-start-dashes.md', 'agent-dashes');
+    const ytext = session.dc.document.getText('source');
+
+    session.dc.document.transact(() => {
+      applyAgentMarkdownWrite(session.dc.document, '---\n# H\n\nBody.\n', 'replace');
+    }, session.origin);
+    expect(ytext.toString()).toBe('---\n# H\n\nBody.\n');
+
+    session.um.stopCapturing();
+
+    session.dc.document.transact(() => {
+      applyAgentMarkdownWrite(session.dc.document, '# Other\n', 'replace');
+    }, session.origin);
+
+    const undone = applyAgentUndo(session, 'last');
+    expect(undone).toBe(true);
+
+    expect(ytext.toString()).toBe('---\n# H\n\nBody.\n');
+    expect(ytext.toString().startsWith('---\n')).toBe(true);
+    expect(ytext.toString().includes('***')).toBe(false);
+  });
+
+  test('preserves user-form delimiter `__foo__` across undo (FR-25 alignment check)', async () => {
+    const session = await manager.getSession('doc-delimiter.md', 'agent-delim');
+    const ytext = session.dc.document.getText('source');
+
+    session.dc.document.transact(() => {
+      applyAgentMarkdownWrite(session.dc.document, '__bold__ and _italic_\n', 'replace');
+    }, session.origin);
+    session.um.stopCapturing();
+
+    session.dc.document.transact(() => {
+      applyAgentMarkdownWrite(session.dc.document, '# Heading\n', 'replace');
+    }, session.origin);
+
+    const undone = applyAgentUndo(session, 'last');
+    expect(undone).toBe(true);
+
+    expect(ytext.toString()).toBe('__bold__ and _italic_\n');
+    expect(ytext.toString().includes('**bold**')).toBe(false);
+    expect(ytext.toString().includes('*italic*')).toBe(false);
+  });
+
+  test("scope='session' drains across multiple source-form writes — final state empty", async () => {
+    const session = await manager.getSession('doc-session-drain.md', 'agent-drain');
+    const ytext = session.dc.document.getText('source');
+
+    session.dc.document.transact(() => {
+      applyAgentMarkdownWrite(session.dc.document, '__a__\r\n', 'replace');
+    }, session.origin);
+    session.um.stopCapturing();
+
+    session.dc.document.transact(() => {
+      applyAgentMarkdownWrite(session.dc.document, '---\n# B\n', 'replace');
+    }, session.origin);
+    session.um.stopCapturing();
+
+    session.dc.document.transact(() => {
+      applyAgentMarkdownWrite(session.dc.document, '## H ##\nC\n', 'replace');
+    }, session.origin);
+
+    expect(session.um.undoStack.length).toBe(3);
+
+    const undone = applyAgentUndo(session, 'session');
+    expect(undone).toBe(true);
+    expect(session.um.undoStack.length).toBe(0);
+    expect(ytext.toString()).toBe('');
   });
 });

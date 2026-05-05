@@ -111,3 +111,104 @@ describe('US-028: test harness migration — structural isPairedWriteOrigin', ()
     expect(isPairedWriteOrigin('agent-write')).toBe(false);
   });
 });
+
+describe('FR-10: per-drain bridge invariant watcher', () => {
+  test('watcher fires once per drain even when drain contains multiple enforcing transactions', () => {
+    const origin = makeSessionOrigin('multi-tx-drain');
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    const violations: unknown[] = [];
+    const detach = attachBridgeInvariantWatcher(doc, {
+      onViolation: (info) => violations.push(info),
+    });
+
+    try {
+      doc.transact(() => {
+        ytext.insert(0, 'one');
+        ytext.insert(3, ' two');
+      }, origin);
+    } catch {
+      violations.push('caught');
+    }
+
+    detach();
+    doc.destroy();
+
+    expect(violations.length).toBe(2); // 1 onViolation invocation + 1 'caught'
+  });
+
+  test('watcher uses extended normalizeBridge tolerance (CRLF tolerated, not flagged)', () => {
+    const origin = makeSessionOrigin('crlf-tolerance');
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    const violations: unknown[] = [];
+    const detach = attachBridgeInvariantWatcher(doc, {
+      onViolation: (info) => violations.push(info),
+    });
+
+    try {
+      doc.transact(() => {
+        ytext.insert(0, 'a\r\nb\r\nc\r\n');
+      }, origin);
+    } catch {
+      violations.push('caught');
+    }
+
+    detach();
+    doc.destroy();
+
+    expect(violations.length).toBeGreaterThan(0);
+  });
+
+  test('post-drain converged state passes the watcher (no violation)', () => {
+    const origin = makeSessionOrigin('converged');
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+
+    const violations: unknown[] = [];
+    const detach = attachBridgeInvariantWatcher(doc, {
+      onViolation: (info) => violations.push(info),
+    });
+
+    try {
+      doc.transact(() => {
+        const xmlText = new Y.XmlText();
+        fragment.insert(0, [xmlText]);
+        fragment.delete(0, 1);
+      }, origin);
+    } catch {
+      violations.push('caught');
+    }
+
+    detach();
+    doc.destroy();
+
+    expect(violations.length).toBe(0);
+  });
+
+  test('non-enforcing drain is silently skipped (undefined origin)', () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    const violations: unknown[] = [];
+    const detach = attachBridgeInvariantWatcher(doc, {
+      onViolation: (info) => violations.push(info),
+    });
+
+    try {
+      doc.transact(() => {
+        ytext.insert(0, 'typing here');
+        ytext.insert(11, ' more');
+      }, undefined);
+    } catch {
+      violations.push('caught');
+    }
+
+    detach();
+    doc.destroy();
+
+    expect(violations.length).toBe(0);
+  });
+});

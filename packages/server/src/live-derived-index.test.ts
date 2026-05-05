@@ -191,6 +191,81 @@ describe('createLiveDerivedIndexExtension', () => {
     await second.disconnect();
   });
 
+  test('FR-43: backlink update receives raw ytext bytes (CRLF survives)', async () => {
+    const updateDocumentFromMarkdown = mock(() => {});
+    const extension = createLiveDerivedIndexExtension({
+      backlinkIndex: { updateDocumentFromMarkdown } as unknown as never,
+      debounceMs: 5,
+    });
+    const conn = await hp.openDirectConnection('crlf-doc');
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, 'crlf-doc', '# Title\r\n\r\nLine A\r\nLine B\r\n');
+    await extension.onChange?.(
+      makeOnChangePayload(hp, doc, 'crlf-doc', {
+        source: 'local',
+        context: { origin: 'agent-write' },
+      }),
+    );
+    await wait(20);
+
+    expect(updateDocumentFromMarkdown).toHaveBeenCalledTimes(1);
+    const [, bodyArg] = updateDocumentFromMarkdown.mock.calls[0] as [string, string];
+    expect(bodyArg).toContain('\r\n');
+    expect(bodyArg).toBe('# Title\r\n\r\nLine A\r\nLine B\r\n');
+    await conn.disconnect();
+  });
+
+  test('FR-43: doc-start `---\\n` survives (architectural-floor case)', async () => {
+    const updateDocumentFromMarkdown = mock(() => {});
+    const extension = createLiveDerivedIndexExtension({
+      backlinkIndex: { updateDocumentFromMarkdown } as unknown as never,
+      debounceMs: 5,
+    });
+    const conn = await hp.openDirectConnection('thematic-doc');
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, 'thematic-doc', '---\n# Title\n');
+    await extension.onChange?.(
+      makeOnChangePayload(hp, doc, 'thematic-doc', {
+        source: 'local',
+        context: { origin: 'agent-write' },
+      }),
+    );
+    await wait(20);
+
+    expect(updateDocumentFromMarkdown).toHaveBeenCalledTimes(1);
+    const [, bodyArg] = updateDocumentFromMarkdown.mock.calls[0] as [string, string];
+    expect(bodyArg).toBe('---\n# Title\n');
+    expect(bodyArg).not.toContain('***');
+    await conn.disconnect();
+  });
+
+  test('FR-43: angle-bracket autolink form is observable in backlink snippet', async () => {
+    const updateDocumentFromMarkdown = mock(() => {});
+    const extension = createLiveDerivedIndexExtension({
+      backlinkIndex: { updateDocumentFromMarkdown } as unknown as never,
+      debounceMs: 5,
+    });
+    const conn = await hp.openDirectConnection('autolink-doc');
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, 'autolink-doc', '# Page\n\nVisit <https://example.com> for info\n');
+    await extension.onChange?.(
+      makeOnChangePayload(hp, doc, 'autolink-doc', {
+        source: 'local',
+        context: { origin: 'agent-write' },
+      }),
+    );
+    await wait(20);
+
+    expect(updateDocumentFromMarkdown).toHaveBeenCalledTimes(1);
+    const [, bodyArg] = updateDocumentFromMarkdown.mock.calls[0] as [string, string];
+    expect(bodyArg).toContain('<https://example.com>');
+    expect(bodyArg).not.toContain('[https://example.com](https://example.com)');
+    await conn.disconnect();
+  });
+
   test('logs and swallows callback errors', async () => {
     const updateDocumentFromMarkdown = mock(() => {
       throw new Error('boom');

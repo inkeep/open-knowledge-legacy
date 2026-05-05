@@ -3,8 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as Y from 'yjs';
+import { composeAndWriteRawBody } from './bridge-intake.ts';
+import { __setQuiescentOverrideForTests } from './bridge-quiescence.ts';
 import {
   createPersistenceExtension,
+  getReconciledBase,
   setBatchInProgress,
   switchReconciledBaseScope,
 } from './persistence.ts';
@@ -19,7 +22,9 @@ function replaceDocParagraph(document: Y.Doc, text: string): void {
 }
 
 function replaceDocParagraphs(document: Y.Doc, texts: string[]): void {
+  const body = `${texts.join('\n\n')}\n`;
   const fragment = document.getXmlFragment('default');
+  const ytext = document.getText('source');
   if (fragment.length > 0) {
     fragment.delete(0, fragment.length);
   }
@@ -31,6 +36,10 @@ function replaceDocParagraphs(document: Y.Doc, texts: string[]): void {
       return paragraph;
     }),
   );
+  if (ytext.length > 0) {
+    ytext.delete(0, ytext.length);
+  }
+  ytext.insert(0, body);
 }
 
 async function loadDocument(
@@ -275,5 +284,148 @@ describe('batch-gated L1 persistence', () => {
 
     firstDoc.destroy();
     secondDoc.destroy();
+  });
+});
+
+describe('quiescence gate — deferCount cleanup on disk-write error', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'ok-defer-disk-error-'));
+    mkdirSync(tmpDir, { recursive: true });
+    setBatchInProgress(false);
+    switchReconciledBaseScope('main');
+  });
+
+  afterEach(() => {
+    setBatchInProgress(false);
+    switchReconciledBaseScope('main');
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('disk-write error in force-flush path resets deferCount so next cycle resumes the gate', async () => {
+    const docName = 'force-flush-disk-error';
+    const docPath = join(tmpDir, `${docName}.md`);
+    writeFileSync(docPath, 'initial\n', 'utf-8');
+
+    const persistence = createPersistenceExtension({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      gitEnabled: false,
+    });
+    const document = new Y.Doc();
+
+    await loadDocument(persistence, document, docName);
+    document.transact(() => replaceDocParagraph(document, 'edited body'), BROWSER_ORIGIN);
+
+    __setQuiescentOverrideForTests(document, false);
+
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+
+    try {
+      for (let i = 0; i < 8; i++) {
+        await storeDocument(persistence, document, docName);
+      }
+      const skipsBeforeFlush = warnings.filter((w) =>
+        w.includes('"event":"persistence-skip-non-quiescent"'),
+      ).length;
+      expect(skipsBeforeFlush).toBe(8);
+
+      rmSync(docPath, { force: true });
+      mkdirSync(docPath);
+
+      let firstThrow: unknown = null;
+      try {
+        await storeDocument(persistence, document, docName);
+      } catch (e) {
+        firstThrow = e;
+      }
+      expect(firstThrow).not.toBeNull();
+      const forceFlushesAfterFirst = warnings.filter((w) =>
+        w.includes('"event":"persistence-force-flush-during-burst"'),
+      ).length;
+      expect(forceFlushesAfterFirst).toBe(1);
+
+      try {
+        await storeDocument(persistence, document, docName);
+      } catch {}
+      const forceFlushesAfterSecond = warnings.filter((w) =>
+        w.includes('"event":"persistence-force-flush-during-burst"'),
+      ).length;
+      const skipsAfterSecond = warnings.filter((w) =>
+        w.includes('"event":"persistence-skip-non-quiescent"'),
+      ).length;
+
+      expect(forceFlushesAfterSecond).toBe(1);
+      expect(skipsAfterSecond).toBe(9);
+    } finally {
+      console.warn = originalWarn;
+      __setQuiescentOverrideForTests(document, undefined);
+      document.destroy();
+    }
+  });
+});
+
+describe('Y.Text-is-truth wiring (FR-33 / FR-35)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'ok-fr33-wiring-'));
+    mkdirSync(tmpDir, { recursive: true });
+    setBatchInProgress(false);
+    switchReconciledBaseScope('main');
+  });
+
+  afterEach(() => {
+    setBatchInProgress(false);
+    switchReconciledBaseScope('main');
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('FR-33: disk bytes come from ytext.toString(), not serialize(fragment)', async () => {
+    const docName = 'fr33-wiring';
+    const docPath = join(tmpDir, `${docName}.md`);
+    writeFileSync(docPath, '', 'utf-8');
+    const persistence = createPersistenceExtension({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      gitEnabled: false,
+    });
+    const document = new Y.Doc();
+    await loadDocument(persistence, document, docName);
+
+    document.transact(() => {
+      composeAndWriteRawBody(document, '__foo__\n');
+    });
+
+    await storeDocument(persistence, document, docName);
+
+    const diskBytes = readFileSync(docPath, 'utf-8');
+    expect(diskBytes).toContain('__foo__');
+    expect(diskBytes).not.toContain('**foo**');
+    document.destroy();
+  });
+
+  test('FR-35: cold-load setReconciledBase stores raw disk bytes', async () => {
+    const docName = 'fr35-cold-load';
+    const docPath = join(tmpDir, `${docName}.md`);
+    writeFileSync(docPath, '__cold__\n', 'utf-8');
+
+    const persistence = createPersistenceExtension({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      gitEnabled: false,
+    });
+    const document = new Y.Doc();
+    await loadDocument(persistence, document, docName);
+
+    const base = getReconciledBase(docName);
+    expect(base).toBe('__cold__\n');
+    expect(base).not.toContain('**cold**');
+    document.destroy();
   });
 });

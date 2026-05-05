@@ -124,14 +124,16 @@ declare module 'mdast' {
     sourceRaw?: string;
   }
   interface EmphasisData {
-    sourceDelimiter?: string;
+    sourceDelimiter?: '*' | '_';
   }
   interface StrongData {
-    sourceDelimiter?: string;
+    sourceDelimiter?: '**' | '__';
   }
   interface LinkData {
     sourceStyle?: string;
     sourceRaw?: string;
+    sourceUrlForm?: 'angle-bracketed';
+    sourceTitleMarker?: 'single' | 'double' | 'paren';
   }
   interface LinkReferenceData {
     sourceRaw?: string;
@@ -144,14 +146,31 @@ declare module 'mdast' {
   }
   interface HeadingData {
     sourceStyle?: string;
+    sourceTrailingHashes?: number;
+    sourceUnderlineLength?: number;
   }
   interface CodeData {
+    sourceFenceChar?: string;
+    sourceFenceLength?: number;
+    sourceStyle?: 'indented' | 'fenced';
+  }
+  interface InlineCodeData {
     sourceFenceChar?: string;
     sourceFenceLength?: number;
   }
   interface ListData {
     bulletMarker?: string;
     listMarkerDelimiter?: string;
+  }
+  interface BlockquoteData {
+    sourceMarkerSpacings?: Array<'single' | 'none'>;
+  }
+  interface TableData {
+    sourceDashCounts?: number[];
+  }
+  interface DefinitionData {
+    sourceLayout?: 'multiline' | 'inline';
+    sourceTitleMarker?: 'single' | 'double' | 'paren';
   }
   interface RootContentMap {
     wikiLink: WikiLinkMdast;

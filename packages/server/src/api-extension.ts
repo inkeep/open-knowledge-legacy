@@ -62,7 +62,7 @@ import {
   formatRenameSubject,
   formatRollbackSubject,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
-import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
+import { updateYFragment } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromFile } from 'file-type';
@@ -178,6 +178,7 @@ import {
 import { mdManager, schema } from './md-manager.ts';
 import {
   getMetrics,
+  incrementAgentPatchFindMismatches,
   incrementAgentWriteCalls,
   incrementSummariesProvided,
   incrementSummariesTruncated,
@@ -1177,11 +1178,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         : undefined;
       const parsedJson = mdManager.parseWithFallback(body, parseOpts);
       const pmNode = schema.nodeFromJSON(parsedJson);
+      applyFastDiff(ytext, currentText, result.markdown);
       updateYFragment(document, xmlFragment, pmNode, {
         mapping: new Map(),
         isOMark: new Map(),
       });
-      applyFastDiff(ytext, currentText, result.markdown);
     }, MANAGED_RENAME_ORIGIN);
     return result;
   }
@@ -2320,12 +2321,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         session.dc.document.transact(() => {
-          const xmlFragment = session.dc.document.getXmlFragment('default');
-          const ytext = session.dc.document.getText('source');
-          const currentFm = stripFrontmatter(ytext.toString()).frontmatter;
-          const currentBody = mdManager.serialize(
-            yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
-          );
+          const ytextSnapshot = session.dc.document.getText('source').toString();
+          const { frontmatter: currentFm, body: currentBody } = stripFrontmatter(ytextSnapshot);
           const currentFull = prependFrontmatter(currentFm, currentBody);
 
           const pos =
@@ -2335,6 +2332,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                 ? offset
                 : -1;
           if (pos === -1) {
+            console.warn(
+              JSON.stringify({
+                event: 'agent-patch-find-mismatch',
+                'doc.name': docName,
+                findLength: find.length,
+                replaceLength: replace.length,
+                hadOffset: offset != null,
+              }),
+            );
+            incrementAgentPatchFindMismatches();
             if (offset == null) {
               notFound = true;
             } else {

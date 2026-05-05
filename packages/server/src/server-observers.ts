@@ -3,6 +3,7 @@ import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import {
   applyFastDiff,
   applyIncrementalDiff,
+  BridgeInvariantViolationError,
   BridgeMergeContentLossError,
   mergeThreeWay,
   normalizeBridge,
@@ -12,10 +13,13 @@ import {
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
+import { attachQuiescenceTracker } from './bridge-quiescence.ts';
+import { assertBridgeInvariant } from './bridge-watchdog.ts';
 import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
 import {
   incrementBridgeMergeCheckpointCreated,
   incrementBridgeMergeContentLoss,
+  incrementObserverAPathBFires,
   incrementServerObserverError,
   incrementServerObserverFire,
 } from './metrics.ts';
@@ -157,6 +161,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       }
 
       const preMergeBaseline = lastSyncedXmlMd;
+      const pathBState: { mergedText: string | null } = { mergedText: null };
       doc.transact(() => {
         if (currentText === lastSyncedXmlMd) {
           applyIncrementalDiff(ytext, currentText, md);
@@ -164,14 +169,28 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
           try {
             const mergedText = mergeThreeWay(lastSyncedXmlMd, md, currentText);
             applyFastDiff(ytext, currentText, mergedText);
+            pathBState.mergedText = mergedText;
           } catch (mergeErr) {
             if (!(mergeErr instanceof BridgeMergeContentLossError)) throw mergeErr;
             handleBridgeMergeLoss(mergeErr, preMergeBaseline);
             if (shouldRethrowBridgeMergeLoss()) throw mergeErr;
             applyFastDiff(ytext, currentText, mergeErr.info.result);
+            pathBState.mergedText = mergeErr.info.result;
           }
         }
       }, OBSERVER_SYNC_ORIGIN);
+
+      if (pathBState.mergedText !== null) {
+        incrementObserverAPathBFires();
+        console.warn(
+          JSON.stringify({
+            event: 'observer-a-path-b-fired',
+            xmlFragmentAdvanced: true,
+            ytextDiverged: true,
+            mergeBytesChanged: Math.abs(pathBState.mergedText.length - currentText.length),
+          }),
+        );
+      }
 
       incrementServerObserverFire('a');
       lastSyncedXmlMd = ytext.toString();
@@ -191,10 +210,9 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
     if (isPairedWriteOrigin(transaction.origin)) {
       try {
-        const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
-        const body = mdManager.serialize(json);
         const frontmatter = readCurrentFm();
-        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+        lastSyncedXmlMd = ytext.toString();
+        priorFmForTelemetry = frontmatter;
       } catch (err) {
         incrementServerObserverError('a');
         console.warn(
@@ -262,19 +280,16 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
       try {
         const canonicalBody = mdManager.serialize(parsedJson);
-        if (canonicalBody === body) {
-          lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
-        } else {
-          const canonicalYText = prependFrontmatter(frontmatter, canonicalBody);
-          const currentYText = ytext.toString();
-          if (currentYText !== canonicalYText) {
-            doc.transact(() => {
-              applyFastDiff(ytext, currentYText, canonicalYText);
-            }, OBSERVER_SYNC_ORIGIN);
-          }
-          lastSyncedXmlMd = canonicalYText;
-        }
+        const canonicalYText = prependFrontmatter(frontmatter, canonicalBody);
+        assertBridgeInvariant(ytext.toString(), canonicalYText, {
+          site: 'observer-b',
+          docName: opts.docName,
+        });
+        lastSyncedXmlMd = canonicalYText;
       } catch (reserializeErr) {
+        if (reserializeErr instanceof BridgeInvariantViolationError) {
+          throw reserializeErr;
+        }
         console.warn(
           '[Server Observer B] Post-sync re-serialization failed — using input body as baseline:',
           reserializeErr,
@@ -282,6 +297,9 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
       }
     } catch (err) {
+      if (err instanceof BridgeInvariantViolationError) {
+        throw err;
+      }
       incrementServerObserverError('b');
       console.error('[Server Observer B] Failed to sync text→tree:', err);
       try {
@@ -290,6 +308,9 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         const fm = readCurrentFm();
         lastSyncedXmlMd = prependFrontmatter(fm, postBody);
       } catch (innerErr) {
+        if (innerErr instanceof BridgeInvariantViolationError) {
+          throw innerErr;
+        }
         console.warn('[Server Observer B] Baseline recovery also failed:', innerErr);
       }
     }
@@ -300,10 +321,9 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
     if (isPairedWriteOrigin(transaction.origin)) {
       try {
-        const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
-        const body = mdManager.serialize(json);
         const frontmatter = readCurrentFm();
-        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+        lastSyncedXmlMd = ytext.toString();
+        priorFmForTelemetry = frontmatter;
       } catch (err) {
         incrementServerObserverError('b');
         console.warn(
@@ -345,8 +365,10 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
   xmlFragment.observeDeep(observerA);
   ytext.observe(observerB);
   doc.on('afterAllTransactions', afterAll);
+  const detachQuiescence = attachQuiescenceTracker(doc);
 
   return () => {
+    detachQuiescence();
     doc.off('afterAllTransactions', afterAll);
     xmlFragment.unobserveDeep(observerA);
     ytext.unobserve(observerB);

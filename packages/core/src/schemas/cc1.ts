@@ -20,6 +20,13 @@ export const DerivedViewChannelSchema = z.enum([
 ]);
 export type DerivedViewChannel = z.infer<typeof DerivedViewChannelSchema>;
 
+export type CC1Channel =
+  | DerivedViewChannel
+  | typeof CC1_CHANNEL_SERVER_INFO
+  | typeof CC1_CHANNEL_BRANCH_SWITCHED
+  | typeof CC1_CHANNEL_DISK_ACK
+  | typeof CC1_CHANNEL_CONFIG_VALIDATION_REJECTED;
+
 export const CC1ServerInfoPayloadSchema = z
   .object({
     v: z.literal(CC1_CONTRACT_VERSION),
