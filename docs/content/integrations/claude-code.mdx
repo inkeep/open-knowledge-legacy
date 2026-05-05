@@ -2,3 +2,27 @@
 title: Claude Code
 description: Use Open Knowledge with Claude Code.
 ---
+
+Open Knowledge plugs into Claude Code through MCP plus an installed skill that teaches the agent how to use the tools.
+
+## Install
+
+In your project:
+
+```bash
+npx @inkeep/open-knowledge init
+```
+
+This registers the MCP server in Claude Code's user config (`~/.claude.json`) and project config (`.mcp.json`), and installs a skill at `.claude/skills/open-knowledge/SKILL.md`.
+
+## Verify
+
+Open the project in Claude Code and ask:
+
+> List all the docs in this project.
+
+Claude Code should call `list_documents` and respond with your knowledge base. If it doesn't see the tool, restart Claude Code so it picks up the new MCP entry.
+
+## Live editing
+
+When Claude Code writes to a doc, the editor opens automatically in your browser and the change streams in.

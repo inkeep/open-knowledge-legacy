@@ -1,4 +1,67 @@
 ---
 title: Configuration
-description: Schema reference for .ok/config.yml — content directory, persistence, folder rules, MCP, and CLI overrides.
+description: The .ok/config.yml schema, environment variables, and CLI flags.
 ---
+
+Open Knowledge reads YAML config from two places:
+
+- **Project** — `./.ok/config.yml` (this project)
+- **User** — `~/.ok/config.yml` (every project on your machine)
+
+Both files are optional; defaults cover everything.
+
+You can edit config three ways:
+
+- **Settings pane** in the editor — Cmd/Ctrl-, or App menu → Settings…
+- **Your IDE** — `ok init` scaffolds a `$schema` magic comment for autocomplete and validation
+- **AI agents** — via the `set_config` MCP tool
+
+Edits made anywhere reflect everywhere; an open Settings pane refreshes within ~500ms.
+
+## Schema
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `content.dir` | string | `"."` | Content directory, relative to project root. Excluded paths live in `.okignore`. |
+| `server.host` | string | `"localhost"` | Server bind address. |
+| `server.openOnAgentEdit` | boolean | `false` | Open the editor in your browser on the first agent write. |
+| `mcp.autoStart` | boolean | `true` | Auto-start the server when `ok mcp` runs and no live server is found. |
+| `mcp.tools.search.maxResults` | number | `50` | Cap on rows from the `search` MCP tool. |
+| `mcp.tools.read_document.historyDepth` | number | `5` | History entries surfaced by `read_document`. |
+| `preview.baseUrl` | URL | (unset) | Override for `previewUrl` returned by MCP tools. Project-scope only. |
+| `appearance.theme` | `"light" \| "dark" \| "system"` | (unset) | Editor theme. |
+| `appearance.editorModeDefault` | `"wysiwyg" \| "source"` | (unset) | Initial editor mode for new docs. |
+| `github.oauthAppClientId` | string | (built-in) | Override for forks of the GitHub OAuth App. |
+
+## Folder-level frontmatter
+
+Default frontmatter for a folder lives in that folder's `.ok/frontmatter.yml`, not in `config.yml`. Drop a `.ok/` directory inside any folder and Open Knowledge applies its rules to docs underneath. Set rules from the editor's folder properties pane, or via the `set_folder_rule` MCP tool.
+
+## Precedence
+
+CLI flags > environment variables > project config > user config > defaults. Leaf values at higher levels override the same leaf below; arrays replace, they don't concatenate.
+
+## Environment variables
+
+| Variable | Sets |
+| --- | --- |
+| `PORT` | Server port |
+| `HOST` | `server.host` |
+| `OK_MCP_AUTOSTART` | Set to `0` to disable MCP auto-start |
+| `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` | Override the `previewUrl` returned by MCP tools |
+| `OPEN_KNOWLEDGE_GITHUB_CLIENT_ID` | Override the GitHub OAuth App client ID |
+
+## CLI flags
+
+| Flag | Sets |
+| --- | --- |
+| `--port <port>` | Server port |
+| `--host <host>` | Server bind address |
+| `--cwd <path>` | Working directory used to resolve config |
+
+## Verifying changes
+
+```bash
+npx @inkeep/open-knowledge config validate    # schema check; exits non-zero on failure
+npx @inkeep/open-knowledge preview            # show which files match your content scope
+```

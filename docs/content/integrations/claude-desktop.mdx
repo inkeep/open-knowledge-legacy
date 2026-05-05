@@ -1,4 +1,64 @@
 ---
 title: Claude Desktop
-description: Use Open Knowledge with the Claude Desktop app on macOS.
+description: Use Open Knowledge with the Claude Desktop app — Chat, Cowork, and the Code tab.
 ---
+
+The Claude Desktop app has three modes that touch Open Knowledge differently.
+
+- **Code tab** is Claude Code. Set it up via the [Claude Code](/integrations/claude-code) page.
+- **Chat** and **Cowork** read skills from a separate, isolated list. Use the install command below for those.
+
+## Installed from the macOS DMG
+
+A consent dialog runs the first time the app launches. It detects every MCP-capable editor on your machine, preselects all of them, and writes user-level MCP entries when you click **Add** — or writes nothing when you click **Skip**. To re-trigger it, delete `~/.ok/mcp-status.json` and relaunch.
+
+The DMG path covers MCP wiring but doesn't install the skill that Chat and Cowork need. Run the command below for that.
+
+## Install the skill (Chat + Cowork)
+
+```bash
+npx @inkeep/open-knowledge install-skill
+```
+
+This builds `openknowledge.skill`, saves it to `~/Downloads/`, and opens the Claude Desktop app. Upload it manually with five clicks: **Customize → Skills → + → Create skill → Upload skill**, then pick the file from Downloads.
+
+The skill turns on automatically. Use it in any Chat or Cowork session.
+
+If `Customize → Skills` isn't visible, enable it in **Settings → Capabilities → Code execution and file creation**.
+
+### Flags
+
+- `--out <path>` — write the `.skill` file somewhere other than `~/Downloads/`
+- `--no-open` — build the file without launching Claude Desktop
+- `--force` — rebuild even if the install state shows the skill is already current
+
+## Verify
+
+In a fresh Chat or Cowork session:
+
+> Use the open-knowledge skill to summarize what's in this workspace.
+
+Claude should recognize the skill and use Open Knowledge's tools.
+
+## Cowork: skill won't fire after install
+
+Claude Cowork has [an open bug](https://github.com/anthropics/claude-code/issues/26254) where custom skills register in the UI but don't mount in the session VM. Symptom: the skill shows enabled but Cowork tells you it isn't available.
+
+Workaround:
+
+1. **Customize → Skills**, find `open-knowledge`, delete it.
+2. Run `npx @inkeep/open-knowledge install-skill` again.
+3. Re-upload (the same 5-click sequence).
+4. Start a fresh Cowork session.
+
+A related ["Save and Replace" bug](https://github.com/anthropics/claude-code/issues/46836) silently no-ops same-name reinstalls. Same workaround: delete first, then re-upload.
+
+## Team and Enterprise
+
+Org owners can publish the skill once instead of asking every user to install it:
+
+```bash
+npx @inkeep/open-knowledge install-skill --no-open --out ./openknowledge.skill
+```
+
+Upload via **Organization settings → Skills → + Add**. Every member sees it in Chat and Cowork.
