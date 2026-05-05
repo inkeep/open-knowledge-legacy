@@ -74,7 +74,7 @@ jobs:
     # is ~3-4 min wall-clock; CI runners are ~2× slower; signing +
     # notarization adds 2-5 min of Apple round-trip on top. 45 min leaves
     # headroom for cold cache and notary-service queue spikes.
-    timeout-minutes: 75
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -215,44 +215,6 @@ jobs:
         working-directory: packages/desktop
         run: node scripts/prepare-universal.mjs
 
-      # Pre-sign diagnostics: capture runner state BEFORE electron-builder
-      # runs codesign, so even if codesign hangs we have ground truth on
-      # timestamp-server reachability, keychain identities, and cert chain
-      # presence. Diagnoses the post-fuse arm64 codesign hang observed in
-      # runs 25397377741 + 25400915031.
-      - name: Diagnose codesign environment
-        if: steps.signmode.outputs.mode == 'signed'
-        run: |
-          set +e
-          echo "::group::Apple timestamp server reachability"
-          time curl --max-time 15 -fsSL -o /dev/null -w 'HTTP %{http_code} in %{time_total}s\n' http://timestamp.apple.com/ts01 || echo "timestamp.apple.com unreachable or slow"
-          echo "::endgroup::"
-
-          echo "::group::Keychains"
-          security list-keychains -d user
-          echo "---default---"
-          security default-keychain -d user
-          echo "::endgroup::"
-
-          echo "::group::Codesign-eligible identities"
-          security find-identity -v -p codesigning
-          echo "::endgroup::"
-
-          echo "::group::Developer ID intermediate cert presence"
-          security find-certificate -c "Developer ID Certification Authority" -a /Library/Keychains/System.keychain || echo "intermediate not in System keychain"
-          security find-certificate -c "Developer ID Certification Authority" -a ~/Library/Keychains/login.keychain-db || echo "intermediate not in login keychain"
-          echo "::endgroup::"
-
-          echo "::group::Codesign + Xcode versions"
-          codesign --version || true
-          xcodebuild -version || true
-          xcrun --find codesign || true
-          echo "::endgroup::"
-
-          echo "::group::Keychain-search-list state"
-          security list-keychains
-          echo "::endgroup::"
-
       # Step B: package via electron-builder. Split from step A across
       # separate runner steps (rather than chained via && in a single shell)
       # because empirically — verified across runs 24920389870 (combined,
@@ -281,13 +243,6 @@ jobs:
           # and break @electron/notarize's path-based contract.
           APPLE_API_KEY_ID: ${{ steps.signmode.outputs.mode == 'signed' && secrets.APPLE_API_KEY_ID || '' }}
           APPLE_API_ISSUER: ${{ steps.signmode.outputs.mode == 'signed' && secrets.APPLE_API_ISSUER || '' }}
-          # DEBUG verbose output for diagnosing the post-fuse arm64 codesign hang
-          # observed in runs 25397377741 and 25400915031 (44min and 19min of
-          # silence between `• signing file=...` and timeout). Suspected causes:
-          # Apple timestamp server slow, Developer ID intermediate cert chain
-          # validation hanging on OCSP/CRL fetch, or macos-26 codesign
-          # regression. Verbose output should pinpoint which.
-          DEBUG: electron-builder*,electron-osx-sign*,@electron/*
           # In unsigned mode, force electron-builder to skip its keychain
           # auto-discovery (mirrors `-c.mac.identity=null` in the script).
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ steps.signmode.outputs.mode == 'unsigned' && 'false' || '' }}
