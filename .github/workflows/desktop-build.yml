@@ -199,6 +199,16 @@ jobs:
         working-directory: packages/desktop
         run: bun run build:desktop
 
+      # Force-install both darwin-arm64 and darwin-x64 prebuilt binaries for
+      # @napi-rs/keyring before electron-builder's universal merge runs. Bun
+      # under workspace conditions only installs the host-arch optionalDependency
+      # (cpu constraint), so the darwin-x64 binary is missing on an arm64
+      # runner. @electron/universal's lipo merge then either errors or hangs
+      # waiting for x64 inputs that don't exist.
+      - name: Force-install darwin keyring prebuilds for universal merge
+        working-directory: packages/desktop
+        run: node scripts/prepare-universal.mjs
+
       # Step B: package via electron-builder. Split from step A across
       # separate runner steps (rather than chained via && in a single shell)
       # because empirically — verified across runs 24920389870 (combined,
