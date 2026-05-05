@@ -1,0 +1,91 @@
+.source-editor {
+  .cm-editor {
+    .cm-panels {
+      border-color: var(--border);
+      background: var(--background);
+      color: var(--popover-foreground);
+    }
+
+    .cm-panels-bottom {
+      border-top: 1px solid var(--border);
+      box-shadow: 0 -12px 32px rgb(0 0 0 / 8%);
+    }
+
+    .cm-panel.cm-search {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 40px 8px 10px;
+      background: none;
+      color: var(--popover-foreground);
+      font-family: var(--font-sans);
+
+      input.cm-textfield {
+        width: clamp(160px, 18vw, 260px);
+        height: 32px;
+        border: 1px solid var(--input);
+        border-radius: var(--radius-md);
+        background: var(--background);
+        color: var(--foreground);
+        padding: 0 10px;
+        font-family: var(--font-sans);
+        font-size: 13px;
+        line-height: 32px;
+
+        &::placeholder {
+          color: var(--muted-foreground);
+        }
+
+        &:focus {
+          border-color: var(--ring);
+          outline: 2px solid color-mix(in oklab, var(--ring) 35%, transparent);
+          outline-offset: 2px;
+        }
+      }
+
+      .cm-button {
+        height: 32px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        background: var(--background);
+        color: var(--foreground);
+        padding: 0 10px;
+        font-family: var(--font-sans);
+        font-size: 13px;
+        line-height: 30px;
+
+        &:hover {
+          background: var(--accent);
+          color: var(--accent-foreground);
+        }
+
+        &:focus-visible {
+          border-color: var(--ring);
+          outline: 2px solid color-mix(in oklab, var(--ring) 35%, transparent);
+          outline-offset: 2px;
+        }
+      }
+
+      label {
+        @apply cursor-pointer text-muted-foreground text-xs inline-flex gap-2;
+      }
+
+      input[type="checkbox"] {
+        @apply m-0 size-4;
+        accent-color: var(--primary);
+      }
+
+      button[name="close"] {
+        top: 8px;
+        right: 10px;
+        @apply text-xl text-muted-foreground rounded-md size-8;
+
+        &:hover {
+          background: var(--accent);
+          color: var(--accent-foreground);
+        }
+      }
+    }
+  }
+}
