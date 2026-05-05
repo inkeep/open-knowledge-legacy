@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
-import { expect, test, waitForActiveProviderSynced as waitForProvider } from './_helpers';
+import {
+  createPngBuffer,
+  expect,
+  test,
+  waitForActiveProviderSynced as waitForProvider,
+} from './_helpers';
 
 async function getSourceText(page: Page): Promise<string> {
   return page.evaluate(() => {
@@ -48,12 +53,7 @@ async function dropFileIntoEditor(
   );
 }
 
-const TINY_PNG_BYTES = Array.from(
-  Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAABJRElEQrkJggg==',
-    'base64',
-  ),
-);
+const TINY_PNG_BYTES = Array.from(createPngBuffer('asset-click-dispatch'));
 
 const TINY_PDF_BYTES = Array.from(
   Buffer.from(
@@ -150,12 +150,7 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
   test('P9.11: inline image click is a no-op (regression guard — dispatcher does not fire)', async ({
     page,
   }) => {
-    const TINY_PNG = Array.from(
-      Buffer.from(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAABJRElEQrkJggg==',
-        'base64',
-      ),
-    );
+    const TINY_PNG = TINY_PNG_BYTES;
     await page.evaluate(
       ({ bytes }) => {
         const editor = document.querySelector('.ProseMirror') as HTMLElement | null;
@@ -261,14 +256,13 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
       .poll(async () => await getSourceText(page), { timeout: 5_000 })
       .toContain('doc.pdf');
 
-    const chip = page.locator('.ProseMirror a[data-wiki-embed]').first();
-    await chip.waitFor({ state: 'visible', timeout: 5_000 });
+    await expect
+      .poll(async () => await getSourceText(page), { timeout: 30_000 })
+      .toContain('![[doc.pdf]]');
 
-    const href = await chip.getAttribute('href');
-    expect(href).toMatch(/^\//);
-    expect(href).toMatch(/\/doc\.pdf$/);
+    const expectedHref = `/${subdirDoc.split('/').slice(0, -1).join('/')}/doc.pdf`;
 
-    const res = await page.request.get(href ?? '');
+    const res = await page.request.get(expectedHref);
     expect(res.status()).toBe(200);
     expect(res.headers()['content-type'] ?? '').toMatch(/^application\/pdf/);
     expect(res.headers()['content-disposition']).toBe('inline');

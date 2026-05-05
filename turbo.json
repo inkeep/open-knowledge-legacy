@@ -38,6 +38,10 @@
         "src/editor/**/*.ts",
         "src/editor/**/*.tsx",
         "tests/integration/**/*.ts",
+        "tests/stress/**/*.e2e.ts",
+        "tests/visual/**/*.e2e.ts",
+        "tests/a11y/**/*.e2e.ts",
+        "tests/stress/_helpers/**/*.ts",
         "../server/src/**/*.ts",
         "../core/src/**/*.ts"
       ]

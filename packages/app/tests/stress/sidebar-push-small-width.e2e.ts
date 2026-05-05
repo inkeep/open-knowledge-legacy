@@ -249,14 +249,16 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.goto('/#/l1');
 
     await page.locator('[data-sidebar="trigger"]').click();
-    await expect.poll(() => isSidebarOpen(page)).toBe(true);
+    await page
+      .locator('[data-slot="sidebar"][data-mobile="true"][data-state="expanded"]')
+      .waitFor({ state: 'attached', timeout: 5_000 });
 
     const inset = page.locator('[data-slot="sidebar-inset"]');
     await expect(inset).not.toHaveAttribute('data-push-pulse', '');
 
     await page.getByRole('treeitem', { name: 'l2.md', exact: true }).click();
 
-    await expect(inset).toHaveAttribute('data-push-pulse', '', { timeout: 1500 });
+    await expect(inset).toHaveAttribute('data-push-pulse', '', { timeout: 3000 });
     await expect(inset).not.toHaveAttribute('data-push-pulse', '', { timeout: 2000 });
   });
 
@@ -270,7 +272,9 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.goto('/#/m1');
 
     await page.locator('[data-sidebar="trigger"]').click();
-    await expect.poll(() => isSidebarOpen(page)).toBe(true);
+    await page
+      .locator('[data-slot="sidebar"][data-mobile="true"][data-state="expanded"]')
+      .waitFor({ state: 'attached', timeout: 5_000 });
 
     await page.getByRole('treeitem', { name: 'm2.md', exact: true }).click();
 

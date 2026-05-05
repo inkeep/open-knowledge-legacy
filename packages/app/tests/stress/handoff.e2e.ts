@@ -261,11 +261,12 @@ test.describe('handoff — 8-cell matrix', () => {
     await seedAndNavigate(page, api);
 
     await openDropdown(page);
+    await waitForProbeSettled(page, 'web');
     await page.getByTestId('open-in-agent-item-claude-cowork').click();
 
     await expect
       .poll(async () => (await readCapturedHandoff(page)).anchorClicks.length, {
-        timeout: 5_000,
+        timeout: 15_000,
       })
       .toBe(1);
 

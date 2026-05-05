@@ -1709,8 +1709,14 @@ button:active:not(:disabled) {
    selection halo and chrome bar (positioned at right: 0) hug the
    element instead of the full editor column. Text-heavy types
    (Callout, Accordion, etc.) intentionally fill the column and
-   are not listed here. */
-.ProseMirror .jsx-component-wrapper[data-component-type="img"],
+   are not listed here.
+
+   Excluded: data-component-type="img". Images can be arbitrarily
+   small (down to 1px decorative PNGs), and a fit-content wrapper
+   collapses to those dimensions, causing the right-anchored chrome
+   bar (~120px wide) to overlap the image's click area. Video and
+   audio elements have natural minimum widths from their controls
+   (~250-300px) so they don't collapse below the chrome bar's width. */
 .ProseMirror .jsx-component-wrapper[data-component-type="video"],
 .ProseMirror .jsx-component-wrapper[data-component-type="audio"] {
   width: fit-content;
