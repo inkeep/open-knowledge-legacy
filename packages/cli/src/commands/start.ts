@@ -173,7 +173,6 @@ export interface BootedStartServer {
   uiSpawnDecision: UiSpawnDecision;
   resolvedUiPort: number | null;
   didAutoInit: boolean;
-  didGitInit: boolean;
 }
 
 export async function bootStartServer(opts: BootStartServerOptions): Promise<BootedStartServer> {
@@ -184,8 +183,9 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   const { existsSync, mkdirSync } = await import('node:fs');
   const { resolve } = await import('node:path');
-  const { bootServer, ensureProjectGit, getLogger, isProcessAlive, readUiLock, resolveContentDir } =
-    await import('@inkeep/open-knowledge-server');
+  const { bootServer, getLogger, isProcessAlive, readUiLock, resolveContentDir } = await import(
+    '@inkeep/open-knowledge-server'
+  );
 
   const log = opts.log ?? getLogger('start');
 
@@ -268,7 +268,6 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     idleShutdownMs: idleThresholdMs,
     skipAutoInit,
     autoInitFn,
-    ensureProjectGitFn: skipAutoInit ? undefined : () => ensureProjectGit(cwd),
     spawnUiSiblingFn,
     idleShutdownHandler: (destroyServer) =>
       buildIdleShutdownHandler({
@@ -319,7 +318,6 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     uiSpawnDecision,
     resolvedUiPort,
     didAutoInit: booted.didAutoInit,
-    didGitInit: booted.didGitInit,
   };
 }
 
@@ -352,18 +350,6 @@ export function startCommand(getConfig: () => Config): Command {
           skipAutoInit: opts.init === false,
         });
       } catch (err) {
-        const { ProjectGitInitError } = await import('@inkeep/open-knowledge-server');
-        if (err instanceof ProjectGitInitError) {
-          console.error(
-            error(
-              "open-knowledge requires git to initialize a parent repo. Install git or run 'git init' yourself, then re-run.",
-            ),
-          );
-          if (err.stderr) {
-            console.error(dim(err.stderr.trim()));
-          }
-          process.exit(1);
-        }
         console.error(
           `${error('Failed to start:')} ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
         );
@@ -434,29 +420,18 @@ export function startCommand(getConfig: () => Config): Command {
             console.log();
           }
 
-          if (booted.didAutoInit || booted.didGitInit) {
-            if (booted.didGitInit) {
-              console.log(
-                `\n  ${info('✓')} Initialized git repo at ${cwd}/.git/ (default branch: main)`,
+          if (booted.didAutoInit) {
+            try {
+              const { previewContent, formatPreviewBlock } = await import('../content/preview.ts');
+              const preview = previewContent({
+                projectDir: cwd,
+                contentDir: booted.contentDir,
+              });
+              console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
+            } catch (e) {
+              console.warn(
+                `Content preview unavailable: ${e instanceof Error ? e.message : String(e)}`,
               );
-            }
-            if (booted.didAutoInit) {
-              try {
-                const { previewContent, formatPreviewBlock } = await import(
-                  '../content/preview.ts'
-                );
-                const preview = previewContent({
-                  projectDir: cwd,
-                  contentDir: booted.contentDir,
-                });
-                console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
-              } catch (e) {
-                console.warn(
-                  `Content preview unavailable: ${e instanceof Error ? e.message : String(e)}`,
-                );
-              }
-            } else {
-              console.log();
             }
           }
 

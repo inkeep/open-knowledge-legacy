@@ -54,7 +54,6 @@ export interface UtilityReadyMessage {
   type: 'ready';
   port: number;
   apiOrigin: string;
-  didGitInit: boolean;
 }
 export interface UtilityErrorMessage {
   type: 'error';
@@ -175,8 +174,6 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
         attachUiSibling: false, // D36 — no `ok ui` sibling under Electron
         idleShutdownMs: null, // D36 — BrowserWindow lifecycle owns utility lifetime
         skipAutoInit: false,
-        ensureProjectGitFn: () =>
-          server.ensureProjectGit(msg.opts.projectDir ?? msg.opts.contentDir),
         autoInitFn: () => {
           const result = initContent(msg.opts.projectDir ?? msg.opts.contentDir);
           return result.created.length > 0 || result.updated.length > 0;
@@ -186,7 +183,6 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
         type: 'ready',
         port: booted.port,
         apiOrigin: `http://localhost:${booted.port}`,
-        didGitInit: booted.didGitInit,
       };
       deps.parentPort?.postMessage(readyMsg);
       resolveReady(readyMsg);

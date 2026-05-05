@@ -18,11 +18,26 @@ export interface EnsureProjectGitResult {
   didInit: boolean;
 }
 
+async function isInsideExistingWorkTree(cwd: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], {
+      cwd,
+    });
+    return stdout.trim() === 'true';
+  } catch {
+    return false;
+  }
+}
+
 export async function ensureProjectGit(projectRoot: string): Promise<EnsureProjectGitResult> {
   const abs = resolve(projectRoot);
   const gitPath = resolve(abs, '.git');
 
   if (existsSync(gitPath)) {
+    return { didInit: false };
+  }
+
+  if (await isInsideExistingWorkTree(abs)) {
     return { didInit: false };
   }
 

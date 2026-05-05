@@ -8,7 +8,6 @@ import {
 import {
   createAssetServeMiddleware,
   createServer,
-  ensureProjectGit,
   handleCollabSocketError,
   parseKeepaliveConnectionId,
   releaseServerLock,
@@ -79,12 +78,6 @@ export function hocuspocusPlugin(): Plugin {
         );
       } else {
         console.info(`[collab] configureServer invocation=1 pid=${process.pid}`);
-      }
-
-      if (!isTestIsolated) {
-        await ensureProjectGit(PROJECT_ROOT);
-      } else if (gitEnabledForTest) {
-        await ensureProjectGit(CONTENT_DIR);
       }
 
       const currentSrv = createServer({

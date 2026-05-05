@@ -1,4 +1,4 @@
-import { describe as _bunDescribe, afterEach, beforeEach, expect, mock, test } from 'bun:test';
+import { describe as _bunDescribe, afterEach, beforeEach, expect, test } from 'bun:test';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
@@ -38,112 +38,6 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true });
-});
-
-describe('bootServer — ensureProjectGitFn wiring (US-001)', () => {
-  test('ensureProjectGitFn throw propagates — bootServer rejects before listen', async () => {
-    const contentDir = resolve(tmpDir, 'fails');
-    writeFileSync(resolve(tmpDir, 'placeholder'), '');
-
-    const expectedError = new Error('simulated git-missing failure');
-    const ensureProjectGitFn = mock(() => Promise.reject(expectedError));
-    const autoInitFn = mock(() => true);
-
-    await expect(
-      bootServer({
-        config: TEST_CONFIG,
-        contentDir,
-        port: 0,
-        quiet: true,
-        gitEnabled: false,
-        ensureProjectGitFn,
-        autoInitFn,
-      }),
-    ).rejects.toThrow('simulated git-missing failure');
-
-    expect(ensureProjectGitFn.mock.calls.length).toBe(1);
-    expect(autoInitFn.mock.calls.length).toBe(0);
-  });
-
-  test('didGitInit is populated from hook return value', async () => {
-    const contentDir = mkdtempSync(resolve(tmpDir, 'bootdir-'));
-    await execFileAsync('git', ['init', '--initial-branch=main', contentDir]);
-    seedOkScaffold(contentDir);
-
-    const ensureProjectGitFn = mock(() => Promise.resolve({ didInit: true }));
-
-    const booted = await bootServer({
-      config: TEST_CONFIG,
-      contentDir,
-      port: 0,
-      quiet: true,
-      gitEnabled: false,
-      ensureProjectGitFn,
-      idleShutdownMs: null,
-      attachUiSibling: false,
-    });
-
-    try {
-      expect(ensureProjectGitFn.mock.calls.length).toBe(1);
-      expect(booted.didGitInit).toBe(true);
-      expect(existsSync(resolve(contentDir, '.git/HEAD'))).toBe(true);
-    } finally {
-      await booted.destroy();
-    }
-  });
-
-  test('skipAutoInit:true skips BOTH ensureProjectGitFn and autoInitFn', async () => {
-    const contentDir = mkdtempSync(resolve(tmpDir, 'skip-'));
-    await execFileAsync('git', ['init', '--initial-branch=main', contentDir]);
-    seedOkScaffold(contentDir);
-
-    const ensureProjectGitFn = mock(() => Promise.resolve({ didInit: true }));
-    const autoInitFn = mock(() => true);
-
-    const booted = await bootServer({
-      config: TEST_CONFIG,
-      contentDir,
-      port: 0,
-      quiet: true,
-      gitEnabled: false,
-      ensureProjectGitFn,
-      autoInitFn,
-      skipAutoInit: true,
-      idleShutdownMs: null,
-      attachUiSibling: false,
-    });
-
-    try {
-      expect(ensureProjectGitFn.mock.calls.length).toBe(0);
-      expect(autoInitFn.mock.calls.length).toBe(0);
-      expect(booted.didGitInit).toBe(false);
-      expect(booted.didAutoInit).toBe(false);
-    } finally {
-      await booted.destroy();
-    }
-  });
-
-  test('omitting ensureProjectGitFn leaves didGitInit false (backward compat)', async () => {
-    const contentDir = mkdtempSync(resolve(tmpDir, 'noop-'));
-    await execFileAsync('git', ['init', '--initial-branch=main', contentDir]);
-    seedOkScaffold(contentDir);
-
-    const booted = await bootServer({
-      config: TEST_CONFIG,
-      contentDir,
-      port: 0,
-      quiet: true,
-      gitEnabled: false,
-      idleShutdownMs: null,
-      attachUiSibling: false,
-    });
-
-    try {
-      expect(booted.didGitInit).toBe(false);
-    } finally {
-      await booted.destroy();
-    }
-  });
 });
 
 describe('bootServer — MissingOkConfigError pre-listen check', () => {

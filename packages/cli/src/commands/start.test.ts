@@ -578,7 +578,7 @@ describe('bootStartServer (integration)', () => {
   });
 });
 
-describe('bootStartServer — ensureProjectGit wiring (US-004)', () => {
+describe('bootStartServer — no auto git-init from ok start (US-004)', () => {
   let tmpDir: string;
   let booted: BootedStartServer | null = null;
 
@@ -597,7 +597,7 @@ describe('bootStartServer — ensureProjectGit wiring (US-004)', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test('fresh tmpdir (no .git/) → booted.didGitInit is true + .git/HEAD exists', async () => {
+  test('fresh tmpdir (no .git/) → ok start does NOT create .git/HEAD', async () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
@@ -605,59 +605,23 @@ describe('bootStartServer — ensureProjectGit wiring (US-004)', () => {
       skipUiAutoSpawn: true,
     });
 
-    expect(booted.didGitInit).toBe(true);
-    expect(existsSync(join(tmpDir, '.git/HEAD'))).toBe(true);
-    const head = readFileSync(join(tmpDir, '.git/HEAD'), 'utf-8');
-    expect(head).toBe('ref: refs/heads/main\n');
-  });
-
-  test('pre-existing .git/ → booted.didGitInit is false (no re-init)', async () => {
-    mkdirSync(join(tmpDir, '.git'));
-
-    booted = await bootStartServer({
-      config: makeTestConfig(),
-      cwd: tmpDir,
-      skipAutoInit: false,
-      skipUiAutoSpawn: true,
-    });
-
-    expect(booted.didGitInit).toBe(false);
-  });
-
-  test('skipAutoInit:true suppresses ensureProjectGit (no project .git/HEAD created)', async () => {
-    const okDir = resolve(tmpDir, '.ok');
-    mkdirSync(okDir, { recursive: true });
-    writeFileSync(resolve(okDir, 'config.yml'), '', 'utf-8');
-    writeFileSync(resolve(okDir, '.gitignore'), '', 'utf-8');
-
-    booted = await bootStartServer({
-      config: makeTestConfig(),
-      cwd: tmpDir,
-      skipAutoInit: true,
-      skipUiAutoSpawn: true,
-    });
-
-    expect(booted.didGitInit).toBe(false);
     expect(existsSync(join(tmpDir, '.git/HEAD'))).toBe(false);
   });
 
-  test('ProjectGitInitError propagates when git binary is missing', async () => {
+  test('missing git binary does not prevent ok start from booting', async () => {
     const originalPath = process.env.PATH;
     process.env.PATH = '/nonexistent-path';
     try {
-      await expect(
-        bootStartServer({
-          config: makeTestConfig(),
-          cwd: tmpDir,
-          skipAutoInit: false,
-          skipUiAutoSpawn: true,
-        }),
-      ).rejects.toThrow();
+      booted = await bootStartServer({
+        config: makeTestConfig(),
+        cwd: tmpDir,
+        skipAutoInit: false,
+        skipUiAutoSpawn: true,
+      });
+      expect(booted.degraded).toContain('shadow-repo');
     } finally {
       process.env.PATH = originalPath;
     }
-
-    expect(existsSync(join(tmpDir, '.git'))).toBe(false);
   });
 });
 

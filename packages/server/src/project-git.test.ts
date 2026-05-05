@@ -40,6 +40,20 @@ describe('ensureProjectGit', () => {
     expect(result.didInit).toBe(false);
   });
 
+  test('returns { didInit: false } when running inside a subfolder of an existing repo', async () => {
+    const projectRoot = resolve(tmpDir, 'parent-repo');
+    mkdirSync(projectRoot, { recursive: true });
+    await execFileAsync('git', ['init', '--initial-branch=main', projectRoot]);
+
+    const subFolder = resolve(projectRoot, 'nested/child');
+    mkdirSync(subFolder, { recursive: true });
+
+    const result = await ensureProjectGit(subFolder);
+
+    expect(result.didInit).toBe(false);
+    expect(existsSync(resolve(subFolder, '.git'))).toBe(false);
+  });
+
   test('runs git init --initial-branch=main when .git/ is missing', async () => {
     const projectRoot = resolve(tmpDir, 'fresh');
     mkdirSync(projectRoot, { recursive: true });

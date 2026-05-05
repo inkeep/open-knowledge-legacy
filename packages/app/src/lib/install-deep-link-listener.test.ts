@@ -16,7 +16,6 @@ function makeBridge(
     } as OkDesktopConfig,
     onProjectSwitched: mock(() => () => {}),
     onMenuAction: mock(() => () => {}),
-    onGitInitNotice: mock(() => () => {}),
     onDeepLink: mock((cb: (evt: { doc: string }) => void) => {
       handler = cb;
       return mock(() => {

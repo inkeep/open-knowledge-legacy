@@ -10,7 +10,6 @@ export interface EventChannels {
   'ok:project:switching': { payload: { projectPath: string } };
   'ok:project:switched': { payload: OkDesktopConfig };
   'ok:menu-action': { payload: OkMenuAction };
-  'ok:git-init-notice': { payload: { gitDir: string } };
   'ok:update:downloaded': { payload: { version: string } };
   'ok:update:whats-new': { payload: { version: string; releaseUrl: string } };
   'ok:update:stuck-hint': { payload: { downloadUrl: string } };

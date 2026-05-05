@@ -164,12 +164,6 @@ const bridge: OkDesktopBridge = {
     return () => ipcRenderer.removeListener('ok:menu-action', listener);
   },
 
-  onGitInitNotice(cb: (evt: { gitDir: string }) => void) {
-    const listener = (_event: IpcRendererEvent, evt: { gitDir: string }) => cb(evt);
-    ipcRenderer.on('ok:git-init-notice', listener);
-    return () => ipcRenderer.removeListener('ok:git-init-notice', listener);
-  },
-
   onUpdateDownloaded(cb: (info: OkUpdateDownloadedInfo) => void) {
     const listener = (_event: IpcRendererEvent, info: OkUpdateDownloadedInfo) => cb(info);
     ipcRenderer.on('ok:update:downloaded', listener);

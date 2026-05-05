@@ -54,7 +54,6 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       port: 51234,
       destroy: mock(() => Promise.resolve()),
       degraded: [] as readonly string[],
-      didGitInit: false,
     };
     const bootServer = mock(() => Promise.resolve(fakeBooted));
     const importServer = mock(() =>
@@ -88,7 +87,6 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     expect(ready.type).toBe('ready');
     expect(ready.port).toBe(51234);
     expect(ready.apiOrigin).toBe('http://localhost:51234');
-    expect(ready.didGitInit).toBe(false);
 
     const callArgs = bootServer.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     expect(callArgs?.attachUiSibling).toBe(false);
@@ -99,7 +97,6 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       type: 'ready',
       port: 51234,
       apiOrigin: 'http://localhost:51234',
-      didGitInit: false,
     });
   });
 

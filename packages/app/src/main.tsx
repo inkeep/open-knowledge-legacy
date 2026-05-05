@@ -12,7 +12,6 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import '@/lib/desktop-bridge-types';
 import { installDesktopFetchRewrite } from '@/lib/desktop-fetch';
 import { installDeepLinkListener } from '@/lib/install-deep-link-listener';
-import { installGitInitToast } from '@/lib/install-git-init-toast';
 import { installMcpConsentListener } from '@/lib/mcp-consent-store';
 import { initWebVitals } from '@/lib/perf';
 import { installColdMountInstrumentation } from '@/lib/perf/cold-mount-instrumentation';
@@ -31,10 +30,6 @@ if (typeof window !== 'undefined' && window.okDesktop?.config.apiOrigin) {
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   installColdMountInstrumentation();
   initWebVitals();
-}
-
-if (typeof window !== 'undefined') {
-  installGitInitToast({ bridge: window.okDesktop });
 }
 
 installUpdateNoticesBridge();
