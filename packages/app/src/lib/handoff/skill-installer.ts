@@ -4,18 +4,22 @@ export type SkillInstallResult =
   | { ok: true; path?: string; handoffWarning?: string }
   | { ok: false; reason: string; message?: string };
 
+interface SkillInstallOptions {
+  force?: boolean;
+}
+
 export interface SkillInstaller {
-  install(): Promise<SkillInstallResult>;
+  install(opts?: SkillInstallOptions): Promise<SkillInstallResult>;
 }
 
 export type ElectronSkillBridge = Pick<OkDesktopBridge['skill'], 'buildAndOpen'>;
 
 export function electronSkillInstaller(bridge: ElectronSkillBridge): SkillInstaller {
   return {
-    async install() {
+    async install(opts) {
       let result: Awaited<ReturnType<ElectronSkillBridge['buildAndOpen']>>;
       try {
-        result = await bridge.buildAndOpen();
+        result = await bridge.buildAndOpen(opts?.force ? { force: true } : undefined);
       } catch (err) {
         return {
           ok: false,
@@ -23,15 +27,19 @@ export function electronSkillInstaller(bridge: ElectronSkillBridge): SkillInstal
           message: err instanceof Error ? err.message : String(err),
         };
       }
-      if (result.ok) return { ok: true, path: result.path };
+      if (result.ok) {
+        return { ok: true, path: result.path };
+      }
       return { ok: false, reason: result.reason, message: result.message };
     },
   };
 }
 
 interface ServerSkillInstallResponse {
-  status: 'installed' | 'built' | 'failed';
+  status: 'installed' | 'built' | 'failed' | 'skip-current';
   outputPath?: string;
+  skillVersion?: string;
+  recordedAt?: string;
   handoffError?: { reason: string; message: string };
   buildError?: string;
 }
@@ -45,13 +53,13 @@ export function httpSkillInstaller(opts: HttpSkillInstallerOptions = {}): SkillI
   const fetchFn = opts.fetch ?? globalThis.fetch;
   const url = `${opts.apiOrigin ?? ''}/api/install-skill`;
   return {
-    async install() {
+    async install(callOpts) {
       let response: Response;
       try {
         response = await fetchFn(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
+          body: JSON.stringify(callOpts?.force ? { force: true } : {}),
         });
       } catch (err) {
         return {

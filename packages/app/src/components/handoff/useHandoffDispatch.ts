@@ -9,6 +9,7 @@ import { toast as sonnerToast } from 'sonner';
 import {
   type EnsureCoworkSkillOutcome,
   ensureCoworkSkillInstalledWithDefaults,
+  reinstallCoworkSkill,
 } from '@/lib/handoff/cowork-skill-install';
 import { dispatchHandoff as defaultDispatchHandoff } from '@/lib/handoff/dispatch';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
@@ -192,10 +193,12 @@ export function defaultHandoffDispatchDeps(): HandoffDispatchDeps {
 
 interface UseHandoffDispatchResult {
   dispatch: (target: HandoffTarget, input: HandoffDispatchInput) => Promise<HandoffOutcome>;
+  reinstallCoworkSkill: () => Promise<EnsureCoworkSkillOutcome>;
 }
 
 export function useHandoffDispatch(): UseHandoffDispatchResult {
   return {
     dispatch: (target, input) => runHandoffDispatch(target, input, defaultHandoffDispatchDeps()),
+    reinstallCoworkSkill,
   };
 }

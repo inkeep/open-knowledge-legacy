@@ -241,6 +241,19 @@ describe('ContentFilter', () => {
       expect(filter.isDirExcluded('.ok')).toBe(true);
       expect(filter.isExcluded('.ok/logo.png')).toBe(true);
     });
+
+    test('isExcluded rejects supported docs born inside BUILTIN_SKIP_DIRS', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isExcluded('.ok/templates/daily.md')).toBe(true);
+      expect(filter.isExcluded('meetings/.ok/templates/standup.md')).toBe(true);
+      expect(filter.isExcluded('meetings/.ok/frontmatter.yml.md')).toBe(true);
+      expect(filter.isExcluded('node_modules/some-pkg/README.md')).toBe(true);
+      expect(filter.isExcluded('apps/web/dist/index.md')).toBe(true);
+
+      expect(filter.isExcluded('meetings/prep-notes.md')).toBe(false);
+      expect(filter.isExcluded('docs/intro.md')).toBe(false);
+    });
   });
 
   describe('reserved system doc names', () => {

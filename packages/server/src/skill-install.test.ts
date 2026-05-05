@@ -95,9 +95,13 @@ function freshHome(): string {
   return mkdtempSync(join(tmpdir(), 'ok-skill-install-'));
 }
 
-const SIDECAR_REL = ['.ok', 'skill-installed-version'] as const;
+const SIDECAR_REL = ['.ok', 'skill-state', 'cli-hosts'] as const;
+const LEGACY_SIDECAR_REL = ['.ok', 'skill-installed-version'] as const;
 function sidecarPathFor(home: string): string {
   return join(home, ...SIDECAR_REL);
+}
+function legacySidecarPathFor(home: string): string {
+  return join(home, ...LEGACY_SIDECAR_REL);
 }
 
 const CENTRAL_SKILL_REL = ['.agents', 'skills', 'open-knowledge'] as const;
@@ -112,14 +116,29 @@ function writeCentralSkill(home: string): void {
 }
 
 function writeSidecar(home: string, content: string): void {
-  const dir = join(home, '.ok');
+  const dir = join(home, '.ok', 'skill-state');
   mkdirSync(dir, { recursive: true });
   writeFileSync(sidecarPathFor(home), content, 'utf-8');
+}
+
+function writeLegacySidecar(home: string, content: string): void {
+  const dir = join(home, '.ok');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(legacySidecarPathFor(home), content, 'utf-8');
 }
 
 function readSidecarIfExists(home: string): string | null {
   try {
     return readFileSync(sidecarPathFor(home), 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+function readLegacySidecarIfExists(home: string): string | null {
+  try {
+    return readFileSync(legacySidecarPathFor(home), 'utf-8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
@@ -323,9 +342,77 @@ describe('installUserSkill — HOME propagates to subprocess env', () => {
 
     await installUserSkill(opts);
 
-    expect((calls[0]?.opts.env as NodeJS.ProcessEnv)?.HOME).toBe(home);
+    expect((calls[0]?.opts.env as NodeJS.ProcessEnv)?.HOME).toBe(host(calls).HOME);
   });
 });
+
+describe('installUserSkill — legacy sidecar migration', () => {
+  test('legacy file present + valid version → moved to new path; legacy gone', async () => {
+    const home = freshHome();
+    writeLegacySidecar(home, `${currentVersion}\n`);
+    writeCentralSkill(home);
+    const { spawn, calls } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
+
+    const result = await installUserSkill({ home, spawn });
+
+    expect(result).toBe('skip-current');
+    expect(calls.length).toBe(0);
+    expect(readLegacySidecarIfExists(home)).toBeNull();
+    expect(readSidecarIfExists(home)).toBe(`${currentVersion}\n`);
+  });
+
+  test('legacy file absent → no-op; fresh install proceeds', async () => {
+    const home = freshHome();
+    const { spawn, calls } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
+
+    const result = await installUserSkill({ home, spawn });
+
+    expect(result).toBe('installed');
+    expect(calls.length).toBe(1);
+    expect(readLegacySidecarIfExists(home)).toBeNull();
+    expect(readSidecarIfExists(home)).toBe(`${currentVersion}\n`);
+  });
+
+  test('legacy file with invalid content → deleted; fresh install proceeds', async () => {
+    const home = freshHome();
+    writeLegacySidecar(home, 'not-a-version\n');
+    const { spawn, calls } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
+
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+      const result = await installUserSkill({ home, spawn });
+      expect(result).toBe('installed');
+      expect(calls.length).toBe(1);
+      expect(readLegacySidecarIfExists(home)).toBeNull();
+      expect(readSidecarIfExists(home)).toBe(`${currentVersion}\n`);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test('migration is idempotent: second call after migration is a no-op', async () => {
+    const home = freshHome();
+    writeLegacySidecar(home, `${currentVersion}\n`);
+    writeCentralSkill(home);
+    const { spawn: firstSpawn } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
+    const { spawn: secondSpawn, calls: secondCalls } = makeSpawnFake({
+      outcome: { kind: 'exit', code: 0 },
+    });
+
+    await installUserSkill({ home, spawn: firstSpawn });
+    const result = await installUserSkill({ home, spawn: secondSpawn });
+
+    expect(result).toBe('skip-current');
+    expect(secondCalls.length).toBe(0);
+    expect(readLegacySidecarIfExists(home)).toBeNull();
+    expect(readSidecarIfExists(home)).toBe(`${currentVersion}\n`);
+  });
+});
+
+function host(calls: ReadonlyArray<{ opts: { env?: NodeJS.ProcessEnv } }>): NodeJS.ProcessEnv {
+  return (calls[0]?.opts.env ?? {}) as NodeJS.ProcessEnv;
+}
 
 describe('buildAndOpenSkill', () => {
   function makeFakeSpawn(capture: {
@@ -346,6 +433,7 @@ describe('buildAndOpenSkill', () => {
     const capture: { command?: string; args?: readonly string[] } = {};
 
     const result = await buildAndOpenSkill({
+      home,
       out: join(home, 'no-open.skill'),
       noOpen: true,
       spawnFn: makeFakeSpawn(capture),
@@ -363,6 +451,7 @@ describe('buildAndOpenSkill', () => {
     const out = join(home, 'darwin.skill');
 
     const result = await buildAndOpenSkill({
+      home,
       out,
       platformName: 'darwin',
       spawnFn: makeFakeSpawn(capture),
@@ -379,6 +468,7 @@ describe('buildAndOpenSkill', () => {
     const out = join(home, 'win32.skill');
 
     const result = await buildAndOpenSkill({
+      home,
       out,
       platformName: 'win32',
       spawnFn: makeFakeSpawn(capture),
@@ -396,6 +486,7 @@ describe('buildAndOpenSkill', () => {
     const capture: { command?: string; args?: readonly string[] } = {};
 
     const result = await buildAndOpenSkill({
+      home,
       out: join(home, 'linux.skill'),
       platformName: 'linux',
       spawnFn: makeFakeSpawn(capture),
@@ -409,6 +500,7 @@ describe('buildAndOpenSkill', () => {
     const home = freshHome();
 
     const result = await buildAndOpenSkill({
+      home,
       out: join(home, 'aix.skill'),
       platformName: 'aix' as NodeJS.Platform,
       spawnFn: makeFakeSpawn({
@@ -425,6 +517,7 @@ describe('buildAndOpenSkill', () => {
     const home = freshHome();
 
     const result = await buildAndOpenSkill({
+      home,
       out: join(home, 'spawn-error.skill'),
       platformName: 'darwin',
       spawnFn: makeFakeSpawn({ threw: new Error('EACCES: permission denied') }),
@@ -434,5 +527,103 @@ describe('buildAndOpenSkill', () => {
     expect(result.handoffError?.reason).toBe('spawn-error');
     expect(result.handoffError?.message).toContain('EACCES');
     expect(result.outputPath).toBeDefined();
+  });
+});
+
+describe('buildAndOpenSkill — install-state gate', () => {
+  function makeNoopSpawn(): SpawnLike {
+    return ((command: string) => {
+      throw new Error(`spawn should not have been called (cmd=${command})`);
+    }) as unknown as SpawnLike;
+  }
+  function writeCoworkState(home: string, version: string): void {
+    const dir = join(home, '.ok', 'skill-state');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'claude-cowork'), `${version}\n`, 'utf-8');
+  }
+  function readCoworkState(home: string): string | null {
+    try {
+      return readFileSync(join(home, '.ok', 'skill-state', 'claude-cowork'), 'utf-8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+  }
+
+  test('recorded claude-cowork matches current → status="skip-current"; no build, no spawn', async () => {
+    const home = freshHome();
+    writeCoworkState(home, currentVersion);
+
+    const result = await buildAndOpenSkill({
+      home,
+      out: join(home, 'should-not-build.skill'),
+      platformName: 'darwin',
+      spawnFn: makeNoopSpawn(),
+    });
+
+    expect(result.status).toBe('skip-current');
+    expect(result.skillVersion).toBe(currentVersion);
+    expect(typeof result.recordedAt).toBe('string');
+    let outExists = false;
+    try {
+      readFileSync(join(home, 'should-not-build.skill'));
+      outExists = true;
+    } catch {}
+    expect(outExists).toBe(false);
+  });
+
+  test('force=true bypasses gate even when recorded matches', async () => {
+    const home = freshHome();
+    writeCoworkState(home, currentVersion);
+    const capture: { command?: string; args?: readonly string[] } = {};
+    const out = join(home, 'forced.skill');
+
+    const result = await buildAndOpenSkill({
+      home,
+      out,
+      platformName: 'darwin',
+      spawnFn: ((command: string, args: readonly string[]) => {
+        capture.command = command;
+        capture.args = args;
+        return {
+          unref: () => {},
+        } as unknown as ReturnType<Parameters<SpawnLike>[2] extends never ? never : SpawnLike>;
+      }) as unknown as SpawnLike,
+      force: true,
+    });
+
+    expect(result.status).toBe('installed');
+    expect(capture.command).toBe('open');
+  });
+
+  test('successful build writes claude-cowork install-state', async () => {
+    const home = freshHome();
+    expect(readCoworkState(home)).toBeNull();
+    const out = join(home, 'fresh.skill');
+
+    const result = await buildAndOpenSkill({
+      home,
+      out,
+      noOpen: true,
+    });
+
+    expect(result.status).toBe('built');
+    expect(readCoworkState(home)).toBe(`${currentVersion}\n`);
+  });
+
+  test('subsequent invocation after a successful build hits the gate', async () => {
+    const home = freshHome();
+    const first = await buildAndOpenSkill({
+      home,
+      out: join(home, 'first.skill'),
+      noOpen: true,
+    });
+    expect(first.status).toBe('built');
+    const second = await buildAndOpenSkill({
+      home,
+      out: join(home, 'second.skill'),
+      noOpen: true,
+    });
+    expect(second.status).toBe('skip-current');
   });
 });

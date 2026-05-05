@@ -126,7 +126,7 @@ export interface RequestChannels {
 
   'ok:skill:detect-claude-desktop': { args: []; result: boolean };
 
-  'ok:skill:build-and-open': { args: []; result: BuildAndOpenResult };
+  'ok:skill:build-and-open': { args: [opts?: { force?: boolean }]; result: BuildAndOpenResult };
 
   'ok:local-op:auth:start': {
     args: [];

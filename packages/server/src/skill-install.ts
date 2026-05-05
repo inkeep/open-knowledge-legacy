@@ -1,18 +1,24 @@
 import { type SpawnOptions, spawn } from 'node:child_process';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { homedir, platform as osPlatform } from 'node:os';
 import { dirname, join, resolve as resolvePath } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   type BuildSkillZipResult,
   buildSkillZip,
   resolveBundledSkillDir,
 } from './build-skill-zip.ts';
+import { tracedMkdir } from './fs-traced.ts';
+import { recordSkillInstallEvent, type SkillInstallEventOutcome } from './skill-install-events.ts';
+import {
+  migrateLegacySidecar,
+  readServerPackageVersion,
+  readTargetRecordedAt,
+  readTargetVersion,
+  type SkillStateLogger,
+  writeTargetVersion,
+} from './skill-state.ts';
 
-export interface SkillInstallLogger {
-  warn: (data: unknown, message: string) => void;
-  info?: (data: unknown, message: string) => void;
-}
+export type SkillInstallLogger = SkillStateLogger;
 
 export type SpawnLike = (
   command: string,
@@ -29,48 +35,11 @@ export interface InstallUserSkillOptions {
 
 export type InstallUserSkillResult = 'installed' | 'skip-current' | 'failed';
 
-const SIDECAR_FILENAME = 'skill-installed-version';
-
 const CENTRAL_SKILL_DIR_REL = ['.agents', 'skills', 'open-knowledge'] as const;
 
 const SKILLS_CLI_SPEC = 'skills@~1.5.0';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
-
-const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/;
-
-async function readServerPackageVersion(): Promise<string> {
-  const pkgUrl = new URL('../package.json', import.meta.url);
-  const raw = await readFile(fileURLToPath(pkgUrl), 'utf-8');
-  const parsed = JSON.parse(raw) as { version?: unknown };
-  if (typeof parsed.version !== 'string' || parsed.version.length === 0) {
-    throw new Error('@inkeep/open-knowledge-server/package.json missing version field');
-  }
-  return parsed.version;
-}
-
-function sidecarPath(home: string): string {
-  return join(home, '.ok', SIDECAR_FILENAME);
-}
-
-async function readSidecarVersion(home: string): Promise<string | null> {
-  try {
-    const raw = await readFile(sidecarPath(home), 'utf-8');
-    const trimmed = raw.trim();
-    if (trimmed.length === 0) return null;
-    if (!VERSION_RE.test(trimmed)) return null;
-    return trimmed;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
-  }
-}
-
-async function writeSidecarVersion(home: string, version: string): Promise<void> {
-  const path = sidecarPath(home);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${version}\n`, 'utf-8');
-}
 
 function centralSkillDir(home: string): string {
   return join(home, ...CENTRAL_SKILL_DIR_REL);
@@ -153,6 +122,33 @@ export async function installUserSkill(
   const spawnFn = opts.spawn ?? (spawn as SpawnLike);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
+  const report = async (
+    outcome: SkillInstallEventOutcome,
+    version?: string,
+    reason?: string,
+  ): Promise<void> => {
+    await recordSkillInstallEvent(
+      {
+        ts: new Date().toISOString(),
+        surface: 'cli-npx-skills-add',
+        target: 'cli-hosts',
+        outcome,
+        ...(version !== undefined ? { version } : {}),
+        ...(reason !== undefined ? { reason } : {}),
+      },
+      { homedir: () => home, warn: logger.warn },
+    );
+  };
+
+  try {
+    await migrateLegacySidecar(home, logger);
+  } catch (err) {
+    logger.warn(
+      { event: 'skill-install.migration.failed', error: String(err) },
+      'Legacy skill sidecar migration failed; continuing with fresh install path.',
+    );
+  }
+
   let currentVersion: string;
   try {
     currentVersion = await readServerPackageVersion();
@@ -161,16 +157,24 @@ export async function installUserSkill(
       { event: 'skill-install.failed', reason: 'version-read-failed', error: String(err) },
       'Skill install aborted — could not read @inkeep/open-knowledge-server version.',
     );
+    await report('failed', undefined, 'version-read-failed');
     return 'failed';
   }
 
-  const existingVersion = await readSidecarVersion(home).catch(() => null);
+  const existingVersion = await readTargetVersion(home, 'cli-hosts').catch((err) => {
+    logger.warn(
+      { event: 'skill-install.gate.read-failed', error: String(err) },
+      'Could not read cli-hosts install-state; proceeding with fresh install.',
+    );
+    return null;
+  });
   if (existingVersion !== null && existingVersion === currentVersion) {
     if (await centralSkillExists(home)) {
       logger.info?.(
         { event: 'skill-install.skip-current', version: currentVersion },
         'Open Knowledge skill already installed at current version; skipping.',
       );
+      await report('skip-current', currentVersion);
       return 'skip-current';
     }
     logger.info?.(
@@ -195,6 +199,7 @@ export async function installUserSkill(
       },
       'Skill install aborted — bundled SKILL.md asset not found.',
     );
+    await report('failed', currentVersion, 'bundled-asset-missing');
     return 'failed';
   }
   const args = ['-y', SKILLS_CLI_SPEC, 'add', bundledDir, '--agent', '*', '-g', '-y', '--copy'];
@@ -204,18 +209,20 @@ export async function installUserSkill(
 
   if (outcome.kind === 'ok') {
     try {
-      await writeSidecarVersion(home, currentVersion);
+      await writeTargetVersion(home, 'cli-hosts', currentVersion);
     } catch (err) {
       logger.warn(
         { event: 'skill-install.failed', reason: 'sidecar-write-failed', error: String(err) },
         'Skill install succeeded but sidecar write failed.',
       );
+      await report('failed', currentVersion, 'sidecar-write-failed');
       return 'failed';
     }
     logger.info?.(
       { event: 'skill-install.installed', version: currentVersion },
       'Open Knowledge skill installed to detected agent hosts.',
     );
+    await report('installed', currentVersion);
     return 'installed';
   }
 
@@ -225,6 +232,7 @@ export async function installUserSkill(
       'Skill install subprocess timed out. Run manually: npx ' +
         `${SKILLS_CLI_SPEC} add ${bundledDir} --agent '*' -g -y --copy`,
     );
+    await report('failed', currentVersion, 'timeout');
     return 'failed';
   }
 
@@ -239,6 +247,7 @@ export async function installUserSkill(
       'Skill install failed — `npx` unavailable or spawn errored. Run manually: npx ' +
         `${SKILLS_CLI_SPEC} add ${bundledDir} --agent '*' -g -y --copy`,
     );
+    await report('failed', currentVersion, 'spawn-error');
     return 'failed';
   }
 
@@ -252,6 +261,7 @@ export async function installUserSkill(
     'Skill install subprocess exited non-zero. Run manually: npx ' +
       `${SKILLS_CLI_SPEC} add ${bundledDir} --agent '*' -g -y --copy`,
   );
+  await report('failed', currentVersion, `nonzero-exit:${outcome.exitCode ?? 'unknown'}`);
   return 'failed';
 }
 
@@ -261,12 +271,14 @@ const SKILL_FILENAME = 'openknowledge.skill';
 export interface BuildAndOpenSkillOptions {
   out?: string;
   noOpen?: boolean;
+  force?: boolean;
   spawnFn?: SpawnLike;
   platformName?: NodeJS.Platform;
-  homeDir?: string;
+  home?: string;
+  logger?: SkillInstallLogger;
 }
 
-export type BuildAndOpenSkillStatus = 'installed' | 'built' | 'failed';
+export type BuildAndOpenSkillStatus = 'installed' | 'built' | 'failed' | 'skip-current';
 
 export interface BuildAndOpenSkillResult {
   status: BuildAndOpenSkillStatus;
@@ -277,6 +289,7 @@ export interface BuildAndOpenSkillResult {
   skillVersion?: string;
   handoffError?: { reason: 'unsupported-platform' | 'spawn-error'; message: string };
   buildError?: string;
+  recordedAt?: string;
 }
 
 function defaultDownloadsPath(home: string): string {
@@ -319,17 +332,92 @@ function invokeFileAssociation(
 export async function buildAndOpenSkill(
   opts: BuildAndOpenSkillOptions = {},
 ): Promise<BuildAndOpenSkillResult> {
-  const home = opts.homeDir ?? homedir();
+  const home = opts.home ?? homedir();
   const outputPath = resolvePath(opts.out ?? defaultDownloadsPath(home));
   const platformName = opts.platformName ?? osPlatform();
   const spawnFn = opts.spawnFn ?? spawn;
+  const logger = opts.logger;
+
+  const report = async (
+    outcome: SkillInstallEventOutcome,
+    version?: string,
+    reason?: string,
+  ): Promise<void> => {
+    await recordSkillInstallEvent(
+      {
+        ts: new Date().toISOString(),
+        surface: 'server-build-and-open',
+        target: 'claude-cowork',
+        outcome,
+        ...(version !== undefined ? { version } : {}),
+        ...(reason !== undefined ? { reason } : {}),
+      },
+      { homedir: () => home, warn: logger?.warn },
+    );
+  };
 
   try {
-    await mkdir(dirname(outputPath), { recursive: true });
+    await migrateLegacySidecar(home, logger);
   } catch (err) {
+    logger?.warn?.(
+      { event: 'skill-install.migration.failed', error: String(err) },
+      'Legacy skill sidecar migration failed; continuing with build path.',
+    );
+  }
+
+  if (!opts.force) {
+    let currentVersion: string | null = null;
+    try {
+      currentVersion = await readServerPackageVersion();
+    } catch (err) {
+      logger?.warn?.(
+        { event: 'skill-install.gate.version-read-failed', error: String(err) },
+        'Could not read @inkeep/open-knowledge-server version for gate check; rebuilding.',
+      );
+    }
+
+    if (currentVersion !== null) {
+      let recordedVersion: string | null = null;
+      let recordedAt: string | null = null;
+      try {
+        [recordedVersion, recordedAt] = await Promise.all([
+          readTargetVersion(home, 'claude-cowork'),
+          readTargetRecordedAt(home, 'claude-cowork'),
+        ]);
+      } catch (err) {
+        logger?.warn?.(
+          { event: 'skill-install.gate.read-failed', error: String(err) },
+          'Could not read claude-cowork install-state; rebuilding.',
+        );
+      }
+
+      if (recordedVersion !== null && recordedVersion === currentVersion) {
+        logger?.info?.(
+          {
+            event: 'skill-install.skip-current',
+            target: 'claude-cowork',
+            version: currentVersion,
+          },
+          'Open Knowledge skill already delivered at current version; skipping rebuild.',
+        );
+        await report('skip-current', currentVersion);
+        return {
+          status: 'skip-current',
+          skillVersion: currentVersion,
+          ...(recordedAt !== null ? { recordedAt } : {}),
+        };
+      }
+    }
+  }
+
+  try {
+    await tracedMkdir(dirname(outputPath), { recursive: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await report('failed', undefined, `mkdir-failed:${message}`);
     return {
       status: 'failed',
-      buildError: `could not create output directory: ${err instanceof Error ? err.message : String(err)}`,
+      buildError: `could not create output directory: ${message}`,
     };
   }
 
@@ -337,9 +425,11 @@ export async function buildAndOpenSkill(
   try {
     build = await buildSkillZip({ outputPath, skipVersionCheck: true });
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await report('failed', undefined, `build-failed:${message}`);
     return {
       status: 'failed',
-      buildError: err instanceof Error ? err.message : String(err),
+      buildError: message,
     };
   }
 
@@ -352,17 +442,36 @@ export async function buildAndOpenSkill(
     skillVersion: build.skillVersion,
   };
 
+  if (build.skillVersion) {
+    try {
+      await writeTargetVersion(home, 'claude-cowork', build.skillVersion);
+    } catch (err) {
+      logger?.warn?.(
+        {
+          event: 'skill-install.state-write-failed',
+          target: 'claude-cowork',
+          version: build.skillVersion,
+          error: String(err),
+        },
+        'Skill bundle built but install-state write failed; gate will re-trigger build on next click.',
+      );
+    }
+  }
+
   if (opts.noOpen) {
+    await report('built', build.skillVersion);
     return baseResult;
   }
 
   const invocation = invokeFileAssociation(build.outputPath, platformName, spawnFn);
   if (!invocation.ok) {
+    await report('built', build.skillVersion, `handoff-${invocation.reason}`);
     return {
       ...baseResult,
       handoffError: { reason: invocation.reason, message: invocation.message },
     };
   }
 
+  await report('installed', build.skillVersion);
   return { ...baseResult, status: 'installed' };
 }

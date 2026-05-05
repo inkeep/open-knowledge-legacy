@@ -688,8 +688,8 @@ function registerIpcHandlers() {
   handle('ok:skill:detect-claude-desktop', async () => {
     return handleDetectClaudeDesktop();
   });
-  handle('ok:skill:build-and-open', async () => {
-    return handleBuildAndOpen({ app, shell });
+  handle('ok:skill:build-and-open', async (_event, opts) => {
+    return handleBuildAndOpen({ app, shell, force: opts?.force });
   });
 
   const localOpDeps: LocalOpDeps = {
