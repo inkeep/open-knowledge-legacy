@@ -4,6 +4,7 @@ import {
   Image,
   type LucideIcon,
   MessageSquareWarning,
+  Sigma,
   SquarePlay,
   Volume2,
 } from 'lucide-react';
@@ -12,6 +13,7 @@ const ICON_COMPONENTS: Record<string, LucideIcon> = {
   ChevronRight,
   Image,
   MessageSquareWarning,
+  Sigma,
   SquarePlay,
   Volume2,
 };

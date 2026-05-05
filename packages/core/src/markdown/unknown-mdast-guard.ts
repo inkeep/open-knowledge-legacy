@@ -37,6 +37,7 @@ export const KNOWN_MDAST_TYPES: ReadonlySet<string> = new Set([
   'wikiLinkEmbed',
   'math',
   'inlineMath',
+  'mark',
   'rawMdxFallbackMdast',
 ]);
 

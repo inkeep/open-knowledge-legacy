@@ -4,10 +4,10 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the 5 canonical + 6 compat descriptors + wildcard', () => {
+  test('returns the 6 canonical + 8 compat descriptors + wildcard', () => {
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(12);
+    expect(entries.length).toBe(15);
   });
 
   test('get returns registered component by name', () => {
@@ -72,6 +72,7 @@ describe('createRegistry', () => {
     expect(registry.has('video')).toBe(true);
     expect(registry.has('audio')).toBe(true);
     expect(registry.has('Accordion')).toBe(true);
+    expect(registry.has('Math')).toBe(true);
     expect(registry.has('*')).toBe(true);
     expect(registry.has('Image')).toBe(false);
     expect(registry.has('Video')).toBe(false);
@@ -82,12 +83,12 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains 5 canonical + 6 compat entries (5-pack + source-form preservation)', () => {
-    expect(builtInComponents.length).toBe(11);
+  test('contains 6 canonical + 8 compat entries (canonical pack + source-form preservation + math syntax compats)', () => {
+    expect(builtInComponents.length).toBe(14);
     const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
     const compat = builtInComponents.filter((m) => m.surface === 'compat');
-    expect(canonical.length).toBe(5);
-    expect(compat.length).toBe(6);
+    expect(canonical.length).toBe(6);
+    expect(compat.length).toBe(8);
   });
 
   test('all entries have required fields', () => {
@@ -121,7 +122,7 @@ describe('builtInComponents manifest', () => {
     }
   });
 
-  test('no registered descriptor has emptyChildName (5-pack is standalone-first — no compound parents)', () => {
+  test('no registered descriptor has emptyChildName (canonical pack is standalone-first — no compound parents)', () => {
     const containers = builtInComponents.filter((m) => m.emptyChildName);
     const names = containers.map((c) => `${c.name}→${c.emptyChildName}`).sort();
     expect(
@@ -345,6 +346,37 @@ describe('builtInComponents manifest', () => {
     expect(accordion?.emptyChildName).toBeUndefined();
   });
 
+  test('Math exposes the 3-prop surface', () => {
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    expect(math).toBeDefined();
+    if (!math) return;
+    const propNames = math.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(['formula', 'id', 'language'].sort());
+  });
+
+  test('Math has `formula` as a required string with autoFocus', () => {
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    const formula = math?.props.find((p) => p.name === 'formula');
+    expect(formula).toBeDefined();
+    expect(formula?.type).toBe('string');
+    expect(formula?.required).toBe(true);
+    if (formula?.type === 'string') {
+      expect(formula.autoFocus).toBe(true);
+    }
+  });
+
+  test('Math is a self-closing leaf (no children slot)', () => {
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    expect(math?.hasChildren).toBe(false);
+    expect(math?.isSelfClosing).toBe(true);
+  });
+
+  test('Math has no `display` prop', () => {
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    const display = math?.props.find((p) => p.name === 'display');
+    expect(display).toBeUndefined();
+  });
+
   test('each name is unique', () => {
     const names = builtInComponents.map((m) => m.name);
     expect(new Set(names).size).toBe(names.length);
@@ -433,6 +465,10 @@ describe('common/advanced split per descriptor', () => {
     Accordion: {
       common: ['title', 'defaultOpen'],
       advanced: ['icon', 'description', 'id', 'name'],
+    },
+    Math: {
+      common: ['formula'],
+      advanced: ['id', 'language'],
     },
   };
   for (const [name, split] of Object.entries(expected)) {

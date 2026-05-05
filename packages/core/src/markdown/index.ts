@@ -391,6 +391,8 @@ function buildMdastToPmHandlers(
   const strikeMark = m.strike ?? m.delete;
   if (strikeMark) handlers.delete = toPmMark(strikeMark);
 
+  if (m.highlight) handlers.mark = toPmMark(m.highlight);
+
   if (m.emphasis) {
     handlers.emphasis = toPmMark(m.emphasis, (node: Emphasis) => ({
       sourceDelimiter: node.data?.sourceDelimiter ?? '*',
@@ -556,17 +558,29 @@ function buildMdastToPmHandlers(
         children.length ? children : undefined,
       );
     };
-    if (n.jsxInline) {
-      handlers.mdxJsxTextElement = (node: MdxJsxTextElement) => {
+    const extractStringAttr = (node: MdxJsxTextElement, attrName: string): string | null => {
+      const attr = node.attributes?.find(
+        (a): a is MdxJsxAttribute => a.type === 'mdxJsxAttribute' && a.name === attrName,
+      );
+      if (!attr) return null;
+      if (typeof attr.value === 'string') return attr.value;
+      return null;
+    };
+
+    handlers.mdxJsxTextElement = (node: MdxJsxTextElement) => {
+      if (node.name === 'InlineMath' && n.mathInline) {
+        const formula = extractStringAttr(node, 'formula') ?? '';
+        const id = extractStringAttr(node, 'id');
+        return n.mathInline.create({ formula, id: id ?? null });
+      }
+      if (n.jsxInline) {
         const raw = rawFromData(node.data) ?? '';
         return n.jsxInline.createAndFill({}, raw ? [schema.text(raw)] : null);
-      };
-    } else {
-      handlers.mdxJsxTextElement = (node: MdxJsxTextElement) =>
-        n.jsxComponent.createAndFill({
-          sourceRaw: rawFromData(node.data) ?? '',
-        });
-    }
+      }
+      return n.jsxComponent.createAndFill({
+        sourceRaw: rawFromData(node.data) ?? '',
+      });
+    };
 
     handlers.mdxFlowExpression = (node: MdxFlowExpression) => {
       const raw = rawFromData(node.data) ?? `{${node.value ?? ''}}`;
@@ -717,6 +731,11 @@ function buildMdastToPmHandlers(
     );
     return schema.text(node.value ?? node.type);
   };
+
+  if (n.mathInline) {
+    handlers.inlineMath = (node: { type: 'inlineMath'; value?: string }) =>
+      n.mathInline.create({ formula: node.value ?? '' });
+  }
 
   if (!handlers.math) handlers.math = blockUnknownHandler;
   if (!handlers.inlineMath) handlers.inlineMath = inlineUnknownHandler;
@@ -930,6 +949,28 @@ function buildPmToMdastHandlers(schema: Schema): {
     };
   }
 
+  if (n.mathInline) {
+    nodeHandlers.mathInline = (pmNode: PmNode) => {
+      const formula = (pmNode.attrs.formula as string) ?? '';
+      const id = pmNode.attrs.id;
+      if (typeof id === 'string' && id.length > 0) {
+        return {
+          type: 'mdxJsxTextElement' as const,
+          name: 'InlineMath',
+          attributes: [
+            { type: 'mdxJsxAttribute' as const, name: 'formula', value: formula },
+            { type: 'mdxJsxAttribute' as const, name: 'id', value: id },
+          ],
+          children: [],
+        } as unknown as MdastNodes;
+      }
+      return {
+        type: 'inlineMath' as const,
+        value: formula,
+      } as unknown as MdastNodes;
+    };
+  }
+
   if (n.wikiLink) {
     nodeHandlers.wikiLink = (pmNode: PmNode) => {
       const target: string = pmNode.attrs.target ?? '';
@@ -982,6 +1023,10 @@ function buildPmToMdastHandlers(schema: Schema): {
   if (strikeMark) {
     const name = m.strike ? 'strike' : 'delete';
     markHandlers[name] = fromPmMark('delete');
+  }
+
+  if (m.highlight) {
+    markHandlers.highlight = fromPmMark('mark');
   }
 
   if (m.link) {

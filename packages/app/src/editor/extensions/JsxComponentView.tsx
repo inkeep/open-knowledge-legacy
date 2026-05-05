@@ -188,6 +188,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     hasEditableProps &&
     descriptor.props.some((p) => {
       if (p.type !== 'string') return false;
+      if (!p.required) return false;
       if ('hidden' in p && p.hidden) return false;
       return currentProps[p.name] === '';
     });

@@ -2114,6 +2114,11 @@ Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/h
 
 Copyright (c) Microsoft Corporation.
 
+### `@types/katex@0.16.8`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/katex
+
+Copyright (c) Microsoft Corporation.
+
 ### `@types/linkify-it@5.0.0`
 Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/linkify-it
 
@@ -2460,6 +2465,11 @@ Homepage: https://github.com/wooorm/comma-separated-tokens
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `commander@14.0.3`
+Homepage: https://github.com/tj/commander.js
+
+Copyright (c) 2011 TJ Holowaychuk <tj@vision-media.ca>
+
+### `commander@8.3.0`
 Homepage: https://github.com/tj/commander.js
 
 Copyright (c) 2011 TJ Holowaychuk <tj@vision-media.ca>
@@ -3311,6 +3321,11 @@ Homepage: https://github.com/vasturiano/kapsule
 
 Copyright (c) 2017 Vasco Asturiano
 
+### `katex@0.16.45`
+Homepage: https://katex.org
+
+Copyright (c) 2013-2020 Khan Academy and other contributors
+
 ### `kleur@4.1.5`
 Homepage: https://github.com/lukeed/kleur
 
@@ -3441,6 +3456,11 @@ Homepage: https://github.com/syntax-tree/mdast-util-gfm-task-list-item
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
+### `mdast-util-math@3.0.0`
+Homepage: https://github.com/syntax-tree/mdast-util-math
+
+Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
+
 ### `mdast-util-mdx@3.0.0`
 Homepage: https://github.com/syntax-tree/mdast-util-mdx
 
@@ -3554,6 +3574,11 @@ Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-gfm-task-list-item@2.1.0`
 Homepage: https://github.com/micromark/micromark-extension-gfm-task-list-item
+
+Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
+
+### `micromark-extension-math@3.1.0`
+Homepage: https://github.com/micromark/micromark-extension-math
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
@@ -4308,6 +4333,11 @@ Homepage: https://github.com/hyoban/remark-github-alerts#readme
 
 Copyright (c) 2023 Stephen Zhou <https://github.com/hyoban>
 
+### `remark-math@6.0.0`
+Homepage: https://github.com/remarkjs/remark-math/tree/main/packages/remark-math
+
+_(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
+
 ### `remark-parse@11.0.0`
 Homepage: https://remark.js.org
 
@@ -4779,6 +4809,11 @@ Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 Homepage: https://github.com/syntax-tree/unist-util-position-from-estree
 
 Copyright (c) 2021 Titus Wormer <tituswormer@gmail.com>
+
+### `unist-util-remove-position@5.0.0`
+Homepage: https://github.com/syntax-tree/unist-util-remove-position
+
+Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `unist-util-stringify-position@4.0.0`
 Homepage: https://github.com/syntax-tree/unist-util-stringify-position

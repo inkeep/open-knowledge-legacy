@@ -21,6 +21,7 @@ import { App } from './App';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import 'react-medium-image-zoom/dist/styles.css';
+import 'katex/dist/katex.min.css';
 import './globals.css';
 
 if (typeof window !== 'undefined' && window.okDesktop?.config.apiOrigin) {

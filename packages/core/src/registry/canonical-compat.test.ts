@@ -14,19 +14,21 @@ describe('canonical/compat split — registry shape', () => {
     }
   });
 
-  test('exactly 5 canonical descriptors (5-pack foundation)', () => {
-    expect(canonicalDescriptors.length).toBe(5);
+  test('exactly 6 canonical descriptors', () => {
+    expect(canonicalDescriptors.length).toBe(6);
     expect(canonicalDescriptors.map((m) => m.name).sort()).toEqual(
-      ['Accordion', 'Callout', 'audio', 'img', 'video'].sort(),
+      ['Accordion', 'Callout', 'Math', 'audio', 'img', 'video'].sort(),
     );
   });
 
-  test('compat descriptor set covers v1 source-form preservation + WikiEmbed convergence', () => {
+  test('compat descriptor set covers v1 source-form preservation + WikiEmbed convergence + math syntax', () => {
     expect(compatDescriptors.map((m) => m.name).sort()).toEqual(
       [
         'CommonMarkImage',
+        'DollarMath',
         'GFMCallout',
         'HtmlDetailsAccordion',
+        'MathFence',
         'WikiEmbedAudio',
         'WikiEmbedImage',
         'WikiEmbedVideo',
@@ -88,6 +90,26 @@ describe('compat descriptors — prop-set is a subset of canonical', () => {
     if (!accordion || !html) throw new Error('Missing descriptor');
     const canonicalNames = new Set(accordion.props.map((p) => p.name));
     for (const p of html.props) {
+      expect(canonicalNames.has(p.name)).toBe(true);
+    }
+  });
+
+  test('DollarMath props are a subset of Math props', () => {
+    const math = canonicalDescriptors.find((m) => m.name === 'Math');
+    const dm = compatDescriptors.find((m) => m.name === 'DollarMath');
+    if (!math || !dm) throw new Error('Missing descriptor');
+    const canonicalNames = new Set(math.props.map((p) => p.name));
+    for (const p of dm.props) {
+      expect(canonicalNames.has(p.name)).toBe(true);
+    }
+  });
+
+  test('MathFence props are a subset of Math props', () => {
+    const math = canonicalDescriptors.find((m) => m.name === 'Math');
+    const mf = compatDescriptors.find((m) => m.name === 'MathFence');
+    if (!math || !mf) throw new Error('Missing descriptor');
+    const canonicalNames = new Set(math.props.map((p) => p.name));
+    for (const p of mf.props) {
       expect(canonicalNames.has(p.name)).toBe(true);
     }
   });

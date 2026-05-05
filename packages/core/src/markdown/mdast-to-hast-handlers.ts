@@ -3,6 +3,7 @@ import type { MdxJsxFlowElement, MdxJsxTextElement } from 'mdast-util-mdx';
 import type { Handler, Handlers } from 'mdast-util-to-hast';
 import { toWikiLinkSlug } from '../utils/slug.ts';
 import type {
+  MarkMdast,
   PromotedMdastType,
   RawMdxFallbackMdast,
   WikiLinkEmbedMdast,
@@ -145,12 +146,24 @@ const rawMdxFallbackHandler: Handler = (state, node) => {
   return children;
 };
 
+const markHandler: Handler = (state, node) => {
+  const result: Element = {
+    type: 'element',
+    tagName: 'mark',
+    properties: {},
+    children: state.all(node as MarkMdast) as ElementContent[],
+  };
+  state.patch(node, result);
+  return state.applyData(node, result);
+};
+
 const promotedHandlers: Record<PromotedMdastType, Handler> = {
   wikiLink: wikiLinkHandler,
   wikiLinkEmbed: wikiLinkEmbedHandler,
   mdxJsxFlowElement: mdxJsxFlowHandler,
   mdxJsxTextElement: mdxJsxTextHandler,
   rawMdxFallback: rawMdxFallbackHandler,
+  mark: markHandler,
 };
 
 export const customNodeHandlers: Handlers = promotedHandlers;
