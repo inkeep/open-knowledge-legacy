@@ -53,8 +53,8 @@ describe('Two linked worktrees boot in parallel with isolated state (D13)', () =
       expect(bootedB.port).toBeGreaterThan(0);
       expect(bootedA.port).not.toBe(bootedB.port);
 
-      expect(bootedA.lockDir).toBe(resolve(a.worktreePath, '.ok'));
-      expect(bootedB.lockDir).toBe(resolve(b.worktreePath, '.ok'));
+      expect(bootedA.lockDir).toBe(resolve(a.worktreePath, '.ok', 'local'));
+      expect(bootedB.lockDir).toBe(resolve(b.worktreePath, '.ok', 'local'));
       expect(bootedA.lockDir).not.toBe(bootedB.lockDir);
 
       expect(existsSync(expectedShadowA)).toBe(true);

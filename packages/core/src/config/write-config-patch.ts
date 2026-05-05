@@ -1,9 +1,10 @@
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { isMap, isSeq, type ParsedNode, parseDocument } from 'yaml';
 import { OK_DIR } from '../constants/ok-dir.ts';
+import { atomicWriteFile } from '../util/atomic-yaml-write.ts';
 import type { ConfigValidationError } from './errors.ts';
 import type { Err, Ok, Result } from './result.ts';
 import { type Config, type ConfigPatch, ConfigSchema } from './schema.ts';
@@ -58,19 +59,6 @@ function err(error: ConfigValidationError): Err<ConfigValidationError> {
 
 function ok(value: WriteConfigPatchSuccess): Ok<WriteConfigPatchSuccess> {
   return { ok: true, ...value };
-}
-
-async function atomicWrite(absPath: string, content: string): Promise<void> {
-  const tmpPath = `${absPath}.tmp.${crypto.randomUUID()}`;
-  try {
-    await writeFile(tmpPath, content, { encoding: 'utf-8', mode: 0o644 });
-    await rename(tmpPath, absPath);
-  } catch (e) {
-    try {
-      unlinkSync(tmpPath);
-    } catch {}
-    throw e;
-  }
 }
 
 export async function writeConfigPatch(
@@ -170,7 +158,7 @@ async function writeConfigPatchInner(
   }
 
   try {
-    await atomicWrite(absPath, serialized);
+    await atomicWriteFile(absPath, serialized);
   } catch (e) {
     return err({
       code: 'WRITE_ERROR',

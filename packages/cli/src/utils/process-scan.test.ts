@@ -182,14 +182,14 @@ describe('discoverLockDirs', () => {
         }),
       );
 
-    existsSyncSpy.mockImplementation((p: unknown) => p === '/Users/mike/notes/.ok');
+    existsSyncSpy.mockImplementation((p: unknown) => p === '/Users/mike/notes/.ok/local');
 
     const dirs = await discoverLockDirs();
     expect(dirs).toHaveLength(1);
-    expect(dirs[0]).toContain('.ok');
+    expect(dirs[0]).toContain('.ok/local');
   });
 
-  it('returns empty array when no ok processes and no .ok dirs exist', async () => {
+  it('returns empty array when no ok processes and no .ok/local dirs exist', async () => {
     spawnSyncSpy
       .mockReturnValueOnce(makeSpawnResult({ stdout: '', status: 1 }))
       .mockReturnValueOnce(makeSpawnResult({ stdout: 'COMMAND PID USER\n', status: 0 }));

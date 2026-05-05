@@ -5,14 +5,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  legacySidecarPath,
-  migrateLegacySidecar,
   readAllTargets,
   readServerPackageVersion,
   readSkillInstallStateSnapshot,
   readTargetRecordedAt,
   readTargetVersion,
-  targetStatePath,
+  skillStateYamlPath,
   writeTargetVersion,
 } from './skill-state.ts';
 
@@ -32,17 +30,15 @@ describe('build-time invariant — package.json version matches SKILL.md metadat
   test('server package.json version === bundled SKILL.md frontmatter metadata.version', async () => {
     const skillMdUrl = new URL('../assets/skills/open-knowledge/SKILL.md', import.meta.url);
     const skillMd = await readFile(fileURLToPath(skillMdUrl), 'utf-8');
-
     const versionMatch = skillMd.match(/^\s*version:\s*"?([^"\n]+)"?\s*$/m);
     expect(versionMatch).not.toBeNull();
     const skillMdVersion = versionMatch?.[1]?.trim();
-
     const pkgVersion = await readServerPackageVersion();
     expect(skillMdVersion).toBe(pkgVersion);
   });
 });
 
-describe('readTargetVersion / writeTargetVersion round-trip', () => {
+describe('readTargetVersion / writeTargetVersion round-trip (YAML)', () => {
   test('write → read returns the same version', async () => {
     const home = freshHome();
     await writeTargetVersion(home, 'claude-cowork', '1.2.3');
@@ -56,16 +52,44 @@ describe('readTargetVersion / writeTargetVersion round-trip', () => {
     expect(await readTargetVersion(home, 'cli-hosts')).toBeNull();
   });
 
-  test('atomic write — final file has no `.tmp` sibling', async () => {
+  test('atomic write — YAML exists at expected path with no .tmp sibling', async () => {
     const home = freshHome();
     await writeTargetVersion(home, 'cli-hosts', '0.1.0');
-    expect(readFileSync(targetStatePath(home, 'cli-hosts'), 'utf-8')).toBe('0.1.0\n');
-    let tmpExists = false;
-    try {
-      readFileSync(`${targetStatePath(home, 'cli-hosts')}.tmp`, 'utf-8');
-      tmpExists = true;
-    } catch {}
-    expect(tmpExists).toBe(false);
+    const yamlPath = skillStateYamlPath(home);
+    const yaml = readFileSync(yamlPath, 'utf-8');
+    expect(yaml).toContain('cli-hosts:');
+    expect(yaml).toContain('0.1.0');
+    expect(yaml).toContain('schema: 1');
+    let tmpFound = false;
+    for (const f of (await import('node:fs')).readdirSync(dirname(yamlPath))) {
+      if (f.startsWith('skill-state.yml.tmp.')) tmpFound = true;
+    }
+    expect(tmpFound).toBe(false);
+  });
+
+  test('writes accept and store an optional surface attribution', async () => {
+    const home = freshHome();
+    await writeTargetVersion(home, 'claude-cowork', '0.3.0', 'electron-build-and-open');
+    await writeTargetVersion(home, 'cli-hosts', '0.3.0', 'cli-npx-skills-add');
+
+    const yaml = readFileSync(skillStateYamlPath(home), 'utf-8');
+    expect(yaml).toContain('electron-build-and-open');
+    expect(yaml).toContain('cli-npx-skills-add');
+  });
+
+  test('all four surface enum values round-trip correctly', async () => {
+    const home = freshHome();
+    await writeTargetVersion(home, 'claude-cowork', '0.3.0', 'server-build-and-open');
+    await writeTargetVersion(home, 'cli-hosts', '0.3.0', 'desktop-direct');
+    let yaml = readFileSync(skillStateYamlPath(home), 'utf-8');
+    expect(yaml).toContain('server-build-and-open');
+    expect(yaml).toContain('desktop-direct');
+
+    await writeTargetVersion(home, 'claude-cowork', '0.4.0', 'electron-build-and-open');
+    await writeTargetVersion(home, 'cli-hosts', '0.4.0', 'cli-npx-skills-add');
+    yaml = readFileSync(skillStateYamlPath(home), 'utf-8');
+    expect(yaml).toContain('electron-build-and-open');
+    expect(yaml).toContain('cli-npx-skills-add');
   });
 
   test('refuses to write invalid version strings', async () => {
@@ -74,16 +98,46 @@ describe('readTargetVersion / writeTargetVersion round-trip', () => {
     await expect(writeTargetVersion(home, 'cli-hosts', '')).rejects.toThrow();
   });
 
-  test('corrupt file content reads as null (treated as fresh install)', async () => {
+  test('recordedAt updates on every successful write, including reinstalls of the same version', async () => {
     const home = freshHome();
-    await mkdir(dirname(targetStatePath(home, 'cli-hosts')), { recursive: true });
-    await writeFile(targetStatePath(home, 'cli-hosts'), 'corrupt-string\n', 'utf-8');
-    expect(await readTargetVersion(home, 'cli-hosts')).toBeNull();
+    await writeTargetVersion(home, 'cli-hosts', '0.3.0');
+    const t1 = await readTargetRecordedAt(home, 'cli-hosts');
+    expect(t1).not.toBeNull();
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    await writeTargetVersion(home, 'cli-hosts', '0.3.0'); // SAME version
+    const t2 = await readTargetRecordedAt(home, 'cli-hosts');
+    expect(t2).not.toBeNull();
+    expect(new Date(t2 ?? '').getTime()).toBeGreaterThan(new Date(t1 ?? '').getTime());
+  });
+
+  test('write to one target preserves another target', async () => {
+    const home = freshHome();
+    await writeTargetVersion(home, 'claude-cowork', '0.3.0', 'electron-build-and-open');
+    await writeTargetVersion(home, 'cli-hosts', '0.3.0', 'cli-npx-skills-add');
+
+    expect(await readTargetVersion(home, 'claude-cowork')).toBe('0.3.0');
+    expect(await readTargetVersion(home, 'cli-hosts')).toBe('0.3.0');
+
+    await writeTargetVersion(home, 'cli-hosts', '0.4.0');
+    expect(await readTargetVersion(home, 'claude-cowork')).toBe('0.3.0');
+    expect(await readTargetVersion(home, 'cli-hosts')).toBe('0.4.0');
+  });
+
+  test('write without surface preserves an existing surface on the same target', async () => {
+    const home = freshHome();
+    await writeTargetVersion(home, 'cli-hosts', '0.3.0', 'cli-npx-skills-add');
+    await writeTargetVersion(home, 'cli-hosts', '0.4.0'); // no surface arg
+
+    const yaml = readFileSync(skillStateYamlPath(home), 'utf-8');
+    expect(yaml).toContain('0.4.0');
+    expect(yaml).toContain('cli-npx-skills-add');
   });
 });
 
 describe('readTargetRecordedAt', () => {
-  test('returns ISO 8601 mtime for an existing target file', async () => {
+  test('returns ISO 8601 in-band timestamp for an existing target', async () => {
     const home = freshHome();
     await writeTargetVersion(home, 'claude-cowork', '0.1.0');
     const ts = await readTargetRecordedAt(home, 'claude-cowork');
@@ -91,66 +145,72 @@ describe('readTargetRecordedAt', () => {
     expect(ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
   });
 
-  test('returns null when the file is absent', async () => {
+  test('returns null when the YAML is absent', async () => {
     const home = freshHome();
     expect(await readTargetRecordedAt(home, 'claude-cowork')).toBeNull();
   });
 });
 
-describe('migrateLegacySidecar', () => {
-  test('absent legacy file → no-op', async () => {
+describe('fail-soft on bad on-disk content', () => {
+  test('schema: 99 → readTargetVersion returns null and warn-log fires', async () => {
     const home = freshHome();
-    await migrateLegacySidecar(home);
-    expect(await readTargetVersion(home, 'cli-hosts')).toBeNull();
-  });
+    const yamlPath = skillStateYamlPath(home);
+    await mkdir(dirname(yamlPath), { recursive: true });
+    await writeFile(yamlPath, 'schema: 99\ntargets: {}\n', 'utf-8');
 
-  test('valid legacy file → renamed to new path', async () => {
-    const home = freshHome();
-    await mkdir(dirname(legacySidecarPath(home)), { recursive: true });
-    await writeFile(legacySidecarPath(home), '0.5.0\n', 'utf-8');
-
-    await migrateLegacySidecar(home);
-
-    expect(await readTargetVersion(home, 'cli-hosts')).toBe('0.5.0');
-    let legacyStillExists = false;
-    try {
-      readFileSync(legacySidecarPath(home), 'utf-8');
-      legacyStillExists = true;
-    } catch {}
-    expect(legacyStillExists).toBe(false);
-  });
-
-  test('idempotent: second invocation is a no-op', async () => {
-    const home = freshHome();
-    await mkdir(dirname(legacySidecarPath(home)), { recursive: true });
-    await writeFile(legacySidecarPath(home), '0.5.0\n', 'utf-8');
-
-    await migrateLegacySidecar(home);
-    await migrateLegacySidecar(home);
-
-    expect(await readTargetVersion(home, 'cli-hosts')).toBe('0.5.0');
-  });
-
-  test('corrupt legacy file → deleted; new path stays absent', async () => {
-    const home = freshHome();
-    await mkdir(dirname(legacySidecarPath(home)), { recursive: true });
-    await writeFile(legacySidecarPath(home), 'corrupt-content\n', 'utf-8');
-
-    const originalWarn = console.warn;
-    console.warn = () => {};
-    try {
-      await migrateLegacySidecar(home);
-    } finally {
-      console.warn = originalWarn;
-    }
+    const events: Array<{ data: unknown; message: string }> = [];
+    const { readSkillStateFile } = await import('./skill-state.ts');
+    const state = await readSkillStateFile(home, {
+      warn: (data, message) => events.push({ data, message }),
+    });
+    expect(state).toBeNull();
 
     expect(await readTargetVersion(home, 'cli-hosts')).toBeNull();
-    let legacyStillExists = false;
-    try {
-      readFileSync(legacySidecarPath(home), 'utf-8');
-      legacyStillExists = true;
-    } catch {}
-    expect(legacyStillExists).toBe(false);
+    expect(await readTargetVersion(home, 'claude-cowork')).toBeNull();
+
+    const invalidSchemaEvent = events.find(
+      (e) =>
+        typeof e.data === 'object' &&
+        e.data !== null &&
+        (e.data as { event?: unknown }).event === 'skill-state.invalid-schema-version',
+    );
+    expect(invalidSchemaEvent).toBeDefined();
+  });
+
+  test('malformed YAML → readTargetVersion returns null without throwing', async () => {
+    const home = freshHome();
+    const yamlPath = skillStateYamlPath(home);
+    await mkdir(dirname(yamlPath), { recursive: true });
+    await writeFile(yamlPath, '{schema: 1, targets:\n  cli-hosts: {version: "0.3.0",\n', 'utf-8');
+
+    expect(await readTargetVersion(home, 'cli-hosts')).toBeNull();
+    expect(await readTargetVersion(home, 'claude-cowork')).toBeNull();
+  });
+
+  test('schema-violation (non-version-string) → returns null + structured warn', async () => {
+    const home = freshHome();
+    const yamlPath = skillStateYamlPath(home);
+    await mkdir(dirname(yamlPath), { recursive: true });
+    await writeFile(
+      yamlPath,
+      'schema: 1\ntargets:\n  cli-hosts:\n    version: "not-a-semver"\n    recordedAt: "2026-05-05T00:00:00.000Z"\n',
+      'utf-8',
+    );
+
+    const events: Array<{ data: unknown; message: string }> = [];
+    const { readSkillStateFile } = await import('./skill-state.ts');
+    const state = await readSkillStateFile(home, {
+      warn: (data, message) => events.push({ data, message }),
+    });
+    expect(state).toBeNull();
+
+    const violationEvent = events.find(
+      (e) =>
+        typeof e.data === 'object' &&
+        e.data !== null &&
+        (e.data as { event?: unknown }).event === 'skill-state.schema-violation',
+    );
+    expect(violationEvent).toBeDefined();
   });
 });
 
@@ -161,7 +221,7 @@ describe('readAllTargets / readSkillInstallStateSnapshot', () => {
     expect(snapshot).toEqual({ 'claude-cowork': null, 'cli-hosts': null });
   });
 
-  test('all-targets resolves recorded entries when files exist', async () => {
+  test('all-targets resolves recorded entries when the YAML exists', async () => {
     const home = freshHome();
     await writeTargetVersion(home, 'claude-cowork', '1.0.0');
     await writeTargetVersion(home, 'cli-hosts', '0.9.0');

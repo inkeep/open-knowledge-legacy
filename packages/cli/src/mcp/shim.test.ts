@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
+import { LOCAL_DIR, OK_DIR } from '@inkeep/open-knowledge-core';
 import type { ServerLockMetadata } from '@inkeep/open-knowledge-server';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import {
@@ -72,7 +73,7 @@ describe('MCP stdio shim server resolution', () => {
 
   beforeEach(async () => {
     tmp = await mkdtemp(resolve(tmpdir(), 'ok-mcp-shim-'));
-    lockDir = resolve(tmp, '.open-knowledge');
+    lockDir = resolve(tmp, OK_DIR, LOCAL_DIR);
   });
 
   afterEach(async () => {
@@ -383,7 +384,7 @@ describe('startMcpShim lifecycle', () => {
 
   beforeEach(async () => {
     tmp = await mkdtemp(resolve(tmpdir(), 'ok-mcp-shim-lifecycle-'));
-    lockDir = resolve(tmp, '.open-knowledge');
+    lockDir = resolve(tmp, OK_DIR, LOCAL_DIR);
   });
 
   afterEach(async () => {

@@ -5,6 +5,7 @@ const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { LOCAL_DIR } from '@inkeep/open-knowledge-core';
 import simpleGit from 'simple-git';
 import type { SyncState } from './sync-engine.ts';
 import { SyncEngine } from './sync-engine.ts';
@@ -23,7 +24,7 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'sync-engine-test-'));
   projectDir = join(tmpDir, 'project');
   contentDir = join(tmpDir, 'content');
-  okDir = join(contentDir, '.ok');
+  okDir = join(contentDir, '.ok', LOCAL_DIR);
   mkdirSync(projectDir, { recursive: true });
   mkdirSync(okDir, { recursive: true });
 });

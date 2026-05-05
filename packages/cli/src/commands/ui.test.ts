@@ -8,11 +8,11 @@ import type { Scheduler } from '@inkeep/open-knowledge-core';
 import {
   acquireServerLock,
   ConfigSchema,
+  getLocalDir,
   readUiLock,
   type UiLockMetadata,
   updateServerLockPort,
 } from '@inkeep/open-knowledge-server';
-import { OK_DIR } from '../constants.ts';
 import {
   closeHttpServers,
   DEFAULT_UI_SAFETY_NET_MS,
@@ -66,7 +66,7 @@ let handle: UiServerHandle | null = null;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-ui-cmd-test-'));
-  lockDir = resolve(tmpDir, OK_DIR);
+  lockDir = getLocalDir(tmpDir);
 });
 
 afterEach(async () => {

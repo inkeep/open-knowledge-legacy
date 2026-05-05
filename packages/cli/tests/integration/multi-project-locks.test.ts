@@ -3,6 +3,7 @@ import { type ChildProcess, spawn as nativeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { LOCAL_DIR } from '@inkeep/open-knowledge-core';
 import {
   acquireProcessLock,
   isProcessAlive,
@@ -17,7 +18,7 @@ interface ProjectHandles {
 }
 
 function makeProject(root: string, slug: string): ProjectHandles {
-  const lockDir = join(root, slug, '.ok');
+  const lockDir = join(root, slug, '.ok', LOCAL_DIR);
   mkdirSync(lockDir, { recursive: true });
   const metadata = { worktreeRoot: join(root, slug), startedAt: new Date().toISOString() };
   const server = acquireProcessLock({ lockName: 'server', lockDir, metadata });
@@ -251,7 +252,7 @@ function stopLockWorker(handle: WorkerHandle): Promise<void> {
 
     it('three concurrent worker processes each hold their own server+ui locks (no cross-contamination)', async () => {
       const lockDirs = [1, 2, 3].map((i) => {
-        const lockDir = join(testRoot, `project-${i}`, '.ok');
+        const lockDir = join(testRoot, `project-${i}`, '.ok', LOCAL_DIR);
         mkdirSync(lockDir, { recursive: true });
         return { i, lockDir, serverPort: 52100 + i, uiPort: 3100 + i };
       });
@@ -292,7 +293,7 @@ function stopLockWorker(handle: WorkerHandle): Promise<void> {
     });
 
     it('a fourth worker against an already-held lockDir collides on the live foreign pid (US-001 collision branch)', async () => {
-      const lockDir = join(testRoot, 'shared-project', '.ok');
+      const lockDir = join(testRoot, 'shared-project', '.ok', LOCAL_DIR);
       mkdirSync(lockDir, { recursive: true });
 
       const holder = await spawnLockWorker(lockDir, 52200, 3200);

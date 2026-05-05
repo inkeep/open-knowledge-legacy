@@ -55,7 +55,7 @@ export function ConnectingBanner() {
         <span>
           Couldn't reach collab server — {describeError(collabLastError)}. Try{' '}
           <code className="bg-red-100/60 px-1 rounded">ok status</code> or check{' '}
-          <code className="bg-red-100/60 px-1 rounded">.ok/last-spawn-error.log</code>.
+          <code className="bg-red-100/60 px-1 rounded">.ok/local/last-spawn-error.log</code>.
         </span>
         <button
           type="button"

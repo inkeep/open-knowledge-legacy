@@ -122,9 +122,9 @@ export async function discoverLockDirs(): Promise<string[]> {
 
   for (const cwd of cwds) {
     if (cwd == null) continue;
-    const okDir = join(cwd, '.ok');
-    if (existsSync(okDir)) {
-      candidateDirs.add(okDir);
+    const lockDir = join(cwd, '.ok', 'local');
+    if (existsSync(lockDir)) {
+      candidateDirs.add(lockDir);
     }
   }
 
@@ -142,9 +142,9 @@ export async function discoverLockDirs(): Promise<string[]> {
 
     for (const cwd of portCwds) {
       if (cwd == null) continue;
-      const okDir = join(cwd, '.ok');
-      if (existsSync(okDir)) {
-        candidateDirs.add(okDir);
+      const lockDir = join(cwd, '.ok', 'local');
+      if (existsSync(lockDir)) {
+        candidateDirs.add(lockDir);
       }
     }
   }

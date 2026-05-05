@@ -1,7 +1,7 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
 import { resolve } from 'node:path';
-import { OK_DIR } from '@inkeep/open-knowledge-core';
+import { LOCAL_DIR, OK_DIR } from '@inkeep/open-knowledge-core';
 import { resolveGitDirDetailed } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import type { Config } from './config/schema.ts';
 import { normalizeFsPath } from './fs-traced.ts';
@@ -12,6 +12,45 @@ import { mountMcpAndApi } from './mcp-mount.ts';
 import { MissingOkConfigError } from './missing-ok-config-error.ts';
 import { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 import { initTelemetry, shutdownTelemetry, withSpan } from './telemetry.ts';
+
+const LEGACY_RUNTIME_FILENAMES = [
+  'server.lock',
+  'ui.lock',
+  'state.json',
+  'principal.json',
+  'sync-state.json',
+  'conflicts.json',
+  'last-spawn-error.log',
+] as const;
+
+const LEGACY_RUNTIME_DIRNAMES = ['cache', 'tmp'] as const;
+
+export function findLegacyRuntimeFiles(okDir: string): string[] {
+  const localDir = resolve(okDir, LOCAL_DIR);
+  const localDirEmpty = (() => {
+    if (!existsSync(localDir)) return true;
+    try {
+      return readdirSync(localDir).length === 0;
+    } catch {
+      return true;
+    }
+  })();
+  if (!localDirEmpty) return [];
+
+  const found: string[] = [];
+  for (const name of LEGACY_RUNTIME_FILENAMES) {
+    if (existsSync(resolve(okDir, name))) found.push(name);
+  }
+  for (const name of LEGACY_RUNTIME_DIRNAMES) {
+    const candidate = resolve(okDir, name);
+    try {
+      if (existsSync(candidate) && statSync(candidate).isDirectory()) {
+        found.push(`${name}/`);
+      }
+    } catch {}
+  }
+  return found;
+}
 
 function computeWorktreeAttributes(projectDir: string): {
   kind: 'main' | 'linked';
@@ -128,6 +167,13 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
   if (!existsSync(gitignorePath)) {
     console.warn(
       `[boot] Note: ${OK_DIR}/.gitignore is missing — per-machine state files in ${OK_DIR}/ may show up as untracked changes. Run \`ok init\` to add the recommended ignore entries.`,
+    );
+  }
+
+  const legacyFound = findLegacyRuntimeFiles(okDir);
+  if (legacyFound.length > 0) {
+    console.warn(
+      `[boot] Found legacy runtime files at ${OK_DIR}/${legacyFound.join(', ')}. Delete ${OK_DIR}/ and re-init — these files moved to ${OK_DIR}/${LOCAL_DIR}/.`,
     );
   }
 

@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Principal } from '@inkeep/open-knowledge-core';
-import { OK_DIR } from '@inkeep/open-knowledge-core';
 import simpleGit from 'simple-git';
+import { getLocalDir } from './config/paths.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
 
 const PRINCIPAL_FILE = 'principal.json';
@@ -23,7 +23,7 @@ async function readGitConfig(
 }
 
 export async function loadPrincipal(contentDir: string): Promise<Principal> {
-  const okDir = resolve(contentDir, OK_DIR);
+  const okDir = getLocalDir(contentDir);
   const principalPath = resolve(okDir, PRINCIPAL_FILE);
 
   const { name: gitName, email: gitEmail } = await readGitConfig(contentDir);

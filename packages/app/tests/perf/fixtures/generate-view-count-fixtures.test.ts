@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
+import { MarkdownManager, OK_DIR, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { generateFixture } from './generate-view-count-fixtures';
 
 interface PmJson {
@@ -67,13 +67,13 @@ describe('generateFixture — convergence', () => {
     }
   });
 
-  test('writes both FIXTURE.md and .open-knowledge/config.yml', () => {
+  test('writes both FIXTURE.md and .ok/config.yml', () => {
     const tmp = mkdtempSync(resolve(tmpdir(), 'gen-fixtures-shape-'));
     try {
       const outDir = resolve(tmp, 'shape-bucket');
       generateFixture(50, outDir);
       expect(existsSync(resolve(outDir, 'FIXTURE.md'))).toBe(true);
-      expect(existsSync(resolve(outDir, '.open-knowledge', 'config.yml'))).toBe(true);
+      expect(existsSync(resolve(outDir, OK_DIR, 'config.yml'))).toBe(true);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

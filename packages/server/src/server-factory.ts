@@ -28,6 +28,7 @@ import { seedBasenameIndex } from './asset-walk.ts';
 import { HocuspocusAuthRejection, parseHocuspocusAuthToken } from './auth-token-schema.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { CC1Broadcaster, isConfigDoc, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
+import { getLocalDir } from './config/paths.ts';
 import {
   type ConfigFileWatcherUnsubscribe,
   startConfigFileWatcher,
@@ -178,7 +179,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   const serverInstanceId = randomUUID();
 
-  const lockDir = resolve(contentDir, '.ok');
+  const lockDir = getLocalDir(contentDir);
   acquireServerLock(lockDir, {
     port: options.port ?? 0,
     worktreeRoot: projectDir,

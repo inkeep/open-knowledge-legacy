@@ -205,7 +205,7 @@ describe('T5: Branch switch while tab open', () => {
     expect((diskAfter.match(/\[\[feature-sibling\]\]/g) ?? []).length).toBe(1);
     expect((diskAfter.match(/\[\[main-sibling\]\]/g) ?? []).length).toBe(0);
 
-    const ystateDir = join(contentDir, '.ok', 'ystate');
+    const ystateDir = join(contentDir, '.ok', 'local', 'ystate');
     expect(existsSync(ystateDir)).toBe(false);
 
     const expectedDbName = `ok-ydoc:main:${serverInstanceId}:test-doc`;

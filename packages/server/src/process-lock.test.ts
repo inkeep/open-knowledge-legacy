@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { LOCAL_DIR } from '@inkeep/open-knowledge-core';
 import {
   acquireProcessLock,
   type LockName,
@@ -24,7 +25,7 @@ let lockPath: string;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-process-lock-test-'));
-  lockDir = resolve(tmpDir, '.ok');
+  lockDir = resolve(tmpDir, '.ok', LOCAL_DIR);
   lockPath = lockFilePath(lockDir, LOCK_NAME);
 });
 

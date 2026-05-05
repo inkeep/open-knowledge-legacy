@@ -1,7 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { resolve } from 'node:path';
-import { OK_DIR } from '@inkeep/open-knowledge-core';
-import { resolveContentDir, resolveLockDir } from './paths.ts';
+import { getLocalDir, resolveContentDir, resolveLockDir } from './paths.ts';
 import type { Config } from './schema.ts';
 
 function makeConfig(dir: string): Config {
@@ -22,7 +20,7 @@ describe('resolveContentDir', () => {
 });
 
 describe('resolveLockDir', () => {
-  test('returns <contentDir>/.ok', () => {
-    expect(resolveLockDir('/tmp/project')).toBe(resolve('/tmp/project', OK_DIR));
+  test('returns <contentDir>/.ok/local', () => {
+    expect(resolveLockDir('/tmp/project')).toBe(getLocalDir('/tmp/project'));
   });
 });

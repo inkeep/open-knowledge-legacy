@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { LOCAL_DIR } from '@inkeep/open-knowledge-core';
 import * as Y from 'yjs';
 import { loggerFactory, type PinoLogger } from './logger.ts';
 import {
@@ -187,7 +188,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     });
     await server.ready;
 
-    const lockPath = join(tmpDir, '.ok', 'server.lock');
+    const lockPath = join(tmpDir, '.ok', LOCAL_DIR, 'server.lock');
     const docName = 'shutdown-order';
     const contentPath = join(tmpDir, `${docName}.md`);
     const captures: Array<{ lockExists: boolean; contentOnDisk: boolean; payload: string }> = [];
@@ -743,7 +744,7 @@ describe('createServer() managed rename recovery', () => {
   });
 
   test('marks the server degraded when the managed rename journal is corrupt', async () => {
-    mkdirSync(join(tmpDir, '.ok'), { recursive: true });
+    mkdirSync(join(tmpDir, '.ok', LOCAL_DIR), { recursive: true });
     writeFileSync(managedRenameJournalPath(tmpDir), '{not valid json', 'utf-8');
 
     const server = createServer({
@@ -778,7 +779,7 @@ describe('createServer() server-lock integration (V0-1)', () => {
     });
     await server.ready;
 
-    const lockPath = join(tmpDir, '.ok', 'server.lock');
+    const lockPath = join(tmpDir, '.ok', LOCAL_DIR, 'server.lock');
     expect(existsSync(lockPath)).toBe(true);
     const md = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(md.pid).toBe(process.pid);
@@ -797,7 +798,7 @@ describe('createServer() server-lock integration (V0-1)', () => {
     });
     await server.ready;
 
-    expect(server.lockDir).toBe(join(tmpDir, '.ok'));
+    expect(server.lockDir).toBe(join(tmpDir, '.ok', LOCAL_DIR));
 
     await server.destroy();
   });
@@ -811,7 +812,7 @@ describe('createServer() server-lock integration (V0-1)', () => {
     await first.ready;
 
     const { hostname } = await import('node:os');
-    const lockPath = join(tmpDir, '.ok', 'server.lock');
+    const lockPath = join(tmpDir, '.ok', LOCAL_DIR, 'server.lock');
     writeFileSync(
       lockPath,
       JSON.stringify({
@@ -852,7 +853,7 @@ describe('createServer() server-lock integration (V0-1)', () => {
     });
     await server.ready;
 
-    const lockPath = join(tmpDir, '.ok', 'server.lock');
+    const lockPath = join(tmpDir, '.ok', LOCAL_DIR, 'server.lock');
     const before = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(before.port).toBe(0);
 
@@ -874,7 +875,7 @@ describe('createServer() server-lock integration (V0-1)', () => {
     });
     await server.ready;
 
-    const lockPath = join(tmpDir, '.ok', 'server.lock');
+    const lockPath = join(tmpDir, '.ok', LOCAL_DIR, 'server.lock');
     expect(existsSync(lockPath)).toBe(true);
 
     const origCloseAll = server.sessionManager.closeAll.bind(server.sessionManager);

@@ -100,7 +100,8 @@ describe('runInit', () => {
     const result = await runInitForTest();
 
     expect(result.contentCreated.length).toBeGreaterThan(0);
-    expect(existsSync(join(testDir, OK_DIR, 'cache'))).toBe(true);
+    expect(existsSync(join(testDir, OK_DIR, 'cache'))).toBe(false);
+    expect(existsSync(join(testDir, OK_DIR, 'local'))).toBe(false);
     expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(false);
     expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
     expect(existsSync(join(testDir, OK_DIR, 'articles'))).toBe(false);

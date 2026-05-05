@@ -12,6 +12,7 @@ import {
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
+import { getLocalDir } from './config/paths.ts';
 import type { ContentFilter } from './content-filter.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 
@@ -744,7 +745,7 @@ export class BacklinkIndex {
   }
 
   private cachePath(branch = this.activeBranch): string {
-    return resolve(this.projectDir, '.ok', 'cache', branch, 'backlinks.json');
+    return resolve(getLocalDir(this.projectDir), 'cache', branch, 'backlinks.json');
   }
 
   updateDocument(

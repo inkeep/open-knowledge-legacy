@@ -6,6 +6,7 @@ import { request as httpRequest } from 'node:http';
 import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
+import { LOCAL_DIR } from '@inkeep/open-knowledge-core';
 import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
 import {
   awaitUiSiblingPort,
@@ -187,7 +188,7 @@ describe('spawnOkUi', () => {
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-spawnui-'));
-    lockDir = resolve(tmpDir, '.ok');
+    lockDir = resolve(tmpDir, '.ok', LOCAL_DIR);
   });
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
@@ -463,7 +464,7 @@ describe('bootStartServer (integration)', () => {
   });
 
   test('skip auto-spawn when ui.lock alive (idempotent re-acquire path)', async () => {
-    const lockDir = join(tmpDir, '.ok');
+    const lockDir = join(tmpDir, '.ok', LOCAL_DIR);
     mkdirSync(lockDir, { recursive: true });
     writeFileSync(
       join(lockDir, 'ui.lock'),
@@ -772,7 +773,7 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
   });
 
   test('skip path: resolvedUiPort reflects the pre-existing ok ui lock port', async () => {
-    const lockDir = join(tmpDir, '.ok');
+    const lockDir = join(tmpDir, '.ok', LOCAL_DIR);
     mkdirSync(lockDir, { recursive: true });
     writeFileSync(
       join(lockDir, 'ui.lock'),

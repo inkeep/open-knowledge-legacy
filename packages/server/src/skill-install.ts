@@ -10,11 +10,11 @@ import {
 import { tracedMkdir } from './fs-traced.ts';
 import { recordSkillInstallEvent, type SkillInstallEventOutcome } from './skill-install-events.ts';
 import {
-  migrateLegacySidecar,
   readServerPackageVersion,
   readTargetRecordedAt,
   readTargetVersion,
   type SkillStateLogger,
+  type SkillStateSurface,
   writeTargetVersion,
 } from './skill-state.ts';
 
@@ -31,6 +31,7 @@ export interface InstallUserSkillOptions {
   logger?: SkillInstallLogger;
   spawn?: SpawnLike;
   timeoutMs?: number;
+  surface?: SkillStateSurface;
 }
 
 export type InstallUserSkillResult = 'installed' | 'skip-current' | 'failed';
@@ -121,6 +122,7 @@ export async function installUserSkill(
   };
   const spawnFn = opts.spawn ?? (spawn as SpawnLike);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const surfaceAttribution: SkillStateSurface = opts.surface ?? 'cli-npx-skills-add';
 
   const report = async (
     outcome: SkillInstallEventOutcome,
@@ -130,7 +132,7 @@ export async function installUserSkill(
     await recordSkillInstallEvent(
       {
         ts: new Date().toISOString(),
-        surface: 'cli-npx-skills-add',
+        surface: surfaceAttribution,
         target: 'cli-hosts',
         outcome,
         ...(version !== undefined ? { version } : {}),
@@ -139,15 +141,6 @@ export async function installUserSkill(
       { homedir: () => home, warn: logger.warn },
     );
   };
-
-  try {
-    await migrateLegacySidecar(home, logger);
-  } catch (err) {
-    logger.warn(
-      { event: 'skill-install.migration.failed', error: String(err) },
-      'Legacy skill sidecar migration failed; continuing with fresh install path.',
-    );
-  }
 
   let currentVersion: string;
   try {
@@ -161,7 +154,7 @@ export async function installUserSkill(
     return 'failed';
   }
 
-  const existingVersion = await readTargetVersion(home, 'cli-hosts').catch((err) => {
+  const existingVersion = await readTargetVersion(home, 'cli-hosts', logger).catch((err) => {
     logger.warn(
       { event: 'skill-install.gate.read-failed', error: String(err) },
       'Could not read cli-hosts install-state; proceeding with fresh install.',
@@ -209,7 +202,7 @@ export async function installUserSkill(
 
   if (outcome.kind === 'ok') {
     try {
-      await writeTargetVersion(home, 'cli-hosts', currentVersion);
+      await writeTargetVersion(home, 'cli-hosts', currentVersion, surfaceAttribution, logger);
     } catch (err) {
       logger.warn(
         { event: 'skill-install.failed', reason: 'sidecar-write-failed', error: String(err) },
@@ -356,15 +349,6 @@ export async function buildAndOpenSkill(
     );
   };
 
-  try {
-    await migrateLegacySidecar(home, logger);
-  } catch (err) {
-    logger?.warn?.(
-      { event: 'skill-install.migration.failed', error: String(err) },
-      'Legacy skill sidecar migration failed; continuing with build path.',
-    );
-  }
-
   if (!opts.force) {
     let currentVersion: string | null = null;
     try {
@@ -381,8 +365,8 @@ export async function buildAndOpenSkill(
       let recordedAt: string | null = null;
       try {
         [recordedVersion, recordedAt] = await Promise.all([
-          readTargetVersion(home, 'claude-cowork'),
-          readTargetRecordedAt(home, 'claude-cowork'),
+          readTargetVersion(home, 'claude-cowork', logger),
+          readTargetRecordedAt(home, 'claude-cowork', logger),
         ]);
       } catch (err) {
         logger?.warn?.(
@@ -444,7 +428,13 @@ export async function buildAndOpenSkill(
 
   if (build.skillVersion) {
     try {
-      await writeTargetVersion(home, 'claude-cowork', build.skillVersion);
+      await writeTargetVersion(
+        home,
+        'claude-cowork',
+        build.skillVersion,
+        'server-build-and-open',
+        logger,
+      );
     } catch (err) {
       logger?.warn?.(
         {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { LOCAL_DIR } from '@inkeep/open-knowledge-core';
 import { type ConflictEntry, ConflictStore } from './conflict-storage.ts';
 
 let tmpDir = '';
@@ -14,10 +15,10 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'conflict-store-test-'));
   projectDir = join(tmpDir, 'project');
   contentDir = join(tmpDir, 'content');
-  storePath = join(contentDir, '.ok', 'conflicts.json');
+  storePath = join(contentDir, '.ok', LOCAL_DIR, 'conflicts.json');
   mkdirSync(projectDir, { recursive: true });
   mkdirSync(contentDir, { recursive: true });
-  mkdirSync(join(contentDir, '.ok'), { recursive: true });
+  mkdirSync(join(contentDir, '.ok', LOCAL_DIR), { recursive: true });
 });
 
 afterEach(() => {

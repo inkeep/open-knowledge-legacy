@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { CONFIG_SCHEMA_MAJOR_PATH } from '@inkeep/open-knowledge-core';
-import { CACHE_DIR, CONFIG_FILENAME, OK_DIR, PACKAGE_VERSION } from '../constants.ts';
+import { CONFIG_SCHEMA_MAJOR_PATH, LOCAL_DIR } from '@inkeep/open-knowledge-core';
+import { CONFIG_FILENAME, OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 
 export function packageVersionMajorMinor(version: string): string {
   const [rawMajor = '0', rawMinor = '0'] = version.split('.');
@@ -158,23 +158,10 @@ function ensureGitignoreEntries(
   return 'updated';
 }
 
-const OK_GITIGNORE_CONTENT = `# Per-machine runtime state — never commit. All Open Knowledge ignore rules
-# live here so the project root .gitignore stays free of OK-internal paths.
-
-# Derived caches
-${CACHE_DIR}/
-
-# Per-process locks
-server.lock
-ui.lock
-
-# Sync watermarks + per-machine principal identity
-sync-state.json
-principal.json
-state.json
-
-# MCP spawn diagnostics
-last-spawn-error.log
+const OK_GITIGNORE_CONTENT = `# .ok/local/ holds per-machine runtime state. Anything inside is
+# machine-local and never committed. New runtime files (caches, locks,
+# manifests, telemetry, error logs) are auto-ignored — no edit needed here.
+${LOCAL_DIR}/
 `;
 
 export const OK_OKIGNORE_TEMPLATE = `# .okignore — paths to exclude from the Open Knowledge document index.
@@ -202,7 +189,6 @@ export function initContent(projectDir: string): {
   const skipped: string[] = [];
 
   mkdirSync(okDir, { recursive: true });
-  mkdirSync(join(okDir, CACHE_DIR), { recursive: true });
 
   const gitignoreAction = ensureGitignoreEntries(join(okDir, '.gitignore'), OK_GITIGNORE_CONTENT);
   if (gitignoreAction === 'created') {

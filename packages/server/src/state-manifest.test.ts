@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { LOCAL_DIR } from '@inkeep/open-knowledge-core';
 import {
   assertCompatibleStateManifest,
   detectProjectShape,
@@ -14,7 +15,7 @@ import {
 
 function makeTmp(): { lockDir: string; shadowRepoDir: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), 'state-manifest-test-'));
-  const lockDir = join(root, '.ok');
+  const lockDir = join(root, '.ok', LOCAL_DIR);
   const shadowRepoDir = join(root, '.git', 'ok');
   return {
     lockDir,
@@ -67,7 +68,7 @@ describe('detectProjectShape', () => {
   test('only the configured shadowRepoDir triggers adopt — unrelated dirs nearby do not leak', () => {
     const root = mkdtempSync(join(tmpdir(), 'state-manifest-shadow-only-'));
     try {
-      const lockDir = join(root, '.ok');
+      const lockDir = join(root, '.ok', LOCAL_DIR);
       const shadowRepoDir = join(root, '.git', 'ok');
       const unrelatedSiblingDir = join(root, '.git', 'some-other-tooling-dir');
 
