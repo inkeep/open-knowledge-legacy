@@ -36,6 +36,8 @@ export const PROMOTED_MDAST_TYPES = [
   'rawMdxFallback',
   'mark',
   'tag',
+  'comment',
+  'commentBlock',
 ] as const;
 
 export type PromotedMdastType = (typeof PROMOTED_MDAST_TYPES)[number];
@@ -72,6 +74,28 @@ export interface RawMdxFallbackMdast {
   data: {
     reason: string;
     originalSpan: { start: number; end: number };
+    [key: string]: unknown;
+  };
+  position?: Position;
+}
+
+export interface CommentMdast {
+  type: 'comment';
+  // biome-ignore lint/suspicious/noExplicitAny: see RootContentMap note above
+  children: Array<any>;
+  data?: {
+    sourceForm?: 'mdx' | 'markdown';
+    [key: string]: unknown;
+  };
+  position?: Position;
+}
+
+export interface CommentBlockMdast {
+  type: 'commentBlock';
+  // biome-ignore lint/suspicious/noExplicitAny: see RootContentMap note above
+  children: Array<any>;
+  data?: {
+    sourceForm?: 'mdx' | 'markdown';
     [key: string]: unknown;
   };
   position?: Position;
@@ -136,6 +160,8 @@ declare module 'mdast' {
     wikiLinkEmbed: WikiLinkEmbedMdast;
     mark: MarkMdast;
     tag: TagMdast;
+    comment: CommentMdast;
+    commentBlock: CommentBlockMdast;
   }
 }
 

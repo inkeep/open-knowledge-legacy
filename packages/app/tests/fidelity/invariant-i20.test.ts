@@ -31,6 +31,20 @@ function findFirstNode(node: JSONContent, type: string): JSONContent | undefined
 
 const GFM_TYPES = ['note', 'tip', 'important', 'warning', 'caution'] as const;
 
+const ALL_FIRST_CLASS_TYPES = [
+  ...GFM_TYPES,
+  'abstract',
+  'info',
+  'todo',
+  'success',
+  'question',
+  'failure',
+  'danger',
+  'bug',
+  'example',
+  'quote',
+] as const;
+
 describe('I20 — Obsidian foldable `-` marker parses to collapsible + defaultOpen=false', () => {
   for (const type of GFM_TYPES) {
     test(`[!${type.toUpperCase()}]- structurally equivalent to <Callout type collapsible defaultOpen={false}>`, () => {
@@ -107,19 +121,29 @@ describe('I20 — props shape after parse', () => {
 });
 
 describe('I20 — scope boundary (D-MF17)', () => {
-  test('foldable marker on alias that folds to GFM type is honored', () => {
+  test('foldable marker on a first-class type is honored (post 2026-05 callout-type-expansion)', () => {
     const gfmForm = '> [!success]-\n> Body\n';
     const json = mdManager.parse(gfmForm);
     const callout = findFirstNode(json, 'jsxComponent');
     const props = (callout?.attrs?.props ?? {}) as Record<string, unknown>;
-    expect(props.type).toBe('tip');
+    expect(props.type).toBe('success');
     expect(props.collapsible).toBe(true);
     expect(props.defaultOpen).toBe(false);
   });
 
-  test('alias-mapped foldable alert round-trips byte-identical', () => {
+  test('first-class foldable callout round-trips byte-identical', () => {
     const gfmForm = '> [!success]+\n> Body\n';
     expect(mdRoundTrip(gfmForm)).toBe(gfmForm);
+  });
+
+  test('alias that still folds (`summary` → `abstract`) honors foldable marker', () => {
+    const gfmForm = '> [!summary]-\n> Body\n';
+    const json = mdManager.parse(gfmForm);
+    const callout = findFirstNode(json, 'jsxComponent');
+    const props = (callout?.attrs?.props ?? {}) as Record<string, unknown>;
+    expect(props.type).toBe('abstract');
+    expect(props.collapsible).toBe(true);
+    expect(props.defaultOpen).toBe(false);
   });
 
   test('unknown-type foldable marker honored under "fallback to note" path (M1 fix)', () => {
@@ -146,13 +170,13 @@ describe('I20 — scope boundary (D-MF17)', () => {
   });
 });
 
-describe('I20 — PBT: every GFM type × marker round-trips', () => {
+describe('I20 — PBT: every first-class type × marker round-trips', () => {
   const bodyChars = fc.stringMatching(/^[A-Za-z][\w .,!?;:()']{0,40}$/);
 
-  test('GFM type × foldable marker × body text → pristine round-trip', () => {
+  test('first-class type × foldable marker × body text → pristine round-trip', () => {
     fc.assert(
       fc.property(
-        fc.constantFrom(...GFM_TYPES),
+        fc.constantFrom(...ALL_FIRST_CLASS_TYPES),
         fc.constantFrom('+' as const, '-' as const),
         bodyChars,
         (type, marker, body) => {

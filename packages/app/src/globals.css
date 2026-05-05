@@ -1726,19 +1726,46 @@ button:active:not(:disabled) {
  * red (destructive / hazard).
  */
 :root {
-  --callout-note-color: oklch(0.62 0.15 240);
-  --callout-tip-color: oklch(0.58 0.14 145);
-  --callout-important-color: oklch(0.55 0.18 290);
-  --callout-warning-color: oklch(0.65 0.16 70);
-  --callout-caution-color: oklch(0.58 0.21 25);
+  /* GFM 5 — pre-2026-05 colors, kept identical so existing renders are
+   * unchanged. */
+  --callout-note-color: oklch(0.62 0.15 240); /* blue */
+  --callout-tip-color: oklch(0.58 0.14 145); /* green */
+  --callout-important-color: oklch(0.55 0.18 290); /* violet */
+  --callout-warning-color: oklch(0.65 0.16 70); /* amber */
+  --callout-caution-color: oklch(0.58 0.21 25); /* red */
+  /* Obsidian-parity 10 — distinct hues so the visual identity per type
+   * is recognizable at a glance. Tokens are referenced once in the
+   * `[data-callout-type="…"]` rules below; chroma values match the GFM
+   * 5's intensity for visual coherence. */
+  --callout-abstract-color: oklch(0.65 0.13 220); /* sky / teal */
+  --callout-info-color: oklch(0.62 0.15 240); /* blue — note's hue */
+  --callout-todo-color: oklch(0.62 0.15 260); /* indigo */
+  --callout-success-color: oklch(0.6 0.16 150); /* emerald — slightly hotter than tip's green */
+  --callout-question-color: oklch(0.6 0.18 310); /* magenta-violet */
+  --callout-failure-color: oklch(0.58 0.21 15); /* red — matches caution */
+  --callout-danger-color: oklch(0.6 0.21 35); /* red-orange */
+  --callout-bug-color: oklch(0.58 0.18 5); /* deep red */
+  --callout-example-color: oklch(0.6 0.15 280); /* violet, distinct from important */
+  --callout-quote-color: oklch(0.55 0.04 270); /* near-gray with cool tint */
 }
 
 .dark {
+  /* Lifted lightness for dark-mode legibility — same hue family per type. */
   --callout-note-color: oklch(0.75 0.12 240);
   --callout-tip-color: oklch(0.73 0.13 145);
   --callout-important-color: oklch(0.72 0.16 290);
   --callout-warning-color: oklch(0.77 0.14 70);
   --callout-caution-color: oklch(0.72 0.2 25);
+  --callout-abstract-color: oklch(0.78 0.11 220);
+  --callout-info-color: oklch(0.75 0.12 240);
+  --callout-todo-color: oklch(0.75 0.13 260);
+  --callout-success-color: oklch(0.75 0.14 150);
+  --callout-question-color: oklch(0.75 0.16 310);
+  --callout-failure-color: oklch(0.72 0.2 15);
+  --callout-danger-color: oklch(0.74 0.19 35);
+  --callout-bug-color: oklch(0.72 0.17 5);
+  --callout-example-color: oklch(0.75 0.13 280);
+  --callout-quote-color: oklch(0.72 0.04 270);
 }
 
 /* Per-type default accent. An inline `--callout-type-color` from the
@@ -1758,6 +1785,36 @@ button:active:not(:disabled) {
 }
 .callout[data-callout-type="caution"] {
   --callout-type-color: var(--callout-caution-color);
+}
+.callout[data-callout-type="abstract"] {
+  --callout-type-color: var(--callout-abstract-color);
+}
+.callout[data-callout-type="info"] {
+  --callout-type-color: var(--callout-info-color);
+}
+.callout[data-callout-type="todo"] {
+  --callout-type-color: var(--callout-todo-color);
+}
+.callout[data-callout-type="success"] {
+  --callout-type-color: var(--callout-success-color);
+}
+.callout[data-callout-type="question"] {
+  --callout-type-color: var(--callout-question-color);
+}
+.callout[data-callout-type="failure"] {
+  --callout-type-color: var(--callout-failure-color);
+}
+.callout[data-callout-type="danger"] {
+  --callout-type-color: var(--callout-danger-color);
+}
+.callout[data-callout-type="bug"] {
+  --callout-type-color: var(--callout-bug-color);
+}
+.callout[data-callout-type="example"] {
+  --callout-type-color: var(--callout-example-color);
+}
+.callout[data-callout-type="quote"] {
+  --callout-type-color: var(--callout-quote-color);
 }
 
 .callout {

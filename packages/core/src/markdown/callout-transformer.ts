@@ -19,23 +19,28 @@
  * pristine round-trip emits that verbatim per the to-markdown handler's
  * sourceRaw-first dispatch.
  *
- * ## Foldable detection (D-MF17)
+ * ## Foldable detection
  *
  * `remark-github-alerts` is not foldable-aware — its opener regex is
  * `^\[!TYPE\]([^\n\r]*)` which greedily captures everything after the
  * marker on the opener line (including `+`/`-`). Re-inspecting the
  * original source at `blockquote.position.start.offset` is the single
- * reliable place to detect the foldable marker. Scope is the 5 GFM types
- * only — broader Obsidian types (`[!success]+`, `[!idea]-`) still flow
- * through the alias map but foldable-marker detection is inside the GFM
- * narrow.
+ * reliable place to detect the foldable marker. Scope covers all 15
+ * first-class types via `ACCEPTED_TYPES` membership AFTER alias
+ * normalization — `> [!success]+`, `> [!quote]-`, etc. honor the marker
+ * because the resolved type is in the set. Aliases that fold into a
+ * first-class type (`> [!summary]+` → `abstract`) also honor it (gate is
+ * on resolved type, not source token). Truly unknown tokens fall back
+ * to `note` and lose the marker by design.
  *
  * ## Alias map
  *
- * Folds Obsidian / Mintlify / Pandoc type aliases into the GFM 5-type
- * subset. Lossy for some migrated content (`success` → `tip`, `danger` →
- * `caution`, `idea` → `tip`); the strict GFM 5-type enum will extend
- * additively when broader Obsidian authoring demand surfaces.
+ * Folds rarer Obsidian / Mintlify / Pandoc / Fumadocs tokens into one of
+ * the 15 first-class types (5 GFM + 10 Obsidian-parity promoted from
+ * aliases in 2026-05). Non-lossy for the Obsidian core set — `success`,
+ * `quote`, `bug`, etc. are now first-class with their own icons and
+ * colors. The map's identity entries cover all 15 first-class types so
+ * the lookup is uniform.
  *
  * ## Why not a custom ~150-LoC blockquote visitor
  *
@@ -51,14 +56,39 @@ import type { MdxJsxAttribute, MdxJsxFlowElement } from 'mdast-util-mdx';
 import { visit } from 'unist-util-visit';
 import type { VFile } from 'vfile';
 
-type CalloutType = 'note' | 'tip' | 'important' | 'warning' | 'caution';
+type CalloutType =
+  | 'note'
+  | 'tip'
+  | 'important'
+  | 'warning'
+  | 'caution'
+  | 'abstract'
+  | 'info'
+  | 'todo'
+  | 'success'
+  | 'question'
+  | 'failure'
+  | 'danger'
+  | 'bug'
+  | 'example'
+  | 'quote';
 
-const GFM_TYPES: ReadonlySet<string> = new Set<CalloutType>([
+const ACCEPTED_TYPES: ReadonlySet<string> = new Set<CalloutType>([
   'note',
   'tip',
   'important',
   'warning',
   'caution',
+  'abstract',
+  'info',
+  'todo',
+  'success',
+  'question',
+  'failure',
+  'danger',
+  'bug',
+  'example',
+  'quote',
 ]);
 
 const TYPE_ALIAS_MAP: Readonly<Record<string, CalloutType>> = {
@@ -67,25 +97,30 @@ const TYPE_ALIAS_MAP: Readonly<Record<string, CalloutType>> = {
   important: 'important',
   warning: 'warning',
   caution: 'caution',
-  info: 'note',
-  question: 'note',
-  faq: 'note',
-  abstract: 'note',
-  summary: 'note',
-  tldr: 'note',
-  todo: 'note',
-  success: 'tip',
+  abstract: 'abstract',
+  info: 'info',
+  todo: 'todo',
+  success: 'success',
+  question: 'question',
+  failure: 'failure',
+  danger: 'danger',
+  bug: 'bug',
+  example: 'example',
+  quote: 'quote',
+  summary: 'abstract',
+  tldr: 'abstract',
+  check: 'success',
+  done: 'success',
+  help: 'question',
+  faq: 'question',
+  fail: 'failure',
+  missing: 'failure',
+  error: 'danger',
+  cite: 'quote',
   idea: 'tip',
-  check: 'tip',
   hint: 'tip',
-  example: 'tip',
   warn: 'warning',
   attention: 'warning',
-  danger: 'caution',
-  error: 'caution',
-  bug: 'caution',
-  failure: 'caution',
-  quote: 'important',
 };
 
 const CALLOUT_CLASS_PREFIX = 'ok-alert';
@@ -229,7 +264,7 @@ export function calloutTransformerPlugin() {
       const resolvedType: CalloutType = type ?? 'note';
 
       const foldableMarker: '+' | '-' | null =
-        opener && GFM_TYPES.has(resolvedType) ? opener.foldableMarker : null;
+        opener && ACCEPTED_TYPES.has(resolvedType) ? opener.foldableMarker : null;
 
       const sourceAuthoredToken = (() => {
         if (node.position?.start?.offset !== undefined) {

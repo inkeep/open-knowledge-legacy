@@ -18,6 +18,7 @@ import { VFile } from 'vfile';
 import './mdast-augmentation.ts';
 import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
 import { calloutTransformerPlugin, REMARK_GITHUB_ALERTS_OPTIONS } from './callout-transformer.ts';
+import { commentPromoterPlugin } from './comment-promoter.ts';
 import { detailsAccordionPromoterPlugin } from './details-accordion-promoter.ts';
 import { highlightPromoterPlugin } from './highlight-promoter.ts';
 import { imagePromoterPlugin } from './image-promoter.ts';
@@ -72,6 +73,7 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     .use(singleDollarMathPromoterPlugin)
     .use(highlightPromoterPlugin)
     .use(mermaidPromoterPlugin)
+    .use(commentPromoterPlugin)
     .use(mergedPostParseWalkerPlugin) // Phase B
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
     .use(remarkProseMirror, {

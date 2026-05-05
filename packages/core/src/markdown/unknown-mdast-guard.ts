@@ -39,6 +39,8 @@ export const KNOWN_MDAST_TYPES: ReadonlySet<string> = new Set([
   'math',
   'inlineMath',
   'mark',
+  'comment',
+  'commentBlock',
   'rawMdxFallbackMdast',
 ]);
 

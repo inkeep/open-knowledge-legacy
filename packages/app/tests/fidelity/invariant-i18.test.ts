@@ -56,17 +56,22 @@ describe('I18 — γ pristine preservation of GFM-alert source', () => {
   });
 });
 
-describe('I18 — alias map folds broader types to GFM 5 subset', () => {
-  const aliasCases: Array<{ alias: string; expectedType: (typeof GFM_TYPES)[number] }> = [
-    { alias: 'info', expectedType: 'note' },
-    { alias: 'success', expectedType: 'tip' },
-    { alias: 'danger', expectedType: 'caution' },
-    { alias: 'error', expectedType: 'caution' },
-    { alias: 'warn', expectedType: 'warning' },
+describe('I18 — alias map folds rarer aliases to first-class types', () => {
+  const aliasCases: Array<{ alias: string; expectedType: string }> = [
+    { alias: 'summary', expectedType: 'abstract' },
+    { alias: 'tldr', expectedType: 'abstract' },
+    { alias: 'check', expectedType: 'success' },
+    { alias: 'done', expectedType: 'success' },
+    { alias: 'help', expectedType: 'question' },
+    { alias: 'faq', expectedType: 'question' },
+    { alias: 'fail', expectedType: 'failure' },
+    { alias: 'missing', expectedType: 'failure' },
+    { alias: 'error', expectedType: 'danger' },
+    { alias: 'cite', expectedType: 'quote' },
     { alias: 'idea', expectedType: 'tip' },
     { alias: 'hint', expectedType: 'tip' },
+    { alias: 'warn', expectedType: 'warning' },
     { alias: 'attention', expectedType: 'warning' },
-    { alias: 'bug', expectedType: 'caution' },
   ];
 
   for (const { alias, expectedType } of aliasCases) {
@@ -81,7 +86,7 @@ describe('I18 — alias map folds broader types to GFM 5 subset', () => {
   }
 
   test('alias-authored source round-trips byte-identical (γ preserves raw type token)', () => {
-    const gfmForm = '> [!success]\n> Authored with Obsidian\n';
+    const gfmForm = '> [!summary]\n> Authored with Obsidian\n';
     const out = mdRoundTrip(gfmForm);
     expect(out).toBe(gfmForm);
   });

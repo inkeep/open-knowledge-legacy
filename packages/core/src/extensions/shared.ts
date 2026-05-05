@@ -4,6 +4,8 @@ import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table
 import StarterKit from '@tiptap/starter-kit';
 import { CodeBlockFidelity } from './code-block-fidelity.ts';
 import { CodeMarkFidelity } from './code-mark-fidelity.ts';
+import { CommentBlock } from './comment-block.ts';
+import { CommentMark } from './comment-mark.ts';
 import { EmphasisFidelity, StrongFidelity } from './emphasis-fidelity.ts';
 import { EscapeMark } from './escape-mark.ts';
 import { HardBreakFidelity } from './hard-break-fidelity.ts';
@@ -66,4 +68,6 @@ export const sharedExtensions = [
   TableCell,
   Image.configure({ inline: true }),
   Highlight,
+  CommentMark,
+  CommentBlock,
 ];
