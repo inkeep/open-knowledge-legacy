@@ -8,12 +8,14 @@ if (process.argv.includes('--no-color')) {
   delete process.env.NO_COLOR;
 }
 
+import { spawn } from 'node:child_process';
 import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { authCommand } from './commands/auth/index.ts';
 import { cleanCommand } from './commands/clean.ts';
 import { cloneCommand } from './commands/clone.ts';
 import { configCommand } from './commands/config.ts';
+import { createRealDetectDeps, detectDesktop, launchDesktop } from './commands/desktop-dispatch.ts';
 import { initCommand } from './commands/init.ts';
 import { installSkillCommand } from './commands/install-skill.ts';
 import { mcpCommand } from './commands/mcp.ts';
@@ -22,7 +24,7 @@ import { psCommand } from './commands/ps.ts';
 import { pullCommand } from './commands/pull.ts';
 import { pushCommand } from './commands/push.ts';
 import { seedCommand } from './commands/seed.ts';
-import { startCommand } from './commands/start.ts';
+import { runStartCommand, startCommand } from './commands/start.ts';
 import { statusCommand } from './commands/status.ts';
 import { stopCommand } from './commands/stop.ts';
 import { syncCommand } from './commands/sync.ts';
@@ -63,8 +65,19 @@ program
     resolvedConfig = config;
   });
 
+program.action(async () => {
+  const decision = detectDesktop(createRealDetectDeps());
+
+  if (decision.available) {
+    launchDesktop({ spawn });
+    return;
+  }
+
+  await runStartCommand(resolvedConfig, {});
+});
+
 const start = startCommand(() => resolvedConfig);
-program.addCommand(start, { isDefault: true });
+program.addCommand(start);
 
 const mcp = mcpCommand(() => resolvedConfig);
 program.addCommand(mcp);
