@@ -416,7 +416,13 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
         </button>
       </div>
 
-      <div ref={cmContainerRef} className="raw-mdx-fallback-cm" />
+      {/* biome-ignore lint/a11y/useSemanticElements: <fieldset> is for form-control groupings with <legend>; this div hosts CodeMirror's contenteditable .cm-content (which carries its own role="textbox"), and the wrapper's purpose is to give SR users an accessible name for the embedded editing surface — role="group" is the WAI-ARIA-correct primitive (matches SlashCommandMenu and Field). */}
+      <div
+        ref={cmContainerRef}
+        className="raw-mdx-fallback-cm"
+        role="group"
+        aria-label={`Editing broken MDX source: ${reason}`}
+      />
     </NodeViewWrapper>
   );
 }

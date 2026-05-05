@@ -2,3 +2,26 @@
 title: Agent activity
 description: See every file an agent edits in a session, with per-burst diffs and selective rollback.
 ---
+
+Agent activity shows all edits made by an agent during its current editing session. It is built for quick review: see which files changed, inspect each burst of edits, and undo any agent work you do not want to keep.
+
+## Open agent activity
+
+Click an agent avatar in the presence bar to open that agent's activity view. The panel stays focused on the selected agent, even as you move between documents.
+
+## What you can see
+
+The activity panel groups edits by file. Each file row shows the total additions and deletions from that agent.
+
+Expand a file to see individual edit bursts. Each burst has its own additions, deletions, timestamp, and diff.
+
+## Undo agent edits
+
+When the agent session is still active, you can undo:
+
+- The agent's latest edit burst in a file
+- All tracked edits from that agent in a file
+
+Undo actions are scoped to the selected agent session. They do not roll back unrelated human edits or other agents' work.
+
+After the agent session ends, the activity panel still shows the session's edits for review, but undo is no longer available. Use the [timeline](/features/timeline-and-recovery) to roll back changes from a closed session.
