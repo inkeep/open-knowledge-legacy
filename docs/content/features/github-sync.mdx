@@ -1,4 +1,105 @@
 ---
-title: GitHub Sync
+title: GitHub sync
 description: Clone repos from GitHub, auto-sync changes with your team, and resolve conflicts.
 ---
+
+Open Knowledge can connect a knowledge base to a GitHub repository and keep it synced over time. When GitHub sync is enabled, Open Knowledge actively pulls commits from the remote and pushes commits back to it on a regular cadence.
+
+<Callout type="warn">
+  Only enable GitHub sync for repositories where you are comfortable with Open Knowledge writing commits to the remote history. If you are worried about automated commits corrupting or cluttering your Git history, do not enable sync for that repository.
+</Callout>
+
+## What GitHub sync is for
+
+Use GitHub sync when your docs, specs, notes, or internal knowledge already live in a repository and you want Open Knowledge to keep that repository up to date automatically.
+
+It helps you:
+
+- Start from an existing GitHub repository
+- Keep your knowledge base in sync with updates from your team
+- Resolve conflicts between your edits and your team's edits
+
+## Clone from the app
+
+In the app, the **Clone from GitHub** card opens a clone dialog for interactive setup.
+
+<Steps>
+  <Step>
+    ### Open the clone dialog
+
+    From the Navigator window, select **Clone from GitHub**.
+  </Step>
+
+  <Step>
+    ### Choose a repository
+
+    Paste a repository URL or `owner/repo` shorthand. If you are signed in to GitHub, you can also filter and select from repositories your account can access.
+  </Step>
+
+  <Step>
+    ### Pick a local path
+
+    Choose where the repository should be cloned. The dialog auto-fills `~/Documents/<repo-name>` when it can infer the repo name.
+  </Step>
+
+  <Step>
+    ### Start the clone
+
+    Click **Clone**. The app shows clone progress and lets you cancel while the clone is running.
+  </Step>
+
+  <Step>
+    ### Open the project
+
+    When the clone completes, the Navigator window stays open and the cloned project opens in a new editor window.
+  </Step>
+</Steps>
+
+## Clone with `ok clone`
+
+```bash
+ok clone <repository-url-or-owner/repo> [target-directory]
+```
+
+This command clones the repository, initializes Open Knowledge project state, and starts Open Knowledge in the cloned directory.
+
+By default, the target directory is based on the repository name. You can pass a directory explicitly when you want a different location.
+
+## Enable sync after cloning
+
+When you open a freshly cloned project, GitHub sync is off by default. Toggle it on from the project settings page once you are ready for Open Knowledge to start writing commits to the remote.
+
+While sync is active, Open Knowledge:
+
+- Fetches and pulls commits from the remote on a regular cadence
+- Commits your edits locally using the configured Git identity.
+- Pushes those commits back to the remote so collaborators see your changes
+
+Pulls can overwrite uncommitted local file changes, so commit or discard work-in-progress before you enable sync.
+
+## Authentication
+
+Private repositories require GitHub authentication. Open Knowledge stores your credentials in the keychain and reuses them for each sync.
+
+The sync status indicator surfaces an auth-error state when stored credentials stop working, and sync pauses until you reauthenticate.
+
+## Sync status and conflicts
+
+The sync status indicator in the editor shows the current state of the connection: how many commits you are ahead or behind the remote, when the last sync ran, whether sync is paused, and how many files have unresolved conflicts. You can also trigger an immediate sync from the same control instead of waiting for the next scheduled run.
+
+When a remote update conflicts with your local edits, sync pauses and the conflicted files surface in the in-app conflict resolver. For each conflict you can:
+
+- Keep your version
+- Take the remote version
+- Edit the merged content directly and save the resolution
+
+Once all conflicts are resolved, sync resumes from where it paused.
+
+## Common failure modes
+
+A few situations stop sync from completing successfully:
+
+- **Authentication errors.** Stored credentials are expired, revoked, or scoped too narrowly for the repository. Reauthenticate to clear the error.
+- **Protected branches and rejected pushes.** If the target branch requires reviews, signed commits, or status checks, pushes from Open Knowledge are rejected. Switch to a branch you can push to, or open a pull request for the protected branch instead.
+- **Missing Git identity.** Commits cannot be authored without a configured `user.name` and `user.email`. The status indicator prompts you to set an identity the first time sync needs to commit.
+- **Diverged history.** When the remote has been rewritten (force-push, rebase, branch reset) in a way Open Knowledge cannot reconcile automatically, sync stops and surfaces the error so you can fix it from the command line.
