@@ -18,6 +18,7 @@ import { initCommand } from './commands/init.ts';
 import { installSkillCommand } from './commands/install-skill.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { previewCommand } from './commands/preview.ts';
+import { psCommand } from './commands/ps.ts';
 import { pullCommand } from './commands/pull.ts';
 import { pushCommand } from './commands/push.ts';
 import { seedCommand } from './commands/seed.ts';
@@ -83,6 +84,8 @@ program.addCommand(ui);
 program.addCommand(stopCommand(() => resolvedConfig));
 program.addCommand(cleanCommand(() => resolvedConfig));
 program.addCommand(statusCommand(() => resolvedConfig));
+
+program.addCommand(psCommand());
 
 program.addCommand(configCommand());
 
