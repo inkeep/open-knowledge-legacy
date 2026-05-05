@@ -273,6 +273,7 @@ function extractTextFromMdastNodes(nodes: MdastNodes[]): string {
 import {
   AUDIO_EXTENSIONS,
   IMAGE_EXTENSIONS,
+  PDF_EXTENSIONS,
   VIDEO_EXTENSIONS,
   WIKI_EMBED_EXTENSIONS,
 } from '../constants/upload.ts';
@@ -573,6 +574,10 @@ function buildMdastToPmHandlers(
         const id = extractStringAttr(node, 'id');
         return n.mathInline.create({ formula, id: id ?? null });
       }
+      if (node.name === 'Tag' && n.tag) {
+        const value = extractStringAttr(node, 'value') ?? '';
+        return n.tag.create({ value });
+      }
       if (n.jsxInline) {
         const raw = rawFromData(node.data) ?? '';
         return n.jsxInline.createAndFill({}, raw ? [schema.text(raw)] : null);
@@ -603,6 +608,11 @@ function buildMdastToPmHandlers(
         alias: node.data?.alias ?? null,
         anchor: node.data?.anchor ?? null,
       });
+  }
+
+  if (n.tag) {
+    handlers.tag = (node: { type: 'tag'; value: string }) =>
+      n.tag.createAndFill({ value: node.value });
   }
 
   if (n.wikiLinkEmbed) {
@@ -660,6 +670,21 @@ function buildMdastToPmHandlers(
       ) {
         return n.jsxComponent.createAndFill({
           componentName: 'WikiEmbedAudio',
+          kind: 'element',
+          attributes: [],
+          sourceRaw: '',
+          sourceDirty: false,
+          props: { src: srcOrTarget, title: alias ?? target, target, anchor, alias },
+        });
+      }
+      if (
+        isBlockContext &&
+        PDF_EXTENSIONS.has(ext) &&
+        n.jsxComponent &&
+        registry.has('WikiEmbedPdf')
+      ) {
+        return n.jsxComponent.createAndFill({
+          componentName: 'WikiEmbedPdf',
           kind: 'element',
           attributes: [],
           sourceRaw: '',
@@ -984,6 +1009,14 @@ function buildPmToMdastHandlers(schema: Schema): {
         children: [{ type: 'text' as const, value: label }],
       } as unknown as MdastNodes;
     };
+  }
+
+  if (n.tag) {
+    nodeHandlers.tag = (pmNode: PmNode) =>
+      ({
+        type: 'tag' as const,
+        value: String(pmNode.attrs.value ?? ''),
+      }) as unknown as MdastNodes;
   }
 
   if (n.wikiLinkEmbed) {

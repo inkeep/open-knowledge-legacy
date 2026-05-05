@@ -121,6 +121,7 @@ export { OK_DIR } from './constants/ok-dir.ts';
 export {
   ALLOWED_AUDIO_MIME_TYPES,
   ALLOWED_IMAGE_MIME_TYPES,
+  ALLOWED_PDF_MIME_TYPES,
   ALLOWED_VIDEO_MIME_TYPES,
   ASSET_EXTENSIONS,
   AUDIO_EXTENSIONS,
@@ -136,6 +137,7 @@ export {
   INLINE_RENDERABLE_EXTENSIONS,
   type InlineAssetMediaKind,
   mediaKindForSidebarAssetExtension,
+  PDF_EXTENSIONS,
   SIDEBAR_IMAGE_ASSET_EXTENSIONS,
   SIDEBAR_RENDERABLE_ASSET_EXTENSIONS,
   SIDEBAR_VIDEO_ASSET_EXTENSIONS,
@@ -162,6 +164,7 @@ export { List, ListItem, ListItemNode, ListNode } from './extensions/list.ts';
 export { MathInline } from './extensions/math-inline.ts';
 export { RawMdxFallback } from './extensions/raw-mdx-fallback.ts';
 export { sharedExtensions } from './extensions/shared.ts';
+export { Tag } from './extensions/tag.ts';
 export { ThematicBreakFidelity } from './extensions/thematic-break-fidelity.ts';
 export {
   getWikiLinkText,
@@ -196,6 +199,7 @@ export {
   inferType,
   isIsoDateString,
 } from './frontmatter/schema.ts';
+export { extractFrontmatterTags, FRONTMATTER_TAG_VALUE_RE } from './frontmatter/tags.ts';
 export {
   applyPatchToDocument,
   getDocumentKeys,
@@ -232,6 +236,10 @@ export {
   SAFE_URL_SCHEME_RE,
   SAFE_URL_SCHEMES,
 } from './markdown/safe-url.ts';
+export {
+  createTagInTextRegex,
+  TAG_IN_TEXT_PATTERN_SOURCE,
+} from './markdown/tag-promotion.ts';
 export {
   getParseHealth,
   incrementBlockFallback,
@@ -355,6 +363,7 @@ export {
   resolveAssetProjectPath,
 } from './utils/link-targets.ts';
 export { type BasenameIndex, createBasenameIndex } from './utils/path-resolve.ts';
+export { type PdfAnchorParts, parsePdfAnchor } from './utils/pdf-anchor.ts';
 export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';
 export {
   disambiguateSlug,
@@ -362,3 +371,4 @@ export {
   type HeadingEntry,
   toWikiLinkSlug,
 } from './utils/slug.ts';
+export { expandTagToHierarchy, tagsMatchingPrefix } from './utils/tag-rollup.ts';

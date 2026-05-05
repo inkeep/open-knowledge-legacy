@@ -293,7 +293,7 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
     expect(props?.src).toBe('/stories/wiki-links-next/IMG.PNG');
   });
 
-  test('non-image wiki-embed (PDF) emits server-absolute href on the link mark', () => {
+  test('PDF wiki-embed emits server-absolute src on jsxComponent(WikiEmbedPdf)', () => {
     const json = mdManager.parse('![[doc.pdf]]\n', {
       resolveEmbed: (target: string, _source: string) => {
         if (target === 'doc.pdf') return 'docs/sub/doc.pdf';
@@ -301,10 +301,10 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
       },
       sourcePath: 'docs/sub/notes.md',
     });
-    const linkMark = findMarkInJson(json, 'link');
-    expect(linkMark).not.toBeNull();
-    expect(linkMark?.attrs?.href).toMatch(/^\//);
-    expect(linkMark?.attrs?.href).toBe('/docs/sub/doc.pdf');
+    const node = findJsxComponentInJson(json, 'WikiEmbedPdf');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('/docs/sub/doc.pdf');
   });
 
   test('video wiki-embed (MP4) emits server-absolute src on jsxComponent(WikiEmbedVideo)', () => {
@@ -390,12 +390,10 @@ describe('handlers.wikiLinkEmbed — WikiEmbedImage dispatch (US-002)', () => {
     expect(props?.anchor).toBe('frag');
   });
 
-  test('non-image extension (![[doc.pdf]]) keeps text+link-mark fallback (regression guard)', () => {
+  test('PDF extension (![[doc.pdf]]) routes to WikiEmbedPdf descriptor', () => {
     const json = mdManager.parse('![[doc.pdf]]\n');
     expect(findJsxComponentInJson(json, 'WikiEmbedImage')).toBeNull();
-    const linkMark = findMarkInJson(json, 'link');
-    expect(linkMark).not.toBeNull();
-    expect(linkMark?.attrs?.sourceForm).toBe('wikiembed');
+    expect(findJsxComponentInJson(json, 'WikiEmbedPdf')).not.toBeNull();
   });
 
   test('round-trip: ![[photo.png]] is byte-identical', () => {

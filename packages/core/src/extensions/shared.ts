@@ -17,6 +17,7 @@ import { List, ListItem } from './list.ts';
 import { MathInline } from './math-inline.ts';
 import { RawMdxFallback } from './raw-mdx-fallback.ts';
 import { SourceLiteralMark } from './source-literal-mark.ts';
+import { Tag } from './tag.ts';
 import { ThematicBreakFidelity } from './thematic-break-fidelity.ts';
 import { WikiLink } from './wiki-link.ts';
 import { WikiLinkEmbed } from './wiki-link-embed.ts';
@@ -28,6 +29,7 @@ export const sharedExtensions = [
   MathInline,
   WikiLink,
   WikiLinkEmbed,
+  Tag,
   List,
   ListItem,
   EmphasisFidelity,

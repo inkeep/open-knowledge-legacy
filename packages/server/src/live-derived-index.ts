@@ -4,12 +4,14 @@ import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { mdManager, schema } from './md-manager.ts';
+import type { TagIndex } from './tag-index.ts';
 
 export const LIVE_DERIVED_INDEX_DEBOUNCE_MS = 100;
 
 export interface LiveDerivedIndexOptions {
   backlinkIndex: BacklinkIndex;
-  signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
+  tagIndex?: TagIndex;
+  signalChannel?: (channel: 'files' | 'backlinks' | 'graph' | 'tags') => void;
   debounceMs?: number;
 }
 
@@ -33,7 +35,12 @@ function serializeLiveDocument(document: Document): string {
 }
 
 export function createLiveDerivedIndexExtension(options: LiveDerivedIndexOptions): Extension {
-  const { backlinkIndex, signalChannel, debounceMs = LIVE_DERIVED_INDEX_DEBOUNCE_MS } = options;
+  const {
+    backlinkIndex,
+    tagIndex,
+    signalChannel,
+    debounceMs = LIVE_DERIVED_INDEX_DEBOUNCE_MS,
+  } = options;
   const pendingByDoc = new Map<string, ReturnType<typeof setTimeout>>();
 
   function clearPending(docName: string): void {
@@ -51,11 +58,16 @@ export function createLiveDerivedIndexExtension(options: LiveDerivedIndexOptions
       setTimeout(() => {
         pendingByDoc.delete(docName);
         try {
-          backlinkIndex.updateDocumentFromMarkdown(docName, serializeLiveDocument(document));
+          const markdown = serializeLiveDocument(document);
+          backlinkIndex.updateDocumentFromMarkdown(docName, markdown);
           signalChannel?.('backlinks');
           signalChannel?.('graph');
+          if (tagIndex) {
+            tagIndex.updateDocumentFromMarkdown(docName, markdown);
+            signalChannel?.('tags');
+          }
         } catch (err) {
-          console.error(`[live-derived-index] Failed to update backlinks for ${docName}:`, err);
+          console.error(`[live-derived-index] Failed to update derived views for ${docName}:`, err);
         }
       }, debounceMs),
     );

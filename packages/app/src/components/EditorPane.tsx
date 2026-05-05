@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { TagDialog } from '@/editor/components/TagDialog';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
@@ -107,6 +108,7 @@ export function EditorPane() {
         open={showAutoSyncOnboarding}
         onResolved={() => setAutoSyncOnboardingDismissed(true)}
       />
+      <TagDialog />
       {/*
         Agent Activity Panel now lives inside DocPanel as the `'agent'` mode
         content (SPEC 2026-04-24-activity-panel-to-docpanel-mode-toggle).

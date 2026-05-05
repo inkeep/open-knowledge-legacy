@@ -300,6 +300,7 @@ export {
   type StateManifestWriter,
   writeStateManifest,
 } from './state-manifest.ts';
+export { TagIndex, type TagIndexOptions, type TagSummaryEntry } from './tag-index.ts';
 export {
   getMeter,
   getTracer,

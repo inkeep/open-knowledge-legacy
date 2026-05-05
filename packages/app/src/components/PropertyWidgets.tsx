@@ -17,7 +17,11 @@
  * regardless of declared type — value shape wins for rendering (FR6 AC).
  */
 
-import type { FrontmatterType, FrontmatterValue } from '@inkeep/open-knowledge-core';
+import {
+  FRONTMATTER_TAG_VALUE_RE,
+  type FrontmatterType,
+  type FrontmatterValue,
+} from '@inkeep/open-knowledge-core';
 import { format, parse, parseISO } from 'date-fns';
 import { Calendar as CalendarIcon, Hash, List, SquareCheck, Type, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -33,6 +37,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { dispatchTagClickEvent } from '@/editor/extensions/tag-click-plugin';
+import { cn } from '@/lib/utils';
 
 interface CommonWidgetProps<T extends FrontmatterValue> {
   keyName: string;
@@ -343,31 +349,50 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
     next.splice(index, 1);
     onCommit(next);
   }
+  const isTagsField = keyName === 'tags';
   return (
     <div
       data-testid="list-widget"
       data-key={keyName}
       className="flex h-7 min-h-7 flex-wrap items-center gap-1 rounded-md px-2 focus-within:bg-background"
     >
-      {value.map((chip, i) => (
-        <span
-          // biome-ignore lint/suspicious/noArrayIndexKey: chips are positional; user reorders via add/remove
-          key={`${i}-${chip}`}
-          data-testid="list-chip"
-          data-index={i}
-          className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-sm"
-        >
-          <span>{chip}</span>
-          <button
-            type="button"
-            aria-label={`Remove ${chip}`}
-            onClick={() => removeChip(i)}
-            className="text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+      {value.map((chip, i) => {
+        const renderAsTag = isTagsField && FRONTMATTER_TAG_VALUE_RE.test(chip);
+        return (
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: chips are positional; user reorders via add/remove
+            key={`${i}-${chip}`}
+            data-testid="list-chip"
+            data-index={i}
+            className={cn(
+              'inline-flex items-center gap-1',
+              !renderAsTag && 'rounded-md bg-muted px-1.5 py-0.5 text-sm',
+            )}
           >
-            <X className="size-3" />
-          </button>
-        </span>
-      ))}
+            {renderAsTag ? (
+              <button
+                type="button"
+                data-tag={chip}
+                aria-label={`Open documents tagged #${chip}`}
+                onClick={() => dispatchTagClickEvent(chip)}
+                className="tag"
+              >
+                #{chip}
+              </button>
+            ) : (
+              <span>{chip}</span>
+            )}
+            <button
+              type="button"
+              aria-label={`Remove ${chip}`}
+              onClick={() => removeChip(i)}
+              className="text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+            >
+              <X className="size-3" />
+            </button>
+          </span>
+        );
+      })}
       <input
         data-testid="list-chip-input"
         type="text"

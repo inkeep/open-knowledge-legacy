@@ -16,6 +16,7 @@ export const DerivedViewChannelSchema = z.enum([
   'graph',
   'sync-status',
   'session-activity',
+  'tags',
 ]);
 export type DerivedViewChannel = z.infer<typeof DerivedViewChannelSchema>;
 

@@ -1,4 +1,5 @@
 import type { Editor } from '@tiptap/react';
+import { Hash } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { resolveIcon } from '../registry/icons.ts';
 import { getDescriptor, getRegisteredDescriptors } from '../registry/index.ts';
@@ -161,4 +162,41 @@ export function getComponentItems(): SlashCommandItem[] {
       preview,
     };
   });
+}
+
+export function getInlineComponentItems(): SlashCommandItem[] {
+  return [
+    {
+      name: 'component-Tag',
+      label: 'Tag',
+      icon: Hash,
+      category: 'content',
+      aliases: ['#', 'hashtag', 'label'],
+      description: 'Inline tag (`#tagname`) for cross-doc linking',
+      command: (editor: Editor) => {
+        const beforeRefs = new WeakSet<object>();
+        editor.state.doc.descendants((node) => {
+          if (node.type.name === 'tag') {
+            beforeRefs.add(node);
+          }
+        });
+
+        editor.chain().focus().insertTag('').run();
+
+        let insertPos = -1;
+        editor.state.doc.descendants((node, pos) => {
+          if (insertPos >= 0) return false;
+          if (node.type.name === 'tag' && !beforeRefs.has(node)) {
+            insertPos = pos;
+          }
+        });
+
+        if (insertPos < 0) return;
+        setPendingAutoOpen(insertPos);
+        requestAnimationFrame(() => {
+          editor.commands.setNodeSelection(insertPos);
+        });
+      },
+    },
+  ];
 }

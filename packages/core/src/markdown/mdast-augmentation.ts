@@ -35,6 +35,7 @@ export const PROMOTED_MDAST_TYPES = [
   'mdxJsxTextElement',
   'rawMdxFallback',
   'mark',
+  'tag',
 ] as const;
 
 export type PromotedMdastType = (typeof PROMOTED_MDAST_TYPES)[number];
@@ -87,6 +88,13 @@ export interface MarkMdast {
   position?: Position;
 }
 
+export interface TagMdast {
+  type: 'tag';
+  value: string;
+  data?: { sourceRaw?: string; [key: string]: unknown };
+  position?: Position;
+}
+
 declare module 'mdast' {
   interface TextData {
     escapedChars?: Array<{ offset: number; char: string }>;
@@ -127,6 +135,7 @@ declare module 'mdast' {
     rawMdxFallback: RawMdxFallbackMdast;
     wikiLinkEmbed: WikiLinkEmbedMdast;
     mark: MarkMdast;
+    tag: TagMdast;
   }
 }
 

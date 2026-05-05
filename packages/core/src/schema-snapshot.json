@@ -209,6 +209,17 @@
       "inline": true,
       "atom": true
     },
+    "tag": {
+      "attrs": {
+        "value": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true
+    },
     "list": {
       "attrs": {
         "ordered": {
@@ -443,6 +454,7 @@
     "mathInline",
     "wikiLink",
     "wikiLinkEmbed",
+    "tag",
     "list",
     "listItem",
     "emphasis",

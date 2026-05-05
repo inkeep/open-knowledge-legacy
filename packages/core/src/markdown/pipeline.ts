@@ -25,6 +25,7 @@ import { mathPromoterPlugin } from './math-promoter.ts';
 import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
 import { singleDollarMathPromoterPlugin } from './single-dollar-math-promoter.ts';
+import { remarkTags } from './tag-to-markdown.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
 
 interface PipelineOptions {
@@ -86,6 +87,7 @@ export function createSerializeProcessor(opts: PipelineOptions): Processor {
     .use(remarkMath, { singleDollarTextMath: false })
     .use(remarkMdxAgnostic)
     .use(remarkWikiLink)
+    .use(remarkTags)
     .use(remarkStringify, {
       bullet: '-',
       fences: true,

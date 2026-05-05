@@ -14,10 +14,10 @@ describe('canonical/compat split — registry shape', () => {
     }
   });
 
-  test('exactly 6 canonical descriptors', () => {
-    expect(canonicalDescriptors.length).toBe(6);
+  test('exactly 7 canonical descriptors (5-pack + Math + Pdf)', () => {
+    expect(canonicalDescriptors.length).toBe(7);
     expect(canonicalDescriptors.map((m) => m.name).sort()).toEqual(
-      ['Accordion', 'Callout', 'Math', 'audio', 'img', 'video'].sort(),
+      ['Accordion', 'Callout', 'Math', 'Pdf', 'audio', 'img', 'video'].sort(),
     );
   });
 
@@ -31,6 +31,7 @@ describe('canonical/compat split — registry shape', () => {
         'MathFence',
         'WikiEmbedAudio',
         'WikiEmbedImage',
+        'WikiEmbedPdf',
         'WikiEmbedVideo',
       ].sort(),
     );

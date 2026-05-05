@@ -2,7 +2,7 @@ import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core'
 import FileHandler from '@tiptap/extension-file-handler';
 import { KeyboardNav } from '../block-ux/keyboard-nav';
 import { uploadAndInsert } from '../image-upload/index.ts';
-import { getComponentItems } from '../slash-command/component-items';
+import { getComponentItems, getInlineComponentItems } from '../slash-command/component-items';
 import { slashCommandItems } from '../slash-command/items';
 import { BlockMover } from './block-mover';
 import { BridgeIdPlugin } from './bridge-id-plugin';
@@ -15,6 +15,8 @@ import { RawMdxFallback } from './raw-mdx-fallback';
 import { SelectionStatePlugin } from './selection-state-plugin';
 import { SlashCommand } from './slash-command';
 import { SourceDirtyObserver } from './source-dirty-observer';
+import { TagClickPlugin } from './tag-click-plugin';
+import { Tag } from './tag-view';
 import { WikiLink } from './wiki-link';
 import { WikiLinkEmbed } from './wiki-link-embed';
 
@@ -26,10 +28,11 @@ export const sharedExtensions = [
     if (ext.name === 'wikiLinkEmbed') return WikiLinkEmbed;
     if (ext.name === 'link') return InternalLink;
     if (ext.name === 'mathInline') return MathInline;
+    if (ext.name === 'tag') return Tag;
     return ext;
   }),
   SlashCommand.configure({
-    itemsSources: [() => slashCommandItems, () => getComponentItems()],
+    itemsSources: [() => slashCommandItems, getComponentItems, getInlineComponentItems],
     categoryLabels: {
       content: 'Components',
       layout: 'Layout',
@@ -50,6 +53,7 @@ export const sharedExtensions = [
     },
   }),
   HeadingAnchors,
+  TagClickPlugin,
   BlockDragHandle,
   BlockMover,
   SourceDirtyObserver,

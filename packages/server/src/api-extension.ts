@@ -210,6 +210,7 @@ import {
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
+import type { TagIndex } from './tag-index.ts';
 import { getMeter, getTracer, withSpan } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
@@ -730,7 +731,8 @@ export interface ApiExtensionOptions {
   getDiskAckSVs?: () => Record<string, string>;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
-  signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
+  tagIndex?: TagIndex;
+  signalChannel?: (channel: 'files' | 'backlinks' | 'graph' | 'tags') => void;
   agentFocusBroadcaster?: AgentFocusBroadcaster;
   agentPresenceBroadcaster?: AgentPresenceBroadcaster;
   onAgentWrite?: () => void;
@@ -826,6 +828,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getDiskAckSVs,
     contentRoot,
     backlinkIndex,
+    tagIndex,
     signalChannel,
     agentFocusBroadcaster,
     agentPresenceBroadcaster,
@@ -2161,6 +2164,62 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     } catch (e) {
       console.error('[dead-links]', e);
       json(res, 500, { ok: false, error: 'Failed to read dead links' });
+    }
+  }
+
+  async function handleTagsList(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!tagIndex) {
+      json(res, 503, { ok: false, error: 'Tag index not configured' });
+      return;
+    }
+    try {
+      const tags = tagIndex.getAllTags();
+      json(res, 200, { ok: true, tags });
+    } catch (e) {
+      console.error('[tags-list]', e);
+      json(res, 500, { ok: false, error: 'Failed to read tags' });
+    }
+  }
+
+  async function handleTagsForName(
+    req: IncomingMessage,
+    res: ServerResponse,
+    rawName: string,
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!tagIndex) {
+      json(res, 503, { ok: false, error: 'Tag index not configured' });
+      return;
+    }
+    let name: string;
+    try {
+      name = decodeURIComponent(rawName);
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid tag name encoding' });
+      return;
+    }
+    if (!name) {
+      json(res, 400, { ok: false, error: 'Missing tag name' });
+      return;
+    }
+    try {
+      const docs = tagIndex.getDocsForTagWithMatches(name).map(({ docName, matchingTags }) => ({
+        docName,
+        title: readPageTitleForDocName(docName),
+        matchingTags,
+        snippet: null,
+      }));
+      json(res, 200, { ok: true, name, docs });
+    } catch (e) {
+      console.error('[tags-for-name]', e);
+      json(res, 500, { ok: false, error: 'Failed to read tag membership' });
     }
   }
 
@@ -5792,6 +5851,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/dead-links': handleDeadLinks,
     '/api/orphans': handleOrphans,
     '/api/hubs': handleHubs,
+    '/api/tags': handleTagsList,
     '/api/pages': handlePages,
     '/api/folder-config': handleFolderConfig,
     '/api/template': handleTemplate,
@@ -5922,6 +5982,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       let routeTemplate = url;
       if (url.startsWith('/api/rescue/')) routeTemplate = '/api/rescue/:docName';
       else if (url.startsWith('/api/history/')) routeTemplate = '/api/history/:sha';
+      else if (url.startsWith('/api/tags/')) routeTemplate = '/api/tags/:name';
 
       const tracer = getTracer();
       const started = Date.now();
@@ -5949,6 +6010,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               } else if (url.startsWith('/api/history/')) {
                 const sha = decodeURIComponent(url.slice('/api/history/'.length));
                 if (sha) await handleHistoryVersion(request, response, sha);
+              } else if (url.startsWith('/api/tags/')) {
+                const rawName = url.slice('/api/tags/'.length);
+                if (rawName) await handleTagsForName(request, response, rawName);
               }
 
               const status = response.statusCode;

@@ -90,6 +90,7 @@ import {
 } from './shadow-repo.ts';
 import { assertCompatibleStateManifest } from './state-manifest.ts';
 import { SyncEngine } from './sync-engine.ts';
+import { TagIndex } from './tag-index.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 import { cleanupOrphanUploadTempfiles } from './upload-streaming.ts';
 
@@ -201,6 +202,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   let contentFilter: ReturnType<typeof createContentFilter>;
   let backlinkIndex: BacklinkIndex;
+  let tagIndex: TagIndex;
   let shadowRef: ShadowRef;
   let persistence: ReturnType<typeof createPersistenceExtension>;
   let hocuspocus: Hocuspocus;
@@ -213,7 +215,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   let shutdownAllowsUnload = false;
   let forceUnloadDocument!: (document: Document) => Promise<void>;
 
-  function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
+  function signalChannel(channel: 'files' | 'backlinks' | 'graph' | 'tags'): void {
     cc1Broadcaster?.signal(channel);
   }
   try {
@@ -222,6 +224,12 @@ export function createServer(options: ServerOptions): ServerInstance {
       contentDir,
     });
     backlinkIndex = new BacklinkIndex({ projectDir, contentDir, contentFilter });
+    tagIndex = new TagIndex({ contentDir, contentFilter });
+    try {
+      tagIndex.init();
+    } catch (err) {
+      console.warn('[server-factory] tag-index init failed; continuing with empty index:', err);
+    }
 
     shadowRef = { current: shadowRepo };
 
@@ -274,6 +282,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     sessionManager = new AgentSessionManager(hocuspocus);
     const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
       backlinkIndex,
+      tagIndex,
       signalChannel,
     });
     hocuspocus.configuration.extensions.push(liveDerivedIndexExtension);
@@ -361,6 +370,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       getDiskAckSVs: () => cc1Broadcaster?.getLatestDiskAckSVsAsBase64() ?? {},
       contentRoot,
       backlinkIndex,
+      tagIndex,
       signalChannel,
       agentFocusBroadcaster,
       agentPresenceBroadcaster,
@@ -480,9 +490,11 @@ export function createServer(options: ServerOptions): ServerInstance {
           void backlinkIndex.saveToDisk().catch((err) => {
             console.warn(`[backlinks] Failed to persist create for ${event.docName}:`, err);
           });
+          tagIndex.updateDocumentFromMarkdown(event.docName, event.content);
           signalChannel('files');
           signalChannel('backlinks');
           signalChannel('graph');
+          signalChannel('tags');
           break;
         }
 
@@ -494,8 +506,10 @@ export function createServer(options: ServerOptions): ServerInstance {
             void backlinkIndex.saveToDisk().catch((err) => {
               console.warn(`[backlinks] Failed to persist closed-doc update for ${docName}:`, err);
             });
+            tagIndex.updateDocumentFromMarkdown(docName, theirs);
             signalChannel('backlinks');
             signalChannel('graph');
+            signalChannel('tags');
             return;
           }
 
@@ -518,8 +532,10 @@ export function createServer(options: ServerOptions): ServerInstance {
               void backlinkIndex.saveToDisk().catch((err) => {
                 console.warn(`[backlinks] Failed to persist noop update for ${docName}:`, err);
               });
+              tagIndex.updateDocumentFromMarkdown(docName, theirs);
               signalChannel('backlinks');
               signalChannel('graph');
+              signalChannel('tags');
               break;
 
             case 'clean':
@@ -531,8 +547,10 @@ export function createServer(options: ServerOptions): ServerInstance {
                 void backlinkIndex.saveToDisk().catch((err) => {
                   console.warn(`[backlinks] Failed to persist clean update for ${docName}:`, err);
                 });
+                tagIndex.updateDocumentFromMarkdown(docName, theirs);
                 signalChannel('backlinks');
                 signalChannel('graph');
+                signalChannel('tags');
               } catch (e) {
                 log.error(
                   { err: e, docName },
@@ -551,8 +569,10 @@ export function createServer(options: ServerOptions): ServerInstance {
                 void backlinkIndex.saveToDisk().catch((err) => {
                   console.warn(`[backlinks] Failed to persist merged update for ${docName}:`, err);
                 });
+                tagIndex.updateDocumentFromMarkdown(docName, theirs);
                 signalChannel('backlinks');
                 signalChannel('graph');
+                signalChannel('tags');
               } catch (e) {
                 log.error(
                   { err: e, docName },
@@ -575,8 +595,10 @@ export function createServer(options: ServerOptions): ServerInstance {
                     err,
                   );
                 });
+                tagIndex.updateDocumentFromMarkdown(docName, theirs);
                 signalChannel('backlinks');
                 signalChannel('graph');
+                signalChannel('tags');
               } catch (e) {
                 log.error(
                   { err: e, docName },
@@ -606,9 +628,11 @@ export function createServer(options: ServerOptions): ServerInstance {
             void backlinkIndex.saveToDisk().catch((err) => {
               console.warn(`[backlinks] Failed to persist closed-doc delete for ${docName}:`, err);
             });
+            tagIndex.deleteDocument(docName);
             signalChannel('files');
             signalChannel('backlinks');
             signalChannel('graph');
+            signalChannel('tags');
             return;
           }
 
@@ -649,6 +673,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           void backlinkIndex.saveToDisk().catch((err) => {
             console.warn(`[backlinks] Failed to persist delete for ${docName}:`, err);
           });
+          tagIndex.deleteDocument(docName);
           log.info({ docName, isDirty }, `[reconcile] delete: ${docName} (dirty=${isDirty})`);
 
           hocuspocus.closeConnections(docName);
@@ -656,6 +681,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           signalChannel('files');
           signalChannel('backlinks');
           signalChannel('graph');
+          signalChannel('tags');
           break;
         }
 
@@ -672,6 +698,7 @@ export function createServer(options: ServerOptions): ServerInstance {
               err,
             );
           });
+          tagIndex.renameDocument(oldDocName, newDocName, content);
 
           if (document) {
             const lifecycleMap = document.getMap('lifecycle');
@@ -683,6 +710,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           signalChannel('files');
           signalChannel('backlinks');
           signalChannel('graph');
+          signalChannel('tags');
           break;
         }
 
@@ -1283,6 +1311,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       void backlinkIndex.saveToDisk().catch((err) => {
         console.warn(`[backlinks] Failed to persist startup cache for ${getActiveBranch()}:`, err);
       });
+      tagIndex.init();
       let seedSkipCount = 0;
       try {
         seedBasenameIndex({
@@ -1480,6 +1509,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             void backlinkIndex.saveToDisk(newBranch).catch((err) => {
               console.warn(`[backlinks] Failed to persist branch cache for ${newBranch}:`, err);
             });
+            tagIndex.init();
 
             if (shadowRef.current && info.batchKind === 'cross-branch') {
               let restoredCount = 0;
