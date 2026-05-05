@@ -2,3 +2,42 @@
 title: Install
 description: Install Open Knowledge as a CLI tool or as the macOS app.
 ---
+
+## Prerequisites
+
+- **Node.js ≥ 24** — check with `node -v`. Use [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schniz/fnm) to upgrade.
+- **Git** installed and on your PATH
+
+## CLI
+
+The CLI alone is enough for most workflows:
+
+```bash
+npx @inkeep/open-knowledge --version
+```
+
+`npx` pulls the latest published CLI on demand. To pin a version or work offline, install globally:
+
+```bash
+npm install -g @inkeep/open-knowledge
+```
+
+Both `open-knowledge` and `ok` work as commands.
+
+## macOS desktop app
+
+<Callout type="info">
+The macOS app is in early access. Use the CLI to get started today.
+</Callout>
+
+If you'd prefer a native app, install Open Knowledge from the macOS DMG. The first launch detects every MCP-capable editor on your machine and offers to wire them up — see [Claude Desktop](/integrations/claude-desktop) for the full first-launch flow.
+
+The DMG bundles its own CLI; put it on your PATH from **File → Install Command-Line Tools…** if you want `ok` available everywhere.
+
+<Callout type="warn">
+Open Knowledge is macOS and Linux only. Windows is not supported.
+</Callout>
+
+## What's next
+
+Run `ok init` in a project to scaffold MCP wiring for your editors. The full walkthrough is in the [Quickstart](/get-started/quickstart).

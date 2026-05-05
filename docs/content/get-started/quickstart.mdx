@@ -2,3 +2,58 @@
 title: Quickstart
 description: From install to your first agent-driven edit in under five minutes.
 ---
+
+This page takes you from zero to an AI agent editing your knowledge base.
+
+## 1. Pick a project
+
+Either initialize Open Knowledge in an existing project:
+
+```bash
+cd your-project
+npx @inkeep/open-knowledge init
+```
+
+Or clone a fresh one:
+
+```bash
+npx @inkeep/open-knowledge clone https://github.com/owner/repo
+```
+
+`init` scaffolds an `.ok/` directory, registers the MCP server with every supported editor it detects, and drops a skill file (a short instruction doc that teaches the agent how to call the MCP tools) into Claude Code and Cursor. Safe to re-run. Claude Desktop's Chat and Cowork modes need a separate install; see [Claude Desktop](/integrations/claude-desktop).
+
+## 2. Open the project in your AI tool
+
+Open the project in [Claude Code](/integrations/claude-code), [Cursor](/integrations/cursor), [Codex](/integrations/codex), or [Claude Desktop](/integrations/claude-desktop).
+
+If your tool prompts you to approve a new MCP server (Cursor does this), approve `open-knowledge`.
+
+## 3. Ask the agent to edit a doc
+
+Try one of these:
+
+> Add a new note explaining how this project handles authentication.
+
+> Search for any docs that mention OAuth.
+
+> List the recent changes to the docs folder.
+
+The agent calls Open Knowledge's MCP tools (`write_document`, `search`, `list_documents`, and friends — see the [MCP reference](/reference/mcp) for the full list). On the first write, the editor opens in your browser and the change streams in live.
+
+## 4. Look around
+
+The editor's sidebar shows every doc in your knowledge base. Each doc has:
+
+- A WYSIWYG body and a source-mode toggle
+- A frontmatter panel for properties
+- A timeline of recent edits with per-burst diffs and selective rollback
+- Backlinks to other docs that reference it
+
+The full feature tour is under [Features](/features/editor).
+
+## What's next
+
+- Per-editor setup details: [Integrations](/integrations/claude-code)
+- Tools the agent has access to: [MCP](/reference/mcp)
+- `.ok/config.yml` schema: [Configuration](/reference/configuration)
+- Every CLI command and flag: [CLI](/reference/cli)

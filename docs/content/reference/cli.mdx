@@ -2,3 +2,189 @@
 title: CLI reference
 description: Complete reference for the open-knowledge command-line interface.
 ---
+
+```bash
+npx @inkeep/open-knowledge <command> [options]
+```
+
+Both `open-knowledge` and `ok` work — they're the same command.
+
+## Global options
+
+| Option | Description |
+| --- | --- |
+| `--cwd <path>` | Working directory used to resolve config |
+| `--log-level <level>` | Log level (default: `info`) |
+| `--no-color` / `--color` | Disable or force color output |
+| `--version` | Print version |
+
+## `start`
+
+Run the collaborative editor server. Default command when no subcommand is specified.
+
+```bash
+ok start [options]
+ok                     # equivalent
+```
+
+| Flag | Description |
+| `-p, --port <port>` | Server port (overrides config and the `PORT` env) |
+| `-H, --host <host>` | Bind address (overrides config and the `HOST` env) |
+| `--open` | Open the editor in your default browser |
+| `--open` | Open the editor in your default browser |
+| `--no-init` | Skip `.ok/` scaffolding |
+
+The content directory comes from `content.dir` in `.ok/config.yml` (see [Configuration](/reference/configuration)).
+
+## `init`
+
+Scaffold the `.ok/` directory and register MCP server entries in every detected editor.
+
+```bash
+ok init [options]
+```
+
+| Flag | Description |
+| --- | --- |
+| `--scope <user\|project\|both>` | Where to write MCP config (default: both) |
+| `--no-mcp` | Skip writing editor MCP config |
+
+See [Integrations](/integrations/claude-code) for the per-editor config paths `init` writes to. Safe to re-run.
+
+## `clone`
+
+Clone a git repository, scaffold `.ok/`, and start the editor.
+
+```bash
+ok clone <url> [dir]
+```
+
+URL forms accepted: `https://github.com/owner/repo`, `git@github.com:owner/repo.git`, `ssh://git@github.com/owner/repo`, or the shorthand `owner/repo`.
+
+| Flag | Description |
+| --- | --- |
+| `--json` | Emit JSONL progress events for tooling |
+
+## `mcp`
+
+Run the MCP server. Editors invoke this command for you — you rarely run it yourself.
+
+```bash
+ok mcp [--port <port>]
+```
+
+If no server is running, `ok mcp` starts one automatically. Set `OK_MCP_AUTOSTART=0` to opt out.
+
+## `install-skill`
+
+Build the Open Knowledge skill bundle for the Claude Desktop App's Chat and Cowork modes.
+
+```bash
+ok install-skill [options]
+```
+
+| Flag | Description |
+| --- | --- |
+| `--out <path>` | Custom output path (default: `~/Downloads/openknowledge.skill`) |
+| `--no-open` | Build the file without launching Claude Desktop |
+| `--force` | Rebuild even if the skill is already up to date |
+
+Full walkthrough: [Claude Desktop](/integrations/claude-desktop).
+
+## `seed`
+
+Scaffold a starter knowledge-base structure: three folders (`external-sources/`, `research/`, `articles/`) plus a `log.md`.
+
+```bash
+ok seed [path] [options]
+```
+
+`[path]` sets the project directory (defaults to the current directory).
+
+| Flag | Description |
+| --- | --- |
+| `-r, --root <path>` | Subfolder to scaffold into instead of the project root |
+| `-y, --yes` | Skip the confirmation prompt |
+| `--dry-run` | Print the plan and exit without writing |
+
+## `ui`
+
+Serve the editor. Started automatically when an agent writes — you rarely run it yourself.
+
+```bash
+ok ui [--port <port>] [--host <host>]
+```
+
+## Lifecycle
+
+```bash
+ok status [--json]   # Show running server + editor (add --json for structured output)
+ok stop              # Stop the server and editor
+ok clean             # Clean up after a crashed run
+```
+
+The server shuts itself down after 30 minutes idle, so you rarely need to stop it by hand.
+
+## `preview`
+
+Print the file count and a sample of paths matched by your content scope, without starting the server.
+
+```bash
+ok preview
+```
+
+Useful after editing `.okignore` to confirm exclusions worked.
+
+## `config`
+
+Inspect and maintain `.ok/config.yml`.
+
+### `config validate`
+
+Check `.ok/config.yml` against the schema. Exits non-zero on errors with a `file:line:col` snippet.
+
+```bash
+ok config validate
+```
+
+### `config migrate`
+
+Strip fields that have been removed from the schema since your config was written.
+
+```bash
+ok config migrate                    # both scopes
+ok config migrate --dry-run          # preview removals
+ok config migrate --scope project    # one scope
+```
+
+| Flag | Description |
+| --- | --- |
+| `--dry-run` | Preview removals without writing |
+| `--scope <project\|user\|both>` | Which file to migrate (default: both) |
+
+## `auth`
+
+Manage GitHub authentication for [GitHub sync](/features/github-sync).
+
+```bash
+ok auth login              # Sign in to GitHub
+ok auth status             # Check sign-in status
+ok auth repos              # List accessible repositories
+ok auth signout            # Remove the stored token
+ok auth pat                # Validate and store a Personal Access Token
+ok auth git-credential     # Git credential helper (invoked by git)
+```
+
+Most subcommands accept `--host <host>` (default: `github.com`) and `--json` for structured output.
+
+## `sync` / `push` / `pull`
+
+Sync changes with the remote git repository.
+
+```bash
+ok sync     # Commit local changes, pull, and push
+ok push     # Push local commits
+ok pull     # Pull from the remote
+```
+
+All three accept `--json` for structured progress events.
