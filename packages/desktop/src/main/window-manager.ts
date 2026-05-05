@@ -214,61 +214,52 @@ export class WindowManager {
     let utility!: UtilityProcessLike;
     let port = 0;
     let apiOrigin = '';
-    let didGitInit = false;
     for (let attempt = 1; ; attempt++) {
       utility = this.deps.forkUtility(this.deps.utilityEntryPath, {
         windowLifecycleBound: true,
       });
       const utilityRef = utility;
-      const ready = new Promise<{ port: number; apiOrigin: string; didGitInit: boolean }>(
-        (resolveReady, reject) => {
-          let settled = false;
-          const settle = (fn: () => void) => {
-            if (settled) return;
-            settled = true;
-            utilityRef.removeListener?.('message', onMessage);
-            utilityRef.removeListener?.('exit', onExit);
-            fn();
+      const ready = new Promise<{ port: number; apiOrigin: string }>((resolveReady, reject) => {
+        let settled = false;
+        const settle = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          utilityRef.removeListener?.('message', onMessage);
+          utilityRef.removeListener?.('exit', onExit);
+          fn();
+        };
+        const onMessage = (msg: unknown) => {
+          const m = msg as {
+            type?: string;
+            port?: number;
+            apiOrigin?: string;
+            message?: string;
+            kind?: string;
+            existingLock?: ServerLockMetadataLike;
           };
-          const onMessage = (msg: unknown) => {
-            const m = msg as {
-              type?: string;
-              port?: number;
-              apiOrigin?: string;
-              message?: string;
-              didGitInit?: boolean;
-              kind?: string;
-              existingLock?: ServerLockMetadataLike;
-            };
-            if (
-              m.type === 'ready' &&
-              typeof m.port === 'number' &&
-              typeof m.apiOrigin === 'string'
-            ) {
-              const p = m.port;
-              const o = m.apiOrigin;
-              const g = m.didGitInit === true;
-              settle(() => resolveReady({ port: p, apiOrigin: o, didGitInit: g }));
-            } else if (m.type === 'error') {
-              const richError = Object.assign(new Error(m.message ?? 'utility init failed'), {
-                name: m.kind === 'lock-collision' ? 'LockCollisionError' : 'UtilityInitError',
-                kind: m.kind,
-                existingLock: m.existingLock,
-              });
-              settle(() => reject(richError));
-            }
-          };
-          const onExit = (code: number | null) => {
-            settle(() => reject(new Error(`utility exited before ready (code=${code})`)));
-          };
-          utilityRef.on('message', onMessage);
-          utilityRef.on('exit', onExit);
+          if (m.type === 'ready' && typeof m.port === 'number' && typeof m.apiOrigin === 'string') {
+            const p = m.port;
+            const o = m.apiOrigin;
+            settle(() => resolveReady({ port: p, apiOrigin: o }));
+          } else if (m.type === 'error') {
+            const richError = Object.assign(new Error(m.message ?? 'utility init failed'), {
+              name: m.kind === 'lock-collision' ? 'LockCollisionError' : 'UtilityInitError',
+              kind: m.kind,
+              existingLock: m.existingLock,
+            });
+            settle(() => reject(richError));
+          }
+        };
+        const onExit = (code: number | null) => {
+          settle(() => reject(new Error(`utility exited before ready (code=${code})`)));
+        };
+        utilityRef.on('message', onMessage);
+        utilityRef.on('exit', onExit);
 
-          this.deps.setTimeout(() => {
-            settle(() => reject(new Error(`utility init timed out after ${INIT_TIMEOUT_MS}ms`)));
-          }, INIT_TIMEOUT_MS);
-        },
-      );
+        this.deps.setTimeout(() => {
+          settle(() => reject(new Error(`utility init timed out after ${INIT_TIMEOUT_MS}ms`)));
+        }, INIT_TIMEOUT_MS);
+      });
 
       utility.postMessage({
         type: 'init',
@@ -281,7 +272,7 @@ export class WindowManager {
       });
 
       try {
-        ({ port, apiOrigin, didGitInit } = await ready);
+        ({ port, apiOrigin } = await ready);
         break;
       } catch (err) {
         const richErr = err as Error & {
@@ -370,13 +361,6 @@ export class WindowManager {
       ],
       title: formatEditorTitle(projectName),
     });
-
-    if (didGitInit) {
-      const gitDir = resolve(projectPath, '.git');
-      window.webContents.once('dom-ready', () => {
-        sendToRenderer(window.webContents, 'ok:git-init-notice', { gitDir });
-      });
-    }
 
     if (opts.pendingDeepLinkDoc) {
       const doc = opts.pendingDeepLinkDoc;

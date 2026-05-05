@@ -10,7 +10,6 @@ import { getLogger, type PinoLogger } from './logger.ts';
 import { createMcpHttpHandler } from './mcp-http.ts';
 import { mountMcpAndApi } from './mcp-mount.ts';
 import { MissingOkConfigError } from './missing-ok-config-error.ts';
-import type { EnsureProjectGitResult } from './project-git.ts';
 import { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 import { initTelemetry, shutdownTelemetry, withSpan } from './telemetry.ts';
 
@@ -61,7 +60,6 @@ export interface BootServerOptions
   attachUiSibling?: boolean;
   idleShutdownMs?: number | null;
   autoInitFn?: () => boolean | Promise<boolean>;
-  ensureProjectGitFn?: () => Promise<EnsureProjectGitResult>;
   spawnUiSiblingFn?: (ctx: { lockDir: string; log: PinoLogger }) => void | Promise<void>;
   idleShutdownHandler?: (destroyServer: () => Promise<void>) => () => Promise<void>;
   log?: PinoLogger;
@@ -78,7 +76,6 @@ export interface BootedServer {
   ready: Promise<void>;
   degraded: readonly string[];
   didAutoInit: boolean;
-  didGitInit: boolean;
   serverInstance: ServerInstance;
 }
 
@@ -110,12 +107,6 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
 
   const { createServer: createHttpServer } = await import('node:http');
   const { updateServerLockPort } = await import('./server-lock.ts');
-
-  let didGitInit = false;
-  if (!skipAutoInit && opts.ensureProjectGitFn) {
-    const gitResult = await opts.ensureProjectGitFn();
-    didGitInit = Boolean(gitResult.didInit);
-  }
 
   let didAutoInit = false;
   if (!skipAutoInit && opts.autoInitFn) {
@@ -316,7 +307,6 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
     ready,
     degraded,
     didAutoInit,
-    didGitInit,
     serverInstance,
   };
 }

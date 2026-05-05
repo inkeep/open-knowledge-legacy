@@ -188,7 +188,6 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         },
         onProjectSwitched: () => () => {},
         onMenuAction: () => () => {},
-        onGitInitNotice: () => () => {},
         onUpdateDownloaded: () => () => {},
         onWhatsNew: () => () => {},
         onUpdateStuckHint: () => () => {},
