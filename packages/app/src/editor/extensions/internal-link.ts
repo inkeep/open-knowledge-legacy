@@ -13,7 +13,6 @@ import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { InternalLinkPropPanel } from './InternalLinkPropPanel';
 import { makeLinkResolutionAttrsComputer } from './link-resolution';
 import { linkResolutionDecorationPlugin } from './link-resolution-decoration';
-import { markIdentityDecorationPlugin } from './mark-identity-decoration';
 import { createMarkInteractionBridgePlugin, getCurrentMarkInfo } from './mark-interaction-bridge';
 
 export interface InternalLinkOptions {
@@ -99,7 +98,6 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
           return true;
         },
       }),
-      markIdentityDecorationPlugin(),
       linkResolutionDecorationPlugin({
         markTypes: ['link'],
         computeAttrs: makeLinkResolutionAttrsComputer(docName),

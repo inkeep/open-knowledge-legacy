@@ -1,5 +1,37 @@
-import { Editor } from '@tiptap/core';
-import { EditorView } from '@tiptap/pm/view';
+/**
+ * Cold-mount instrumentation — prototype-level monkey-patches that emit
+ * `ok/cold/*` perf marks around the synchronous cost centers of the
+ * `<TiptapEditor>` cold-mount call chain on large docs.
+ *
+ * Wrapped entry points:
+ *   - `Editor.prototype.mount`                → `ok/cold/editor-mount`
+ *   - `Editor.prototype.createView`           → `ok/cold/editor-create-view`
+ *   - `Editor.prototype.createNodeViews`      → `ok/cold/create-node-views`
+ *   - `EditorView.prototype.updateState`      → `ok/cold/pm-update-state` (per call)
+ *   - `EditorView.prototype.setProps`         → `ok/cold/pm-set-props` (per call)
+ *   - `ProsemirrorBinding.prototype._forceRerender` → `ok/cold/force-rerender`
+ *   - `PureEditorContent.prototype.init`      → `ok/cold/ec-init`
+ *
+ * Per-component extensions — gated by `instrumentationDisabled()` (PROD
+ * short-circuit, same shape as `__okPerfCounters` elsewhere):
+ *   - Per-NodeView-factory          → `ok/cold/nodeview-factory-{nodeType}` (per call)
+ *   - Per-decoration-plugin         → `ok/cold/decoration-{key}` (per call)
+ *   - appendChild → first paint     → `ok/cold/append-to-paint` (once per cold mount)
+ *   - Per-extension lifecycle hooks → `ok/cold/ext-{name}-{hook}` via wrapExtensionsWithTiming
+ *
+ * Also installs a PerformanceObserver for `paint` entries that re-emits
+ * first-paint / first-contentful-paint via marks so they land in the
+ * collector's data stream alongside the monkey-patched spans.
+ *
+ * The patch is a DIAGNOSTIC artifact — called ONCE from `main.tsx` before
+ * any editor constructs (DEV/test only — the install site is gated).
+ * Per-component extensions add a defense-in-depth `import.meta.env.PROD`
+ * check inside their hot paths so accidental PROD invocation is also a no-op.
+ */
+
+import { type AnyExtension, Editor } from '@tiptap/core';
+import type { Plugin } from '@tiptap/pm/state';
+import { EditorView, type NodeViewConstructor } from '@tiptap/pm/view';
 import { PureEditorContent } from '@tiptap/react';
 import { ProsemirrorBinding } from '@tiptap/y-tiptap';
 import { mark } from './mark';
@@ -47,10 +79,14 @@ function wrapMethod<T extends Record<string, unknown>>(
 interface EditorInstanceShape {
   options?: { element?: unknown };
   editorState?: { doc?: { nodeSize?: number; content?: { size?: number } } };
+  view?: PmViewShape;
 }
 
 interface PmViewShape {
-  state?: { doc?: { nodeSize?: number; content?: { size?: number } } };
+  state?: {
+    doc?: { nodeSize?: number; content?: { size?: number } };
+    plugins?: ReadonlyArray<Plugin>;
+  };
   dom?: Element;
 }
 
@@ -79,6 +115,150 @@ let pmUpdateStateCount = 0;
 let pmSetPropsCount = 0;
 let createNodeViewsCount = 0;
 
+let pendingAppendStartMs: number | null = null;
+
+const TARGET_DECORATION_KEY_PREFIXES = ['linkResolutionDecoration$'] as const;
+
+const patchedEditors = new WeakSet<object>();
+const patchedPlugins = new WeakSet<Plugin>();
+
+function lowerDash(s: string): string {
+  return s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+}
+
+function instrumentationDisabled(): boolean {
+  return import.meta.env?.PROD === true;
+}
+
+function wrapNodeViewFactory(nodeName: string, factory: NodeViewConstructor): NodeViewConstructor {
+  if (instrumentationDisabled()) return factory;
+  const dashName = lowerDash(nodeName);
+  const markName = `ok/cold/nodeview-factory-${dashName}`;
+  return function wrappedFactory(...args: Parameters<NodeViewConstructor>) {
+    const start = performance.now();
+    try {
+      return factory(...args);
+    } finally {
+      const dur = performance.now() - start;
+      mark(
+        markName,
+        { nodeType: nodeName, durationMs: Math.round(dur * 1000) / 1000 },
+        { startTime: start, duration: dur },
+      );
+    }
+  } as NodeViewConstructor;
+}
+
+function patchEditorDecorationPlugins(view: EditorView): void {
+  if (instrumentationDisabled()) return;
+  const plugins = view.state.plugins;
+  for (const plugin of plugins) {
+    if (patchedPlugins.has(plugin)) continue;
+    const keyStr = (plugin.spec as { key?: { key?: string } })?.key?.key;
+    if (!keyStr) continue;
+    if (!TARGET_DECORATION_KEY_PREFIXES.some((p) => keyStr.startsWith(p))) continue;
+    const propsBag = plugin.props as { decorations?: (...args: unknown[]) => unknown };
+    const original = propsBag.decorations;
+    if (typeof original !== 'function') {
+      patchedPlugins.add(plugin);
+      continue;
+    }
+    const dashKey = lowerDash(keyStr.replace(/\$\d*$/, '')); // strip the $N counter
+    const markName = `ok/cold/decoration-${dashKey}`;
+    propsBag.decorations = function timedDecorations(this: Plugin, ...args: unknown[]) {
+      const start = performance.now();
+      try {
+        return original.apply(this, args);
+      } finally {
+        const dur = performance.now() - start;
+        mark(
+          markName,
+          { pluginKey: keyStr, durationMs: Math.round(dur * 1000) / 1000 },
+          { startTime: start, duration: dur },
+        );
+      }
+    } as typeof original;
+    patchedPlugins.add(plugin);
+  }
+}
+
+function patchEditorNodeViews(view: EditorView): void {
+  if (instrumentationDisabled()) return;
+  const internal = view as unknown as { _props?: { nodeViews?: Record<string, unknown> } };
+  const nodeViews = internal._props?.nodeViews;
+  if (!nodeViews || typeof nodeViews !== 'object') return;
+  for (const [name, factory] of Object.entries(nodeViews)) {
+    if (typeof factory !== 'function') continue;
+    const tagged = factory as { __okWrapped?: true };
+    if (tagged.__okWrapped === true) continue;
+    const wrapped = wrapNodeViewFactory(name, factory as NodeViewConstructor);
+    (wrapped as unknown as { __okWrapped: true }).__okWrapped = true;
+    nodeViews[name] = wrapped;
+  }
+}
+
+export function wrapExtensionsWithTiming<E extends AnyExtension>(extensions: E[]): E[] {
+  if (instrumentationDisabled()) return extensions;
+  return extensions.map((ext) => {
+    const name = ext.name ?? 'unknown';
+    const dashName = lowerDash(name);
+    return ext.extend({
+      onBeforeCreate(this: { parent?: (() => void) | null }) {
+        const start = performance.now();
+        try {
+          this.parent?.();
+        } finally {
+          const dur = performance.now() - start;
+          mark(
+            `ok/cold/ext-${dashName}-on-before-create`,
+            { ext: name, hook: 'onBeforeCreate', durationMs: Math.round(dur * 1000) / 1000 },
+            { startTime: start, duration: dur },
+          );
+        }
+      },
+      onCreate(this: { parent?: (() => void) | null }) {
+        const start = performance.now();
+        try {
+          this.parent?.();
+        } finally {
+          const dur = performance.now() - start;
+          mark(
+            `ok/cold/ext-${dashName}-on-create`,
+            { ext: name, hook: 'onCreate', durationMs: Math.round(dur * 1000) / 1000 },
+            { startTime: start, duration: dur },
+          );
+        }
+      },
+      onUpdate(this: { parent?: (() => void) | null }) {
+        const start = performance.now();
+        try {
+          this.parent?.();
+        } finally {
+          const dur = performance.now() - start;
+          mark(
+            `ok/cold/ext-${dashName}-on-update`,
+            { ext: name, hook: 'onUpdate', durationMs: Math.round(dur * 1000) / 1000 },
+            { startTime: start, duration: dur },
+          );
+        }
+      },
+      onDestroy(this: { parent?: (() => void) | null }) {
+        const start = performance.now();
+        try {
+          this.parent?.();
+        } finally {
+          const dur = performance.now() - start;
+          mark(
+            `ok/cold/ext-${dashName}-on-destroy`,
+            { ext: name, hook: 'onDestroy', durationMs: Math.round(dur * 1000) / 1000 },
+            { startTime: start, duration: dur },
+          );
+        }
+      },
+    }) as E;
+  });
+}
+
 export function installColdMountInstrumentation(): void {
   if (installed) return;
   installed = true;
@@ -87,13 +267,17 @@ export function installColdMountInstrumentation(): void {
     Editor.prototype as unknown as Record<string, unknown>,
     'mount',
     'ok/cold/editor-mount',
-    (self) => {
+    (self, _r, _s, durationMs) => {
       const ei = self as unknown as EditorInstanceShape;
+      if (!instrumentationDisabled()) {
+        pendingAppendStartMs = performance.now();
+      }
       return {
         elementDefault: (ei.options?.element as Element | undefined)?.nodeName ?? null,
         docSize: docSizeOf(
           ei.editorState as { doc?: { nodeSize?: number; content?: { size?: number } } },
         ),
+        durationMs,
       };
     },
   );
@@ -104,6 +288,11 @@ export function installColdMountInstrumentation(): void {
     'ok/cold/editor-create-view',
     (self) => {
       const ei = self as unknown as EditorInstanceShape;
+      if (!instrumentationDisabled() && !patchedEditors.has(self) && ei.view) {
+        patchEditorDecorationPlugins(ei.view as EditorView);
+        patchEditorNodeViews(ei.view as EditorView);
+        patchedEditors.add(self);
+      }
       return {
         docSize: docSizeOf(
           ei.editorState as { doc?: { nodeSize?: number; content?: { size?: number } } },
@@ -119,6 +308,9 @@ export function installColdMountInstrumentation(): void {
     (self, _r, _s, duration) => {
       createNodeViewsCount += 1;
       const ei = self as unknown as { view?: PmViewShape };
+      if (!instrumentationDisabled() && ei.view) {
+        patchEditorNodeViews(ei.view as EditorView);
+      }
       return {
         docSize: docSizeOf(ei.view as { doc?: { nodeSize?: number; content?: { size?: number } } }),
         seq: createNodeViewsCount,
@@ -198,6 +390,24 @@ export function installColdMountInstrumentation(): void {
               { entryType: entry.entryType, startTime: Math.round(entry.startTime * 1000) / 1000 },
               { startTime: entry.startTime, duration: 0 },
             );
+            if (
+              !instrumentationDisabled() &&
+              name === 'first-paint' &&
+              pendingAppendStartMs !== null
+            ) {
+              const start = pendingAppendStartMs;
+              const dur = Math.max(0, entry.startTime - start);
+              mark(
+                'ok/cold/append-to-paint',
+                {
+                  paintEntryType: entry.entryType,
+                  durationMs: Math.round(dur * 1000) / 1000,
+                  paintAt: Math.round(entry.startTime * 1000) / 1000,
+                },
+                { startTime: start, duration: dur },
+              );
+              pendingAppendStartMs = null;
+            }
           }
         }
       });

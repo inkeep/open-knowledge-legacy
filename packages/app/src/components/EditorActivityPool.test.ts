@@ -7,6 +7,7 @@ import {
   EditorActivityPool,
   getServerRestartRecoveryView,
   LARGE_DOC_CHAR_THRESHOLD,
+  shouldEmitFirstToggle,
 } from './EditorActivityPool';
 
 interface FakeEntry {
@@ -363,6 +364,74 @@ describe('computeEditorMountGate — invariant: at least one editor rendered', (
         }
       }
     }
+  });
+});
+
+describe('shouldEmitFirstToggle — first-toggle mark gate', () => {
+  test('large doc, both editors rendering, not yet emitted → emit', () => {
+    expect(
+      shouldEmitFirstToggle({
+        isLarge: true,
+        renderSource: true,
+        renderVisual: true,
+        hasEmittedFirstToggle: false,
+      }),
+    ).toBe(true);
+  });
+
+  test('large doc, both rendering, already emitted → do NOT emit (one-shot per Activity)', () => {
+    expect(
+      shouldEmitFirstToggle({
+        isLarge: true,
+        renderSource: true,
+        renderVisual: true,
+        hasEmittedFirstToggle: true,
+      }),
+    ).toBe(false);
+  });
+
+  test('large doc, only source rendering (initial cold load in source mode) → do NOT emit', () => {
+    expect(
+      shouldEmitFirstToggle({
+        isLarge: true,
+        renderSource: true,
+        renderVisual: false,
+        hasEmittedFirstToggle: false,
+      }),
+    ).toBe(false);
+  });
+
+  test('large doc, only visual rendering (initial cold load in visual mode) → do NOT emit', () => {
+    expect(
+      shouldEmitFirstToggle({
+        isLarge: true,
+        renderSource: false,
+        renderVisual: true,
+        hasEmittedFirstToggle: false,
+      }),
+    ).toBe(false);
+  });
+
+  test('small doc with both editors mounted (default pre-mount-both) → do NOT emit (AC 3)', () => {
+    expect(
+      shouldEmitFirstToggle({
+        isLarge: false,
+        renderSource: true,
+        renderVisual: true,
+        hasEmittedFirstToggle: false,
+      }),
+    ).toBe(false);
+  });
+
+  test('small doc, both rendered, already emitted (impossible in production but safe) → do NOT emit', () => {
+    expect(
+      shouldEmitFirstToggle({
+        isLarge: false,
+        renderSource: true,
+        renderVisual: true,
+        hasEmittedFirstToggle: true,
+      }),
+    ).toBe(false);
   });
 });
 

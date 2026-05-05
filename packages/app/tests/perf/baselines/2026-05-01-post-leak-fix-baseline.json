@@ -1,0 +1,146 @@
+{
+  "label": "post-leak-fix-baseline",
+  "capturedAt": "2026-05-01T14:53:44.000Z",
+  "commitSha": "d2e649c39d3d5280cb7e5d483c923f7011d37573",
+  "runCount": 3,
+  "scenarios": {
+    "cold-load-big-doc": {
+      "docs": {
+        "README": {
+          "coldLoadMs": {
+            "p50": 1090,
+            "p95": 1097,
+            "runs": [1098, 1090, 1075]
+          },
+          "observedLongestTaskMs": {
+            "p50": 131,
+            "p95": 134,
+            "runs": [129, 134, 131]
+          }
+        },
+        "AGENTS": {
+          "coldLoadMs": {
+            "p50": 1085,
+            "p95": 1091,
+            "runs": [1092, 1062, 1085]
+          },
+          "observedLongestTaskMs": {
+            "p50": 151,
+            "p95": 154,
+            "runs": [154, 151, 148]
+          }
+        },
+        "PROJECT": {
+          "coldLoadMs": {
+            "p50": 4396,
+            "p95": 4433,
+            "runs": [4437, 4396, 4360]
+          },
+          "observedLongestTaskMs": {
+            "p50": 2235,
+            "p95": 2247,
+            "runs": [2248, 2235, 2225]
+          }
+        }
+      }
+    },
+    "cold-pool-warm": {
+      "docs": {
+        "README": {
+          "coldPoolWarmMs": {
+            "p50": 1,
+            "p95": 2,
+            "runs": [1, 2, 1]
+          },
+          "observedLongestTaskMs": {
+            "p50": 175,
+            "p95": 175,
+            "runs": [173, 175, 175]
+          }
+        },
+        "AGENTS": {
+          "coldPoolWarmMs": {
+            "p50": 221,
+            "p95": 224,
+            "runs": [221, 224, 217]
+          },
+          "observedLongestTaskMs": {
+            "p50": 176,
+            "p95": 177,
+            "runs": [169, 176, 177]
+          }
+        },
+        "PROJECT": {
+          "coldPoolWarmMs": {
+            "p50": 3094,
+            "p95": 3110,
+            "runs": [3112, 3075, 3094]
+          },
+          "observedLongestTaskMs": {
+            "p50": 2494,
+            "p95": 2538,
+            "runs": [2543, 2494, 2472]
+          }
+        }
+      }
+    },
+    "mode-toggle": {
+      "docs": {
+        "README": {
+          "modeToggleMs": {
+            "p50": 41,
+            "p95": 43,
+            "runs": [41, 43, 39]
+          }
+        },
+        "AGENTS": {
+          "modeToggleMs": {
+            "p50": 39,
+            "p95": 40,
+            "runs": [40, 37, 39]
+          }
+        },
+        "PROJECT": {
+          "modeToggleMs": {
+            "p50": 167,
+            "p95": 167,
+            "runs": [167, 165, 167]
+          }
+        }
+      }
+    },
+    "warm-switch-cached": {
+      "docs": {
+        "README": {
+          "warmSwitchCachedMs": {
+            "p50": 332,
+            "p95": 334,
+            "runs": [332, 334, 322]
+          }
+        },
+        "AGENTS": {
+          "warmSwitchCachedMs": {
+            "p50": 3413,
+            "p95": 3426,
+            "runs": [3410, 3427, 3413]
+          }
+        },
+        "PROJECT": {
+          "warmSwitchCachedMs": {
+            "p50": 13,
+            "p95": 13,
+            "runs": [10, 13, 13]
+          }
+        }
+      }
+    }
+  },
+  "notes": [
+    "Captured 2026-05-01 against worktree feat/perf-constant-overrides @ d2e649c3 (post-merge integration of origin/main; UndoManager closure-leak fix from PR #397 included).",
+    "Anchored to merge commit that integrates origin/main containing PR #397 (TipTap+Yjs leak fix), PR #408 (perf-harness headless default + ACTIVITY_MOUNT_LIMIT=1 fix), PR #401 (.open-knowledge/ \u2192 .ok/ rename), and PR #403 (RHF settings refactor).",
+    "Supersedes 2026-04-30-post-merge-baseline.json (commitSha 2abe8249) as the pre-G4 anchor for chip-virtualization-and-cv-auto spec measurements.",
+    "Sweep protocol: 4 scenarios \u00d7 3 docs \u00d7 (1 warmup + 3 measurement) = 48 reps. Warmup reps captured but excluded from p50/p95.",
+    "Bun 1.3.13; Vite 8.0.8; dev server VITE_PORT=5179 (this worktree). Repo-rooted content (PR #376 tripwire blocks doc-doubling).",
+    "Doc-tagging: cold-load-big-doc/mode-toggle/warm-switch-cached use scenario-emitted docName/docA. cold-pool-warm uses timestamp-order bucketing (runner ran README\u2192AGENTS\u2192PROJECT in fixed sequence)."
+  ]
+}

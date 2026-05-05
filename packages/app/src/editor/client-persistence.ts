@@ -1,5 +1,10 @@
 import { IndexeddbPersistence } from 'y-indexeddb';
 import * as Y from 'yjs';
+import { mark } from '@/lib/perf';
+
+function instrumentationDisabled(): boolean {
+  return import.meta.env?.PROD === true;
+}
 
 export const UNKNOWN_BRANCH_SENTINEL = '_unknown_';
 
@@ -29,8 +34,19 @@ class ClientPersistenceImpl implements ClientPersistenceProvider {
       );
     }
     this._dbName = `ok-ydoc:${branch}:${serverInstanceId}:${docName}`;
+    const start = instrumentationDisabled() ? 0 : performance.now();
     this._idb = new IndexeddbPersistence(this._dbName, doc);
-    this.whenSynced = this._idb.whenSynced.then(() => this);
+    this.whenSynced = this._idb.whenSynced.then(() => {
+      if (!instrumentationDisabled()) {
+        const end = performance.now();
+        mark(
+          'ok/pool/idb-whensynced',
+          { docName, durationMs: Math.round((end - start) * 1000) / 1000 },
+          { startTime: start, duration: end - start },
+        );
+      }
+      return this;
+    });
   }
 
   get synced(): boolean {
@@ -38,21 +54,45 @@ class ClientPersistenceImpl implements ClientPersistenceProvider {
   }
 
   async destroy(): Promise<void> {
-    await this._idb.destroy();
+    const start = instrumentationDisabled() ? 0 : performance.now();
+    try {
+      await this._idb.destroy();
+    } finally {
+      if (!instrumentationDisabled()) {
+        const end = performance.now();
+        mark(
+          'ok/pool/idb-destroy',
+          { dbName: this._dbName, durationMs: Math.round((end - start) * 1000) / 1000 },
+          { startTime: start, duration: end - start },
+        );
+      }
+    }
   }
 
   async clearData(): Promise<void> {
-    await this._idb.destroy();
-    const dbName = this._dbName;
-    await new Promise<void>((resolve, reject) => {
-      const req = indexedDB.deleteDatabase(dbName);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-      req.onblocked = () => {
-        console.warn(JSON.stringify({ event: 'ok-client-persistence-clear-blocked', dbName }));
-        reject(new Error(`idb-clear-blocked: ${dbName}`));
-      };
-    });
+    const start = instrumentationDisabled() ? 0 : performance.now();
+    try {
+      await this._idb.destroy();
+      const dbName = this._dbName;
+      await new Promise<void>((resolve, reject) => {
+        const req = indexedDB.deleteDatabase(dbName);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+        req.onblocked = () => {
+          console.warn(JSON.stringify({ event: 'ok-client-persistence-clear-blocked', dbName }));
+          reject(new Error(`idb-clear-blocked: ${dbName}`));
+        };
+      });
+    } finally {
+      if (!instrumentationDisabled()) {
+        const end = performance.now();
+        mark(
+          'ok/pool/idb-cleardata',
+          { dbName: this._dbName, durationMs: Math.round((end - start) * 1000) / 1000 },
+          { startTime: start, duration: end - start },
+        );
+      }
+    }
   }
 }
 

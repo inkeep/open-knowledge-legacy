@@ -1,12 +1,14 @@
 import type { Node as PmNode } from '@tiptap/pm/model';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
+import { mark } from '@/lib/perf';
 import {
   getPageListCache,
   type PageListCacheSnapshot,
   subscribePageListCache,
 } from '../page-list-cache';
 import { type MarkInfo, markIdentityKey } from './mark-identity';
+import { MARK_ID_DATA_ATTR } from './mark-identity-decoration';
 
 type PluginStateShape = { version: number };
 
@@ -35,8 +37,11 @@ export function computeLinkResolutionDecorations(
   const decos: Decoration[] = [];
   for (const info of byId.values()) {
     if (!markTypes.has(info.markType)) continue;
-    const attrs = computeAttrs(info, cache);
-    if (attrs === null) continue;
+    const userAttrs = computeAttrs(info, cache);
+    const attrs: Record<string, string> = { [MARK_ID_DATA_ATTR]: info.id };
+    if (userAttrs !== null) {
+      Object.assign(attrs, userAttrs);
+    }
     decos.push(Decoration.inline(info.from, info.to, attrs));
   }
   if (decos.length === 0) return null;
@@ -76,6 +81,11 @@ export function linkResolutionDecorationPlugin(
       },
     },
     view(view) {
+      mark(
+        'ok/render/decoration-merge',
+        { markTypes: Array.from(markTypeSet).join(',') },
+        { startTime: performance.now(), duration: 0 },
+      );
       const unsubscribe = subscribePageListCache(() => {
         view.dispatch(view.state.tr.setMeta(linkResolutionDecorationKey, { refresh: true }));
       });

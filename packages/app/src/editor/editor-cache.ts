@@ -4,6 +4,7 @@ import type { Editor } from '@tiptap/core';
 import { yUndoPluginKey } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 import { mark } from '@/lib/perf';
+import { readNumericOverride } from '@/lib/perf/env-override';
 
 function readEditorUndoManager(editor: Editor): { restore?: unknown } | null {
   try {
@@ -20,11 +21,11 @@ function readEditorUndoManager(editor: Editor): { restore?: unknown } | null {
 
 export const CACHE_ENABLED = true;
 
-export const MAX_CACHE = 10;
+export const MAX_CACHE = readNumericOverride('MAX_CACHE', 10);
 
-export const VIEW_COUNT_CACHE_THRESHOLD = 50;
+export const VIEW_COUNT_CACHE_THRESHOLD = readNumericOverride('VIEW_COUNT_CACHE_THRESHOLD', 50);
 
-export const BYTES_CACHE_THRESHOLD = 500_000;
+export const BYTES_CACHE_THRESHOLD = readNumericOverride('BYTES_CACHE_THRESHOLD', 500_000);
 
 interface SizeStats {
   viewCount: number;
@@ -141,6 +142,12 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
 
   const existing = tiptapCache.get(docName);
   if (existing) {
+    mark('ok/cache/reparent-start', {
+      docName,
+      kind: 'tiptap',
+      viewCount: sizeStats?.viewCount ?? -1,
+      bytes: sizeStats?.bytes ?? -1,
+    });
     reparentTiptapDom(existing, container);
     existing.activeMountKey = docName;
     touchLru(tiptapLru, docName);
@@ -150,6 +157,12 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
         existing.editor.commands.focus();
       } catch {}
     }
+    mark('ok/cache/reparent-end', {
+      docName,
+      kind: 'tiptap',
+      viewCount: sizeStats?.viewCount ?? -1,
+      bytes: sizeStats?.bytes ?? -1,
+    });
     mark('ok/cache/hit', { docName, kind: 'tiptap' });
     if (sizeStats) {
       mark('ok/cold/editor-mount-stats', {
@@ -304,6 +317,12 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
 
   const existing = cmCache.get(docName);
   if (existing) {
+    mark('ok/cache/reparent-start', {
+      docName,
+      kind: 'cm',
+      viewCount: sizeStats?.viewCount ?? -1,
+      bytes: sizeStats?.bytes ?? -1,
+    });
     reparentCmDom(existing, container);
     existing.activeMountKey = docName;
     touchLru(cmLru, docName);
@@ -313,6 +332,12 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
         existing.view.focus();
       } catch {}
     }
+    mark('ok/cache/reparent-end', {
+      docName,
+      kind: 'cm',
+      viewCount: sizeStats?.viewCount ?? -1,
+      bytes: sizeStats?.bytes ?? -1,
+    });
     mark('ok/cache/hit', { docName, kind: 'cm' });
     if (sizeStats) {
       mark('ok/cold/editor-mount-stats', {

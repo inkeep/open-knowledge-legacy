@@ -1,0 +1,145 @@
+{
+  "label": "post-merge-baseline",
+  "capturedAt": "2026-04-30T17:37:55.698Z",
+  "commitSha": "2abe82498bf35344a6027774edb340dafe1ba100",
+  "runCount": 3,
+  "scenarios": {
+    "cold-pool-warm": {
+      "docs": {
+        "README": {
+          "coldPoolWarmMs": {
+            "p50": 18,
+            "p95": 19,
+            "runs": [19, 18, 18]
+          },
+          "observedLongestTaskMs": {
+            "p50": 194,
+            "p95": 195,
+            "runs": [137, 195, 194]
+          }
+        },
+        "AGENTS": {
+          "coldPoolWarmMs": {
+            "p50": 247,
+            "p95": 249,
+            "runs": [247, 235, 249]
+          },
+          "observedLongestTaskMs": {
+            "p50": 190,
+            "p95": 204,
+            "runs": [190, 204, 188]
+          }
+        },
+        "PROJECT": {
+          "coldPoolWarmMs": {
+            "p50": 3102,
+            "p95": 3144,
+            "runs": [3071, 3144, 3102]
+          },
+          "observedLongestTaskMs": {
+            "p50": 2527,
+            "p95": 2561,
+            "runs": [2489, 2561, 2527]
+          }
+        }
+      }
+    },
+    "cold-load-big-doc": {
+      "docs": {
+        "README": {
+          "coldLoadMs": {
+            "p50": 1172,
+            "p95": 1189,
+            "runs": [1172, 1161, 1189]
+          },
+          "observedLongestTaskMs": {
+            "p50": 138,
+            "p95": 171,
+            "runs": [138, 137, 171]
+          }
+        },
+        "AGENTS": {
+          "coldLoadMs": {
+            "p50": 1186,
+            "p95": 1193,
+            "runs": [1193, 1161, 1186]
+          },
+          "observedLongestTaskMs": {
+            "p50": 174,
+            "p95": 182,
+            "runs": [165, 182, 174]
+          }
+        },
+        "PROJECT": {
+          "coldLoadMs": {
+            "p50": 4636,
+            "p95": 4697,
+            "runs": [4697, 4636, 4437]
+          },
+          "observedLongestTaskMs": {
+            "p50": 2293,
+            "p95": 2294,
+            "runs": [2293, 2294, 2279]
+          }
+        }
+      }
+    },
+    "warm-switch-cached": {
+      "docs": {
+        "README": {
+          "warmSwitchCachedMs": {
+            "p50": 346,
+            "p95": 353,
+            "runs": [346, 302, 353]
+          }
+        },
+        "AGENTS": {
+          "warmSwitchCachedMs": {
+            "p50": 3437,
+            "p95": 3492,
+            "runs": [2588, 3492, 3437]
+          }
+        },
+        "PROJECT": {
+          "warmSwitchCachedMs": {
+            "p50": 31,
+            "p95": 69,
+            "runs": [31, 25, 69]
+          }
+        }
+      }
+    },
+    "mode-toggle": {
+      "docs": {
+        "README": {
+          "modeToggleMs": {
+            "p50": 38,
+            "p95": 41,
+            "runs": [35, 41, 38]
+          }
+        },
+        "AGENTS": {
+          "modeToggleMs": {
+            "p50": 37,
+            "p95": 39,
+            "runs": [39, 37, 33]
+          }
+        },
+        "PROJECT": {
+          "modeToggleMs": {
+            "p50": 175,
+            "p95": 176,
+            "runs": [175, 176, 173]
+          }
+        }
+      }
+    }
+  },
+  "notes": [
+    "Captured 2026-04-30 against worktree feat/perf-constant-overrides @ 2abe8249 (post-merge of origin/main onto Tier A).",
+    "Anchored to merge of PR #311 (CRDT IDB persistence + buffer-and-replay) and PR #376 (persistence tripwire), +30 commits.",
+    "Replaces 2026-04-23 anchor (cfb6ef2d) as the reference for all post-merge perf comparisons.",
+    "Bun 1.3.11; Vite 8.0.8; isolated content dir not required (PR #376 tripwire blocks doc-doubling).",
+    "Headline diffs vs 2026-04-23: cold-load-big-doc PROJECT 5839 -> 4636 ms (-21%); AGENTS 1966 -> 1186 (-40%); cold-pool-warm AGENTS 655 -> 247 (-62%); warm-switch-cached PROJECT 1007 -> 31 (-97%); regression flagged on warm-switch-cached AGENTS 1014 -> 3437 (+239%) likely from IDB-init overhead in eviction-walk, not reparent itself."
+  ]
+}

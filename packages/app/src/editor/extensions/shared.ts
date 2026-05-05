@@ -1,4 +1,5 @@
 import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core';
+import { Extension } from '@tiptap/core';
 import FileHandler from '@tiptap/extension-file-handler';
 import { KeyboardNav } from '../block-ux/keyboard-nav';
 import { uploadAndInsert } from '../image-upload/index.ts';
@@ -6,6 +7,7 @@ import { getComponentItems, getInlineComponentItems } from '../slash-command/com
 import { slashCommandItems } from '../slash-command/items';
 import { BlockMover } from './block-mover';
 import { BridgeIdPlugin } from './bridge-id-plugin';
+import { chunkWrapperDecorationPlugin } from './chunk-wrapper-decoration';
 import { BlockDragHandle } from './drag-handle';
 import { FootnoteAnchorScroll } from './footnote-anchor-scroll';
 import { HeadingAnchors } from './heading-anchors';
@@ -62,4 +64,10 @@ export const sharedExtensions = [
   KeyboardNav,
   BridgeIdPlugin,
   SelectionStatePlugin,
+  Extension.create({
+    name: 'chunkWrapperDecoration',
+    addProseMirrorPlugins() {
+      return [chunkWrapperDecorationPlugin()];
+    },
+  }),
 ];

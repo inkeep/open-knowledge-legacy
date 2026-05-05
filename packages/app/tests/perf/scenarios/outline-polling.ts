@@ -1,3 +1,4 @@
+import { installLongtaskObserver } from '../lib/longtask-observer';
 import { defineScenario } from '../lib/scenario';
 
 const DOC = 'README';
@@ -11,6 +12,8 @@ export default defineScenario({
 
   async run(ctx) {
     const { page, opts } = ctx;
+
+    await installLongtaskObserver(page);
 
     const headingRequestsAt: number[] = [];
     page.on('response', (resp) => {

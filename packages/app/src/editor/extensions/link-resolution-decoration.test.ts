@@ -99,6 +99,7 @@ describe('computeLinkResolutionDecorations (pure helper)', () => {
     expect(found[0]?.from).toBe(1);
     expect(found[0]?.to).toBe(6);
     expect(found[0]?.type.attrs?.['data-resolution-state']).toBe('external');
+    expect(found[0]?.type.attrs?.['data-mark-id']).toBe('m1');
   });
 
   test('non-tracked markType → skipped (no decoration for that mark)', () => {
@@ -111,7 +112,7 @@ describe('computeLinkResolutionDecorations (pure helper)', () => {
     expect(result).toBeNull();
   });
 
-  test('computeAttrs returning null → that mark is skipped', () => {
+  test('computeAttrs returning null → mark gets data-mark-id baseline only (D6 merged-plugin null-attrs fallback)', () => {
     const doc = buildDoc([
       { text: 'first', marks: [linkMark('https://a.com')] },
       { text: 'second', marks: [linkMark('https://b.com')] },
@@ -125,7 +126,20 @@ describe('computeLinkResolutionDecorations (pure helper)', () => {
     const result = computeLinkResolutionDecorations(doc, byId, trackedTypes, computeAttrs, null);
     expect(result).not.toBeNull();
     const found = (result as DecorationSet).find();
-    expect(found.length).toBe(1);
+    expect(found.length).toBe(2);
+    const m1 = found.find((d) => (d as unknown as { from: number }).from === 1);
+    expect(m1).toBeDefined();
+    expect(
+      (m1 as unknown as { type: { attrs?: Record<string, string> } }).type.attrs?.['data-mark-id'],
+    ).toBe('m1');
+    expect(
+      (m1 as unknown as { type: { attrs?: Record<string, string> } }).type.attrs?.['data-x'],
+    ).toBe('1');
+    const m2 = found.find((d) => (d as unknown as { from: number }).from === 6);
+    expect(m2).toBeDefined();
+    expect(
+      (m2 as unknown as { type: { attrs?: Record<string, string> } }).type.attrs?.['data-mark-id'],
+    ).toBe('m2');
   });
 
   test('cache is forwarded verbatim to computeAttrs', () => {

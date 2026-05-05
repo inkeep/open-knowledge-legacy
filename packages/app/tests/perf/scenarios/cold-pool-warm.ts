@@ -1,4 +1,5 @@
 import { markerFor } from '../lib/doc-markers';
+import { installLongtaskObserver, readLongtasks } from '../lib/longtask-observer';
 import { defineScenario } from '../lib/scenario';
 
 const BIG_DOC = process.env.OK_PERF_BIG_DOC ?? 'PROJECT';
@@ -58,18 +59,7 @@ export default defineScenario({
   async run(ctx) {
     const { page, opts } = ctx;
 
-    await page.addInitScript(() => {
-      const store: { startTime: number; duration: number; name: string }[] = [];
-      (globalThis as unknown as { __okScenLongTasks: typeof store }).__okScenLongTasks = store;
-      try {
-        const obs = new PerformanceObserver((list) => {
-          for (const e of list.getEntries()) {
-            store.push({ startTime: e.startTime, duration: e.duration, name: e.name });
-          }
-        });
-        obs.observe({ type: 'longtask', buffered: true });
-      } catch {}
-    });
+    await installLongtaskObserver(page);
 
     await page.goto(`${opts.target}/#/${encodeURIComponent(WARM_DOC)}`, {
       waitUntil: 'domcontentloaded',
@@ -156,14 +146,7 @@ export default defineScenario({
     ctx.recordMetric('coldPoolWarmMs', coldPoolWarmMs);
     ctx.note(`Step 4: revisited ${BIG_DOC} in ${coldPoolWarmMs}ms`);
 
-    const longTasks = await page.evaluate(() => {
-      const store = (
-        globalThis as unknown as {
-          __okScenLongTasks?: { startTime: number; duration: number; name: string }[];
-        }
-      ).__okScenLongTasks;
-      return store ?? [];
-    });
+    const longTasks = await readLongtasks(page);
     const longestTaskMs = longTasks.reduce((m, t) => Math.max(m, t.duration), 0);
     const tasksInRevisit = longTasks.filter((t) => t.startTime >= revisitStartPerf);
     const longestRevisitTaskMs = tasksInRevisit.reduce((m, t) => Math.max(m, t.duration), 0);

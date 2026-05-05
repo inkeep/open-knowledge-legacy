@@ -87,6 +87,10 @@ export async function traceStart(cdp: CDPSession): Promise<TraceToken> {
   return { cdp, events, handler };
 }
 
+/**
+ * Flush + aggregate. After this returns, `dataCollected` events are no
+ * longer captured (handler detached), and the CDP Tracing domain is closed.
+ */
 export async function traceEnd(token: TraceToken): Promise<TraceSummary> {
   const { cdp, events, handler } = token;
 
@@ -222,4 +226,76 @@ export function aggregateTrace(events: readonly CdpTraceEvent[]): TraceSummary {
 function roundMs(v: number): number {
   if (!Number.isFinite(v)) return 0;
   return Math.round(v * 100) / 100;
+}
+
+export interface PerfMetricsDelta {
+  layoutMs: number;
+  recalcStyleMs: number;
+  scriptMs: number;
+  taskMs: number;
+}
+
+export type PerfMetricsSnapshot = ReadonlyMap<string, number>;
+
+export interface MinimalCdpClient {
+  send(method: 'Performance.enable'): Promise<unknown>;
+  send(
+    method: 'Performance.getMetrics',
+  ): Promise<{ metrics: Array<{ name: string; value: number }> }>;
+  // biome-ignore lint/suspicious/noExplicitAny: pass-through signature; only the two overloads above are exercised by this helper.
+  send(method: string, params?: unknown): Promise<any>;
+}
+
+export async function enablePerformanceMetrics(cdp: MinimalCdpClient): Promise<void> {
+  await cdp.send('Performance.enable');
+}
+
+export async function getPerfMetricsSnapshot(cdp: MinimalCdpClient): Promise<PerfMetricsSnapshot> {
+  const result = await cdp.send('Performance.getMetrics');
+  const map = new Map<string, number>();
+  for (const m of result.metrics) {
+    if (typeof m?.name === 'string' && typeof m?.value === 'number') {
+      map.set(m.name, m.value);
+    }
+  }
+  return map;
+}
+
+function deltaSeconds(end: PerfMetricsSnapshot, start: PerfMetricsSnapshot, name: string): number {
+  const e = end.get(name);
+  const s = start.get(name);
+  if (typeof e !== 'number' || typeof s !== 'number') return 0;
+  return Math.max(0, e - s);
+}
+
+export function computePerfMetricsDelta(
+  start: PerfMetricsSnapshot,
+  end: PerfMetricsSnapshot,
+): PerfMetricsDelta {
+  return {
+    layoutMs: roundMs(deltaSeconds(end, start, 'LayoutDuration') * 1000),
+    recalcStyleMs: roundMs(deltaSeconds(end, start, 'RecalcStyleDuration') * 1000),
+    scriptMs: roundMs(deltaSeconds(end, start, 'ScriptDuration') * 1000),
+    taskMs: roundMs(deltaSeconds(end, start, 'TaskDuration') * 1000),
+  };
+}
+
+export async function capturePerfMetricsWindow<T>(
+  cdp: MinimalCdpClient,
+  fn: () => Promise<T>,
+): Promise<{ result: T; deltas: PerfMetricsDelta }> {
+  const start = await getPerfMetricsSnapshot(cdp);
+  let result: T;
+  try {
+    result = await fn();
+  } catch (err) {
+    const end = await getPerfMetricsSnapshot(cdp);
+    const deltas = computePerfMetricsDelta(start, end);
+    if (err && typeof err === 'object') {
+      (err as { perfMetricsDeltas?: PerfMetricsDelta }).perfMetricsDeltas = deltas;
+    }
+    throw err;
+  }
+  const end = await getPerfMetricsSnapshot(cdp);
+  return { result, deltas: computePerfMetricsDelta(start, end) };
 }

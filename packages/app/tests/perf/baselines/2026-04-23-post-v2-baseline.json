@@ -1,0 +1,142 @@
+{
+  "label": "post-v2-baseline",
+  "capturedAt": "2026-04-23T09:07:06.969Z",
+  "commitSha": "cfb6ef2d",
+  "runCount": 3,
+  "scenarios": {
+    "cold-pool-warm": {
+      "docs": {
+        "README": {
+          "coldPoolWarmMs": {
+            "p50": 2,
+            "p95": 3,
+            "runs": [2, 3, 1]
+          },
+          "observedLongestTaskMs": {
+            "p50": 403,
+            "p95": 406,
+            "runs": [406, 403, 402]
+          }
+        },
+        "AGENTS": {
+          "coldPoolWarmMs": {
+            "p50": 655,
+            "p95": 657,
+            "runs": [655, 654, 657]
+          },
+          "observedLongestTaskMs": {
+            "p50": 404,
+            "p95": 408,
+            "runs": [408, 403, 404]
+          }
+        },
+        "PROJECT": {
+          "coldPoolWarmMs": {
+            "p50": 2897,
+            "p95": 2931,
+            "runs": [2882, 2897, 2931]
+          },
+          "observedLongestTaskMs": {
+            "p50": 2346,
+            "p95": 2398,
+            "runs": [2335, 2346, 2398]
+          }
+        }
+      }
+    },
+    "cold-load-big-doc": {
+      "docs": {
+        "README": {
+          "coldLoadMs": {
+            "p50": 1945,
+            "p95": 2155,
+            "runs": [2155, 1945, 1745]
+          },
+          "observedLongestTaskMs": {
+            "p50": 441,
+            "p95": 483,
+            "runs": [441, 434, 483]
+          }
+        },
+        "AGENTS": {
+          "coldLoadMs": {
+            "p50": 1966,
+            "p95": 2063,
+            "runs": [1817, 1966, 2063]
+          },
+          "observedLongestTaskMs": {
+            "p50": 444,
+            "p95": 447,
+            "runs": [431, 444, 447]
+          }
+        },
+        "PROJECT": {
+          "coldLoadMs": {
+            "p50": 5839,
+            "p95": 6351,
+            "runs": [5722, 6351, 5839]
+          },
+          "observedLongestTaskMs": {
+            "p50": 2191,
+            "p95": 2216,
+            "runs": [2147, 2216, 2191]
+          }
+        }
+      }
+    },
+    "warm-switch-cached": {
+      "docs": {
+        "README": {
+          "warmSwitchCachedMs": {
+            "p50": 1005,
+            "p95": 1016,
+            "runs": [1016, 1005, 996]
+          }
+        },
+        "AGENTS": {
+          "warmSwitchCachedMs": {
+            "p50": 1014,
+            "p95": 1046,
+            "runs": [1014, 1046, 1007]
+          }
+        },
+        "PROJECT": {
+          "warmSwitchCachedMs": {
+            "p50": 1007,
+            "p95": 1008,
+            "runs": [1007, 1008, 998]
+          }
+        }
+      }
+    },
+    "mode-toggle": {
+      "docs": {
+        "README": {
+          "modeToggleMs": {
+            "p50": 79,
+            "p95": 80,
+            "runs": [75, 80, 79]
+          }
+        },
+        "AGENTS": {
+          "modeToggleMs": {
+            "p50": 53,
+            "p95": 54,
+            "runs": [54, 53, 53]
+          }
+        },
+        "PROJECT": {
+          "modeToggleMs": {
+            "p50": 193,
+            "p95": 207,
+            "runs": [207, 193, 185]
+          }
+        }
+      }
+    }
+  },
+  "notes": [
+    "M0.5 anchor — first post-PR-#237 measurement; see specs/2026-04-22-cap-calibration-probes/evidence/m0.5-post-v2-baseline.md",
+    "Each (scenario, doc) cell is the median (p50) and p95 of 3 reps captured 2026-04-23 against localhost:5173 dev server"
+  ]
+}

@@ -2,9 +2,49 @@ import { describe, expect, test } from 'bun:test';
 import {
   aggregateTrace,
   type CdpTraceEvent,
+  capturePerfMetricsWindow,
+  computePerfMetricsDelta,
+  enablePerformanceMetrics,
+  getPerfMetricsSnapshot,
   LONG_TASK_THRESHOLD_MS,
+  type MinimalCdpClient,
   TRACE_CATEGORIES,
 } from './cdp-tracer';
+
+function mockCdp(snapshots: Array<Record<string, number>>): {
+  client: MinimalCdpClient;
+  enableCalls: number;
+  getMetricsCalls: number;
+} {
+  let enableCalls = 0;
+  let getMetricsCalls = 0;
+  const client: MinimalCdpClient = {
+    // biome-ignore lint/suspicious/noExplicitAny: minimal mock
+    async send(method: string, _params?: unknown): Promise<any> {
+      if (method === 'Performance.enable') {
+        enableCalls += 1;
+        return {};
+      }
+      if (method === 'Performance.getMetrics') {
+        const snap = snapshots[getMetricsCalls] ?? {};
+        getMetricsCalls += 1;
+        return {
+          metrics: Object.entries(snap).map(([name, value]) => ({ name, value })),
+        };
+      }
+      throw new Error(`unexpected CDP method ${method}`);
+    },
+  };
+  return {
+    client,
+    get enableCalls() {
+      return enableCalls;
+    },
+    get getMetricsCalls() {
+      return getMetricsCalls;
+    },
+  };
+}
 
 function ev(
   name: string,
@@ -164,5 +204,90 @@ describe('aggregateTrace', () => {
     expect(TRACE_CATEGORIES).toContain('blink.user_timing');
     expect(TRACE_CATEGORIES).toContain('devtools.timeline');
     expect(TRACE_CATEGORIES).toContain('disabled-by-default-devtools.timeline');
+  });
+});
+
+describe('Performance.getMetrics window helpers', () => {
+  test('enablePerformanceMetrics calls Performance.enable once', async () => {
+    const m = mockCdp([]);
+    await enablePerformanceMetrics(m.client);
+    expect(m.enableCalls).toBe(1);
+  });
+
+  test('getPerfMetricsSnapshot returns a Map keyed by metric name', async () => {
+    const m = mockCdp([
+      { LayoutDuration: 1.5, RecalcStyleDuration: 0.5, ScriptDuration: 2.0, TaskDuration: 4.0 },
+    ]);
+    const snap = await getPerfMetricsSnapshot(m.client);
+    expect(snap.get('LayoutDuration')).toBe(1.5);
+    expect(snap.get('RecalcStyleDuration')).toBe(0.5);
+    expect(snap.get('ScriptDuration')).toBe(2.0);
+    expect(snap.get('TaskDuration')).toBe(4.0);
+  });
+
+  test('computePerfMetricsDelta converts seconds to ms and returns 4 axes', () => {
+    const start = new Map([
+      ['LayoutDuration', 1.0],
+      ['RecalcStyleDuration', 0.1],
+      ['ScriptDuration', 2.0],
+      ['TaskDuration', 3.5],
+    ]);
+    const end = new Map([
+      ['LayoutDuration', 1.5],
+      ['RecalcStyleDuration', 0.6],
+      ['ScriptDuration', 4.0],
+      ['TaskDuration', 7.0],
+    ]);
+    const delta = computePerfMetricsDelta(start, end);
+    expect(delta.layoutMs).toBe(500);
+    expect(delta.recalcStyleMs).toBe(500);
+    expect(delta.scriptMs).toBe(2000);
+    expect(delta.taskMs).toBe(3500);
+  });
+
+  test('computePerfMetricsDelta clamps negative deltas to zero', () => {
+    const start = new Map([['LayoutDuration', 5.0]]);
+    const end = new Map([['LayoutDuration', 3.0]]); // page reload simulation
+    const delta = computePerfMetricsDelta(start, end);
+    expect(delta.layoutMs).toBe(0);
+  });
+
+  test('computePerfMetricsDelta returns 0 for missing metrics', () => {
+    const empty = new Map<string, number>();
+    const delta = computePerfMetricsDelta(empty, empty);
+    expect(delta.layoutMs).toBe(0);
+    expect(delta.recalcStyleMs).toBe(0);
+    expect(delta.scriptMs).toBe(0);
+    expect(delta.taskMs).toBe(0);
+  });
+
+  test('capturePerfMetricsWindow brackets fn() with start + end snapshots', async () => {
+    const m = mockCdp([
+      { LayoutDuration: 1.0, RecalcStyleDuration: 0.1, ScriptDuration: 2.0, TaskDuration: 3.0 },
+      { LayoutDuration: 1.5, RecalcStyleDuration: 0.3, ScriptDuration: 4.0, TaskDuration: 6.0 },
+    ]);
+    const { result, deltas } = await capturePerfMetricsWindow(m.client, async () => 'work-result');
+    expect(result).toBe('work-result');
+    expect(deltas.layoutMs).toBe(500);
+    expect(deltas.recalcStyleMs).toBe(200);
+    expect(deltas.scriptMs).toBe(2000);
+    expect(deltas.taskMs).toBe(3000);
+    expect(m.getMetricsCalls).toBe(2);
+  });
+
+  test('capturePerfMetricsWindow rethrows on fn rejection but attaches deltas to err', async () => {
+    const m = mockCdp([{ LayoutDuration: 1.0 }, { LayoutDuration: 1.5 }]);
+    const err = await capturePerfMetricsWindow(m.client, async () => {
+      throw new Error('boom');
+    }).catch((e: Error & { perfMetricsDeltas?: { layoutMs: number } }) => e);
+    expect(err.message).toBe('boom');
+    expect(err.perfMetricsDeltas?.layoutMs).toBe(500);
+    expect(m.getMetricsCalls).toBe(2);
+  });
+
+  test('capturePerfMetricsWindow snapshot count is exactly 2 even on resolution', async () => {
+    const m = mockCdp([{ LayoutDuration: 0 }, { LayoutDuration: 0 }]);
+    await capturePerfMetricsWindow(m.client, async () => 42);
+    expect(m.getMetricsCalls).toBe(2); // not 1, not 3
   });
 });

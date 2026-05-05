@@ -1,4 +1,5 @@
 import { markerFor } from '../lib/doc-markers';
+import { installLongtaskObserver } from '../lib/longtask-observer';
 import { defineScenario } from '../lib/scenario';
 
 const BIG_DOC = process.env.OK_PERF_BIG_DOC ?? 'PROJECT';
@@ -12,6 +13,8 @@ export default defineScenario({
 
   async run(ctx) {
     const { page, opts } = ctx;
+
+    await installLongtaskObserver(page);
 
     await page.goto(`${opts.target}/#/${encodeURIComponent(BIG_DOC)}`, {
       waitUntil: 'domcontentloaded',
