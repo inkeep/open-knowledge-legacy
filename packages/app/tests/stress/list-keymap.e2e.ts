@@ -135,6 +135,51 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
     expect(ytext).not.toMatch(/^ {2}/m);
   });
 
+  test('Enter at end of a non-empty bullet item creates a new bullet', async ({ page, api }) => {
+    const docName = uniqueDocName('enter-bullet');
+    await openDoc(api, page, docName);
+    await seedMarkdown(api, page, docName, '- sf\n');
+
+    await page.locator('.ProseMirror').focus();
+    await page.locator('.ProseMirror li').first().click();
+    await page.keyboard.press('End');
+    await waitForPmSelectionInNode(page, 'listItem');
+
+    await page.keyboard.press('Enter');
+    await expect.poll(() => getYText(page)).toMatch(/^- sf\n- ?$/m);
+  });
+
+  test('Enter at end of a non-empty ordered item creates a new ordered item', async ({
+    page,
+    api,
+  }) => {
+    const docName = uniqueDocName('enter-ordered');
+    await openDoc(api, page, docName);
+    await seedMarkdown(api, page, docName, '1. sf\n');
+
+    await page.locator('.ProseMirror').focus();
+    await page.locator('.ProseMirror li').first().click();
+    await page.keyboard.press('End');
+    await waitForPmSelectionInNode(page, 'listItem');
+
+    await page.keyboard.press('Enter');
+    await expect.poll(() => getYText(page)).toMatch(/^1\. sf\n2\. ?$/m);
+  });
+
+  test('Enter at end of a task item creates a new task item', async ({ page, api }) => {
+    const docName = uniqueDocName('enter-task');
+    await openDoc(api, page, docName);
+    await seedMarkdown(api, page, docName, '- [ ] sf\n');
+
+    await page.locator('.ProseMirror').focus();
+    await page.locator('.ProseMirror li').first().click();
+    await page.keyboard.press('End');
+    await waitForPmSelectionInNode(page, 'listItem');
+
+    await page.keyboard.press('Enter');
+    await expect.poll(() => getYText(page)).toMatch(/^- \[ \] sf\n- \[ \] ?$/m);
+  });
+
   test.fixme('Tab inside a codeBlock inserts a literal tab character', async ({ page, api }) => {
     const docName = uniqueDocName('tab-codeblock');
     await openDoc(api, page, docName);

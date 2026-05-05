@@ -7,6 +7,20 @@
       "inline": false,
       "atom": false
     },
+    "listItem": {
+      "attrs": {
+        "checked": {
+          "hasDefault": true
+        },
+        "spread": {
+          "hasDefault": true
+        }
+      },
+      "content": "paragraph block*",
+      "group": "",
+      "inline": false,
+      "atom": false
+    },
     "doc": {
       "attrs": {},
       "content": "block+",
@@ -226,20 +240,6 @@
       },
       "content": "listItem+",
       "group": "block list",
-      "inline": false,
-      "atom": false
-    },
-    "listItem": {
-      "attrs": {
-        "checked": {
-          "hasDefault": true
-        },
-        "spread": {
-          "hasDefault": true
-        }
-      },
-      "content": "paragraph block*",
-      "group": "",
       "inline": false,
       "atom": false
     },

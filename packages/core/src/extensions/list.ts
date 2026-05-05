@@ -258,7 +258,6 @@ export const ListItemNode = Node.create({
   name: 'listItem',
   content: 'paragraph block*',
   defining: true,
-  priority: 60,
 
   addAttributes() {
     return {
