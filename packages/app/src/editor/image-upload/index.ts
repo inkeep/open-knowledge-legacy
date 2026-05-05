@@ -8,13 +8,11 @@ import {
   WIKI_EMBED_EXTENSIONS,
 } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { toast } from 'sonner';
 import { getEditorDocName } from '../extensions/doc-context.ts';
 import { buildUnresolvedWikiLinkAttrs } from '../extensions/wiki-link-helpers.ts';
-import { getDescriptor } from '../registry/index.ts';
-import { focusInsertedComponent } from '../slash-command/component-items.tsx';
 
 const uploadPluginKey = new PluginKey<UploadPluginState>('imageUpload');
 
@@ -286,7 +284,6 @@ export async function uploadAndInsert(
       return;
     }
     const childData = buildMediaJsxNodeData(shape.kind, resolvedSrc);
-    const componentName = childData.attrs.componentName;
 
     editor
       .chain()
@@ -296,8 +293,16 @@ export async function uploadAndInsert(
       })
       .focus()
       .insertContentAt(mappedPos, childData)
+      .command(({ tr: chainTr, dispatch }) => {
+        if (!dispatch) return true;
+        const realPos = chainTr.mapping.map(mappedPos);
+        const inserted = chainTr.doc.nodeAt(realPos);
+        if (inserted?.type.name === 'jsxComponent') {
+          chainTr.setSelection(NodeSelection.create(chainTr.doc, realPos));
+        }
+        return true;
+      })
       .run();
-    focusInsertedComponent(editor, mappedPos, getDescriptor(componentName));
     return;
   }
 

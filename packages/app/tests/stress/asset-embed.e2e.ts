@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
-import { expect, test, waitForActiveProviderSynced as waitForProvider } from './_helpers';
+import {
+  createPngBuffer,
+  expect,
+  test,
+  waitForActiveProviderSynced as waitForProvider,
+} from './_helpers';
 
 async function dropFileIntoEditor(
   page: Page,
@@ -49,12 +54,7 @@ async function getSourceText(page: Page): Promise<string> {
 }
 
 const FAKE_PDF_HEADER = '%PDF-1.4\n%fake pdf bytes for e2e test\n';
-const TINY_PNG = Array.from(
-  Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAABJRElEQrkJggg==',
-    'base64',
-  ),
-);
+const TINY_PNG = Array.from(createPngBuffer('asset-embed'));
 
 test.describe('asset-embed — drop UX (SPEC §6 FR-1, FR-1a, FR-2, FR-8)', () => {
   let docName: string;
