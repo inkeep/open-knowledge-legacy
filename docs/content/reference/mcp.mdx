@@ -1,4 +1,46 @@
 ---
-title: MCP tools
-description: Reference for the MCP tools Open Knowledge exposes — read_document, write_document, edit_document, search, and exec.
+title: MCP
+description: Tools the Open Knowledge MCP server exposes to AI agents.
 ---
+
+The MCP server gives AI agents structured access to your knowledge base. Most tools work whether or not the editor is open. Write tools require the editor — Open Knowledge starts it for you on the first write.
+
+## Tools
+
+| Tool | Purpose |
+| --- | --- |
+| `read_document` | Read a doc with its frontmatter, backlinks, and recent history |
+| `search` | Full-text search |
+| `list_documents` | List every doc |
+| `exec` | Read-only shell (`ls`, `cat`, `grep`, `find`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`) |
+| `write_document` | Write a full doc, including frontmatter |
+| `edit_document` | Find-and-replace inside a doc body |
+| `delete_document` | Delete a doc |
+| `rename_document` | Rename a doc and rewrite its inbound links |
+| `rename_folder` | Rename a folder and rewrite every affected link |
+| `get_history` | Version timeline for a doc |
+| `save_version` | Snapshot the project at a named checkpoint |
+| `rollback_to_version` | Restore a doc to an earlier version |
+| `get_backlinks` / `get_forward_links` | Wiki-link graph queries |
+| `get_hubs` / `get_orphans` / `get_dead_links` | Link-graph diagnostics |
+| `suggest_links` | Suggest missing wiki-links for a page |
+| `ingest` | Capture an external URL or file as reference material |
+| `research` | Gather sources and write provisional findings |
+| `consolidate` | Promote research into a canonical article |
+| `get_config` / `set_config` | Read or update `.ok/config.yml` |
+| `set_folder_rule` | Set default frontmatter for a folder |
+| `write_template` / `delete_template` | Manage `.ok/templates/` |
+
+## Editing frontmatter
+
+Use `write_document` for frontmatter edits — pass the full document, including the `---\n…\n---` block. `edit_document` is body-only and refuses find/replace patterns that touch frontmatter.
+
+## Edit summaries
+
+The five write tools (`write_document`, `edit_document`, `rename_document`, `rename_folder`, `rollback_to_version`) accept an optional `summary` describing the intent of the edit — e.g. `"Fixed token-refresh race"`. Summaries appear on the document's timeline so readers can scan recent agent activity.
+
+Cap is 80 characters. Avoid secrets and PII; summaries persist to git history.
+
+## Preview links
+
+Every tool that returns a docName also returns a `previewUrl` pointing at that doc in the editor. Open it once per session — the editor refocuses automatically on subsequent writes.

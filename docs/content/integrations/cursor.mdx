@@ -2,3 +2,27 @@
 title: Cursor
 description: Use Open Knowledge with Cursor.
 ---
+
+Open Knowledge plugs into Cursor through MCP plus an installed skill that teaches the agent how to use the tools.
+
+## Install
+
+In your project:
+
+```bash
+npx @inkeep/open-knowledge init
+```
+
+This registers the MCP server in Cursor's user config (`~/.cursor/mcp.json`) and project config (`.cursor/mcp.json`), and installs a skill at `.cursor/skills/open-knowledge/SKILL.md`.
+
+## Approve the server
+
+Cursor prompts you to approve a new MCP server when you next open the project. Approve `open-knowledge` — until you do, the agent can't see the tools.
+
+## Verify
+
+Ask the agent:
+
+> List all the docs in this project.
+
+The agent should call `list_documents` and respond with your knowledge base. If it still doesn't see the tool after approval, restart Cursor so it picks up the new MCP entry.
