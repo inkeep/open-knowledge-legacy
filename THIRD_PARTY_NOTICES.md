@@ -594,6 +594,31 @@ Apache License
    limitations under the License.
 ```
 
+### `@chevrotain/cst-dts-gen@12.0.0`
+Homepage: https://github.com/Chevrotain/chevrotain
+
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
+
+### `@chevrotain/gast@12.0.0`
+Homepage: https://github.com/Chevrotain/chevrotain
+
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
+
+### `@chevrotain/regexp-to-ast@12.0.0`
+Homepage: https://github.com/Chevrotain/chevrotain
+
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
+
+### `@chevrotain/types@12.0.0`
+Homepage: https://chevrotain.io/documentation/
+
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
+
+### `@chevrotain/utils@12.0.0`
+Homepage: https://github.com/Chevrotain/chevrotain
+
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
+
 ### `@mongodb-js/zstd@7.0.0`
 Homepage: https://github.com/mongodb-js/zstd
 
@@ -773,6 +798,11 @@ Homepage: https://github.com/gr2m/before-after-hook
 
 Copyright 2018 Gregor Martynus and other contributors.
 
+### `chevrotain@12.0.0`
+Homepage: https://chevrotain.io/docs/
+
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
+
 ### `class-variance-authority@0.7.1`
 Homepage: https://github.com/joe-bell/cva#readme
 
@@ -787,6 +817,11 @@ _(LICENSE template present but no copyright line filled in; refer to the package
 Homepage: https://github.com/JackuB/diff-match-patch
 
 _(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
+
+### `dompurify@3.3.3`
+Homepage: https://github.com/cure53/DOMPurify
+
+Copyright 2025 Dr.-Ing. Mario Heiderich, Cure53
 
 ### `human-signals@8.0.1`
 Homepage: https://www.github.com/ehmicky/human-signals
@@ -889,6 +924,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+### `@antfu/install-pkg@1.1.0`
+Homepage: https://github.com/antfu/install-pkg#readme
+
+Copyright (c) 2021 Anthony Fu <https://github.com/antfu>
 
 ### `@babel/code-frame@7.29.0`
 Homepage: https://babel.dev/docs/en/next/babel-code-frame
@@ -1034,6 +1074,11 @@ Copyright (c) 2014-present Sebastian McKenzie and other contributors
 Homepage: https://github.com/Borewit/text-codec
 
 _(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
+### `@braintree/sanitize-url@7.1.2`
+Homepage: https://github.com/braintree/sanitize-url#readme
+
+Copyright (c) 2017 Braintree
 
 ### `@codemirror/autocomplete@6.20.1`
 Homepage: https://github.com/codemirror/autocomplete
@@ -1199,6 +1244,16 @@ Copyright (c) 2022 - present, Yusuke Wada and Hono contributors
 Homepage: https://react-hook-form.com
 
 Copyright (c) 2019-present Beier(Bill) Luo
+
+### `@iconify/types@2.0.0`
+Homepage: https://github.com/iconify/iconify
+
+Copyright (c) 2021 - 2022 Vjacheslav Trushkin / Iconify OÜ
+
+### `@iconify/utils@3.1.0`
+Homepage: https://iconify.design/docs/libraries/utils/
+
+Copyright (c) 2021-PRESENT Vjacheslav Trushkin
 
 ### `@inquirer/ansi@2.0.5`
 Homepage: https://github.com/SBoudrias/Inquirer.js/blob/main/packages/ansi/README.md
@@ -1384,6 +1439,11 @@ Copyright 2018 LifeOmic
 Homepage: https://github.com/marijnh/find-cluster-break#readme
 
 Copyright (C) 2024 by Marijn Haverbeke <marijn@haverbeke.berlin>
+
+### `@mermaid-js/parser@1.1.0`
+Homepage: https://github.com/mermaid-js/mermaid/tree/develop/packages/mermaid/parser/#readme
+
+Copyright (c) 2023 Yokozuna59
 
 ### `@modelcontextprotocol/sdk@1.29.0`
 Homepage: https://modelcontextprotocol.io
@@ -2104,6 +2164,161 @@ Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/b
 
 Copyright (c) Microsoft Corporation.
 
+### `@types/d3@7.4.3`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-array@3.2.2`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-array
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-axis@3.0.6`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-axis
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-brush@3.0.6`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-brush
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-chord@3.0.6`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-chord
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-color@3.1.3`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-color
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-contour@3.0.6`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-contour
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-delaunay@6.0.4`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-delaunay
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-dispatch@3.0.7`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-dispatch
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-drag@3.0.7`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-drag
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-dsv@3.0.7`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-dsv
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-ease@3.0.2`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-ease
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-fetch@3.0.7`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-fetch
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-force@3.0.10`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-force
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-format@3.0.4`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-format
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-geo@3.1.0`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-geo
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-hierarchy@3.1.7`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-hierarchy
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-interpolate@3.0.4`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-interpolate
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-path@3.1.1`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-path
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-polygon@3.0.2`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-polygon
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-quadtree@3.0.6`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-quadtree
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-random@3.0.3`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-random
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-scale@4.0.9`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-scale
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-scale-chromatic@3.1.0`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-scale-chromatic
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-selection@3.0.11`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-selection
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-shape@3.1.8`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-shape
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-time@3.0.4`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-time
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-time-format@4.0.3`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-time-format
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-timer@3.0.2`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-timer
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-transition@3.0.9`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-transition
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/d3-zoom@3.0.8`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/d3-zoom
+
+Copyright (c) Microsoft Corporation.
+
 ### `@types/debug@4.1.13`
 Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/debug
 
@@ -2116,6 +2331,11 @@ Copyright (c) Microsoft Corporation.
 
 ### `@types/estree-jsx@1.0.5`
 Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree-jsx
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/geojson@7946.0.16`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/geojson
 
 Copyright (c) Microsoft Corporation.
 
@@ -2174,6 +2394,11 @@ Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/s
 
 Copyright (c) Microsoft Corporation.
 
+### `@types/trusted-types@2.0.7`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/trusted-types
+
+Copyright (c) Microsoft Corporation.
+
 ### `@types/unist@3.0.3`
 Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/unist
 
@@ -2203,6 +2428,11 @@ _(No LICENSE file in package; SPDX identifier in `package.json` is the sole decl
 Homepage: https://uiwjs.github.io/react-codemirror/#/theme/doc
 
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
+
+### `@upsetjs/venn.js@2.0.0`
+Homepage: https://github.com/upsetjs/venn.js
+
+Copyright (c) 2013 Ben Frederickson Copyright (c) 2021 Samuel Gratzl
 
 ### `accepts@2.0.0`
 Homepage: https://github.com/jshttp/accepts
@@ -2404,6 +2634,11 @@ Homepage: https://github.com/wooorm/character-reference-invalid
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
+### `chevrotain-allstar@0.4.1`
+Homepage: https://github.com/langium/chevrotain-allstar
+
+Copyright 2022 TypeFox GmbH
+
 ### `chokidar@5.0.0`
 Homepage: https://github.com/paulmillr/chokidar
 
@@ -2494,6 +2729,19 @@ Homepage: https://github.com/tj/commander.js
 
 Copyright (c) 2011 TJ Holowaychuk <tj@vision-media.ca>
 
+### `commander@7.2.0`
+Homepage: https://github.com/tj/commander.js
+
+Copyright (c) 2011 TJ Holowaychuk <tj@vision-media.ca>
+
+### `confbox@0.1.8`
+Homepage: https://github.com/unjs/confbox
+
+Copyright (c) Pooya Parsa <pooya@pi0.io>
+Copyright (C) 2011-2015 by Vitaly Puzrin
+Copyright (c) Squirrel Chat et al., All rights reserved.
+Copyright (c) Microsoft
+
 ### `content-disposition@1.1.0`
 Homepage: https://github.com/jshttp/content-disposition
 
@@ -2529,6 +2777,16 @@ Homepage: https://github.com/expressjs/cors
 
 Copyright (c) 2013 Troy Goode <troygoode@gmail.com>
 
+### `cose-base@1.0.3`
+Homepage: https://github.com/iVis-at-Bilkent/cose-base#readme
+
+Copyright (c) 2019 - present, iVis@Bilkent.
+
+### `cose-base@2.2.0`
+Homepage: https://github.com/iVis-at-Bilkent/cose-base#readme
+
+Copyright (c) 2019 - present, iVis@Bilkent.
+
 ### `cosmiconfig@9.0.1`
 Homepage: https://github.com/cosmiconfig/cosmiconfig#readme
 
@@ -2555,6 +2813,21 @@ Homepage: https://mths.be/cssesc
 
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
+### `cytoscape@3.33.2`
+Homepage: http://js.cytoscape.org
+
+Copyright (c) 2016-2026, The Cytoscape Consortium.
+
+### `cytoscape-cose-bilkent@4.1.0`
+Homepage: https://github.com/cytoscape/cytoscape.js-cose-bilkent
+
+Copyright (c) 2016-2018, The Cytoscape Consortium.
+
+### `cytoscape-fcose@2.2.0`
+Homepage: https://github.com/iVis-at-Bilkent/cytoscape.js-fcose
+
+Copyright (c) 2018 - present, iVis-at-Bilkent.
+
 ### `d3-binarytree@1.0.2`
 Homepage: https://github.com/vasturiano/d3-binarytree
 
@@ -2569,6 +2842,11 @@ Copyright (c) 2017 Vasco Asturiano
 Homepage: https://github.com/vasturiano/d3-octree
 
 Copyright (c) 2017 Vasco Asturiano
+
+### `dagre-d3-es@7.0.14`
+Homepage: https://github.com/tbo47/dagre-es
+
+Copyright (c) 2022-2024 Thibaut Lassalle, David Newell, Alois Klink, Sidharth Vinod and dagre-es contributors
 
 ### `data-uri-to-buffer@4.0.1`
 Homepage: https://github.com/TooTallNate/node-data-uri-to-buffer
@@ -2589,6 +2867,11 @@ Copyright (c) 2021 Sasha Koss and Lesha Koss https://kossnocorp.mit-license.org
 Homepage: https://github.com/felixge/node-dateformat
 
 _(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
+### `dayjs@1.11.20`
+Homepage: https://day.js.org
+
+Copyright (c) 2018-present, iamkun
 
 ### `debug@4.4.3`
 Homepage: https://github.com/debug-js/debug
@@ -3006,6 +3289,11 @@ Homepage: https://github.com/graphql/graphql-js
 
 Copyright (c) GraphQL Contributors
 
+### `hachure-fill@0.5.2`
+Homepage: https://github.com/pshihn/hachure-fill#readme
+
+Copyright (c) 2023 Preet Shihn
+
 ### `has-symbols@1.1.0`
 Homepage: https://github.com/ljharb/has-symbols#readme
 
@@ -3118,6 +3406,11 @@ Copyright (c) 2013 Nathan Rajlich <nathan@tootallnate.net>
 
 ### `iconv-lite@0.7.2`
 Homepage: https://github.com/pillarjs/iconv-lite
+
+Copyright (c) 2011 Alexander Shtuchkin
+
+### `iconv-lite@0.6.3`
+Homepage: https://github.com/ashtuchkin/iconv-lite
 
 Copyright (c) 2011 Alexander Shtuchkin
 
@@ -3336,6 +3629,11 @@ Homepage: https://katex.org
 
 Copyright (c) 2013-2020 Khan Academy and other contributors
 
+### `khroma@2.1.0`
+Homepage: https://github.com/fabiospampinato/khroma
+
+Copyright (c) 2019-present Fabio Spampinato, Andrew Maney
+
 ### `kleur@4.1.5`
 Homepage: https://github.com/lukeed/kleur
 
@@ -3345,6 +3643,21 @@ Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
 Homepage: https://github.com/lukeed/kleur
 
 Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
+
+### `langium@4.2.2`
+Homepage: https://langium.org
+
+Copyright 2021 TypeFox GmbH
+
+### `layout-base@1.0.2`
+Homepage: https://github.com/iVis-at-Bilkent/layout-base#readme
+
+Copyright (c) 2019 iVis@Bilkent
+
+### `layout-base@2.0.1`
+Homepage: https://github.com/iVis-at-Bilkent/layout-base#readme
+
+Copyright (c) 2019 iVis@Bilkent
 
 ### `lazy-val@1.0.5`
 Homepage: https://github.com/develar/lazy-val
@@ -3415,6 +3728,11 @@ Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin.
 Homepage: https://github.com/wooorm/markdown-table
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
+
+### `marked@16.4.2`
+Homepage: https://marked.js.org
+
+Copyright (c) 2018+, MarkedJS (https://github.com/markedjs/) Copyright (c) 2011-2018, Christopher Jeffrey (https://github.com/chjj/)
 
 ### `math-intrinsics@1.1.0`
 Homepage: https://github.com/es-shims/math-intrinsics#readme
@@ -3536,6 +3854,11 @@ Copyright (c) Stephen Sugden <me@stephensugden.com> (stephensugden.com)
 Homepage: https://github.com/teambition/merge2
 
 Copyright (c) 2014-2020 Teambition
+
+### `mermaid@11.14.0`
+Homepage: https://github.com/mermaid-js/mermaid
+
+Copyright (c) 2014 - 2022 Knut Sveidqvist
 
 ### `micromark@4.0.2`
 Homepage: https://github.com/micromark/micromark/tree/main/packages/micromark
@@ -3757,6 +4080,11 @@ Homepage: https://github.com/mafintosh/mkdirp-classic
 
 Copyright (c) 2020 James Halliday (mail@substack.net) and Mathias Buus
 
+### `mlly@1.8.2`
+Homepage: https://github.com/unjs/mlly
+
+Copyright (c) Pooya Parsa <pooya@pi0.io>
+
 ### `modern-tar@0.7.6`
 Homepage: https://github.com/ayuhito/modern-tar
 
@@ -3907,6 +4235,11 @@ Homepage: https://github.com/open-draft/outvariant
 
 Copyright (c) 2021–present Artem Zakharchenko
 
+### `package-manager-detector@1.6.0`
+Homepage: https://github.com/antfu-collective/package-manager-detector#readme
+
+Copyright (c) 2020-PRESENT Anthony Fu <https://github.com/antfu>
+
 ### `papaparse@5.5.3`
 Homepage: https://www.papaparse.com/
 
@@ -3947,6 +4280,11 @@ Homepage: https://github.com/browserify/path-browserify
 
 Copyright (c) 2013 James Halliday
 
+### `path-data-parser@0.1.0`
+Homepage: https://github.com/pshihn/path-data-parser#readme
+
+Copyright (c) 2020 Preet Shihn
+
 ### `path-expression-matcher@1.5.0`
 Homepage: https://github.com/NaturalIntelligence/path-expression-matcher#readme
 
@@ -3976,6 +4314,13 @@ Copyright (c) 2014 Blake Embrey (hello@blakeembrey.com)
 Homepage: https://github.com/pillarjs/path-to-regexp
 
 Copyright (c) 2014 Blake Embrey (hello@blakeembrey.com)
+
+### `pathe@2.0.3`
+Homepage: https://github.com/unjs/pathe
+
+Copyright (c) Pooya Parsa <pooya@pi0.io> - Daniel Roe <daniel@roe.dev>
+Copyright Joyent, Inc. and other Node contributors.
+Copyright (c) 2023-present Fabio Spampinato
 
 ### `picomatch@4.0.4`
 Homepage: https://github.com/micromatch/picomatch
@@ -4011,6 +4356,22 @@ Copyright Mateo Collina, David Mark Clements, James Sumners
 Homepage: https://github.com/crouchcd/pkce-challenge#readme
 
 Copyright (c) 2019
+
+### `pkg-types@1.3.1`
+Homepage: https://github.com/unjs/pkg-types
+
+Copyright (c) Pooya Parsa <pooya@pi0.io> - Daniel Roe <daniel@roe.dev>
+Copyright Joyent, Inc. and other Node contributors.
+
+### `points-on-curve@0.2.0`
+Homepage: https://github.com/pshihn/bezier-points#readme
+
+Copyright (c) 2020 Preet Shihn
+
+### `points-on-path@0.2.1`
+Homepage: https://github.com/pshihn/points-on-path#readme
+
+Copyright (c) 2020 Preet
 
 ### `postcss@8.5.9`
 Homepage: https://postcss.org/
@@ -4408,6 +4769,11 @@ Homepage: https://github.com/marijnh/rope-sequence
 
 Copyright (C) 2016 by Marijn Haverbeke <marijn@haverbeke.berlin>
 
+### `roughjs@4.6.6`
+Homepage: https://roughjs.com
+
+Copyright (c) 2019 Preet Shihn
+
 ### `router@2.2.0`
 Homepage: https://github.com/pillarjs/router
 
@@ -4640,6 +5006,11 @@ Homepage: https://github.com/marijnh/style-mod
 
 Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
+### `stylis@4.3.6`
+Homepage: https://github.com/thysultan/stylis.js
+
+Copyright (c) 2016-present Sultan Tarimo
+
 ### `supports-preserve-symlinks-flag@1.0.0`
 Homepage: https://github.com/inspect-js/node-supports-preserve-symlinks-flag#readme
 
@@ -4695,6 +5066,11 @@ Homepage: https://github.com/bgrins/TinyColor
 
 _(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
+### `tinyexec@1.1.1`
+Homepage: https://github.com/tinylibs/tinyexec#readme
+
+Copyright (c) 2024 Tinylibs
+
 ### `tldts@7.0.28`
 Homepage: https://github.com/remusao/tldts#readme
 
@@ -4740,6 +5116,11 @@ Homepage: https://github.com/wooorm/trough
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
+### `ts-dedent@2.2.0`
+Homepage: https://github.com/tamino-martinius/node-ts-dedent
+
+Copyright (c) 2018 Tamino Martinius
+
 ### `ts-morph@26.0.0`
 Homepage: https://github.com/dsherret/ts-morph#readme
 
@@ -4774,6 +5155,11 @@ Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2014-2015 Dou
 Homepage: https://github.com/markdown-it/uc.micro
 
 Copyright Mathias Bynens <https://mathiasbynens.be/>
+
+### `ufo@1.6.3`
+Homepage: https://github.com/unjs/ufo
+
+Copyright (c) Pooya Parsa <pooya@pi0.io>
 
 ### `uint8array-extras@1.5.0`
 Homepage: https://github.com/sindresorhus/uint8array-extras
@@ -4880,6 +5266,11 @@ Homepage: https://github.com/TooTallNate/util-deprecate
 
 Copyright (c) 2014 Nathan Rajlich <nathan@tootallnate.net>
 
+### `uuid@11.1.0`
+Homepage: https://github.com/uuidjs/uuid
+
+Copyright (c) 2010-2020 Robert Kieffer and other contributors
+
 ### `vary@1.1.2`
 Homepage: https://github.com/jshttp/vary
 
@@ -4899,6 +5290,36 @@ Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 Homepage: https://github.com/vfile/vfile-message
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
+
+### `vscode-jsonrpc@8.2.0`
+Homepage: https://github.com/Microsoft/vscode-languageserver-node
+
+Copyright (c) Microsoft Corporation
+
+### `vscode-languageserver@9.0.1`
+Homepage: https://github.com/Microsoft/vscode-languageserver-node
+
+Copyright (c) Microsoft Corporation
+
+### `vscode-languageserver-protocol@3.17.5`
+Homepage: https://github.com/Microsoft/vscode-languageserver-node
+
+Copyright (c) Microsoft Corporation
+
+### `vscode-languageserver-textdocument@1.0.12`
+Homepage: https://github.com/Microsoft/vscode-languageserver-node
+
+Copyright (c) Microsoft Corporation
+
+### `vscode-languageserver-types@3.17.5`
+Homepage: https://github.com/Microsoft/vscode-languageserver-node
+
+Copyright (c) Microsoft Corporation
+
+### `vscode-uri@3.1.0`
+Homepage: https://github.com/microsoft/vscode-uri#readme
+
+Copyright (c) Microsoft
 
 ### `w3c-keyname@2.2.8`
 Homepage: https://github.com/marijnh/w3c-keyname#readme
@@ -5047,15 +5468,45 @@ Homepage: https://github.com/yargs/cliui
 
 Copyright (c) 2015, Contributors
 
+### `d3@7.9.0`
+Homepage: https://d3js.org
+
+Copyright 2010-2023 Mike Bostock
+
 ### `d3-array@3.2.4`
 Homepage: https://d3js.org/d3-array/
 
 Copyright 2010-2023 Mike Bostock
 
+### `d3-axis@3.0.0`
+Homepage: https://d3js.org/d3-axis/
+
+Copyright 2010-2021 Mike Bostock
+
+### `d3-brush@3.0.0`
+Homepage: https://d3js.org/d3-brush/
+
+Copyright 2010-2021 Mike Bostock
+
+### `d3-chord@3.0.1`
+Homepage: https://d3js.org/d3-chord/
+
+Copyright 2010-2021 Mike Bostock
+
 ### `d3-color@3.1.0`
 Homepage: https://d3js.org/d3-color/
 
 Copyright 2010-2022 Mike Bostock
+
+### `d3-contour@4.0.2`
+Homepage: https://d3js.org/d3-contour/
+
+Copyright 2012-2023 Mike Bostock
+
+### `d3-delaunay@6.0.4`
+Homepage: https://github.com/d3/d3-delaunay
+
+Copyright 2018-2021 Observable, Inc. Copyright 2021 Mapbox
 
 ### `d3-dispatch@3.0.1`
 Homepage: https://d3js.org/d3-dispatch/
@@ -5067,18 +5518,59 @@ Homepage: https://d3js.org/d3-drag/
 
 Copyright 2010-2021 Mike Bostock
 
+### `d3-dsv@3.0.1`
+Homepage: https://d3js.org/d3-dsv/
+
+Copyright 2013-2021 Mike Bostock
+
+### `d3-fetch@3.0.1`
+Homepage: https://d3js.org/d3-fetch/
+
+Copyright 2016-2021 Mike Bostock
+
+### `d3-force@3.0.0`
+Homepage: https://d3js.org/d3-force/
+
+Copyright 2010-2021 Mike Bostock
+
 ### `d3-format@3.1.2`
 Homepage: https://d3js.org/d3-format/
 
 Copyright 2010-2026 Mike Bostock
+
+### `d3-geo@3.1.1`
+Homepage: https://d3js.org/d3-geo/
+
+Copyright 2010-2024 Mike Bostock
+Copyright 2008-2012 Charles Karney
+
+### `d3-hierarchy@3.1.2`
+Homepage: https://d3js.org/d3-hierarchy/
+
+Copyright 2010-2021 Mike Bostock
 
 ### `d3-interpolate@3.0.1`
 Homepage: https://d3js.org/d3-interpolate/
 
 Copyright 2010-2021 Mike Bostock
 
+### `d3-path@3.1.0`
+Homepage: https://d3js.org/d3-path/
+
+Copyright 2015-2022 Mike Bostock
+
+### `d3-polygon@3.0.1`
+Homepage: https://d3js.org/d3-polygon/
+
+Copyright 2010-2021 Mike Bostock
+
 ### `d3-quadtree@3.0.1`
 Homepage: https://d3js.org/d3-quadtree/
+
+Copyright 2010-2021 Mike Bostock
+
+### `d3-random@3.0.1`
+Homepage: https://d3js.org/d3-random/
 
 Copyright 2010-2021 Mike Bostock
 
@@ -5097,6 +5589,11 @@ Copyright 2002 Cynthia Brewer, Mark Harrower, and The Pennsylvania State Univers
 Homepage: https://d3js.org/d3-selection/
 
 Copyright 2010-2021 Mike Bostock
+
+### `d3-shape@3.2.0`
+Homepage: https://d3js.org/d3-shape/
+
+Copyright 2010-2022 Mike Bostock
 
 ### `d3-time@3.1.0`
 Homepage: https://d3js.org/d3-time/
@@ -5122,6 +5619,11 @@ Copyright 2010-2021 Mike Bostock
 Homepage: https://d3js.org/d3-zoom/
 
 Copyright 2010-2021 Mike Bostock
+
+### `delaunator@5.1.0`
+Homepage: https://github.com/mapbox/delaunator
+
+Copyright (c) 2026, Mapbox
 
 ### `electron-to-chromium@1.5.334`
 Homepage: https://github.com/Kilian/electron-to-chromium
@@ -5375,10 +5877,30 @@ Homepage: https://github.com/dcodeIO/protobuf.js
 
 Copyright (c) 2016, Daniel Wirtz  All rights reserved.
 
+### `d3-array@2.12.1`
+Homepage: https://d3js.org/d3-array/
+
+Copyright 2010-2020 Mike Bostock
+
 ### `d3-ease@3.0.1`
 Homepage: https://d3js.org/d3-ease/
 
 Copyright 2010-2021 Mike Bostock Copyright 2001 Robert Penner
+
+### `d3-path@1.0.9`
+Homepage: https://d3js.org/d3-path/
+
+Copyright 2015-2016 Mike Bostock
+
+### `d3-sankey@0.12.3`
+Homepage: https://github.com/d3/d3-sankey
+
+Copyright 2015, Mike Bostock
+
+### `d3-shape@1.3.7`
+Homepage: https://d3js.org/d3-shape/
+
+Copyright 2010-2015 Mike Bostock
 
 ### `diff@8.0.4`
 Homepage: https://github.com/kpdecker/jsdiff
@@ -5409,6 +5931,11 @@ Copyright (c) 2014, Nathan LaFreniere and other [contributors](https://github.co
 Homepage: https://github.com/rpearce/react-medium-image-zoom
 
 Copyright (c) 2020, Robert Pearce
+
+### `rw@1.3.3`
+Homepage: https://github.com/mbostock/rw
+
+Copyright (c) 2014-2016, Michael Bostock
 
 ### `secure-json-parse@4.1.0`
 Homepage: https://github.com/fastify/secure-json-parse#readme
@@ -5520,6 +6047,7 @@ The following packages are under licenses that do not require attribution (BlueO
 
 - `isexe@3.1.5` — BlueOak-1.0.0
 - `minimatch@10.2.5` — BlueOak-1.0.0
+- `robust-predicates@3.0.3` — Unlicense
 - `sax@1.6.0` — BlueOak-1.0.0
 - `tslib@2.8.1` — 0BSD
 

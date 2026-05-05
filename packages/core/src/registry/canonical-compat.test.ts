@@ -14,14 +14,14 @@ describe('canonical/compat split — registry shape', () => {
     }
   });
 
-  test('exactly 7 canonical descriptors (5-pack + Math + Pdf)', () => {
-    expect(canonicalDescriptors.length).toBe(7);
+  test('exactly 8 canonical descriptors (5-pack + Math + Mermaid + Pdf)', () => {
+    expect(canonicalDescriptors.length).toBe(8);
     expect(canonicalDescriptors.map((m) => m.name).sort()).toEqual(
-      ['Accordion', 'Callout', 'Math', 'Pdf', 'audio', 'img', 'video'].sort(),
+      ['Accordion', 'Callout', 'Math', 'Mermaid', 'Pdf', 'audio', 'img', 'video'].sort(),
     );
   });
 
-  test('compat descriptor set covers v1 source-form preservation + WikiEmbed convergence + math syntax', () => {
+  test('compat descriptor set covers v1 source-form preservation + WikiEmbed convergence + math/mermaid syntax', () => {
     expect(compatDescriptors.map((m) => m.name).sort()).toEqual(
       [
         'CommonMarkImage',
@@ -29,6 +29,7 @@ describe('canonical/compat split — registry shape', () => {
         'GFMCallout',
         'HtmlDetailsAccordion',
         'MathFence',
+        'MermaidFence',
         'WikiEmbedAudio',
         'WikiEmbedImage',
         'WikiEmbedPdf',
@@ -111,6 +112,16 @@ describe('compat descriptors — prop-set is a subset of canonical', () => {
     if (!math || !mf) throw new Error('Missing descriptor');
     const canonicalNames = new Set(math.props.map((p) => p.name));
     for (const p of mf.props) {
+      expect(canonicalNames.has(p.name)).toBe(true);
+    }
+  });
+
+  test('MermaidFence props are a subset of Mermaid props', () => {
+    const mermaid = canonicalDescriptors.find((m) => m.name === 'Mermaid');
+    const fence = compatDescriptors.find((m) => m.name === 'MermaidFence');
+    if (!mermaid || !fence) throw new Error('Missing descriptor');
+    const canonicalNames = new Set(mermaid.props.map((p) => p.name));
+    for (const p of fence.props) {
       expect(canonicalNames.has(p.name)).toBe(true);
     }
   });

@@ -7,6 +7,7 @@ import {
   Sigma,
   SquarePlay,
   Volume2,
+  Workflow,
 } from 'lucide-react';
 
 const ICON_COMPONENTS: Record<string, LucideIcon> = {
@@ -16,6 +17,7 @@ const ICON_COMPONENTS: Record<string, LucideIcon> = {
   Sigma,
   SquarePlay,
   Volume2,
+  Workflow,
 };
 
 export function resolveIcon(iconName: string | undefined): LucideIcon {

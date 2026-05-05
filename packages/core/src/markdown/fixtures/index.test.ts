@@ -7,9 +7,9 @@ import {
 } from './index.ts';
 
 describe('fixture loaders — count + shape contracts', () => {
-  test('loadBuiltInFixtures returns 39 entries (28 canonical + 11 parse-path)', () => {
+  test('loadBuiltInFixtures returns 41 entries (30 canonical + 11 parse-path)', () => {
     const fixtures = loadBuiltInFixtures();
-    expect(fixtures).toHaveLength(39);
+    expect(fixtures).toHaveLength(41);
   });
 
   test('every BuiltInFixture has non-empty componentName + blockForm', () => {

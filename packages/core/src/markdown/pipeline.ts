@@ -23,6 +23,7 @@ import { highlightPromoterPlugin } from './highlight-promoter.ts';
 import { imagePromoterPlugin } from './image-promoter.ts';
 import { mathPromoterPlugin } from './math-promoter.ts';
 import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
+import { mermaidPromoterPlugin } from './mermaid-promoter.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
 import { singleDollarMathPromoterPlugin } from './single-dollar-math-promoter.ts';
 import { remarkTags } from './tag-to-markdown.ts';
@@ -70,6 +71,7 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     .use(mathPromoterPlugin)
     .use(singleDollarMathPromoterPlugin)
     .use(highlightPromoterPlugin)
+    .use(mermaidPromoterPlugin)
     .use(mergedPostParseWalkerPlugin) // Phase B
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
     .use(remarkProseMirror, {

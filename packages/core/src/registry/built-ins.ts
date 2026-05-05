@@ -1,18 +1,20 @@
 /**
  * Built-ins manifest — canonical pack (Callout + Image + Video + Audio +
- * Accordion + Math + PDF).
+ * Accordion + Math + Mermaid + PDF).
  *
- * Math joined the canonical surface 2026-04-29 (KaTeX-lazy renderer with
- * γ-preserved source forms across `<Math>`, `$$…$$`, ` ```math ` fence);
- * PDF joined 2026-05-02 as the seventh canonical (pdfjs-dist-backed
- * multi-page canvas viewer with our own toolbar). `canonical-compat.test.ts`
- * and `registry.test.ts` are the authoritative count assertions and update
- * with every canonical addition. The compound-wrapper machinery is absent
- * (US-002 deleted `compound-wrappers.tsx` and the precedent #29
- * compound-components bridge was retracted on this branch in US-001).
- * Names that still appear in user content fall through to the wildcard
- * `'*'` descriptor (`hasChildren: true`, empty props) per
- * `createRegistry()` / `getOrWildcard()`.
+ * Math + Mermaid joined the canonical surface 2026-04-29 (KaTeX-lazy
+ * renderer with γ-preserved source forms across `<Math>`, `$$…$$`,
+ * ` ```math ` fence; mermaid-js v11 renderer with γ-preserved source forms
+ * across `<Mermaid>` and ` ```mermaid ` fences — replaces the placeholder
+ * stub deleted 2026-04-21). PDF joined 2026-05-02 as the eighth canonical
+ * (pdfjs-dist-backed multi-page canvas viewer with our own toolbar).
+ * `canonical-compat.test.ts` and `registry.test.ts` are the authoritative
+ * count assertions and update with every canonical addition. The
+ * compound-wrapper machinery is absent (US-002 deleted
+ * `compound-wrappers.tsx` and the precedent #29 compound-components bridge
+ * was retracted on this branch in US-001). Names that still appear in user
+ * content fall through to the wildcard `'*'` descriptor (`hasChildren:
+ * true`, empty props) per `createRegistry()` / `getOrWildcard()`.
  *
  * ImageZoom renamed to Image (US-003 / FR-20); US-006 widens the prop surface
  * to the FR-2 8-prop shape (src, alt, width, height, caption, title, loading,
@@ -39,10 +41,6 @@
  * file is the authoritative source of truth. Downstream embedders can call
  * `createRegistry()` + `.set(...)` to add their own descriptors, but the
  * canonical pack here is the in-app baseline.
- *
- * Mermaid was removed 2026-04-21 — placeholder stub was non-functional. See
- * `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
- * for the un-deferral framework.
  */
 import type { Nodes as MdastNodes } from 'mdast';
 import {
@@ -469,6 +467,34 @@ const mathProps: PropDef[] = [
 ];
 const dollarMathProps: PropDef[] = [mathProps[0]];
 const mathFenceProps: PropDef[] = [mathProps[0]];
+const mermaidProps: PropDef[] = [
+  {
+    name: 'chart',
+    type: 'string',
+    required: true,
+    autoFocus: true,
+    description:
+      'Mermaid chart source (graph / flowchart / sequenceDiagram / class / state / etc.)',
+  },
+  {
+    name: 'id',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'HTML id attribute for deep-linking (e.g. `#system-arch-diagram`)',
+  },
+  {
+    name: 'theme',
+    type: 'enum',
+    enumValues: ['default', 'dark', 'forest', 'neutral'],
+    defaultValue: 'default',
+    required: false,
+    advanced: true,
+    description:
+      'Mermaid theme — default ships only `default` styling; alternates land alongside theme-switching infrastructure',
+  },
+];
+const mermaidFenceProps: PropDef[] = [mermaidProps[0]];
 
 const wikiEmbedPdfProps: PropDef[] = [
   {
@@ -631,6 +657,34 @@ export const builtInComponents: JsxComponentMeta[] = [
     description: 'Block math equation rendered with KaTeX from a LaTeX source string',
     searchTerms: ['math', 'latex', 'equation', 'formula', 'katex', 'tex'],
     serialize: (node, ctx) => emitMdxJsx('Math', node, ctx, mathProps),
+  },
+  {
+    name: 'Mermaid',
+    surface: 'canonical',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: mermaidProps,
+    icon: 'Workflow',
+    category: 'content',
+    displayName: 'Mermaid',
+    description:
+      'Diagram rendered from Mermaid source (flowchart, sequence, class, state, ER, gantt, pie)',
+    searchTerms: [
+      'mermaid',
+      'diagram',
+      'flowchart',
+      'graph',
+      'sequence',
+      'sequencediagram',
+      'class',
+      'state',
+      'er',
+      'erdiagram',
+      'gantt',
+      'pie',
+      'chart',
+    ],
+    serialize: (node, ctx) => emitMdxJsx('Mermaid', node, ctx, mermaidProps),
   },
 
   {
@@ -873,6 +927,29 @@ export const builtInComponents: JsxComponentMeta[] = [
         lang: 'math',
         meta: null,
         value: p?.formula ?? '',
+      };
+    },
+  },
+  {
+    name: 'MermaidFence',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: mermaidFenceProps,
+    icon: 'Workflow',
+    category: 'content',
+    displayName: 'Mermaid Fence',
+    description:
+      'Mermaid diagram via ` ```mermaid ` fenced code syntax — read-only compat. Preserves the fence form on round-trip; insert a fresh Mermaid block for the full prop surface (id, theme).',
+    rendersAs: 'Mermaid',
+    translateProps: (props) => props,
+    serialize: (node) => {
+      const p = node.attrs.props as { chart?: string } | undefined;
+      return {
+        type: 'code' as const,
+        lang: 'mermaid',
+        meta: null,
+        value: p?.chart ?? '',
       };
     },
   },
