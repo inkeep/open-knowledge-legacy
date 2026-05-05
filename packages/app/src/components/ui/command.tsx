@@ -40,6 +40,7 @@ function CommandDialog({
   commandProps,
   ...props
 }: CommandDialogProps) {
+  const { className: commandClassName, ...restCommandProps } = commandProps ?? {};
   return (
     <Dialog {...props}>
       <DialogHeader className="sr-only">
@@ -53,9 +54,9 @@ function CommandDialog({
         <Command
           className={cn(
             '[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]]:px-2 [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5',
-            commandProps?.className,
+            commandClassName,
           )}
-          {...commandProps}
+          {...restCommandProps}
         >
           {children}
         </Command>
@@ -66,12 +67,12 @@ function CommandDialog({
 
 function CommandInput({ className, ...props }: ComponentProps<typeof CommandPrimitive.Input>) {
   return (
-    <div data-slot="command-input-wrapper" className="flex h-9 items-center gap-2 border-b px-3">
+    <div data-slot="command-input-wrapper" className="flex items-center gap-2 border-b px-3">
       <SearchIcon className="size-4 shrink-0 opacity-50" />
       <CommandPrimitive.Input
         data-slot="command-input"
         className={cn(
-          'flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
+          'flex w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
           className,
         )}
         {...props}
@@ -105,7 +106,7 @@ function CommandGroup({ className, ...props }: ComponentProps<typeof CommandPrim
     <CommandPrimitive.Group
       data-slot="command-group"
       className={cn(
-        'overflow-hidden p-1 text-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:text-xs',
+        'overflow-hidden p-1 text-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:uppercase **:[[cmdk-group-heading]]:tracking-wider',
         className,
       )}
       {...props}

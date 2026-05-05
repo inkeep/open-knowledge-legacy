@@ -365,8 +365,10 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
             data-testid="list-chip"
             data-index={i}
             className={cn(
-              'inline-flex items-center gap-1',
-              !renderAsTag && 'rounded-md bg-muted px-1.5 py-0.5 text-sm',
+              'inline-flex items-center text-1sm gap-0.5 rounded-full py-0.5 pl-2 pr-1.5 transition-colors',
+              renderAsTag
+                ? 'bg-primary/10 font-medium text-primary has-[button[data-tag]:hover]:bg-primary/20 has-[button[data-tag]:active]:bg-primary/25'
+                : 'bg-muted ',
             )}
           >
             {renderAsTag ? (
@@ -375,7 +377,7 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
                 data-tag={chip}
                 aria-label={`Open documents tagged #${chip}`}
                 onClick={() => dispatchTagClickEvent(chip)}
-                className="tag"
+                className="cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 #{chip}
               </button>
@@ -386,9 +388,14 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
               type="button"
               aria-label={`Remove ${chip}`}
               onClick={() => removeChip(i)}
-              className="text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+              className={cn(
+                'inline-flex items-center justify-center rounded-sm p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                renderAsTag
+                  ? 'text-primary opacity-70 hover:text-primary hover:opacity-100'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
             >
-              <X className="size-3" />
+              <X className="size-3" aria-hidden="true" />
             </button>
           </span>
         );

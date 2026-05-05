@@ -99,9 +99,9 @@ function NavigationItem({
       value={`${entry.kind} ${entry.path}`}
       onSelect={onSelect}
       data-testid={`command-palette-nav-${entry.kind}-${entry.path}`}
-      className={snippet ? 'items-start' : ''}
+      className="items-start"
     >
-      <Icon className={snippet ? 'mt-0.5' : ''} />
+      <Icon className="mt-0.5" />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="truncate font-medium">
           <HighlightedText query={query} text={title} />
@@ -126,10 +126,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
       {segments.map((segment) => {
         const key = `${segment.start}:${segment.match ? 'match' : 'plain'}`;
         return segment.match ? (
-          <mark
-            key={key}
-            className="rounded-sm bg-yellow-300/20 px-0.5 text-yellow-200 underline decoration-yellow-300 underline-offset-2"
-          >
+          <mark key={key} className="rounded-sm bg-primary/10 px-0.5 font-semibold text-primary">
             {segment.text}
           </mark>
         ) : (
@@ -322,7 +319,11 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
         onOpenChange={onOpenChange}
         title="Workspace Command Palette"
         description="Search files, folders, and commands for the current workspace."
-        commandProps={{ shouldFilter: false }}
+        commandProps={{
+          shouldFilter: false,
+          className:
+            '[&_[cmdk-input-wrapper]_svg]:h-4 [&_[cmdk-input-wrapper]_svg]:w-4 [&_[cmdk-item]_svg]:h-4 [&_[cmdk-item]_svg]:w-4',
+        }}
       >
         <CommandInput
           value={query}
