@@ -1,7 +1,54 @@
+/**
+ * Built-ins manifest — canonical pack (Callout + Image + Video + Audio +
+ * Accordion + Math + PDF).
+ *
+ * Math joined the canonical surface 2026-04-29 (KaTeX-lazy renderer with
+ * γ-preserved source forms across `<Math>`, `$$…$$`, ` ```math ` fence);
+ * PDF joined 2026-05-02 as the seventh canonical (pdfjs-dist-backed
+ * multi-page canvas viewer with our own toolbar). `canonical-compat.test.ts`
+ * and `registry.test.ts` are the authoritative count assertions and update
+ * with every canonical addition. The compound-wrapper machinery is absent
+ * (US-002 deleted `compound-wrappers.tsx` and the precedent #29
+ * compound-components bridge was retracted on this branch in US-001).
+ * Names that still appear in user content fall through to the wildcard
+ * `'*'` descriptor (`hasChildren: true`, empty props) per
+ * `createRegistry()` / `getOrWildcard()`.
+ *
+ * ImageZoom renamed to Image (US-003 / FR-20); US-006 widens the prop surface
+ * to the FR-2 8-prop shape (src, alt, width, height, caption, title, loading,
+ * zoom) alongside the DIY `react-medium-image-zoom` renderer. US-005 widened
+ * Callout to 7 props (GFM 5-type enum + title/icon/color/collapsible/
+ * defaultOpen). US-007 adds Video with the FR-3 9-prop HTML5 `<video>` shape
+ * (pure HTML5 wrapper per D-MF12 — no URL sniffing, no iframe emission, no
+ * `start` prop). US-008 widens Audio from the pre-narrow 2-prop shape
+ * (src/title) to the FR-4 7-prop shape (src/title/autoPlay/loop/muted/preload
+ * + children for `<source>`/`<track>` passthrough) and flips `hasChildren:
+ * false → true` (drops `isSelfClosing`) — the pre-US-008 state was a bug: the
+ * inline renderer in `componentMap` passed children but the descriptor
+ * declared none. US-009 adds Accordion with the FR-5 6-prop shape (title
+ * required + defaultOpen + icon + description + id + name + children) —
+ * standalone per D-MF16 (renamed from Toggle; no `<Accordions>` parent
+ * wrapper required; HTML5 `<details>`/`<summary>` substrate; cross-browser
+ * exclusive-accordion grouping via HTML5 `<details name>`; no `variant` prop
+ * per D-MF14 — NG30 preserves the Notion color-map absorption path).
+ *
+ * ── Intent-of-ship ───────────────────────────────────────────────────────
+ *
+ * This manifest is the shipped default for the OK editor. The greenfield
+ * directive (2026-04-13) forbids shipping empty-scaffolding registries; this
+ * file is the authoritative source of truth. Downstream embedders can call
+ * `createRegistry()` + `.set(...)` to add their own descriptors, but the
+ * canonical pack here is the in-app baseline.
+ *
+ * Mermaid was removed 2026-04-21 — placeholder stub was non-functional. See
+ * `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
+ * for the un-deferral framework.
+ */
 import type { Nodes as MdastNodes } from 'mdast';
 import {
   ALLOWED_AUDIO_MIME_TYPES,
   ALLOWED_IMAGE_MIME_TYPES,
+  ALLOWED_PDF_MIME_TYPES,
   ALLOWED_VIDEO_MIME_TYPES,
 } from '../constants/upload.ts';
 import { emitMdxJsx } from '../markdown/serialize-helpers.ts';
@@ -423,6 +470,42 @@ const mathProps: PropDef[] = [
 const dollarMathProps: PropDef[] = [mathProps[0]];
 const mathFenceProps: PropDef[] = [mathProps[0]];
 
+const wikiEmbedPdfProps: PropDef[] = [
+  {
+    name: 'alias',
+    type: 'string',
+    required: false,
+    defaultValue: '',
+    description: 'Title text (Obsidian alias syntax: `![[doc.pdf|title]]`)',
+  },
+];
+
+const pdfProps: PropDef[] = [
+  {
+    name: 'src',
+    type: 'string',
+    required: true,
+    defaultValue: '',
+    description: 'PDF source URL',
+    accept: ALLOWED_PDF_MIME_TYPES,
+    autoFocus: true,
+  },
+  {
+    name: 'title',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'Accessible label for the embedded PDF viewer',
+  },
+  {
+    name: 'anchor',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'PDF viewer parameters as a single URL-fragment string (e.g. `page=3&height=600`)',
+  },
+];
+
 function escapeHtmlAttr(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -507,6 +590,20 @@ export const builtInComponents: JsxComponentMeta[] = [
     searchTerms: ['audio', 'sound', 'music', 'mp3', 'podcast', 'player'],
     placeholder: { label: 'Add audio' },
     serialize: (node, ctx) => emitMdxJsx('audio', node, ctx, htmlAudioProps),
+  },
+  {
+    name: 'Pdf',
+    surface: 'canonical',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: pdfProps,
+    icon: 'FileText',
+    category: 'media',
+    displayName: 'PDF',
+    description: 'Embedded PDF viewer (`#page=N` to open at page N, `#height=N` for viewer height)',
+    searchTerms: ['pdf', 'document', 'embed', 'pdfjs'],
+    placeholder: { label: 'Add a PDF' },
+    serialize: (node, ctx) => emitMdxJsx('Pdf', node, ctx, pdfProps),
   },
 
   {
@@ -670,6 +767,31 @@ export const builtInComponents: JsxComponentMeta[] = [
       return {
         src: props.src,
         title: alias ?? target,
+      };
+    },
+    serialize: serializeWikiEmbed,
+  },
+
+  {
+    name: 'WikiEmbedPdf',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: wikiEmbedPdfProps,
+    icon: 'FileText',
+    category: 'media',
+    displayName: 'Wiki Embed PDF',
+    description:
+      'Obsidian-style `![[doc.pdf]]` wiki-embed — read-only compat. Renders through the `Pdf` canonical (pdfjs-dist multi-page canvas viewer with custom toolbar). Edit the title via the alias slot; `#page=N` scrolls the matching `<canvas>` slot into view on first render, `#height=N` sizes the scroll container.',
+    rendersAs: 'Pdf',
+    translateProps: (props) => {
+      const alias = typeof props.alias === 'string' && props.alias.length > 0 ? props.alias : null;
+      const target = typeof props.target === 'string' ? props.target : '';
+      const anchor = typeof props.anchor === 'string' ? props.anchor : '';
+      return {
+        src: props.src,
+        title: alias ?? target,
+        anchor,
       };
     },
     serialize: serializeWikiEmbed,

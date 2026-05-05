@@ -98,6 +98,35 @@ describe('createLiveDerivedIndexExtension', () => {
     await conn.disconnect();
   });
 
+  test('feeds tagIndex with the same markdown and signals the tags channel', async () => {
+    const updateBacklink = mock(() => {});
+    const updateTag = mock(() => {});
+    const signalChannel = mock(() => {});
+    const extension = createLiveDerivedIndexExtension({
+      backlinkIndex: { updateDocumentFromMarkdown: updateBacklink } as unknown as never,
+      tagIndex: { updateDocumentFromMarkdown: updateTag } as unknown as never,
+      debounceMs: 5,
+      signalChannel,
+    });
+    const conn = await hp.openDirectConnection('tag-derived-doc');
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, 'tag-derived-doc', '# Hello\n\nA #typescript note.\n');
+    const payload = makeOnChangePayload(hp, doc, 'tag-derived-doc', {
+      source: 'local',
+      context: { origin: 'agent-write' },
+    });
+
+    await extension.onChange?.(payload);
+    await wait(20);
+
+    expect(updateBacklink).toHaveBeenCalledTimes(1);
+    expect(updateTag).toHaveBeenCalledTimes(1);
+    expect(updateTag).toHaveBeenCalledWith('tag-derived-doc', '# Hello\n\nA #typescript note.\n');
+    expect(signalChannel.mock.calls).toEqual([['backlinks'], ['graph'], ['tags']]);
+    await conn.disconnect();
+  });
+
   test('beforeUnloadDocument cancels pending timers', async () => {
     const updateDocumentFromMarkdown = mock(() => {});
     const extension = createLiveDerivedIndexExtension({
@@ -192,7 +221,7 @@ describe('createLiveDerivedIndexExtension', () => {
       expect(signalChannel).not.toHaveBeenCalled();
       expect(errorSpy).toHaveBeenCalled();
       expect(errorSpy.mock.calls[0]?.[0]).toContain(
-        '[live-derived-index] Failed to update backlinks for error-doc:',
+        '[live-derived-index] Failed to update derived views for error-doc:',
       );
     } finally {
       console.error = originalError;

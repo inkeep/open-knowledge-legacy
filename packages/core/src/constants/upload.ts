@@ -10,6 +10,8 @@ export const ALLOWED_VIDEO_MIME_TYPES = ['video/mp4', 'video/webm', 'video/ogg']
 
 export const ALLOWED_AUDIO_MIME_TYPES = ['audio/mpeg', 'audio/wav', 'audio/ogg'] as const;
 
+export const ALLOWED_PDF_MIME_TYPES = ['application/pdf'] as const;
+
 export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
   'png',
   'jpg',
@@ -21,6 +23,8 @@ export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
 ]);
 
 export const VIDEO_EXTENSIONS: ReadonlySet<string> = new Set(['mp4', 'webm', 'mov', 'm4v', 'mkv']);
+
+export const PDF_EXTENSIONS: ReadonlySet<string> = new Set(['pdf']);
 
 export const AUDIO_EXTENSIONS: ReadonlySet<string> = new Set([
   'mp3',

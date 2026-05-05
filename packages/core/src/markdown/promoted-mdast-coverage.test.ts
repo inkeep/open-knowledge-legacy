@@ -7,6 +7,7 @@ import { resetParseHealth } from '../metrics/parse-health.ts';
 import { MarkdownManager } from './index.ts';
 import { PROMOTED_MDAST_TYPES, type PromotedMdastType } from './mdast-augmentation.ts';
 import { customNodeHandlers } from './mdast-to-hast-handlers.ts';
+import { tagToMarkdown } from './tag-to-markdown.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
 import { wikiLinkToMarkdown } from './wiki-link-micromark.ts';
 
@@ -21,6 +22,7 @@ function toMarkdownHasHandler(type: PromotedMdastType): boolean {
   if ((toMarkdownHandlers as AnyHandlerMap)[type]) return true;
   if (type === 'wikiLink' && wikiLinkToMarkdown.handlers.wikiLink) return true;
   if (type === 'wikiLinkEmbed' && wikiLinkToMarkdown.handlers.wikiLinkEmbed) return true;
+  if (type === 'tag' && tagToMarkdown.handlers.tag) return true;
   return false;
 }
 
@@ -40,6 +42,7 @@ const parseFixtures: Record<PromotedMdastType, ParseFixture> = {
     expectedPmType: 'rawMdxFallback',
   },
   mark: { md: '==hello==', expectedPmMark: 'highlight' },
+  tag: { md: 'See #word now.', expectedPmType: 'tag' },
 };
 
 function findPmNode(json: JSONContent, type: string): boolean {
@@ -146,6 +149,7 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         children: [{ type: 'text', value: 'hi' }],
         data: { sourceForm: 'markdown' },
       },
+      tag: { type: 'tag', value: 'foo' },
     };
 
     for (const type of PROMOTED_MDAST_TYPES) {
@@ -206,6 +210,7 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         children: [{ type: 'text', value: 'hi' }],
         data: { sourceForm: 'markdown' },
       },
+      tag: { type: 'tag', value: 'foo' },
     };
 
     for (const type of PROMOTED_MDAST_TYPES) {
@@ -214,6 +219,8 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         handler = wikiLinkToMarkdown.handlers.wikiLink;
       } else if (type === 'wikiLinkEmbed') {
         handler = wikiLinkToMarkdown.handlers.wikiLinkEmbed;
+      } else if (type === 'tag') {
+        handler = tagToMarkdown.handlers.tag;
       } else {
         handler = (toMarkdownHandlers as AnyHandlerMap)[type];
       }

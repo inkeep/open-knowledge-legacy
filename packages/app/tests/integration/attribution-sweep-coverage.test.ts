@@ -35,6 +35,8 @@ const EXEMPT_HANDLERS = new Set([
   'handleDeadLinks',
   'handleOrphans',
   'handleHubs',
+  'handleTagsList',
+  'handleTagsForName',
   'handlePages',
   'handleFolderConfig',
   'handleTemplate',

@@ -6,6 +6,7 @@ import type {
   MarkMdast,
   PromotedMdastType,
   RawMdxFallbackMdast,
+  TagMdast,
   WikiLinkEmbedMdast,
   WikiLinkMdast,
 } from './mdast-augmentation.ts';
@@ -157,6 +158,23 @@ const markHandler: Handler = (state, node) => {
   return state.applyData(node, result);
 };
 
+const tagHandler: Handler = (state, node) => {
+  const tag = node as TagMdast;
+  const value = tag.value;
+  const result: Element = {
+    type: 'element',
+    tagName: 'a',
+    properties: {
+      className: ['tag'],
+      dataTag: value,
+      href: `#tag/${value}`,
+    },
+    children: [{ type: 'text', value: `#${value}` }],
+  };
+  state.patch(node, result);
+  return state.applyData(node, result);
+};
+
 const promotedHandlers: Record<PromotedMdastType, Handler> = {
   wikiLink: wikiLinkHandler,
   wikiLinkEmbed: wikiLinkEmbedHandler,
@@ -164,6 +182,7 @@ const promotedHandlers: Record<PromotedMdastType, Handler> = {
   mdxJsxTextElement: mdxJsxTextHandler,
   rawMdxFallback: rawMdxFallbackHandler,
   mark: markHandler,
+  tag: tagHandler,
 };
 
 export const customNodeHandlers: Handlers = promotedHandlers;

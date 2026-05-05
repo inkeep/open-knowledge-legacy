@@ -77,7 +77,7 @@ describe('jsxInline mdast promotion (US-005 / D7)', () => {
   });
 
   test('PM→mdast emits mdxJsxTextElement (not html)', () => {
-    const pm = mdManager.parse('prose <Tag/> text\n');
+    const pm = mdManager.parse('prose <Foo/> text\n');
     const tree = pmToMdast(pm);
     const para = tree.children.find((c) => c.type === 'paragraph') as Paragraph;
     expect(para).toBeDefined();
@@ -86,7 +86,7 @@ describe('jsxInline mdast promotion (US-005 / D7)', () => {
       | undefined;
     expect(jsx).toBeDefined();
     if (!jsx) throw new Error('unreachable');
-    expect(jsx.data?.sourceRaw).toContain('<Tag');
+    expect(jsx.data?.sourceRaw).toContain('<Foo');
   });
 
   test('round-trip PM equivalence for inline JSX', () => {
