@@ -14,12 +14,7 @@ export default {
     'packages/core/src/desktop-bridge.ts': ['files'],
     'packages/desktop/src/shared/ipc-events.ts': ['files'],
     'packages/app/src/components/CloneDialog.tsx': ['files'],
-    'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
-    'docs/content/guides/agent-activity-panel.mdx': ['files'],
-    'docs/content/guides/install-claude-cowork.mdx': ['files'],
-    'docs/content/guides/properties.mdx': ['files'],
-    'docs/content/guides/component-blocks.mdx': ['files'],
-    'docs/content/guides/assets-and-embeds.mdx': ['files'],
+    'docs/content/**/*.mdx': ['files'],
   },
   workspaces: {
     'packages/app': {

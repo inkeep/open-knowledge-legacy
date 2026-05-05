@@ -61,6 +61,10 @@ export const sharedExtensions = [
     horizontalRule: false,
     hardBreak: false,
     link: false,
+    dropcursor: {
+      color: 'color-mix(in oklch, var(--primary) 50%, transparent)',
+      width: 2,
+    },
   }),
   Table.configure({
     resizable: true,

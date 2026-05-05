@@ -953,14 +953,13 @@
 /* Code blocks */
 .ProseMirror pre {
   background: var(--color-gray-100);
-  border-radius: 0.5em;
   padding: 0.75em 1em;
   margin-bottom: 0.5em;
   overflow-x: auto;
   font-family: var(--font-mono);
   font-size: 0.875em;
   line-height: 1.6;
-  @apply scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/30 dark:scrollbar-thumb-muted-foreground/50;
+  @apply scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/30 dark:scrollbar-thumb-muted-foreground/50 rounded-lg;
 }
 
 /* Inline code */
@@ -1091,8 +1090,8 @@
 .ProseMirror img {
   max-width: 100%;
   height: auto;
-  border-radius: 0.375em;
   margin: 0.5em 0;
+  @apply rounded-lg;
 }
 
 .ProseMirror img.ProseMirror-selectednode {
@@ -1698,16 +1697,34 @@ button:active:not(:disabled) {
  * descriptor names fall through to the '*' wildcard now. */
 .ProseMirror .jsx-component-wrapper[data-component-type="img"] {
   --selection-halo-inset: -2px;
-  --selection-halo-radius: calc(0.375rem + 2px);
+  --selection-halo-radius: calc(0.625rem + 2px);
 }
 
 .ProseMirror .jsx-component-wrapper[data-component-type="video"] {
   --selection-halo-inset: -2px;
-  --selection-halo-radius: calc(0.375rem + 2px);
+  --selection-halo-radius: calc(0.625rem + 2px);
 }
 
-.ProseMirror .jsx-component-wrapper[data-component-type="callout"] {
+/* Shrink the wrapper to the rendered media's actual width so the
+   selection halo and chrome bar (positioned at right: 0) hug the
+   element instead of the full editor column. Text-heavy types
+   (Callout, Accordion, etc.) intentionally fill the column and
+   are not listed here. */
+.ProseMirror .jsx-component-wrapper[data-component-type="img"],
+.ProseMirror .jsx-component-wrapper[data-component-type="video"],
+.ProseMirror .jsx-component-wrapper[data-component-type="audio"] {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.ProseMirror .jsx-component-wrapper[data-component-type="callout"],
+.ProseMirror .jsx-component-wrapper[data-component-type="gfmcallout"] {
   --selection-halo-color: var(--callout-type-color, var(--ring));
+  --selection-halo-radius: calc(0.625rem + 4px);
+}
+
+.ProseMirror .jsx-component-wrapper[data-component-type="accordion"] {
+  --selection-halo-radius: calc(0.625rem + 4px);
 }
 
 /* 7b. Callout (5-pack DIY renderer, US-005) — per-type accent tokens.
@@ -1904,11 +1921,24 @@ button:active:not(:disabled) {
 }
 
 .callout {
-  border-left: 3px solid var(--callout-type-color);
   background: color-mix(in oklab, var(--callout-type-color) 6%, transparent);
-  border-radius: 0.375rem;
-  padding: 0.75rem 1rem;
   margin: 0.5rem 0;
+  @apply rounded-lg py-3 px-4 pl-5 relative;
+}
+
+/* Accent line as a pseudo-element so it survives <details> collapse —
+   non-summary children of a closed <details> are hidden by the browser,
+   but ::before is not a child. */
+.callout::before {
+  content: "";
+  position: absolute;
+  top: 0.5rem;
+  bottom: 0.5rem;
+  left: 0.5rem;
+  width: 2px;
+  border-radius: 9999px;
+  background: var(--callout-type-color);
+  pointer-events: none;
 }
 
 .callout .callout-header {
@@ -1918,7 +1948,6 @@ button:active:not(:disabled) {
   color: var(--callout-type-color);
   font-weight: 500;
   line-height: 1.4;
-  margin-bottom: 0.25rem;
 }
 
 .callout .callout-icon {
@@ -1930,8 +1959,13 @@ button:active:not(:disabled) {
   font-size: 0.9rem;
 }
 
+.callout-summary {
+  @apply flex items-center gap-2 justify-between;
+}
+
 .callout-body {
   color: inherit;
+  margin-top: 0.5rem;
 }
 
 .callout-body > :first-child {
@@ -1941,8 +1975,19 @@ button:active:not(:disabled) {
   margin-bottom: 0;
 }
 
+/* Strip the trailing <p>'s margin-bottom so it doesn't stack on top of the
+   callout's own padding-bottom. ProseMirror wraps content in two NodeView
+   layers (.component-children → [data-node-view-wrapper]) before the <p>,
+   so :last-child is chained down to the deepest-last paragraph and only
+   that one. Fallbacks cover 0/1 wrapper depths. */
+.callout-body > p:last-child,
+.callout-body > :last-child > p:last-child,
+.callout-body > :last-child > :last-child > p:last-child {
+  margin-bottom: 0;
+}
+
 /* Collapsible variant — native <details>/<summary> with a real <svg> chevron.
- * The chevron is a lucide ChevronRight rendered as an actual DOM child of
+ * The chevron is a lucide ChevronDown rendered as an actual DOM child of
  * <summary>, so cloneNode(true) (used by the clipboard live-DOM walker) can
  * carry it across to the pasted-HTML output in destination apps. CSS rotates
  * it on the `[open]` attribute, honoring prefers-reduced-motion. */
@@ -1967,7 +2012,7 @@ button:active:not(:disabled) {
 }
 
 .callout-collapsible[open] > summary > .callout-chevron {
-  transform: rotate(90deg);
+  transform: rotate(-180deg);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -1988,7 +2033,7 @@ button:active:not(:disabled) {
 .ok-video {
   display: block;
   max-width: 100%;
-  border-radius: 0.375rem;
+  @apply rounded-lg;
   margin: 0.5rem 0;
 }
 
@@ -2280,10 +2325,10 @@ button:active:not(:disabled) {
  */
 .accordion {
   border: 1px solid var(--border);
-  border-radius: 0.375rem;
   background: var(--background);
   margin: 0.5rem 0;
   overflow: hidden;
+  @apply rounded-lg;
 }
 
 .accordion > summary {

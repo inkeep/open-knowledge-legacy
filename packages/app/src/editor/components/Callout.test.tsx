@@ -19,7 +19,7 @@ describe('Callout — chevron refactor (collapsible mode)', () => {
       </Callout>,
     );
     expect(html).toContain('callout-chevron');
-    expect(html).toMatch(/<summary[^>]*>[^<]*<svg[^>]*callout-chevron/);
+    expect(html).toMatch(/<summary[^>]*>[\s\S]*<svg[^>]*callout-chevron[\s\S]*<\/summary>/);
   });
 
   test('collapsible=true with defaultOpen={false} omits the open attribute', () => {
@@ -40,7 +40,7 @@ describe('Callout — chevron refactor (collapsible mode)', () => {
     expect(html).toMatch(/<details[^>]+open[\s=>]/);
   });
 
-  test('collapsible chevron sits before the header content', () => {
+  test('collapsible chevron sits after the header content', () => {
     const html = renderToString(
       <Callout type="note" title="Heading" collapsible>
         body
@@ -50,6 +50,6 @@ describe('Callout — chevron refactor (collapsible mode)', () => {
     const titleIdx = html.indexOf('callout-title');
     expect(chevronIdx).toBeGreaterThan(-1);
     expect(titleIdx).toBeGreaterThan(-1);
-    expect(chevronIdx).toBeLessThan(titleIdx);
+    expect(chevronIdx).toBeGreaterThan(titleIdx);
   });
 });

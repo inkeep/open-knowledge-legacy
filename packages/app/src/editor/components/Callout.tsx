@@ -3,7 +3,7 @@ import {
   AlertTriangle,
   BookOpen,
   Bug,
-  ChevronRight,
+  ChevronDown,
   CircleCheck,
   CircleHelp,
   CircleX,
@@ -136,8 +136,8 @@ export function Callout(props: CalloutProps) {
         style={rootStyle}
       >
         <summary className="callout-summary" contentEditable={false}>
-          <ChevronRight size={14} className="callout-chevron" aria-hidden="true" />
           {header ?? <span className="callout-title">Details</span>}
+          <ChevronDown size={16} className="callout-chevron" aria-hidden="true" />
         </summary>
         <div className="callout-body">{props.children}</div>
       </details>
