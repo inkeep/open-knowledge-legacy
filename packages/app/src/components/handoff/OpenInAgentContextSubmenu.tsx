@@ -1,10 +1,10 @@
-import type {
-  HandoffOutcome,
-  HandoffTarget,
-  InstallState,
-  TargetData,
+import {
+  composePrompt,
+  type HandoffOutcome,
+  type HandoffTarget,
+  type InstallState,
 } from '@inkeep/open-knowledge-core';
-import { Sparkles } from 'lucide-react';
+import { ExternalLink, Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import {
   DropdownMenuItem,
@@ -13,18 +13,10 @@ import {
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
-import { computeRowState, TargetIcon } from './OpenInAgentMenuItem';
+import { dispatchClaudeWebFallback, TargetIcon } from './OpenInAgentMenuItem';
 import type { HandoffDispatchInput } from './useHandoffDispatch';
 
-export function contextRowHint(
-  target: TargetData,
-  installState: InstallState,
-  isElectronHost: boolean,
-  inputMissing: boolean,
-): string | null {
-  if (target.id === 'cursor' && !isElectronHost) return 'Desktop only';
-  if (installState.installed === null) return 'Detecting…';
-  if (installState.installed === false) return 'Not installed';
+export function contextRowHint(inputMissing: boolean): string | null {
   if (inputMissing) return 'No workspace';
   return null;
 }
@@ -40,7 +32,23 @@ interface OpenInAgentContextSubmenuProps {
 }
 
 export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps): ReactNode {
-  const { input, installStates, isElectronHost, dispatch } = props;
+  const { input, installStates, dispatch } = props;
+  const inputMissing = input === null;
+  const hint = contextRowHint(inputMissing);
+
+  const installedTargets = KNOWN_TARGETS.filter(
+    (target) => installStates[target.id]?.installed === true,
+  );
+
+  const claudeInstalled = installStates['claude-cowork']?.installed === true;
+
+  const prompt = input !== null ? composePrompt(input.docContext) : '';
+
+  const handleClaudeWebFallback = (): void => {
+    if (input === null) return;
+    void dispatchClaudeWebFallback(prompt);
+  };
+
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
@@ -48,12 +56,8 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
         Open in…
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent>
-        {KNOWN_TARGETS.map((target) => {
-          const installState = installStates[target.id];
-          const rowState = computeRowState({ target, installState, isElectronHost });
-          const inputMissing = input === null;
-          const enabled = rowState.enabled && !inputMissing;
-          const hint = contextRowHint(target, installState, isElectronHost, inputMissing);
+        {installedTargets.map((target) => {
+          const enabled = !inputMissing;
           const accessibleLabel = hint
             ? `Open in ${target.displayName}, ${hint}`
             : `Open in ${target.displayName}`;
@@ -78,6 +82,20 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
             </DropdownMenuItem>
           );
         })}
+        {!claudeInstalled ? (
+          <DropdownMenuItem
+            onSelect={handleClaudeWebFallback}
+            disabled={inputMissing}
+            data-testid="file-tree-open-in-claude-web-fallback"
+            aria-label="Open in claude.ai, opens in browser with prompt pre-filled"
+          >
+            <ExternalLink className="size-4" aria-hidden="true" />
+            <span className="flex-1">Open in claude.ai →</span>
+            <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+              opens in browser
+            </span>
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuSubContent>
     </DropdownMenuSub>
   );
