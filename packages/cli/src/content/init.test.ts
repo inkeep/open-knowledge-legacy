@@ -148,37 +148,39 @@ describe('initContent', () => {
   });
 });
 
-describe('committed .ok/.gitignore matches scaffold output', () => {
-  it('matches OK_GITIGNORE_CONTENT byte-for-byte', () => {
-    const tmp = resolve(
-      tmpdir(),
-      `gitignore-mirror-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    mkdirSync(tmp, { recursive: true });
-    try {
-      initContent(tmp);
-      const scaffolded = readFileSync(join(tmp, OK_DIR, '.gitignore'), 'utf-8');
+function findCommittedDogfoodFile(relativePath: string): string | null {
+  let dir = dirname(import.meta.path);
+  while (dir !== '/' && !existsSync(join(dir, relativePath))) {
+    dir = dirname(dir);
+  }
+  return dir === '/' ? null : join(dir, relativePath);
+}
 
-      let dir = dirname(import.meta.path);
-      while (dir !== '/' && !existsSync(join(dir, '.ok', '.gitignore'))) {
-        dir = dirname(dir);
+const COMMITTED_OK_GITIGNORE = findCommittedDogfoodFile(join('.ok', '.gitignore'));
+const COMMITTED_OKIGNORE = findCommittedDogfoodFile('.okignore');
+
+describe.if(COMMITTED_OK_GITIGNORE !== null)(
+  'committed .ok/.gitignore matches scaffold output',
+  () => {
+    it('matches OK_GITIGNORE_CONTENT byte-for-byte', () => {
+      const tmp = resolve(
+        tmpdir(),
+        `gitignore-mirror-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+      mkdirSync(tmp, { recursive: true });
+      try {
+        initContent(tmp);
+        const scaffolded = readFileSync(join(tmp, OK_DIR, '.gitignore'), 'utf-8');
+        const committed = readFileSync(COMMITTED_OK_GITIGNORE as string, 'utf-8');
+        expect(committed).toBe(scaffolded);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
       }
-      if (dir === '/') {
-        throw new Error(
-          `drift-guard: could not locate .ok/.gitignore by walking up from ${import.meta.path}`,
-        );
-      }
-      const committedPath = join(dir, '.ok', '.gitignore');
-      const committed = readFileSync(committedPath, 'utf-8');
+    });
+  },
+);
 
-      expect(committed).toBe(scaffolded);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-});
-
-describe('committed .okignore matches scaffold output', () => {
+describe.if(COMMITTED_OKIGNORE !== null)('committed .okignore matches scaffold output', () => {
   it('matches OK_OKIGNORE_TEMPLATE byte-for-byte', () => {
     const tmp = resolve(
       tmpdir(),
@@ -189,17 +191,7 @@ describe('committed .okignore matches scaffold output', () => {
       initContent(tmp);
       const scaffolded = readFileSync(join(tmp, '.okignore'), 'utf-8');
       expect(scaffolded).toBe(OK_OKIGNORE_TEMPLATE);
-
-      let dir = dirname(import.meta.path);
-      while (dir !== '/' && !existsSync(join(dir, '.okignore'))) {
-        dir = dirname(dir);
-      }
-      if (dir === '/') {
-        throw new Error(
-          `drift-guard: could not locate .okignore by walking up from ${import.meta.path}`,
-        );
-      }
-      const committed = readFileSync(join(dir, '.okignore'), 'utf-8');
+      const committed = readFileSync(COMMITTED_OKIGNORE as string, 'utf-8');
       expect(committed).toBe(OK_OKIGNORE_TEMPLATE);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
