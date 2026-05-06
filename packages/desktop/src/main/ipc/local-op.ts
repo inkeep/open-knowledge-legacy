@@ -22,13 +22,22 @@ interface InFlightClone {
   controller: RunCloneController;
 }
 
+const MAX_CONCURRENT_AUTH_QUERIES = 4;
+
 interface LocalOpHandlerState {
   authInFlight: InFlightAuth | null;
   cloneInFlight: InFlightClone | null;
+  authStatusInFlight: Map<string, Promise<AuthStatusResponse>>;
+  authReposInFlight: Map<string, Promise<AuthReposResponse>>;
 }
 
 export function createLocalOpState(): LocalOpHandlerState {
-  return { authInFlight: null, cloneInFlight: null };
+  return {
+    authInFlight: null,
+    cloneInFlight: null,
+    authStatusInFlight: new Map(),
+    authReposInFlight: new Map(),
+  };
 }
 
 export interface LocalOpDeps {
@@ -113,22 +122,63 @@ export function handleCloneCancel(deps: LocalOpDeps, streamId: string): void {
   }
 }
 
+const DEFAULT_AUTH_QUERY_HOST = 'github.com';
+
+function runCoalescedAuthQuery<T>(
+  inFlight: Map<string, Promise<T>>,
+  host: string,
+  spawn: () => Promise<T>,
+  tooManyError: (host: string) => T,
+): Promise<T> {
+  const existing = inFlight.get(host);
+  if (existing) return existing;
+  if (inFlight.size >= MAX_CONCURRENT_AUTH_QUERIES) {
+    return Promise.resolve(tooManyError(host));
+  }
+  const promise = spawn().finally(() => {
+    inFlight.delete(host);
+  });
+  inFlight.set(host, promise);
+  return promise;
+}
+
 export function handleAuthStatus(
   deps: LocalOpDeps,
   request?: { host?: string },
 ): Promise<AuthStatusResponse> {
-  return runAuthStatusSubprocess({
-    cliArgs: deps.resolveCliArgs(),
-    host: request?.host,
-  });
+  const host = request?.host ?? DEFAULT_AUTH_QUERY_HOST;
+  return runCoalescedAuthQuery(
+    deps.state.authStatusInFlight,
+    host,
+    () =>
+      runAuthStatusSubprocess({
+        cliArgs: deps.resolveCliArgs(),
+        host: request?.host,
+      }),
+    (h) => ({
+      authenticated: false,
+      host: h,
+      error: 'too many concurrent auth status queries',
+    }),
+  );
 }
 
 export function handleAuthRepos(
   deps: LocalOpDeps,
   request?: { host?: string },
 ): Promise<AuthReposResponse> {
-  return runAuthReposSubprocess({
-    cliArgs: deps.resolveCliArgs(),
-    host: request?.host,
-  });
+  const host = request?.host ?? DEFAULT_AUTH_QUERY_HOST;
+  return runCoalescedAuthQuery(
+    deps.state.authReposInFlight,
+    host,
+    () =>
+      runAuthReposSubprocess({
+        cliArgs: deps.resolveCliArgs(),
+        host: request?.host,
+      }),
+    () => ({
+      ok: false,
+      error: 'too many concurrent auth repos queries',
+    }),
+  );
 }
