@@ -20,8 +20,8 @@ import { ConfigSchema } from './config/schema.ts';
 import { parseKeepaliveConnectionId } from './mcp-mount.ts';
 import { shutdownTelemetry } from './telemetry.ts';
 
-function seedOkScaffold(contentDir: string): void {
-  const okDir = resolve(contentDir, OK_DIR);
+function seedOkScaffold(projectDir: string): void {
+  const okDir = resolve(projectDir, OK_DIR);
   mkdirSync(okDir, { recursive: true });
   writeFileSync(resolve(okDir, 'config.yml'), '', 'utf-8');
   writeFileSync(resolve(okDir, '.gitignore'), '', 'utf-8');
@@ -60,10 +60,10 @@ describe('bootServer — MissingOkConfigError pre-listen check', () => {
       caught = err;
     }
     expect(caught).toBeDefined();
-    const e = caught as Error & { kind?: string; contentDir?: string };
+    const e = caught as Error & { kind?: string; projectDir?: string };
     expect(e.name).toBe('MissingOkConfigError');
     expect(e.kind).toBe('okdir');
-    expect(e.contentDir).toBe(contentDir);
+    expect(e.projectDir).toBe(contentDir);
     expect(e.message).toContain('Open Knowledge config not found at .ok/config.yml');
     expect(e.message).toContain('Run ok init');
     expect(existsSync(resolve(contentDir, '.git/ok'))).toBe(false);
@@ -96,6 +96,61 @@ describe('bootServer — MissingOkConfigError pre-listen check', () => {
     expect(e.kind).toBe('config');
     expect(e.message).toContain('Open Knowledge config not found at .ok/config.yml');
     expect(existsSync(resolve(contentDir, '.git/ok'))).toBe(false);
+  });
+
+  test('preflight checks projectDir/.ok/config.yml when projectDir != contentDir', async () => {
+    const projectDir = mkdtempSync(resolve(tmpDir, 'projectdir-preflight-'));
+    await execFileAsync('git', ['init', '--initial-branch=main', projectDir]);
+    seedOkScaffold(projectDir);
+    const contentDir = resolve(projectDir, 'docs');
+    mkdirSync(contentDir, { recursive: true });
+    expect(existsSync(resolve(contentDir, '.ok', 'config.yml'))).toBe(false);
+
+    let booted: Awaited<ReturnType<typeof bootServer>> | null = null;
+    try {
+      booted = await bootServer({
+        config: TEST_CONFIG,
+        contentDir,
+        projectDir,
+        port: 0,
+        quiet: true,
+        gitEnabled: false,
+        idleShutdownMs: null,
+        attachUiSibling: false,
+      });
+      expect(booted.port).toBeGreaterThan(0);
+    } finally {
+      if (booted) await booted.destroy();
+    }
+  });
+
+  test('rejects when projectDir/.ok/config.yml is missing even though contentDir/.ok/config.yml exists', async () => {
+    const projectDir = mkdtempSync(resolve(tmpDir, 'projectdir-only-content-'));
+    await execFileAsync('git', ['init', '--initial-branch=main', projectDir]);
+    const contentDir = resolve(projectDir, 'docs');
+    mkdirSync(contentDir, { recursive: true });
+    seedOkScaffold(contentDir); // wrong place: config under contentDir, not projectDir
+
+    let caught: unknown;
+    try {
+      await bootServer({
+        config: TEST_CONFIG,
+        contentDir,
+        projectDir,
+        port: 0,
+        quiet: true,
+        gitEnabled: false,
+        idleShutdownMs: null,
+        attachUiSibling: false,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    const e = caught as Error & { kind?: string; projectDir?: string };
+    expect(e.name).toBe('MissingOkConfigError');
+    expect(e.kind).toBe('okdir');
+    expect(e.projectDir).toBe(projectDir);
   });
 
   test('proceeds and emits a one-time stderr warning when only .ok/.gitignore is missing (State C)', async () => {
