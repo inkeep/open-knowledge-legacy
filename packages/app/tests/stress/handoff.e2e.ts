@@ -1,7 +1,23 @@
 /**
  * Layer C (Tier 2): Open-in-Agent handoff — 8-cell matrix.
  *
- * Governing spec: `specs/2026-04-21-open-in-agent-desktop/SPEC.md` §13.3.
+ * Governing specs:
+ *   - v0: `specs/2026-04-21-open-in-agent-desktop/SPEC.md` §13.3 (mock setup,
+ *     dispatch correctness, telemetry shape — all installed-target paths).
+ *   - v1: `specs/2026-05-05-handoff-v1-installed-only-rendering/SPEC.md`
+ *     (uninstalled rows are filtered out of the dropdown; the Claude web
+ *     fallback is promoted from a per-row submenu affordance to a top-level
+ *     menu row when Claude Desktop isn't installed).
+ *
+ * Cell coverage after v1:
+ *   - Cells 1, 2, 4, 8: happy paths for installed targets — unchanged.
+ *   - Cell 3: install-state flip — row is HIDDEN pre-flip (filter removes
+ *     `installed:false` rows) and APPEARS post-flip.
+ *   - Cell 5: Web Cursor — row is HIDDEN (filter removes the
+ *     forced-`installed:false` web-host case).
+ *   - Cell 6: Claude web fallback — clicks the top-level
+ *     `open-in-agent-claude-web-fallback` row.
+ *   - Cell 7: empty-state — menu shows only the Claude web fallback row.
  * Each cell maps to the numbered scenarios in that section. Mocking at the
  * `window.okDesktop` bridge boundary (Electron host) + `page.route` on
  * `/api/installed-agents` (web host) via `fixtures/handoff-mocks.ts`.
@@ -33,7 +49,7 @@
  */
 
 import { realpathSync } from 'node:fs';
-import type { Locator, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { expect, test, waitForActiveProviderSynced } from './_helpers';
 import {
   advanceHandoffFakeTime,
@@ -94,14 +110,6 @@ async function waitForProbeSettled(page: Page, host: 'electron' | 'web'): Promis
       { timeout: 10_000 },
     )
     .toBe(true);
-}
-
-function tooltipScope(page: Page): Locator {
-  return page.locator('[data-slot="dropdown-menu-sub-content"]');
-}
-
-async function expectRowDisabled(row: Locator): Promise<void> {
-  await expect(row).toHaveAttribute('data-row-disabled', '');
 }
 
 function skipElectronCellsInCI() {
@@ -226,7 +234,7 @@ test.describe('handoff — 8-cell matrix', () => {
 
     await openDropdown(page);
     const codexRow = page.getByTestId('open-in-agent-item-codex');
-    await expect(codexRow).toContainText('Not installed');
+    await expect(codexRow).toHaveCount(0);
 
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('open-in-agent-menu')).toBeHidden();
@@ -235,15 +243,7 @@ test.describe('handoff — 8-cell matrix', () => {
     await updateElectronInstallMap(page, { claude: true, codex: true, cursor: true });
 
     await openDropdown(page);
-    await expect
-      .poll(
-        async () => {
-          const text = await codexRow.textContent();
-          return (text ?? '').includes('Not installed');
-        },
-        { timeout: 5_000 },
-      )
-      .toBe(false);
+    await expect(codexRow).toBeVisible({ timeout: 5_000 });
   });
 
   test('cell 4: Web Claude Cowork happy path dispatches via anchor-click + success toast', async ({
@@ -282,7 +282,7 @@ test.describe('handoff — 8-cell matrix', () => {
     expect(captured.openExternalCalls.length).toBe(0);
   });
 
-  test('cell 5: Web Cursor row is ALWAYS disabled (E4) regardless of server response', async ({
+  test('cell 5: Web Cursor row is HIDDEN (v1) regardless of server response', async ({
     page,
     api,
     workerServer,
@@ -298,15 +298,9 @@ test.describe('handoff — 8-cell matrix', () => {
 
     await openDropdown(page);
     await waitForProbeSettled(page, 'web');
-    const cursorRow = page.getByTestId('open-in-agent-item-cursor');
-    await expectRowDisabled(cursorRow);
 
-    await cursorRow.hover();
-    await expect(
-      tooltipScope(page).getByText('Cursor handoff requires the desktop build.').first(),
-    ).toBeVisible();
+    await expect(page.getByTestId('open-in-agent-item-cursor')).toHaveCount(0);
 
-    await cursorRow.click({ force: true });
     await expect
       .poll(
         async () => {
@@ -318,7 +312,7 @@ test.describe('handoff — 8-cell matrix', () => {
       .toBe(0);
   });
 
-  test('cell 6: Web Claude disabled — "Open in claude.ai →" fallback dispatches https://claude.ai/new', async ({
+  test('cell 6: Web Claude not installed — top-level "Open in claude.ai →" row dispatches https://claude.ai/new (v1)', async ({
     page,
     api,
     workerServer,
@@ -334,15 +328,15 @@ test.describe('handoff — 8-cell matrix', () => {
 
     await openDropdown(page);
     await waitForProbeSettled(page, 'web');
-    const coworkRow = page.getByTestId('open-in-agent-item-claude-cowork');
-    await expectRowDisabled(coworkRow);
 
-    await coworkRow.hover();
-    const webFallback = tooltipScope(page)
-      .getByTestId('open-in-agent-web-fallback-claude-cowork')
-      .first();
-    await expect(webFallback).toBeVisible();
-    await webFallback.click();
+    await expect(page.getByTestId('open-in-agent-item-claude-cowork')).toHaveCount(0);
+    await expect(page.getByTestId('open-in-agent-item-claude-code')).toHaveCount(0);
+    await expect(page.getByTestId('open-in-agent-item-cursor')).toHaveCount(0);
+    await expect(page.getByTestId('open-in-agent-item-codex')).toBeVisible();
+
+    const fallback = page.getByTestId('open-in-agent-claude-web-fallback');
+    await expect(fallback).toBeVisible();
+    await fallback.click();
 
     await expect
       .poll(async () => (await readCapturedHandoff(page)).anchorClicks.length, {
@@ -355,10 +349,10 @@ test.describe('handoff — 8-cell matrix', () => {
     expect(u.pathname).toBe('/new');
     expect(u.searchParams.get('q')).toContain('Open Knowledge doc');
 
-    await expect(page.getByText('Opened Claude Cowork in your browser.')).toBeVisible();
+    await expect(page.getByText('Opened claude.ai in your browser.')).toBeVisible();
   });
 
-  test('cell 7: Web empty-dropdown — every row disabled with the right tooltip copy', async ({
+  test('cell 7: Web empty-state — menu shows only the Claude web fallback row (v1-AC4)', async ({
     page,
     api,
     workerServer,
@@ -382,35 +376,9 @@ test.describe('handoff — 8-cell matrix', () => {
     await waitForProbeSettled(page, 'web');
 
     for (const id of ['claude-cowork', 'claude-code', 'codex', 'cursor']) {
-      const row = page.getByTestId(`open-in-agent-item-${id}`);
-      await expectRowDisabled(row);
+      await expect(page.getByTestId(`open-in-agent-item-${id}`)).toHaveCount(0);
     }
-
-    const reopenDropdown = async (): Promise<void> => {
-      if (await page.getByTestId('open-in-agent-menu').isVisible()) {
-        await page.mouse.click(10, 10);
-        await expect(page.getByTestId('open-in-agent-menu')).toBeHidden();
-      }
-      await openDropdown(page);
-    };
-
-    await reopenDropdown();
-    await page.getByTestId('open-in-agent-item-cursor').hover();
-    await expect(
-      tooltipScope(page).getByText('Cursor handoff requires the desktop build.').first(),
-    ).toBeVisible();
-
-    await reopenDropdown();
-    await page.getByTestId('open-in-agent-item-codex').hover();
-    await expect(tooltipScope(page).getByText('Requires Codex Desktop.').first()).toBeVisible();
-    await expect(tooltipScope(page).getByTestId('open-in-agent-web-fallback-codex')).toHaveCount(0);
-
-    await reopenDropdown();
-    await page.getByTestId('open-in-agent-item-claude-cowork').hover();
-    await expect(tooltipScope(page).getByText('Requires Claude Desktop.').first()).toBeVisible();
-    await expect(
-      tooltipScope(page).getByTestId('open-in-agent-web-fallback-claude-cowork').first(),
-    ).toBeVisible();
+    await expect(page.getByTestId('open-in-agent-claude-web-fallback')).toBeVisible();
 
     expect(consoleErrors.filter((e) => !e.includes('net::') && !e.includes('favicon'))).toEqual([]);
 
