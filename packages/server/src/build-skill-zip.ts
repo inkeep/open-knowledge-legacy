@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, existsSync, statSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yazl from 'yazl';
 
@@ -67,8 +67,19 @@ async function* walkFiles(dir: string, base: string = dir): AsyncGenerator<strin
   }
 }
 
+function computeWrapperFolderName(
+  sourceDir: string,
+  pathBasename: (p: string) => string = basename,
+): string {
+  return pathBasename(sourceDir) || 'open-knowledge';
+}
+
+function toPosixZipPath(rel: string, pathSep: string = sep): string {
+  return pathSep === '/' ? rel : rel.split(pathSep).join('/');
+}
+
 async function zipDirectory(sourceDir: string, outputPath: string): Promise<void> {
-  const wrapperFolderName = sourceDir.split('/').pop() ?? 'open-knowledge';
+  const wrapperFolderName = computeWrapperFolderName(sourceDir);
   const zipfile = new yazl.ZipFile();
 
   zipfile.addEmptyDirectory(`${wrapperFolderName}/`);
@@ -79,7 +90,7 @@ async function zipDirectory(sourceDir: string, outputPath: string): Promise<void
 
   for (const rel of files) {
     const absolute = join(sourceDir, rel);
-    const entryName = `${wrapperFolderName}/${rel}`;
+    const entryName = `${wrapperFolderName}/${toPosixZipPath(rel)}`;
     zipfile.addFile(absolute, entryName);
   }
   zipfile.end();
@@ -171,4 +182,4 @@ export async function buildSkillZip(opts: BuildSkillZipOptions = {}): Promise<Bu
   return { outputPath, size, sha256, cliVersion, skillVersion };
 }
 
-const __testing = { extractMetadataVersion };
+export const __testing = { extractMetadataVersion, computeWrapperFolderName, toPosixZipPath };
