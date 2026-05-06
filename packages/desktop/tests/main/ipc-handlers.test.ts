@@ -219,6 +219,49 @@ describe('isPathWithinProject — Review M5 confined-path check', () => {
     ).toBe(true);
   });
 
+  test('Windows: matches drive root case-insensitively', () => {
+    expect(
+      isPathWithinProject('c:\\Users\\x\\project\\sub', 'C:\\Users\\x\\project', 'win32'),
+    ).toBe(true);
+  });
+
+  test('Windows: rejects UNC userPath when projectPath is on a local drive', () => {
+    expect(isPathWithinProject('\\\\evil\\share\\secret.txt', 'C:\\projects\\foo', 'win32')).toBe(
+      false,
+    );
+  });
+
+  test('Windows: rejects local-drive userPath when projectPath is a UNC share', () => {
+    expect(isPathWithinProject('C:\\projects\\foo', '\\\\trusted\\share\\proj', 'win32')).toBe(
+      false,
+    );
+  });
+
+  test('Windows: rejects cross-server UNC paths', () => {
+    expect(
+      isPathWithinProject('\\\\evil\\share\\secret.txt', '\\\\trusted\\share\\proj', 'win32'),
+    ).toBe(false);
+  });
+
+  test('Windows: rejects same-server-different-share UNC paths', () => {
+    expect(isPathWithinProject('\\\\srv\\evil\\foo', '\\\\srv\\proj\\base', 'win32')).toBe(false);
+  });
+
+  test('Windows: accepts subpath within the same UNC share', () => {
+    expect(
+      isPathWithinProject('\\\\srv\\proj\\base\\specs\\foo.md', '\\\\srv\\proj\\base', 'win32'),
+    ).toBe(true);
+  });
+
+  test('Windows: rejects device / extended-length namespace prefixes (cross-root)', () => {
+    expect(isPathWithinProject('\\\\?\\C:\\Windows\\System32', 'C:\\projects\\foo', 'win32')).toBe(
+      false,
+    );
+    expect(isPathWithinProject('\\\\.\\C:\\Windows\\System32', 'C:\\projects\\foo', 'win32')).toBe(
+      false,
+    );
+  });
+
   describe('lexical-only symlink contract', () => {
     let root: string;
 
