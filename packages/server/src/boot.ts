@@ -157,11 +157,12 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
     }
   }
 
-  const okDir = resolve(opts.contentDir, OK_DIR);
+  const projectDir = opts.projectDir ?? opts.contentDir;
+  const okDir = resolve(projectDir, OK_DIR);
   const configPath = resolve(okDir, 'config.yml');
   if (!existsSync(configPath)) {
     const okDirExists = existsSync(okDir);
-    throw new MissingOkConfigError(okDirExists ? 'config' : 'okdir', opts.contentDir);
+    throw new MissingOkConfigError(okDirExists ? 'config' : 'okdir', projectDir);
   }
   const gitignorePath = resolve(okDir, '.gitignore');
   if (!existsSync(gitignorePath)) {

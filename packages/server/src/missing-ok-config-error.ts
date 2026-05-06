@@ -5,11 +5,11 @@ export const MISSING_OK_CONFIG_MESSAGE =
 
 export class MissingOkConfigError extends Error {
   readonly kind: MissingOkConfigKind;
-  readonly contentDir: string;
-  constructor(kind: MissingOkConfigKind, contentDir: string, options?: { cause?: unknown }) {
+  readonly projectDir: string;
+  constructor(kind: MissingOkConfigKind, projectDir: string, options?: { cause?: unknown }) {
     super(MISSING_OK_CONFIG_MESSAGE, options);
     this.name = 'MissingOkConfigError';
     this.kind = kind;
-    this.contentDir = contentDir;
+    this.projectDir = projectDir;
   }
 }

@@ -9,10 +9,10 @@ describe('MissingOkConfigError', () => {
     expect(b.message).toBe(MISSING_OK_CONFIG_MESSAGE);
   });
 
-  test('discriminator + contentDir are queryable as readonly fields', () => {
+  test('discriminator + projectDir are queryable as readonly fields', () => {
     const e = new MissingOkConfigError('config', '/tmp/proj');
     expect(e.kind).toBe('config');
-    expect(e.contentDir).toBe('/tmp/proj');
+    expect(e.projectDir).toBe('/tmp/proj');
     expect(e.name).toBe('MissingOkConfigError');
   });
 

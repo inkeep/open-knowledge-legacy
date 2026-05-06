@@ -227,10 +227,10 @@ describe('bootServer pre-listen check on main worktree (FR3)', () => {
       caught = err;
     }
     expect(caught).toBeDefined();
-    const e = caught as Error & { name?: string; kind?: string; contentDir?: string };
+    const e = caught as Error & { name?: string; kind?: string; projectDir?: string };
     expect(e.name).toBe('MissingOkConfigError');
     expect(e.kind).toBe('okdir');
-    expect(e.contentDir).toBe(contentDir);
+    expect(e.projectDir).toBe(contentDir);
     expect(e.message).toContain('Open Knowledge config not found at .ok/config.yml');
     expect(e.message).toContain('Run ok init');
     expect(existsSync(resolve(contentDir, '.git/ok'))).toBe(false);
