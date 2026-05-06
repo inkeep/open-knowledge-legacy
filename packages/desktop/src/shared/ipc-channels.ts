@@ -10,8 +10,8 @@
  * a debugger.
  *
  * Scale-match trigger (FU-3): at >20 channels, migrate baseline to
- * `@electron-toolkit/typed-ipc` or `@egoist/tipc`. Currently 22 — past
- * the trigger; migrate before adding more.
+ * `@electron-toolkit/typed-ipc` or `@egoist/tipc`. Currently 35 — well past
+ * the trigger; migrate before adding another batch.
  */
 
 import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
@@ -22,6 +22,7 @@ import type {
   OkDesktopConfig,
   OkLocalOpAuthReposResponse,
   OkLocalOpAuthStatusResponse,
+  OkUpdateChannel,
 } from './bridge-contract.ts';
 
 export interface RecentProject {
@@ -114,6 +115,20 @@ export interface RequestChannels {
   'ok:project:close': { args: []; result: undefined };
   'ok:navigator:open': { args: []; result: undefined };
   'ok:update:relaunch-now': { args: []; result: undefined };
+  'ok:update:set-channel': { args: [request: { channel: OkUpdateChannel }]; result: undefined };
+  'ok:update:confirm-downgrade': { args: []; result: undefined };
+  'ok:state:query': {
+    args: [];
+    result: {
+      channel: OkUpdateChannel;
+      schemaIncompatibility: {
+        currentBuild: string;
+        persistedSchemaVersion: number;
+        maxSupported: number;
+      } | null;
+    };
+  };
+  'ok:state:reset-incompatible': { args: []; result: undefined };
   'ok:debug:keyring-smoke': { args: []; result: KeyringSmokeResult };
   'ok:seed:plan': { args: [rootDir?: string]; result: SeedPlanResult };
   'ok:seed:apply': { args: [plan: ScaffoldPlan]; result: SeedApplyResult };

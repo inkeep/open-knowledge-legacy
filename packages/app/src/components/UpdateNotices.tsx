@@ -6,6 +6,8 @@ import { dismissNotice, getNoticesSnapshot, subscribeToNotices } from '@/lib/upd
 import type { UpdateNotice } from './UpdateNotices.shared';
 
 export {
+  addSchemaIncompatibilityNotice,
+  appendErrorDetail,
   attachUpdateSubscribers,
   TOAST_A_ACTION,
   TOAST_A_BODY,
@@ -13,12 +15,72 @@ export {
   TOAST_B_ACTION,
   TOAST_C_ACTION,
   TOAST_C_BODY,
+  TOAST_D_ACTION_CONTINUE,
+  TOAST_D_ACTION_STAY,
+  TOAST_D_ERROR_BODY,
+  TOAST_E_ACTION_RESET,
+  TOAST_E_ACTION_STAY,
+  TOAST_E_ERROR_BODY,
   toastBBody,
+  toastDBody,
+  toastEBody,
   type UpdateNotice,
 } from './UpdateNotices.shared';
 
 function NoticeCard({ notice, onDismiss }: { notice: UpdateNotice; onDismiss: () => void }) {
   const borderTone = notice.variant === 'error' ? 'border-destructive/60' : 'border-sidebar-border';
+  const dismissButton = (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="size-5 shrink-0 text-muted-foreground hover:text-sidebar-foreground"
+      aria-label="Dismiss notice"
+      onClick={onDismiss}
+    >
+      <X aria-hidden="true" className="size-3" />
+    </Button>
+  );
+  const actionButtonClass =
+    'shrink-0 text-xs font-medium underline underline-offset-2 decoration-muted-foreground/40 hover:text-sidebar-foreground hover:decoration-sidebar-foreground';
+
+  if (notice.secondaryAction) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        data-testid={`update-notice-${notice.id}`}
+        className={`flex flex-col gap-2 rounded-md border bg-sidebar-accent/30 px-2 py-2 text-xs text-muted-foreground ${borderTone}`}
+      >
+        <div className="flex items-start gap-2">
+          <span className="flex-1 leading-snug">{notice.body}</span>
+          {dismissButton}
+        </div>
+        <div className="flex gap-3 pl-1">
+          {notice.action ? (
+            <button
+              type="button"
+              className={actionButtonClass}
+              onClick={() => {
+                notice.action?.onClick();
+              }}
+            >
+              {notice.action.label}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className={actionButtonClass}
+            onClick={() => {
+              notice.secondaryAction?.onClick();
+            }}
+          >
+            {notice.secondaryAction.label}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       role="status"
@@ -30,7 +92,7 @@ function NoticeCard({ notice, onDismiss }: { notice: UpdateNotice; onDismiss: ()
       {notice.action ? (
         <button
           type="button"
-          className="shrink-0 text-xs font-medium underline underline-offset-2 decoration-muted-foreground/40 hover:text-sidebar-foreground hover:decoration-sidebar-foreground"
+          className={actionButtonClass}
           onClick={() => {
             notice.action?.onClick();
           }}
@@ -38,15 +100,7 @@ function NoticeCard({ notice, onDismiss }: { notice: UpdateNotice; onDismiss: ()
           {notice.action.label}
         </button>
       ) : null}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-5 shrink-0 text-muted-foreground hover:text-sidebar-foreground"
-        aria-label="Dismiss notice"
-        onClick={onDismiss}
-      >
-        <X aria-hidden="true" className="size-3" />
-      </Button>
+      {dismissButton}
     </div>
   );
 }

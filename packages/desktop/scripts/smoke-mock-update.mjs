@@ -7,7 +7,18 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 
-const VERSION = process.env.MOCK_UPDATE_VERSION ?? '0.99.0-mock';
+const SUPPORTED_CHANNELS = /** @type {const} */ (['latest', 'beta']);
+const RAW_CHANNEL = process.env.OK_UPDATER_MOCK_CHANNEL ?? 'latest';
+if (!SUPPORTED_CHANNELS.includes(/** @type {any} */ (RAW_CHANNEL))) {
+  console.error(
+    `[mock-updater] event=fatal message=unsupported OK_UPDATER_MOCK_CHANNEL=${RAW_CHANNEL} (expected one of: ${SUPPORTED_CHANNELS.join(', ')})`,
+  );
+  process.exit(2);
+}
+const CHANNEL = /** @type {'latest' | 'beta'} */ (RAW_CHANNEL);
+const MANIFEST_NAME = `${CHANNEL}-mac.yml`;
+const DEFAULT_VERSION = CHANNEL === 'beta' ? '0.4.0-beta.0' : '0.99.0-mock';
+const VERSION = process.env.MOCK_UPDATE_VERSION ?? DEFAULT_VERSION;
 const TIMEOUT_MS = Number.parseInt(process.env.MOCK_UPDATE_TIMEOUT_MS ?? '30000', 10);
 const KEEP_ALIVE = process.argv.includes('--keep-alive');
 
@@ -89,9 +100,9 @@ function sha512Base64(buf) {
   return createHash('sha512').update(buf).digest('base64');
 }
 
-function buildLatestMacYml({ version, zipName, zipBytes, releaseDate }) {
+function buildMacYml({ version, channel, zipName, zipBytes, releaseDate }) {
   const sha = sha512Base64(zipBytes);
-  return [
+  const lines = [
     `version: ${version}`,
     'files:',
     `  - url: ${zipName}`,
@@ -100,15 +111,20 @@ function buildLatestMacYml({ version, zipName, zipBytes, releaseDate }) {
     `path: ${zipName}`,
     `sha512: ${sha}`,
     `releaseDate: '${releaseDate}'`,
-    '',
-  ].join('\n');
+  ];
+  if (channel !== 'latest') {
+    lines.push(`channel: ${channel}`);
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
 async function main() {
   const zipBytes = buildMinimalZip();
   const zipName = 'open-knowledge-mock.zip';
-  const manifest = buildLatestMacYml({
+  const manifest = buildMacYml({
     version: VERSION,
+    channel: CHANNEL,
     zipName,
     zipBytes,
     releaseDate: new Date().toISOString(),
@@ -121,11 +137,11 @@ async function main() {
   const server = createServer((req, res) => {
     const rawUrl = req.url ?? '/';
     const pathname = rawUrl.split('?', 1)[0] ?? rawUrl;
-    if (pathname === '/latest-mac.yml') {
+    if (pathname === `/${MANIFEST_NAME}`) {
       res.writeHead(200, { 'Content-Type': 'application/x-yaml' });
       res.end(manifest);
       served.manifest = true;
-      console.log(`[mock-updater] event=served path=/latest-mac.yml status=200 run=${runId}`);
+      console.log(`[mock-updater] event=served path=/${MANIFEST_NAME} status=200 run=${runId}`);
     } else if (pathname === `/${zipName}`) {
       res.writeHead(200, {
         'Content-Type': 'application/zip',
@@ -154,9 +170,9 @@ async function main() {
       const addr = server.address();
       if (typeof addr === 'object' && addr !== null) {
         console.log(`[mock-updater] port=${addr.port} run=${runId}`);
-        console.log(`[mock-updater] event=start version=${VERSION}`);
+        console.log(`[mock-updater] event=start channel=${CHANNEL} version=${VERSION}`);
         console.log(`[mock-updater] feedUrl=http://127.0.0.1:${addr.port}`);
-        console.log(`[mock-updater] manifestUrl=http://127.0.0.1:${addr.port}/latest-mac.yml`);
+        console.log(`[mock-updater] manifestUrl=http://127.0.0.1:${addr.port}/${MANIFEST_NAME}`);
         console.log(`[mock-updater] zipUrl=http://127.0.0.1:${addr.port}/${zipName}`);
         console.log(`[mock-updater] sha512=${sha512Base64(zipBytes)}`);
         resolve(addr.port);
@@ -177,11 +193,14 @@ async function main() {
 
   try {
     const base = `http://127.0.0.1:${port}`;
-    const manifestResp = await fetch(`${base}/latest-mac.yml`);
+    const manifestResp = await fetch(`${base}/${MANIFEST_NAME}`);
     if (!manifestResp.ok) throw new Error(`manifest fetch ${manifestResp.status}`);
     const manifestText = await manifestResp.text();
     if (!manifestText.includes(`version: ${VERSION}`)) {
       throw new Error('manifest does not include expected version');
+    }
+    if (CHANNEL === 'beta' && !manifestText.includes('channel: beta')) {
+      throw new Error('beta manifest missing `channel: beta` field');
     }
     const zipResp = await fetch(`${base}/${zipName}`);
     if (!zipResp.ok) throw new Error(`zip fetch ${zipResp.status}`);
@@ -192,11 +211,14 @@ async function main() {
     console.log('[mock-updater] event=self-test-ok');
     if (KEEP_ALIVE) {
       clearTimeout(timeoutHandle);
+      const channelLine = CHANNEL === 'latest' ? '' : `channel: ${CHANNEL}\n`;
       writeFileSync(
         DEV_APP_UPDATE_YML,
-        `provider: generic\nurl: http://127.0.0.1:${port}\nupdaterCacheDirName: open-knowledge-updater-dev\n`,
+        `provider: generic\nurl: http://127.0.0.1:${port}\n${channelLine}updaterCacheDirName: open-knowledge-updater-dev\n`,
       );
-      console.log(`[mock-updater] event=dev-config-written path=${DEV_APP_UPDATE_YML}`);
+      console.log(
+        `[mock-updater] event=dev-config-written path=${DEV_APP_UPDATE_YML} channel=${CHANNEL}`,
+      );
       console.log(
         '[mock-updater] event=keep-alive — server will stay up until Ctrl+C. Pair with: OK_UPDATER_FORCE_DEV=1 bun run --filter=@inkeep/open-knowledge-desktop dev',
       );

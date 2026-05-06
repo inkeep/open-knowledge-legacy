@@ -1,5 +1,6 @@
 import { contextBridge, type IpcRendererEvent, ipcRenderer } from 'electron';
 import type {
+  OkChannelChangedInfo,
   OkDesktopBridge,
   OkDesktopConfig,
   OkLocalOpAuthEvent,
@@ -7,6 +8,8 @@ import type {
   OkLocalOpStream,
   OkMcpWiringShowPayload,
   OkMenuAction,
+  OkUpdateChannel,
+  OkUpdateDowngradeWarningInfo,
   OkUpdateDownloadedInfo,
   OkUpdateStuckHintInfo,
   OkWhatsNewInfo,
@@ -182,6 +185,18 @@ const bridge: OkDesktopBridge = {
     return () => ipcRenderer.removeListener('ok:update:stuck-hint', listener);
   },
 
+  onUpdateDowngradeWarning(cb: (info: OkUpdateDowngradeWarningInfo) => void) {
+    const listener = (_event: IpcRendererEvent, info: OkUpdateDowngradeWarningInfo) => cb(info);
+    ipcRenderer.on('ok:update:downgrade-warning', listener);
+    return () => ipcRenderer.removeListener('ok:update:downgrade-warning', listener);
+  },
+
+  onChannelChanged(cb: (info: OkChannelChangedInfo) => void) {
+    const listener = (_event: IpcRendererEvent, info: OkChannelChangedInfo) => cb(info);
+    ipcRenderer.on('ok:state:update-channel-changed', listener);
+    return () => ipcRenderer.removeListener('ok:state:update-channel-changed', listener);
+  },
+
   onDeepLink(cb: (evt: { doc: string }) => void) {
     const listener = (_event: IpcRendererEvent, evt: { doc: string }) => cb(evt);
     ipcRenderer.on('ok:deep-link', listener);
@@ -230,6 +245,13 @@ const bridge: OkDesktopBridge = {
 
   update: {
     relaunchNow: () => invoke('ok:update:relaunch-now'),
+    setChannel: (channel: OkUpdateChannel) => invoke('ok:update:set-channel', { channel }),
+    confirmDowngrade: () => invoke('ok:update:confirm-downgrade'),
+  },
+
+  state: {
+    query: () => invoke('ok:state:query'),
+    resetIncompatible: () => invoke('ok:state:reset-incompatible'),
   },
 
   mcpWiring: {

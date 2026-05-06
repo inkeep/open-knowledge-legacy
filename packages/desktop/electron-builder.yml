@@ -131,3 +131,9 @@ publish:
   - provider: github
     owner: inkeep
     repo: open-knowledge
+    # Explicit default — beta builds override at the CLI via
+    # `--config.publish.channel=beta`, which routes the manifest to
+    # `beta-mac.yml` instead of `latest-mac.yml`. Keeping this explicit so
+    # the channel intent is grep-able rather than relying on the implicit
+    # no-channel-field default.
+    channel: latest

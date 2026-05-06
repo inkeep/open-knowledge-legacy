@@ -80,9 +80,19 @@ import {
   addRecentProject,
   annotateMissing,
   emptyState,
+  evaluateSchemaCompatibility,
+  MAX_SUPPORTED_SCHEMA_VERSION,
   parseAppState,
+  type SchemaIncompatibilityDiagnostic,
   saveAppStateToDir,
 } from './state-store.ts';
+import {
+  applyConfirmDowngrade,
+  applyResetIncompatible,
+  applySetChannel,
+  applyStateQuery,
+  type UpdateStateHandlerDeps,
+} from './update-state-handlers.ts';
 import { registerProtocolHandler } from './url-scheme.ts';
 import { buildUtilityForkEnv } from './utility-fork-env.ts';
 import {
@@ -164,6 +174,13 @@ function saveAppState(state: AppState): boolean {
 }
 
 let appState: AppState = emptyState();
+let pendingSchemaIncompatibility: SchemaIncompatibilityDiagnostic | null = null;
+export function getPendingSchemaIncompatibility(): SchemaIncompatibilityDiagnostic | null {
+  return pendingSchemaIncompatibility;
+}
+export function clearPendingSchemaIncompatibility(): void {
+  pendingSchemaIncompatibility = null;
+}
 let navigatorWindow: BrowserWindowLike | null = null;
 let wm: WindowManager;
 let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
@@ -669,6 +686,31 @@ function registerIpcHandlers() {
     return undefined;
   });
 
+  const updateStateDeps = (): UpdateStateHandlerDeps => ({
+    getAppState: () => appState,
+    setAppState: (s) => {
+      appState = s;
+    },
+    saveAppState,
+    setUpdaterChannel: (channel) => {
+      autoUpdaterHandle?.setChannel(channel);
+    },
+    confirmDowngrade: async () => {
+      if (!autoUpdaterHandle) {
+        throw new Error('Auto-updater is not available — please restart the app');
+      }
+      await autoUpdaterHandle.confirmDowngrade();
+    },
+    getPendingSchemaIncompatibility,
+    clearPendingSchemaIncompatibility,
+  });
+  handle('ok:update:set-channel', async (_event, request) =>
+    applySetChannel(updateStateDeps(), request),
+  );
+  handle('ok:update:confirm-downgrade', async () => applyConfirmDowngrade(updateStateDeps()));
+  handle('ok:state:reset-incompatible', async () => applyResetIncompatible(updateStateDeps()));
+  handle('ok:state:query', async () => applyStateQuery(updateStateDeps()));
+
   handle('ok:debug:keyring-smoke', async (event) => {
     return ensureDebugIpc().requestKeyringSmoke(event.sender);
   });
@@ -826,6 +868,15 @@ function bootPrimaryInstance(): void {
 
   app.whenReady().then(async () => {
     appState = loadAppState();
+    const compat = evaluateSchemaCompatibility(
+      appState,
+      MAX_SUPPORTED_SCHEMA_VERSION,
+      app.getVersion(),
+    );
+    if (compat.status === 'incompatible') {
+      pendingSchemaIncompatibility = compat.diagnostic;
+      console.warn('[main] schemaVersion incompatibility detected', compat.diagnostic);
+    }
     installLocalhostCorsInjector();
     registerIpcHandlers();
     refreshApplicationMenu();
@@ -872,6 +923,7 @@ function bootPrimaryInstance(): void {
         const all = BrowserWindow.getAllWindows();
         return all[0] ?? null;
       },
+      getAllWindows: () => BrowserWindow.getAllWindows(),
       getAppVersion: () => app.getVersion(),
       isPackaged: app.isPackaged,
       forceDevBypass: process.env.OK_UPDATER_FORCE_DEV === '1',

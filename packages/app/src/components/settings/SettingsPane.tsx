@@ -68,6 +68,7 @@ import { useEnableSyncWithConfirm } from '@/hooks/use-enable-sync-with-confirm';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
 import type { SettingsScope } from '@/lib/use-settings-route';
+import { ChannelSection } from './ChannelSection';
 import {
   getEnumOptions,
   getFieldDefault,
@@ -341,6 +342,7 @@ function SettingsForm({ scope, commitField, flashedPath }: SettingsFormProps) {
         );
       })}
       {scope === 'project' ? <SyncSection /> : null}
+      {scope === 'user' ? <ChannelSection /> : null}
       <IntegrationsSection />
     </div>
   );
