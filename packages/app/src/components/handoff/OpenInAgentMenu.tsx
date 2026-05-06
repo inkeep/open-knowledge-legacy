@@ -1,18 +1,22 @@
 import { composePrompt, type TargetData } from '@inkeep/open-knowledge-core';
-import { Sparkles } from 'lucide-react';
+import { ExternalLink, Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
-import { toast as sonnerToast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
-import { OpenInAgentMenuItem, successToastForWebFallback } from './OpenInAgentMenuItem';
+import {
+  dispatchClaudeWebFallback,
+  OpenInAgentMenuItem,
+  successToastForWebFallback,
+} from './OpenInAgentMenuItem';
 import { type HandoffDispatchInput, useHandoffDispatch } from './useHandoffDispatch';
 import { useInstalledAgents } from './useInstalledAgents';
 
@@ -29,14 +33,6 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
 
   const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
 
-  const handleWebFallbackSuccess = (target: TargetData): void => {
-    sonnerToast.success(successToastForWebFallback(target.displayName));
-  };
-
-  const handleWebFallbackError = (target: TargetData): void => {
-    sonnerToast.error(`Couldn't open ${target.displayName} in your browser.`);
-  };
-
   const handleOpenChange = (next: boolean): void => {
     setOpen(next);
     if (next) void refresh();
@@ -48,6 +44,15 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
   const handleSelect = (target: TargetData): void => {
     if (input === null) return;
     void dispatch(target.id, input);
+  };
+
+  const installedTargets = KNOWN_TARGETS.filter((target) => states[target.id]?.installed === true);
+
+  const claudeInstalled = states['claude-cowork']?.installed === true;
+
+  const handleClaudeWebFallback = (): void => {
+    if (input === null) return;
+    void dispatchClaudeWebFallback(prompt);
   };
 
   return (
@@ -73,7 +78,7 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
         <DropdownMenuLabel className="font-mono font-normal tracking-wide uppercase text-muted-foreground text-xs">
           Open in…
         </DropdownMenuLabel>
-        {KNOWN_TARGETS.map((target) => {
+        {installedTargets.map((target) => {
           const installState = states[target.id];
           return (
             <OpenInAgentMenuItem
@@ -83,11 +88,23 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
               isElectronHost={isElectronHost}
               prompt={prompt}
               onSelect={() => handleSelect(target)}
-              onWebFallbackSuccess={handleWebFallbackSuccess}
-              onWebFallbackError={handleWebFallbackError}
             />
           );
         })}
+        {!claudeInstalled ? (
+          <DropdownMenuItem
+            onSelect={handleClaudeWebFallback}
+            disabled={input === null}
+            data-testid="open-in-agent-claude-web-fallback"
+            aria-label="Open in claude.ai, opens in browser with prompt pre-filled"
+          >
+            <ExternalLink className="size-4" aria-hidden="true" />
+            <span className="flex-1">Open in claude.ai →</span>
+            <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+              opens in browser
+            </span>
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

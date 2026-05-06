@@ -7,6 +7,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { useTheme } from 'next-themes';
 import type { CSSProperties, ReactNode, SVGProps } from 'react';
+import { toast as sonnerToast } from 'sonner';
 import { ClaudeIcon } from '@/components/icons/claude';
 import { CodexBrandIcon } from '@/components/icons/codex';
 import { CursorIcon } from '@/components/icons/cursor';
@@ -135,6 +136,21 @@ export function computeWebFallbackUrl(prompt: string): string {
 
 export function successToastForWebFallback(displayName: string): string {
   return `Opened ${displayName} in your browser.`;
+}
+
+export const CLAUDE_WEB_FALLBACK_LABEL = 'claude.ai';
+
+export async function dispatchClaudeWebFallback(
+  prompt: string,
+  openExternal: typeof defaultOpenExternal = defaultOpenExternal,
+): Promise<void> {
+  const url = buildClaudeAiWebUrl(prompt);
+  const outcome = await openExternal(url);
+  if (outcome.ok) {
+    sonnerToast.success(successToastForWebFallback(CLAUDE_WEB_FALLBACK_LABEL));
+  } else {
+    sonnerToast.error(`Couldn't open ${CLAUDE_WEB_FALLBACK_LABEL} in your browser.`);
+  }
 }
 
 interface OpenInAgentMenuItemProps {
