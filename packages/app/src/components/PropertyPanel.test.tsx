@@ -77,7 +77,7 @@ describe('PropertyPanel widget routing', () => {
     const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="text"');
     expect(html).toContain('data-testid="text-widget"');
-    expect(html).toContain('value="My Title"');
+    expect(html).toContain('>My Title</textarea>');
   });
 
   test('number-shape value renders NumberWidget', () => {
