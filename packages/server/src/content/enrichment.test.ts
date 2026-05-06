@@ -225,3 +225,33 @@ describe('enrichDirectory — nested cascade attachment', () => {
     expect(meta.tags).toEqual(['kb', 'spec']);
   });
 });
+
+describe('enrichPath/enrichDirectory — defense-in-depth path containment', () => {
+  test('enrichPath rejects `../` escape from projectDir', async () => {
+    const project = await bootstrapProject();
+    await expect(enrichPath('../etc/passwd', { projectDir: project })).rejects.toThrow(
+      /escapes the configured root/,
+    );
+  });
+
+  test('enrichPath rejects absolute path outside projectDir', async () => {
+    const project = await bootstrapProject();
+    await expect(enrichPath('/etc/passwd', { projectDir: project })).rejects.toThrow(
+      /escapes the configured root/,
+    );
+  });
+
+  test('enrichDirectory rejects `../` escape from projectDir', async () => {
+    const project = await bootstrapProject();
+    await expect(enrichDirectory('../', { projectDir: project })).rejects.toThrow(
+      /escapes the configured root/,
+    );
+  });
+
+  test('enrichDirectory rejects absolute path outside projectDir', async () => {
+    const project = await bootstrapProject();
+    await expect(enrichDirectory('/etc', { projectDir: project })).rejects.toThrow(
+      /escapes the configured root/,
+    );
+  });
+});

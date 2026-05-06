@@ -1,10 +1,10 @@
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { READ_DOCUMENT_HISTORY_DEPTH } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 import type { BacklinkEntry, ForwardLinkEntry, GitCommit } from '../../content/enrichment.ts';
 import { enrichPath } from '../../content/enrichment.ts';
 import type { ShadowCommit } from '../../content/shadow-log.ts';
+import { resolveWithinRoot } from './path-safety.ts';
 import { resolvePreviewUrlForTool } from './preview-url.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import { resolveProjectServerContext, textPlusStructured, textResult } from './shared.ts';
@@ -84,10 +84,6 @@ function formatForwardLinks(forwardLinks: ForwardLinkEntry[] | null): string {
   return lines.join('\n');
 }
 
-function relativePath(input: string): string {
-  return input.replace(/^\.\//, '').replace(/^\/+/, '');
-}
-
 function docNameFromRelPath(relPath: string): string {
   return relPath.replace(/\.(md|mdx)$/i, '');
 }
@@ -106,8 +102,12 @@ export async function buildReadResult(
     throw new Error(context.error);
   }
   const { cwd, url: resolvedServerUrl } = context;
-  const relPath = relativePath(args.path);
-  const abs = resolve(cwd, relPath);
+  const contained = resolveWithinRoot(cwd, args.path);
+  if (!contained.ok) {
+    throw new Error(`Refusing to read outside project root: ${contained.reason}`);
+  }
+  const relPath = contained.rel;
+  const abs = contained.abs;
   const historyDepth = READ_DOCUMENT_HISTORY_DEPTH;
 
   const [content, meta] = await Promise.all([
@@ -172,14 +172,18 @@ export function register(server: ServerInstance, deps: ReadDocumentDeps): void {
     async (args: { path: string; since?: string; cwd?: string }) => {
       try {
         const body = await buildReadResult(args, deps);
-        const docName = docNameFromRelPath(relativePath(args.path));
+        const cwd = await deps.resolveCwd(args.cwd);
+        const contained = resolveWithinRoot(cwd, args.path);
+        const docName = contained.ok
+          ? docNameFromRelPath(contained.rel)
+          : docNameFromRelPath(args.path);
         const preview = await resolvePreviewUrlForTool(
           docName,
           {
             config: deps.config,
             resolveCwd: deps.resolveCwd,
           },
-          await deps.resolveCwd(args.cwd),
+          cwd,
         );
         if (!preview) {
           return textPlusStructured(body, { previewUrl: null });
