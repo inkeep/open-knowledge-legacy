@@ -3,7 +3,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import {
-  atomicWriteFile,
   emptySkillState,
   SKILL_STATE_REL,
   SKILL_STATE_TARGETS,
@@ -13,6 +12,7 @@ import {
   type SkillStateSurface,
   type SkillStateTarget,
 } from '@inkeep/open-knowledge-core';
+import { atomicWriteFile } from '@inkeep/open-knowledge-core/server';
 import { type ParsedNode, parseDocument } from 'yaml';
 import { tracedMkdir, tracedRename, tracedWriteFile } from './fs-traced.ts';
 
