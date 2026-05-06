@@ -1,6 +1,12 @@
 import { Command } from 'commander';
 import pc from 'picocolors';
-import { discoverLockDirs } from '../utils/process-scan.ts';
+import {
+  discoverLockDirs,
+  extractOkBinaryPath,
+  type ProcessUsage,
+  processCommand,
+  processUsage,
+} from '../utils/process-scan.ts';
 import { inspectLock, type LockState } from './lock-state.ts';
 
 interface PsEntry {
@@ -10,15 +16,19 @@ interface PsEntry {
     status: LockState['status'];
     pid: number;
     startedAt: string;
+    usage: ProcessUsage | null;
   };
   ui: {
     port: number;
     status: LockState['status'];
     pid: number;
     startedAt: string;
+    usage: ProcessUsage | null;
   } | null;
   hostname: string;
   lockPath: string;
+  binary: string | null;
+  command: string | null;
 }
 
 export function timeAgo(isoString: string, now = Date.now()): string {
@@ -35,7 +45,14 @@ export function timeAgo(isoString: string, now = Date.now()): string {
   return `${diffDay}d ago`;
 }
 
-function buildEntry(_lockDir: string, serverState: LockState, uiState: LockState): PsEntry | null {
+function buildEntry(
+  _lockDir: string,
+  serverState: LockState,
+  uiState: LockState,
+  command: string | null,
+  serverUsage: ProcessUsage | null,
+  uiUsage: ProcessUsage | null,
+): PsEntry | null {
   if (serverState.status === 'missing' || serverState.status === 'corrupt') {
     return null;
   }
@@ -50,6 +67,7 @@ function buildEntry(_lockDir: string, serverState: LockState, uiState: LockState
       status: uiState.status,
       pid: uiLock.pid,
       startedAt: uiLock.startedAt,
+      usage: uiUsage,
     };
   }
 
@@ -60,10 +78,13 @@ function buildEntry(_lockDir: string, serverState: LockState, uiState: LockState
       status: serverState.status,
       pid: serverLock.pid,
       startedAt: serverLock.startedAt,
+      usage: serverUsage,
     },
     ui,
     hostname: serverLock.hostname,
     lockPath: serverState.lockPath,
+    binary: command == null ? null : extractOkBinaryPath(command),
+    command,
   };
 }
 
@@ -93,6 +114,15 @@ function colorStatus(status: LockState['status'], label: string): string {
   }
 }
 
+function formatUsage(usage: ProcessUsage | null): string {
+  if (usage == null) return '—';
+  return `${usage.cpuPercent.toFixed(1)}% / ${usage.memPercent.toFixed(1)}%`;
+}
+
+function formatCombinedUsage(entry: PsEntry): string {
+  return `${formatUsage(entry.server.usage)} | ${formatUsage(entry.ui?.usage ?? null)}`;
+}
+
 function formatPorts(entry: PsEntry): string {
   const serverPort = entry.server.port === 0 ? '(starting)' : String(entry.server.port);
   const uiPort =
@@ -107,13 +137,23 @@ export function renderTable(entries: PsEntry[]): string {
     return 'No open-knowledge servers found.';
   }
 
-  const headers = ['DIRECTORY', 'PORTS (API/UI)', 'STATUS', 'PID', 'STARTED'];
+  const headers = [
+    'DIRECTORY',
+    'PORTS (API/UI)',
+    'CPU/MEM (API | UI)',
+    'STATUS',
+    'PID',
+    'STARTED',
+    'BINARY',
+  ];
   const rows = entries.map((e) => [
     e.directory,
     formatPorts(e),
+    formatCombinedUsage(e),
     statusLabel(e.server.status),
     String(e.server.pid),
     timeAgo(e.server.startedAt),
+    e.binary ?? '—',
   ]);
 
   const colCount = headers.length;
@@ -134,7 +174,7 @@ export function renderTable(entries: PsEntry[]): string {
     const cols: string[] = [];
     for (let i = 0; i < colCount; i++) {
       let cell = (row[i] ?? '').padEnd(widths[i] ?? 0);
-      if (i === 2) {
+      if (i === 3) {
         const rawCell = row[i] ?? '';
         const colored = colorStatus(entry.server.status, rawCell);
         const padding = ' '.repeat(Math.max(0, (widths[i] ?? 0) - rawCell.length));
@@ -152,6 +192,8 @@ export function renderTable(entries: PsEntry[]): string {
 interface RunPsDeps {
   discover?: () => Promise<string[]>;
   inspect?: (lockDir: string, name: 'server' | 'ui') => LockState;
+  resolveCommand?: (pid: number) => string | null;
+  resolveUsage?: (pid: number) => ProcessUsage | null;
   json?: boolean;
   all?: boolean;
   log?: (msg: string) => void;
@@ -161,6 +203,8 @@ export async function runPs(deps: RunPsDeps = {}): Promise<void> {
   const discover = deps.discover ?? discoverLockDirs;
   const inspect = deps.inspect ?? inspectLock;
   const log = deps.log ?? ((msg) => console.log(msg));
+  const resolveCommand = deps.resolveCommand ?? processCommand;
+  const resolveUsage = deps.resolveUsage ?? processUsage;
 
   const lockDirs = await discover();
 
@@ -168,7 +212,19 @@ export async function runPs(deps: RunPsDeps = {}): Promise<void> {
   for (const lockDir of lockDirs) {
     const serverState = inspect(lockDir, 'server');
     const uiState = inspect(lockDir, 'ui');
-    const entry = buildEntry(lockDir, serverState, uiState);
+    const command =
+      serverState.status === 'missing' || serverState.status === 'corrupt'
+        ? null
+        : resolveCommand(serverState.lock.pid);
+    const serverUsage =
+      serverState.status === 'missing' || serverState.status === 'corrupt'
+        ? null
+        : resolveUsage(serverState.lock.pid);
+    const uiUsage =
+      uiState.status === 'missing' || uiState.status === 'corrupt'
+        ? null
+        : resolveUsage(uiState.lock.pid);
+    const entry = buildEntry(lockDir, serverState, uiState, command, serverUsage, uiUsage);
     if (entry != null) {
       entries.push(entry);
     }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import * as Y from 'yjs';
 import type { FrontmatterDocProvider, FrontmatterSnapshot } from './bind-frontmatter-doc.ts';
-import { bindFrontmatterDoc, FORM_WRITE_ORIGIN } from './bind-frontmatter-doc.ts';
+import { bindFrontmatterDoc, FORM_WRITE_ORIGIN, touchesFmRegion } from './bind-frontmatter-doc.ts';
 import { detectFmRegion, MAX_FM_REGION_BYTES, readFmMap } from './frontmatter-region.ts';
 
 function makeProvider(initial = ''): FrontmatterDocProvider & {
@@ -341,6 +341,189 @@ describe('bindFrontmatterDoc — dispose()', () => {
     const binding = bindFrontmatterDoc(provider);
     binding.dispose();
     expect(() => binding.dispose()).not.toThrow();
+  });
+});
+
+describe('touchesFmRegion — pure delta inspector', () => {
+  const event = (delta: Array<{ retain?: number; insert?: string; delete?: number }>) =>
+    ({ delta }) as Parameters<typeof touchesFmRegion>[0];
+
+  test('closed FM present: insert inside region triggers re-parse', () => {
+    expect(touchesFmRegion(event([{ retain: 5 }, { insert: 'x' }]), 30, false)).toBe(true);
+  });
+
+  test('closed FM present: insert past region bails out', () => {
+    expect(touchesFmRegion(event([{ retain: 30 }, { insert: 'x' }]), 30, false)).toBe(false);
+  });
+
+  test('closed FM present: delete inside region triggers re-parse', () => {
+    expect(touchesFmRegion(event([{ retain: 10 }, { delete: 5 }]), 30, false)).toBe(true);
+  });
+
+  test('closed FM present: delete past region bails out', () => {
+    expect(touchesFmRegion(event([{ retain: 30 }, { delete: 5 }]), 30, false)).toBe(false);
+  });
+
+  test('no FM, no open fence: body-only insert bails out (the optimization)', () => {
+    expect(touchesFmRegion(event([{ retain: 42 }, { insert: 'x' }]), 0, false)).toBe(false);
+  });
+
+  test('no FM, no open fence: insert at byte 0 triggers re-parse', () => {
+    expect(touchesFmRegion(event([{ insert: '---\n' }]), 0, false)).toBe(true);
+  });
+
+  test('no FM, no open fence: insert inside the leading-byte window triggers re-parse', () => {
+    expect(touchesFmRegion(event([{ retain: 2 }, { insert: '-' }]), 0, false)).toBe(true);
+  });
+
+  test('no FM, no open fence: delete at byte 0 triggers re-parse', () => {
+    expect(touchesFmRegion(event([{ delete: 3 }]), 0, false)).toBe(true);
+  });
+
+  test('no FM, no open fence: delete past leading window bails out', () => {
+    expect(touchesFmRegion(event([{ retain: 50 }, { delete: 5 }]), 0, false)).toBe(false);
+  });
+
+  test('no FM, no open fence: insert at retain=4 (last byte in window) triggers re-parse', () => {
+    expect(touchesFmRegion(event([{ retain: 4 }, { insert: 'x' }]), 0, false)).toBe(true);
+  });
+
+  test('no FM, no open fence: insert at retain=5 (at threshold) bails out', () => {
+    expect(touchesFmRegion(event([{ retain: 5 }, { insert: 'x' }]), 0, false)).toBe(false);
+  });
+
+  test('open fence prefix: any edit triggers re-parse (could close the fence)', () => {
+    expect(touchesFmRegion(event([{ retain: 100 }, { insert: 'x' }]), 0, true)).toBe(true);
+    expect(touchesFmRegion(event([{ retain: 100 }, { delete: 1 }]), 0, true)).toBe(true);
+  });
+
+  test('embedded objects in inserts respect the threshold', () => {
+    expect(
+      touchesFmRegion(
+        event([{ retain: 50 }, { insert: { embed: true } as unknown as string }]),
+        0,
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      touchesFmRegion(
+        event([{ retain: 2 }, { insert: { embed: true } as unknown as string }]),
+        0,
+        false,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('bindFrontmatterDoc — no-FM body-edit perf bailout', () => {
+  function spyOnYTextToString(ytext: Y.Text): { reads: () => number; restore: () => void } {
+    const original = ytext.toString.bind(ytext);
+    let count = 0;
+    ytext.toString = function spied() {
+      count += 1;
+      return original();
+    } as typeof ytext.toString;
+    return {
+      reads: () => count,
+      restore: () => {
+        ytext.toString = original;
+      },
+    };
+  }
+
+  test('body-only edits on a no-FM doc do not call ytext.toString()', () => {
+    const provider = makeProvider('plain body content with no frontmatter\n');
+    const binding = bindFrontmatterDoc(provider);
+    const ytext = provider.document.getText('source');
+    const spy = spyOnYTextToString(ytext);
+    let calls = 0;
+    binding.subscribe(() => {
+      calls += 1;
+    });
+
+    for (let i = 0; i < 25; i++) {
+      ytext.insert(ytext.length, String(i % 10));
+    }
+
+    expect(calls).toBe(0);
+    expect(spy.reads()).toBe(0);
+    spy.restore();
+    binding.dispose();
+  });
+
+  test('inserting an FM block at byte 0 fires the listener', () => {
+    const provider = makeProvider('plain body\n');
+    const binding = bindFrontmatterDoc(provider);
+    const calls: FrontmatterSnapshot[] = [];
+    binding.subscribe((s) => {
+      calls.push(s);
+    });
+
+    const ytext = provider.document.getText('source');
+    ytext.insert(0, '---\ntitle: Hello\n---\n');
+
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.at(-1)?.map).toEqual({ title: 'Hello' });
+  });
+
+  test('open fence prefix without closing fence: body edits still re-parse', () => {
+    const provider = makeProvider('---\ntitle: Hello\n');
+    const binding = bindFrontmatterDoc(provider);
+    const ytext = provider.document.getText('source');
+    const spy = spyOnYTextToString(ytext);
+    let calls = 0;
+    binding.subscribe(() => {
+      calls += 1;
+    });
+
+    ytext.insert(ytext.length, '---\n');
+
+    expect(spy.reads()).toBeGreaterThan(0);
+    expect(calls).toBeGreaterThan(0);
+    expect(binding.current().map).toEqual({ title: 'Hello' });
+    spy.restore();
+    binding.dispose();
+  });
+
+  test('transition no-prefix → open-prefix updates the cached flag', () => {
+    const provider = makeProvider('hello\n');
+    const binding = bindFrontmatterDoc(provider);
+    const ytext = provider.document.getText('source');
+
+    ytext.insert(0, '---\n');
+    expect(binding.current().map).toEqual({});
+
+    const spy = spyOnYTextToString(ytext);
+    let calls = 0;
+    binding.subscribe(() => {
+      calls += 1;
+    });
+    ytext.insert(ytext.length, '---\n');
+
+    expect(spy.reads()).toBeGreaterThan(0);
+    expect(calls).toBeGreaterThan(0);
+    spy.restore();
+    binding.dispose();
+  });
+
+  test('transition open-prefix → no-prefix restores bailout', () => {
+    const provider = makeProvider('---\nhello\n');
+    const binding = bindFrontmatterDoc(provider);
+    const ytext = provider.document.getText('source');
+
+    ytext.delete(0, 4);
+
+    const spy = spyOnYTextToString(ytext);
+    let calls = 0;
+    binding.subscribe(() => {
+      calls += 1;
+    });
+    ytext.insert(ytext.length, 'world');
+
+    expect(spy.reads()).toBe(0);
+    expect(calls).toBe(0);
+    spy.restore();
+    binding.dispose();
   });
 });
 

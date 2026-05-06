@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 const SPAWN_TIMEOUT_MS = 2000;
+const OK_PROCESS_PGREP_QUERY =
+  'cli\\.mjs|open-knowledge|(^|[ /])ok[ ]+(start|mcp|ui)([ ]|$)|packages/(cli|app)|hocuspocus|vite';
 
 const OK_PROCESS_PATTERNS: RegExp[] = [
   /cli\.mjs/,
@@ -17,7 +19,7 @@ function isOkProcess(command: string): boolean {
 }
 
 export async function findOkProcessPids(): Promise<number[]> {
-  const pgrepResult = spawnSync('pgrep', ['-a', '-f', 'cli.mjs'], {
+  const pgrepResult = spawnSync('pgrep', ['-a', '-f', OK_PROCESS_PGREP_QUERY], {
     encoding: 'utf-8',
     timeout: SPAWN_TIMEOUT_MS,
   });
@@ -27,7 +29,8 @@ export async function findOkProcessPids(): Promise<number[]> {
 
   if (!pgrepUnavailable) {
     const output = pgrepResult.stdout ?? '';
-    return parsePgrepOutput(output);
+    const pids = parsePgrepOutput(output);
+    if (pids.length > 0 || output.trim() === '') return pids;
   }
 
   const psResult = spawnSync('ps', ['-axo', 'pid,command'], {
@@ -77,6 +80,52 @@ function parsePsOutput(output: string): number[] {
   return pids;
 }
 
+export function extractOkBinaryPath(command: string): string | null {
+  const tokens = command.trim().split(/\s+/).filter(Boolean);
+  for (const token of tokens) {
+    if (token.startsWith('@')) continue;
+    const base = basename(token);
+    if (base === 'open-knowledge' || base === 'ok') return token;
+    if (
+      token.endsWith('/packages/cli/src/cli.ts') ||
+      token.endsWith('/packages/cli/dist/cli.mjs')
+    ) {
+      return token;
+    }
+    if (base === 'cli.mjs' || base === 'cli.ts') return token;
+  }
+  return null;
+}
+
+export function processCommand(pid: number): string | null {
+  const result = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
+    encoding: 'utf-8',
+    timeout: SPAWN_TIMEOUT_MS,
+  });
+
+  if (result.error != null || !result.stdout) return null;
+  return result.stdout.trim() || null;
+}
+
+export interface ProcessUsage {
+  cpuPercent: number;
+  memPercent: number;
+}
+
+export function processUsage(pid: number): ProcessUsage | null {
+  const result = spawnSync('ps', ['-p', String(pid), '-o', '%cpu=,%mem='], {
+    encoding: 'utf-8',
+    timeout: SPAWN_TIMEOUT_MS,
+  });
+
+  if (result.error != null || !result.stdout) return null;
+  const [cpuRaw, memRaw] = result.stdout.trim().split(/\s+/);
+  const cpuPercent = Number.parseFloat(cpuRaw ?? '');
+  const memPercent = Number.parseFloat(memRaw ?? '');
+  if (Number.isNaN(cpuPercent) || Number.isNaN(memPercent)) return null;
+  return { cpuPercent, memPercent };
+}
+
 export async function pidCwd(pid: number): Promise<string | null> {
   const result = spawnSync('lsof', ['-p', String(pid), '-a', '-d', 'cwd', '-Fn'], {
     encoding: 'utf-8',
@@ -116,16 +165,29 @@ function parseListeningPids(output: string): number[] {
 export async function discoverLockDirs(): Promise<string[]> {
   const candidateDirs = new Set<string>();
 
+  const addLockDirsForCwd = (cwd: string): void => {
+    for (const lockDir of [
+      join(cwd, '.ok', 'local'),
+      join(cwd, '.ok'),
+      join(cwd, '.open-knowledge'),
+      join(cwd, '.openknowledge'),
+    ]) {
+      if (
+        existsSync(lockDir) &&
+        (existsSync(join(lockDir, 'server.lock')) || existsSync(join(lockDir, 'ui.lock')))
+      ) {
+        candidateDirs.add(lockDir);
+      }
+    }
+  };
+
   const okPids = await findOkProcessPids();
   const cwdPromises = okPids.map((pid) => pidCwd(pid));
   const cwds = await Promise.all(cwdPromises);
 
   for (const cwd of cwds) {
     if (cwd == null) continue;
-    const lockDir = join(cwd, '.ok', 'local');
-    if (existsSync(lockDir)) {
-      candidateDirs.add(lockDir);
-    }
+    addLockDirsForCwd(cwd);
   }
 
   const lsofResult = spawnSync('lsof', ['-iTCP', '-sTCP:LISTEN', '-nP'], {
@@ -142,10 +204,7 @@ export async function discoverLockDirs(): Promise<string[]> {
 
     for (const cwd of portCwds) {
       if (cwd == null) continue;
-      const lockDir = join(cwd, '.ok', 'local');
-      if (existsSync(lockDir)) {
-        candidateDirs.add(lockDir);
-      }
+      addLockDirsForCwd(cwd);
     }
   }
 
