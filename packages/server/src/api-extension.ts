@@ -83,6 +83,7 @@ import { collectReferencedAssets, toContentRelativePath } from './asset-referenc
 import { assetContentTypeForPath } from './asset-serve-middleware.ts';
 import { enrichDirectory } from './content/enrichment.ts';
 import { applyNestedFolderRulesUpsert } from './content/folder-rule-write.ts';
+import { resolveNestedFrontmatterWithSources } from './content/nested-folder-rules.ts';
 import {
   applyTemplateDelete,
   applyTemplateWrite,
@@ -4161,6 +4162,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const meta = await enrichDirectory(validated.folderRel, {
         projectDir: validated.resolvedContentDir,
       });
+      const { sources: frontmatterSources } = resolveNestedFrontmatterWithSources(
+        validated.resolvedContentDir,
+        validated.folderRel,
+      );
       const localFmPath = resolve(
         validated.resolvedContentDir,
         validated.folderRel,
@@ -4183,7 +4188,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           frontmatterLocal = null;
         }
       }
-      json(res, 200, { ok: true, folder: meta, frontmatter_local: frontmatterLocal });
+      json(res, 200, {
+        ok: true,
+        folder: meta,
+        frontmatter_local: frontmatterLocal,
+        frontmatter_sources: frontmatterSources,
+      });
     } catch (error) {
       console.error('[folder-config:get]', error);
       json(res, 500, {

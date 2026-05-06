@@ -30,6 +30,7 @@ interface FolderConfig {
 export interface FolderConfigSnapshot {
   folder: FolderConfig;
   frontmatterLocal: Record<string, unknown> | null;
+  frontmatterSources: Record<string, string>;
 }
 
 export interface TemplateMenuEntry {
@@ -84,6 +85,7 @@ export function useFolderConfig(folderPath: string | null): FolderConfigHandle {
           ok: boolean;
           folder?: FolderConfig;
           frontmatter_local?: Record<string, unknown> | null;
+          frontmatter_sources?: Record<string, string>;
           error?: string;
         }>;
       })
@@ -98,6 +100,7 @@ export function useFolderConfig(folderPath: string | null): FolderConfigHandle {
           data: {
             folder: payload.folder,
             frontmatterLocal: payload.frontmatter_local ?? null,
+            frontmatterSources: payload.frontmatter_sources ?? {},
           },
         });
       })

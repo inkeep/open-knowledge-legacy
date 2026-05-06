@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { dispatchTagClickEvent } from '@/editor/extensions/tag-click-plugin';
 import { cn } from '@/lib/utils';
 
@@ -449,10 +450,39 @@ interface TypeIconButtonProps {
   keyName: string;
   type: FrontmatterType;
   onChangeType: (next: FrontmatterType) => void;
+  disabled?: boolean;
 }
 
-export function TypeIconButton({ keyName, type, onChangeType }: TypeIconButtonProps) {
+export function TypeIconButton({
+  keyName,
+  type,
+  onChangeType,
+  disabled = false,
+}: TypeIconButtonProps) {
   const Icon = TYPE_ICON[type];
+  if (disabled) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {/* biome-ignore lint/a11y/noNoninteractiveTabindex: shadcn's tooltip-on-disabled-button pattern requires a focusable <span> wrapper so keyboard users can reach the tooltip — the inner <button disabled> is removed from tab order. https://ui.shadcn.com/docs/components/radix/tooltip#disabled-button */}
+          <span tabIndex={0} className="inline-flex">
+            <button
+              type="button"
+              disabled
+              data-testid="type-icon-button"
+              data-key={keyName}
+              data-type={type}
+              aria-label={`${keyName} type: ${TYPE_LABEL[type]} (inherited from folder defaults; not editable here)`}
+              className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground disabled:cursor-default"
+            >
+              <Icon className="size-3.5" />
+            </button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>Inherited — set a value to override.</TooltipContent>
+      </Tooltip>
+    );
+  }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger

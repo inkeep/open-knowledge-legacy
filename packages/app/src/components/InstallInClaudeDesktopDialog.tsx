@@ -11,6 +11,7 @@ import {
   Dialog as DialogRoot,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { dispatchExternalLinkClick } from '@/lib/external-link';
 import { cn } from '@/lib/utils';
 
 const INSTALL_COMMAND = 'npx @inkeep/open-knowledge install-skill';
@@ -280,6 +281,8 @@ export function InstallInClaudeDesktopDialog({
                   href={DOCS_URL}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={(e) => dispatchExternalLinkClick(e, DOCS_URL)}
+                  onAuxClick={(e) => dispatchExternalLinkClick(e, DOCS_URL)}
                   className="text-xs underline underline-offset-2 hover:text-foreground"
                 >
                   See the full install guide
@@ -295,6 +298,8 @@ export function InstallInClaudeDesktopDialog({
               href={DOCS_URL}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(e) => dispatchExternalLinkClick(e, DOCS_URL)}
+              onAuxClick={(e) => dispatchExternalLinkClick(e, DOCS_URL)}
               className="inline-flex items-center gap-1 self-center text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground sm:mr-auto font-mono tracking-wide uppercase"
             >
               Full guide

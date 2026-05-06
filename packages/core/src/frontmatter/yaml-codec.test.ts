@@ -65,8 +65,8 @@ describe('parseFrontmatterYaml', () => {
     expect(map).toBeNull();
   });
 
-  test('returns null map when list contains non-strings', () => {
-    expect(parseFrontmatterYaml('tags: [1, 2, 3]').map).toBeNull();
+  test('coerces non-string scalars in array values to strings', () => {
+    expect(parseFrontmatterYaml('tags: [1, 2, 3]').map).toEqual({ tags: ['1', '2', '3'] });
   });
 
   test('preserves user-source key order', () => {
@@ -198,9 +198,23 @@ describe('applyPatchToDocument', () => {
     expect(out).toContain('status: published');
   });
 
-  test('throws on invalid value shape', () => {
+  test('coerces non-string scalars when patching arrays', () => {
     const { doc } = parseFrontmatterYaml('title: Foo\n');
-    expect(() => applyPatchToDocument(doc, { tags: [1, 2, 3] })).toThrow();
+    const out = applyPatchToDocument(doc, { tags: [1, 2, 3] });
+    const reparsed = parseFrontmatterYaml(out).map;
+    expect(reparsed?.tags).toEqual(['1', '2', '3']);
+  });
+
+  test('preserves flow-style array when patching an existing flow array', () => {
+    const { doc } = parseFrontmatterYaml('tags: [a, b, c]\n');
+    const out = applyPatchToDocument(doc, { tags: ['a', 'b', 'c', 'd'] });
+    expect(out).toContain('tags: [');
+  });
+
+  test('preserves block-style array when patching an existing block array', () => {
+    const { doc } = parseFrontmatterYaml('tags:\n  - a\n  - b\n');
+    const out = applyPatchToDocument(doc, { tags: ['a', 'b', 'c'] });
+    expect(out).toMatch(/tags:\s*\n\s*-\s/);
   });
 });
 

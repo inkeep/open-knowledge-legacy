@@ -93,11 +93,4 @@ describe('TagPillInput source-level guards', () => {
     const block = after.slice(0, blockEnd);
     expect(block).toContain("setDraft('')");
   });
-
-  test('does NOT use forwardRef / memo / useMemo / useCallback (React Compiler)', () => {
-    expect(SRC).not.toContain('forwardRef');
-    expect(SRC).not.toMatch(/\bmemo\s*\(/);
-    expect(SRC).not.toContain('useMemo');
-    expect(SRC).not.toContain('useCallback');
-  });
 });

@@ -57,8 +57,12 @@ describe('extractFrontmatterTags', () => {
     }
   });
 
-  test('mixed-type lists fail FrontmatterMapSchema and yield no tags', () => {
-    expect(extractFrontmatterTags('tags: [valid, 42, true, also]\n')).toEqual([]);
+  test('coerces non-string scalars and applies the per-entry tag regex', () => {
+    expect(extractFrontmatterTags('tags: [valid, 42, true, also]\n')).toEqual([
+      'valid',
+      'true',
+      'also',
+    ]);
   });
 
   test('returns empty when frontmatter parse fails', () => {

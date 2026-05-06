@@ -203,6 +203,20 @@ describe('PropertyPanel malformed YAML banner (FR9)', () => {
     expect(html).toContain('data-testid="property-panel-yaml-error"');
     expect(html).toContain('Frontmatter YAML is malformed');
   });
+
+  test('does not show YAML-malformed banner when array contains non-string scalars', () => {
+    const provider = makeProvider('mixed-scalar-array-doc');
+    seedYTextFm(provider, '---\ntags: [travel, spain, 2026]\n---\n');
+    const html = renderPanel(provider);
+    expect(html).not.toContain('data-testid="property-panel-yaml-error"');
+    expect(html).toContain('data-widget-type="list"');
+    expect(html).toContain('data-index="0"');
+    expect(html).toContain('data-index="1"');
+    expect(html).toContain('data-index="2"');
+    expect(html).toContain('travel');
+    expect(html).toContain('spain');
+    expect(html).toContain('2026');
+  });
 });
 
 describe('PropertyPanel error rendering', () => {

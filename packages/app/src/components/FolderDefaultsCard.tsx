@@ -10,10 +10,10 @@ import {
   type AddDraft,
   AddPropertyRow,
   FrontmatterRow,
+  InheritedBadge,
   type RenameDraft,
 } from '@/components/FrontmatterRow';
 import { coerceValue, resolveWidgetType } from '@/components/PropertyWidgets';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -64,6 +64,7 @@ export function FolderDefaultsCard({ folderPath, state, onChange }: Props) {
 
   const merged = (state.data.folder.frontmatter_defaults ?? {}) as Record<string, unknown>;
   const local = state.data.frontmatterLocal ?? {};
+  const sources = state.data.frontmatterSources;
   const filePath = frontmatterYamlPath(state.data.folder.path);
   const orderedKeys = Object.keys(merged);
 
@@ -177,30 +178,37 @@ export function FolderDefaultsCard({ folderPath, state, onChange }: Props) {
   }
 
   return (
-    <section className="rounded-lg border bg-card p-2">
+    <section className="rounded-lg border bg-card">
       <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
-        <div className="flex items-center justify-between gap-2 px-2 py-1">
-          <CollapsibleTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="-ml-1 flex items-center gap-1.5 px-1.5 text-xs font-semibold uppercase font-mono tracking-wider text-muted-foreground hover:bg-transparent hover:text-foreground"
-            >
-              <ChevronRight
-                className={`size-3 transition-transform ${collapsed ? '' : 'rotate-90'}`}
-              />
-              <FolderCog className="size-3.5" aria-hidden />
-              Folder defaults
-            </Button>
-          </CollapsibleTrigger>
-          <code className="text-xs text-muted-foreground font-mono">{filePath}</code>
-        </div>
+        <CollapsibleTrigger className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2.5 data-[state=open]:border-b border-border">
+          <span className="flex items-center gap-1.5 text-xs font-semibold uppercase font-mono tracking-wider text-muted-foreground">
+            <ChevronRight
+              className={`size-3 transition-transform ${collapsed ? '' : 'rotate-90'}`}
+              aria-hidden
+            />
+            <span>Folder defaults</span>
+          </span>
+          {/* Stop click bubbling so single / triple click on the path
+                doesn't toggle the collapsible. Drag-to-select never fires
+                click on its own. <code> isn't focusable, so it can't receive
+                keyboard events — biome's useKeyWithClickEvents pairs onClick
+                with a keyboard handler by default; here a keyboard handler
+                would be dead code since the wrapping <button> handles all
+                keyboard activation (Enter/Space → toggle). */}
+          {/* biome-ignore lint/a11y/useKeyWithClickEvents: <code> is non-focusable; keyboard activation lives on the wrapping <button>. */}
+          <code
+            className="text-xs text-muted-foreground font-mono cursor-text select-text"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {filePath}
+          </code>
+        </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="px-1 pb-1">
+          <div className="px-2 py-2">
             {orderedKeys.length === 0 && !adding ? (
-              <p className="px-2 py-2 text-sm text-muted-foreground">
-                No defaults declared. Click <strong>Add property</strong> to set a value (`title`,
-                `description`, `tags`, `status`, `team`, …) that every doc in this folder inherits.
+              <p className="px-1 py-1 text-sm text-muted-foreground">
+                No defaults declared. Add a property to set a value every doc in this folder
+                inherits.
               </p>
             ) : (
               orderedKeys.map((key) => {
@@ -224,13 +232,8 @@ export function FolderDefaultsCard({ folderPath, state, onChange }: Props) {
                           }
                         : undefined
                     }
-                    badge={
-                      isLocal ? null : (
-                        <Badge variant="outline" className="text-[10px]">
-                          inherited
-                        </Badge>
-                      )
-                    }
+                    badge={isLocal ? null : <InheritedBadge source={sources[key] ?? ''} />}
+                    isInherited={!isLocal}
                     onCommit={(next) => void commitKey(key, next)}
                     onChangeType={(t) => setType(key, t)}
                     onRemove={isLocal ? () => void removeKey(key) : undefined}
@@ -252,8 +255,9 @@ export function FolderDefaultsCard({ folderPath, state, onChange }: Props) {
                 type="button"
                 variant="ghost"
                 size="sm"
+                data-testid="add-property-trigger"
                 onClick={beginAdd}
-                className="mt-1 ml-7 flex items-center gap-1.5 rounded px-2 py-1 font-medium text-sm hover:bg-muted/50 hover:text-foreground"
+                className="mt-1 flex items-center gap-1.5 rounded px-2 py-1 font-medium text-sm hover:bg-muted/50 hover:text-foreground"
               >
                 <Plus className="size-3.5" />
                 <span>Add property</span>
