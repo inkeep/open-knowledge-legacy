@@ -2,20 +2,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import type { Config } from '../../config/schema.ts';
+import { type Config, ConfigSchema } from '../../config/schema.ts';
 import type { ServerInstance } from './shared.ts';
 import { register } from './write-document.ts';
 
-const BASE_CONFIG: Config = {
-  content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
-  server: { host: 'localhost', openOnAgentEdit: false },
-  mcp: {
-    tools: {
-      read_document: { historyDepth: 5 },
-      search: { maxResults: 50 },
-    },
-  },
-};
+const BASE_CONFIG: Config = ConfigSchema.parse({});
 
 interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;

@@ -60,10 +60,8 @@ export function parseSpawnTimeoutEnv(raw: string | undefined): number | undefine
 interface ResolveMcpHttpUrlOptions {
   lockDir: string;
   contentDir: string;
-  host: string;
   portOverride?: string;
   envAutoStart?: string;
-  configAutoStart?: boolean;
   spawn?: typeof nativeSpawn;
   readLock?: () => ServerLockMetadata | null;
   isAlive?: (pid: number) => boolean;
@@ -182,7 +180,7 @@ export async function resolveMcpHttpUrl(opts: ResolveMcpHttpUrlOptions): Promise
         `invalid --port value '${opts.portOverride}' — HTTP MCP shim requires a positive port`,
       );
     }
-    return mcpUrlForPort(opts.host, parsed);
+    return mcpUrlForPort('localhost', parsed);
   }
 
   const existingPort = livePortFromLock(readLock(), isAlive);
@@ -191,11 +189,6 @@ export async function resolveMcpHttpUrl(opts: ResolveMcpHttpUrlOptions): Promise
   if (opts.envAutoStart === '0') {
     throw new Error(
       'Open Knowledge server is not running and OK_MCP_AUTOSTART=0 disables auto-start.',
-    );
-  }
-  if (opts.configAutoStart === false) {
-    throw new Error(
-      'Open Knowledge server is not running and config mcp.autoStart=false disables auto-start.',
     );
   }
 

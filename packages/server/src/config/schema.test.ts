@@ -5,52 +5,20 @@ describe('ConfigSchema', () => {
   test('empty object returns all defaults', () => {
     const config = ConfigSchema.parse({});
     expect(config.content.dir).toBe('.');
-    expect(config.server.host).toBe('localhost');
-    expect(config.server.openOnAgentEdit).toBe(false);
-    expect(config.mcp.autoStart).toBe(true);
     expect(config.appearance.theme).toBeUndefined();
     expect(config.appearance.editorModeDefault).toBeUndefined();
+    expect(config.autoSync.onboardingResolvedAt).toBeNull();
   });
 
-  test('stale dropped fields (sync.*, persistence.debounceMs, server.port) pass loose-mode without throwing (D34)', () => {
+  test('stale dropped fields pass loose-mode without throwing', () => {
     const result = ConfigSchema.safeParse({
       sync: { pushIntervalSeconds: 30, autoCommit: true },
       persistence: { debounceMs: 2000 },
-      server: { port: 3000, host: 'example.dev' },
+      server: { port: 3000, host: 'example.dev', openOnAgentEdit: true },
+      github: { oauthAppClientId: 'custom' },
+      mcp: { autoStart: false, tools: { search: { maxResults: 100 } } },
     });
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.server.host).toBe('example.dev');
-    }
-  });
-
-  test('mcp.autoStart: false is accepted', () => {
-    const config = ConfigSchema.parse({ mcp: { autoStart: false } });
-    expect(config.mcp.autoStart).toBe(false);
-  });
-
-  test('mcp section absent parses with autoStart: true default', () => {
-    const config = ConfigSchema.parse({});
-    expect(config.mcp.autoStart).toBe(true);
-  });
-
-  test('partial override preserves other defaults', () => {
-    const config = ConfigSchema.parse({
-      server: { host: '0.0.0.0' },
-    });
-    expect(config.server.host).toBe('0.0.0.0');
-    expect(config.server.openOnAgentEdit).toBe(false); // default preserved
-    expect(config.content.dir).toBe('.'); // other section default preserved
-  });
-
-  test('invalid host type produces error', () => {
-    const result = ConfigSchema.safeParse({
-      server: { host: 12345 },
-    });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0].path).toContain('host');
-    }
   });
 
   test('appearance.theme accepts the enum values', () => {

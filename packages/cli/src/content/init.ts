@@ -57,21 +57,10 @@ export function buildConfigYmlContent(_version: string): string {
 
 
 # --- Server ----------------------------------------------------------------
-# HTTP/WebSocket listener for the Hocuspocus server + static React app.
-#
-# host: bind interface for the HTTP server (\`localhost\` for loopback;
-# \`0.0.0.0\` for LAN). Override per-process with the \`HOST\` env var or the
-# \`--host\` CLI flag. Port is per-machine only — set via \`PORT\` env or the
-# \`--port\` CLI flag (no schema field).
-#
-# openOnAgentEdit: when true, the browser opens automatically the first time
-# an agent writes to the knowledge base in this server session. Debounced to
-# one open per boot. Useful for pairing with Claude Code — you see the edit
-# land live. Leave false for headless/CI.
-#
-# server:
-#   host: localhost
-#   openOnAgentEdit: false
+# Host: set via \`--host\` flag or \`HOST\` env var (default: localhost; use
+# \`0.0.0.0\` to bind LAN-visible). Port: set via \`--port\` flag or \`PORT\`
+# env var (auto-allocated if unset). Both are per-process runtime knobs —
+# no \`server:\` schema field exists.
 
 
 # --- Appearance ------------------------------------------------------------

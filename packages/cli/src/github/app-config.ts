@@ -1,11 +1,5 @@
-import type { Config } from '@inkeep/open-knowledge-server';
+import { DEFAULT_GITHUB_OAUTH_CLIENT_ID } from '@inkeep/open-knowledge-core';
 
-const DEFAULT_OAUTH_CLIENT_ID = 'Ov23liqlSd0V1MwR6rhI';
-
-export function getOAuthClientId(config?: Pick<Config, 'github'>): string {
-  return (
-    process.env.OPEN_KNOWLEDGE_GITHUB_CLIENT_ID ??
-    config?.github?.oauthAppClientId ??
-    DEFAULT_OAUTH_CLIENT_ID
-  );
+export function getOAuthClientId(): string {
+  return process.env.OPEN_KNOWLEDGE_GITHUB_CLIENT_ID ?? DEFAULT_GITHUB_OAUTH_CLIENT_ID;
 }

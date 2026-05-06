@@ -2,15 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { Config } from '@inkeep/open-knowledge-server';
+import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
 import { OK_DIR } from '../constants.ts';
 import { formatPreviewBlock, previewContent } from '../content/preview.ts';
 
 function makeConfig(dir = '.'): Config {
-  return {
-    content: { dir },
-    server: { host: 'localhost', openOnAgentEdit: false },
-  } as Config;
+  return ConfigSchema.parse({ content: { dir } });
 }
 
 describe('preview command', () => {

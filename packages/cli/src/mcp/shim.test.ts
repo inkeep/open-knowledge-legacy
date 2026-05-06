@@ -84,7 +84,6 @@ describe('MCP stdio shim server resolution', () => {
     const url = await resolveMcpHttpUrl({
       lockDir,
       contentDir: tmp,
-      host: 'localhost',
       readLock: () => liveLock,
       isAlive: (pid) => pid === liveLock.pid,
       spawn: (() => {
@@ -102,7 +101,6 @@ describe('MCP stdio shim server resolution', () => {
     const url = await resolveMcpHttpUrl({
       lockDir,
       contentDir: tmp,
-      host: 'localhost',
       readLock: () => {
         pollCount += 1;
         return pollCount >= 3 ? liveLock : null;
@@ -131,7 +129,6 @@ describe('MCP stdio shim server resolution', () => {
       resolveMcpHttpUrl({
         lockDir,
         contentDir: tmp,
-        host: 'localhost',
         envAutoStart: '0',
         readLock: () => null,
         isAlive: () => false,
@@ -139,24 +136,10 @@ describe('MCP stdio shim server resolution', () => {
     ).rejects.toThrow('OK_MCP_AUTOSTART=0');
   });
 
-  test('config auto-start opt-out turns missing server into a short diagnostic', async () => {
-    await expect(
-      resolveMcpHttpUrl({
-        lockDir,
-        contentDir: tmp,
-        host: 'localhost',
-        configAutoStart: false,
-        readLock: () => null,
-        isAlive: () => false,
-      }),
-    ).rejects.toThrow('config mcp.autoStart=false');
-  });
-
   test('valid port override bypasses discovery and formats wildcard host as localhost', async () => {
     const url = await resolveMcpHttpUrl({
       lockDir,
       contentDir: tmp,
-      host: '0.0.0.0',
       portOverride: '6789',
       readLock: () => {
         throw new Error('should not read lock');
@@ -175,7 +158,6 @@ describe('MCP stdio shim server resolution', () => {
       resolveMcpHttpUrl({
         lockDir,
         contentDir: tmp,
-        host: 'localhost',
         portOverride: 'not-a-port',
         spawn: (() => {
           throw new Error('should not spawn');
@@ -189,7 +171,6 @@ describe('MCP stdio shim server resolution', () => {
       resolveMcpHttpUrl({
         lockDir,
         contentDir: tmp,
-        host: 'localhost',
         readLock: () => null,
         isAlive: () => false,
         sleep: async () => {},
@@ -212,7 +193,6 @@ describe('MCP stdio shim server resolution', () => {
       resolveMcpHttpUrl({
         lockDir,
         contentDir: tmp,
-        host: 'localhost',
         readLock: () => null,
         isAlive: () => false,
         sleep: async () => {
@@ -238,7 +218,6 @@ describe('MCP stdio shim server resolution', () => {
       resolveMcpHttpUrl({
         lockDir,
         contentDir: tmp,
-        host: 'localhost',
         readLock: () => null,
         isAlive: () => false,
         sleep: async () => {},
@@ -267,7 +246,6 @@ describe('MCP stdio shim server resolution', () => {
         {
           lockDir,
           contentDir: tmp,
-          host: 'localhost',
           readLock: () => liveLock,
           isAlive: () => true,
         },
@@ -280,7 +258,6 @@ describe('MCP stdio shim server resolution', () => {
         {
           lockDir,
           contentDir: tmp,
-          host: 'localhost',
           readLock: () => liveLock,
           isAlive: () => false,
         },
@@ -293,7 +270,6 @@ describe('MCP stdio shim server resolution', () => {
         {
           lockDir,
           contentDir: tmp,
-          host: 'localhost',
           portOverride: '5123',
           readLock: () => null,
           isAlive: () => false,
@@ -399,7 +375,6 @@ describe('startMcpShim lifecycle', () => {
       startMcpShim({
         lockDir,
         contentDir: tmp,
-        host: 'localhost',
         readLock: () => liveLock,
         isAlive: () => true,
         stderr: { write: () => {} } as unknown as NodeJS.WritableStream,

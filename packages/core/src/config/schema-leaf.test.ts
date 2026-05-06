@@ -4,17 +4,17 @@ import { getLeafFieldMeta, resolveLeafSchema } from './schema-leaf.ts';
 
 describe('resolveLeafSchema', () => {
   test('descends through .default() wrappers to top-level section', () => {
-    const leaf = resolveLeafSchema(ConfigSchema, ['mcp']);
+    const leaf = resolveLeafSchema(ConfigSchema, ['content']);
     expect(leaf).toBeDefined();
   });
 
   test('descends through nested wrappers to a registered scalar leaf', () => {
-    const leaf = resolveLeafSchema(ConfigSchema, ['mcp', 'tools', 'grep', 'maxResults']);
+    const leaf = resolveLeafSchema(ConfigSchema, ['content', 'dir']);
     expect(leaf).toBeDefined();
   });
 
   test('returns undefined for a missing key in the middle of the path', () => {
-    const leaf = resolveLeafSchema(ConfigSchema, ['mcp', 'nope', 'maxResults']);
+    const leaf = resolveLeafSchema(ConfigSchema, ['content', 'nope', 'dir']);
     expect(leaf).toBeUndefined();
   });
 
@@ -25,12 +25,12 @@ describe('resolveLeafSchema', () => {
 });
 
 describe('getLeafFieldMeta', () => {
-  test('returns metadata for an agent-settable scalar leaf', () => {
-    const meta = getLeafFieldMeta(ConfigSchema, ['mcp', 'tools', 'grep', 'maxResults']);
+  test('returns metadata for the project-strict content.dir leaf', () => {
+    const meta = getLeafFieldMeta(ConfigSchema, ['content', 'dir']);
     expect(meta).toEqual({
-      scope: 'either',
-      agentSettable: true,
-      defaultScope: 'user',
+      scope: 'project',
+      agentSettable: false,
+      defaultScope: 'project',
     });
   });
 
@@ -42,22 +42,22 @@ describe('getLeafFieldMeta', () => {
     });
   });
 
-  test('returns metadata for non-agent-settable github.oauthAppClientId', () => {
-    const meta = getLeafFieldMeta(ConfigSchema, ['github', 'oauthAppClientId']);
+  test('returns metadata for the user-scope appearance.theme leaf', () => {
+    const meta = getLeafFieldMeta(ConfigSchema, ['appearance', 'theme']);
     expect(meta).toEqual({
-      scope: 'either',
+      scope: 'user',
       agentSettable: false,
       defaultScope: 'user',
     });
   });
 
   test('returns undefined for an unresolved path', () => {
-    const meta = getLeafFieldMeta(ConfigSchema, ['mcp', 'nonexistent']);
+    const meta = getLeafFieldMeta(ConfigSchema, ['content', 'nonexistent']);
     expect(meta).toBeUndefined();
   });
 
   test('returns undefined for a non-leaf intermediate (object container without registered metadata)', () => {
-    const meta = getLeafFieldMeta(ConfigSchema, ['mcp', 'tools']);
+    const meta = getLeafFieldMeta(ConfigSchema, ['appearance']);
     expect(meta).toBeUndefined();
   });
 });

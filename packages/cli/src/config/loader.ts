@@ -173,12 +173,26 @@ export function loadConfig(cwd?: string): LoadConfigResult {
     sources.push(projectConfigPath);
   }
 
-  const mergedUpload = merged.upload;
-  if (isObject(mergedUpload) && mergedUpload.maxBytes !== undefined) {
-    console.warn(
-      '[config] upload.maxBytes is deprecated and ignored — streaming uploads have no user-facing cap. Remove the key to silence this warning.',
-    );
-  }
+  warnIfRemovedConfigKey(
+    merged,
+    ['upload', 'maxBytes'],
+    'streaming uploads have no user-facing cap',
+  );
+  warnIfRemovedConfigKey(
+    merged,
+    ['github', 'oauthAppClientId'],
+    'use the OPEN_KNOWLEDGE_GITHUB_CLIENT_ID env var instead',
+  );
+  warnIfRemovedConfigKey(merged, ['server', 'host'], 'use the --host flag or HOST env var instead');
+  warnIfRemovedConfigKey(merged, ['server', 'openOnAgentEdit']);
+  warnIfRemovedConfigKey(
+    merged,
+    ['mcp', 'autoStart'],
+    'to disable auto-start, set OK_MCP_AUTOSTART=0',
+  );
+  warnIfRemovedConfigKey(merged, ['mcp', 'tools', 'read_document', 'historyDepth']);
+  warnIfRemovedConfigKey(merged, ['mcp', 'tools', 'grep', 'maxResults']);
+  warnIfRemovedConfigKey(merged, ['mcp', 'tools', 'search', 'maxResults']);
 
   const result = ConfigSchema.safeParse(merged);
   if (!result.success) {
@@ -190,27 +204,29 @@ export function loadConfig(cwd?: string): LoadConfigResult {
   return { config: result.data, sources };
 }
 
-function applyProcessEnvConfigOverrides(
-  config: Config,
-  env: NodeJS.ProcessEnv = process.env,
-): Config {
-  let next = config;
-  if (env.HOST) {
-    next = {
-      ...next,
-      server: {
-        ...next.server,
-        host: env.HOST,
-      },
-    };
+function warnIfRemovedConfigKey(
+  merged: Record<string, unknown>,
+  path: readonly string[],
+  replacementHint?: string,
+): void {
+  let cursor: unknown = merged;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (!isObject(cursor)) return;
+    cursor = (cursor as Record<string, unknown>)[path[i] as string];
   }
-  return next;
+  if (!isObject(cursor)) return;
+  const lastKey = path[path.length - 1] as string;
+  if (cursor[lastKey] === undefined) return;
+  const dotted = path.join('.');
+  const reason = replacementHint ?? 'the value is hardcoded in @inkeep/open-knowledge-core';
+  console.warn(
+    `[config] ${dotted} is no longer user-configurable; ${reason}. Remove the key to silence this warning.`,
+  );
 }
 
 interface CreateProjectConfigResolverOptions {
   startupCwd: string;
   startupConfig: Config;
-  env?: NodeJS.ProcessEnv;
   cacheMs?: number;
   loadConfigFn?: (cwd?: string) => LoadConfigResult;
 }
@@ -218,7 +234,6 @@ interface CreateProjectConfigResolverOptions {
 export function createProjectConfigResolver(
   opts: CreateProjectConfigResolverOptions,
 ): (cwd?: string) => Promise<Config> {
-  const env = opts.env ?? process.env;
   const cacheMs = opts.cacheMs ?? DEFAULT_CONFIG_CACHE_MS;
   const load = opts.loadConfigFn ?? loadConfig;
   const cache = new Map<string, { config: Config; expiresAt: number }>();
@@ -236,12 +251,14 @@ export function createProjectConfigResolver(
 
     const resolution = (async (): Promise<Config> => {
       if (effectiveCwd === (await normalizedStartupCwdPromise)) {
-        const startupResolved = applyProcessEnvConfigOverrides(opts.startupConfig, env);
-        cache.set(effectiveCwd, { config: startupResolved, expiresAt: Date.now() + cacheMs });
-        return startupResolved;
+        cache.set(effectiveCwd, {
+          config: opts.startupConfig,
+          expiresAt: Date.now() + cacheMs,
+        });
+        return opts.startupConfig;
       }
 
-      const resolved = applyProcessEnvConfigOverrides(load(effectiveCwd).config, env);
+      const resolved = load(effectiveCwd).config;
       cache.set(effectiveCwd, { config: resolved, expiresAt: Date.now() + cacheMs });
       return resolved;
     })();

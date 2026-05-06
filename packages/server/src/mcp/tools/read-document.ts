@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { READ_DOCUMENT_HISTORY_DEPTH } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 import type { BacklinkEntry, ForwardLinkEntry, GitCommit } from '../../content/enrichment.ts';
 import { enrichPath } from '../../content/enrichment.ts';
@@ -104,10 +105,10 @@ export async function buildReadResult(
   if (!context.ok) {
     throw new Error(context.error);
   }
-  const { cwd, config, url: resolvedServerUrl } = context;
+  const { cwd, url: resolvedServerUrl } = context;
   const relPath = relativePath(args.path);
   const abs = resolve(cwd, relPath);
-  const historyDepth = config.mcp.tools.read_document.historyDepth;
+  const historyDepth = READ_DOCUMENT_HISTORY_DEPTH;
 
   const [content, meta] = await Promise.all([
     readFile(abs, 'utf-8'),

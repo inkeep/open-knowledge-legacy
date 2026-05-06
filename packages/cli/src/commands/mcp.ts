@@ -37,10 +37,8 @@ export function mcpCommand(getConfig: () => Config): Command {
         await startMcpShim({
           lockDir: getLocalDir(contentDir),
           contentDir,
-          host: startupConfig.server.host,
           portOverride: opts.port,
           envAutoStart: process.env.OK_MCP_AUTOSTART,
-          configAutoStart: startupConfig.mcp.autoStart,
           timeoutMs,
         });
       } catch (err) {

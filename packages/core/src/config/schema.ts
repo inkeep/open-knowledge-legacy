@@ -32,39 +32,6 @@ export const ConfigSchema = z.looseObject({
     .default({
       dir: '.',
     }),
-  github: z
-    .looseObject({
-      oauthAppClientId: z
-        .string()
-        .register(fieldRegistry, {
-          scope: 'either',
-          agentSettable: false,
-          defaultScope: 'user',
-        })
-        .default('Ov23liqlSd0V1MwR6rhI'),
-    })
-    .default({ oauthAppClientId: 'Ov23liqlSd0V1MwR6rhI' }),
-  server: z
-    .looseObject({
-      host: z
-        .string()
-        .regex(/^[\w.\-:]+$/, 'Invalid hostname')
-        .register(fieldRegistry, {
-          scope: 'either',
-          agentSettable: false,
-          defaultScope: 'user',
-        })
-        .default('localhost'),
-      openOnAgentEdit: z
-        .boolean()
-        .register(fieldRegistry, {
-          scope: 'either',
-          agentSettable: false,
-          defaultScope: 'user',
-        })
-        .default(false),
-    })
-    .default({ host: 'localhost', openOnAgentEdit: false }),
   preview: z
     .looseObject({
       baseUrl: z
@@ -73,59 +40,6 @@ export const ConfigSchema = z.looseObject({
         .optional(),
     })
     .default({}),
-  mcp: z
-    .looseObject({
-      autoStart: z
-        .boolean()
-        .register(fieldRegistry, {
-          scope: 'either',
-          agentSettable: false,
-          defaultScope: 'user',
-        })
-        .default(true),
-      tools: z
-        .looseObject({
-          read_document: z
-            .looseObject({
-              historyDepth: z
-                .number()
-                .int()
-                .min(0)
-                .register(fieldRegistry, {
-                  scope: 'either',
-                  agentSettable: true,
-                  defaultScope: 'user',
-                })
-                .default(5),
-            })
-            .default({ historyDepth: 5 }),
-          grep: z
-            .looseObject({
-              maxResults: z
-                .number()
-                .int()
-                .min(1)
-                .register(fieldRegistry, {
-                  scope: 'either',
-                  agentSettable: true,
-                  defaultScope: 'user',
-                })
-                .default(50),
-            })
-            .default({ maxResults: 50 }),
-        })
-        .default({
-          read_document: { historyDepth: 5 },
-          grep: { maxResults: 50 },
-        }),
-    })
-    .default({
-      autoStart: true,
-      tools: {
-        read_document: { historyDepth: 5 },
-        grep: { maxResults: 50 },
-      },
-    }),
   appearance: z
     .looseObject({
       theme: z

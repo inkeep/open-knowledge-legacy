@@ -118,8 +118,8 @@ describe('loadConfigDoc — cold start', () => {
     expect(doc.getText('source').toString()).toBe('');
     const lkg = fx.ctx.lkgCache.get(CONFIG_DOC_NAME_USER);
     expect(lkg).toBeDefined();
-    expect(lkg).toContain('mcp:');
-    expect(lkg).toContain('autoStart: true');
+    expect(lkg).toContain('content:');
+    expect(lkg).toContain('dir: .');
   });
 
   test('broken YAML on disk → seeds Y.Text with raw bytes + LKG = defaults', () => {
@@ -291,10 +291,10 @@ describe('storeConfigDoc — rejection + revert', () => {
   });
 
   test('schema-invalid → reverts Y.Text + structured SCHEMA_INVALID error with issues', async () => {
-    const lkgYaml = 'mcp:\n  autoStart: false\n';
+    const lkgYaml = 'content:\n  dir: docs\n';
     fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, lkgYaml);
     const doc = new Y.Doc();
-    doc.getText('source').insert(0, 'mcp:\n  tools:\n    grep:\n      maxResults: "fifty"\n');
+    doc.getText('source').insert(0, 'appearance:\n  theme: midnight\n');
 
     const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
@@ -307,20 +307,20 @@ describe('storeConfigDoc — rejection + revert', () => {
     expect(err.code).toBe('SCHEMA_INVALID');
     if (err.code === 'SCHEMA_INVALID') {
       expect(err.issues.length).toBeGreaterThan(0);
-      expect(err.issues[0]?.path).toEqual(['mcp', 'tools', 'grep', 'maxResults']);
+      expect(err.issues[0]?.path).toEqual(['appearance', 'theme']);
     }
   });
 
   test('cold-start no LKG entry + invalid mutation → falls back to schema defaults', async () => {
     const doc = new Y.Doc();
-    doc.getText('source').insert(0, 'mcp:\n  autoStart: "not-a-bool"\n');
+    doc.getText('source').insert(0, 'appearance:\n  theme: midnight\n');
 
     const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
     expect(outcome).toBe('reverted');
     const reverted = doc.getText('source').toString();
-    expect(reverted).toContain('mcp:');
-    expect(reverted).toContain('autoStart: true');
+    expect(reverted).toContain('content:');
+    expect(reverted).toContain('dir: .');
     const lkg = fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT);
     expect(lkg).toBeDefined();
     expect(lkg).toBe(reverted);
@@ -554,9 +554,9 @@ describe('applyExternalConfigChange', () => {
 
   test('schema-invalid external content → rejected with structured issues', () => {
     const doc = new Y.Doc();
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'mcp:\n  autoStart: true\n');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'content:\n  dir: docs\n');
 
-    const invalid = 'mcp:\n  tools:\n    grep:\n      maxResults: "fast"\n';
+    const invalid = 'appearance:\n  theme: midnight\n';
     const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_PROJECT, invalid, fx.ctx);
 
     expect(outcome).toBe('rejected');
@@ -565,7 +565,7 @@ describe('applyExternalConfigChange', () => {
     expect(error).toBeDefined();
     if (error && isKnownConfigError(error) && error.code === 'SCHEMA_INVALID') {
       expect(error.issues.length).toBeGreaterThan(0);
-      expect(error.issues[0]?.path).toEqual(['mcp', 'tools', 'grep', 'maxResults']);
+      expect(error.issues[0]?.path).toEqual(['appearance', 'theme']);
     } else {
       throw new Error('expected SCHEMA_INVALID error');
     }

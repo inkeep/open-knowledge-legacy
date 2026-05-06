@@ -2,25 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Config } from '../../config/schema.ts';
+import { type Config, ConfigSchema } from '../../config/schema.ts';
 import { register } from './set-folder-rule.ts';
 import type { ServerInstance } from './shared.ts';
 
-const BASE_CONFIG: Config = {
-  content: { dir: '.' },
-  github: { oauthAppClientId: 'Ov23liqlSd0V1MwR6rhI' },
-  server: { host: 'localhost', openOnAgentEdit: false },
-  preview: {},
-  folders: [],
-  mcp: {
-    autoStart: true,
-    tools: {
-      read_document: { historyDepth: 5 },
-      search: { maxResults: 50 },
-    },
-  },
-  appearance: {},
-};
+const BASE_CONFIG: Config = ConfigSchema.parse({});
 
 interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;

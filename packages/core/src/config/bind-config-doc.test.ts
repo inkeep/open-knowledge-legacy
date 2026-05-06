@@ -42,27 +42,26 @@ describe('bindConfigDoc — current()', () => {
     const binding = bindConfigDoc(provider, 'project');
     const config = binding.current();
     expect(config.content).toBeDefined();
-    expect(config.server).toBeDefined();
-    expect(config.mcp).toBeDefined();
+    expect(config.appearance).toBeDefined();
     binding.dispose();
   });
 
   test('valid YAML in Y.Text parses to merged Config', () => {
-    const yaml = 'mcp:\n  autoStart: false\n';
+    const yaml = 'content:\n  dir: docs\n';
     doc.getText('source').insert(0, yaml);
     const binding = bindConfigDoc(provider, 'project');
 
     const config = binding.current();
-    expect(config.mcp.autoStart).toBe(false);
+    expect(config.content.dir).toBe('docs');
     binding.dispose();
   });
 
   test('invalid YAML falls back to defaults (never throws)', () => {
-    doc.getText('source').insert(0, 'mcp:\n  autoStart: [unclosed');
+    doc.getText('source').insert(0, 'content:\n  dir: [unclosed');
     const binding = bindConfigDoc(provider, 'project');
 
     expect(() => binding.current()).not.toThrow();
-    expect(binding.current().mcp.autoStart).toBe(true); // default
+    expect(binding.current().content.dir).toBe('.'); // default
     binding.dispose();
   });
 
@@ -76,10 +75,10 @@ describe('bindConfigDoc — current()', () => {
   });
 
   test('honors custom ytextKey override (test isolation)', () => {
-    doc.getText('alt').insert(0, 'mcp:\n  autoStart: false\n');
+    doc.getText('alt').insert(0, 'content:\n  dir: docs\n');
     const binding = bindConfigDoc(provider, 'project', { ytextKey: 'alt' });
 
-    expect(binding.current().mcp.autoStart).toBe(false);
+    expect(binding.current().content.dir).toBe('docs');
     binding.dispose();
   });
 });
@@ -101,22 +100,22 @@ describe('bindConfigDoc — patch()', () => {
   });
 
   test('updates existing field + preserves comments via yaml@2 Document', () => {
-    const initial = '# Project config\nmcp:\n  autoStart: false # disabled by default\n';
+    const initial = '# Project config\ncontent:\n  dir: old # original\n';
     doc.getText('source').insert(0, initial);
     const binding = bindConfigDoc(provider, 'project');
 
-    const result = binding.patch({ mcp: { autoStart: true } });
+    const result = binding.patch({ content: { dir: 'new' } });
     expect(result.ok).toBe(true);
 
     const after = doc.getText('source').toString();
     expect(after).toContain('# Project config');
-    expect(after).toContain('# disabled by default');
-    expect(after).toContain('autoStart: true');
+    expect(after).toContain('# original');
+    expect(after).toContain('dir: new');
     binding.dispose();
   });
 
   test('rejects schema-invalid scalar; Y.Text untouched', () => {
-    doc.getText('source').insert(0, 'mcp:\n  autoStart: true\n');
+    doc.getText('source').insert(0, 'content:\n  dir: docs\n');
     const before = doc.getText('source').toString();
     const binding = bindConfigDoc(provider, 'project');
 
@@ -151,12 +150,12 @@ describe('bindConfigDoc — patch()', () => {
     doc.getText('source').insert(0, 'theme: light\nappearance:\ntheme: light\n');
     const binding = bindConfigDoc(provider, 'project');
 
-    const result = binding.patch({ mcp: { autoStart: true } });
+    const result = binding.patch({ content: { dir: 'docs' } });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected self-heal recovery');
     const after = doc.getText('source').toString();
-    expect(after).toContain('mcp:');
-    expect(after).toContain('autoStart: true');
+    expect(after).toContain('content:');
+    expect(after).toContain('dir: docs');
     expect(after.match(/^theme:/gm)?.length ?? 0).toBe(0);
     binding.dispose();
   });
@@ -165,11 +164,11 @@ describe('bindConfigDoc — patch()', () => {
     doc.getText('source').insert(0, '- not a mapping\n- also not\n');
     const binding = bindConfigDoc(provider, 'project');
 
-    const result = binding.patch({ mcp: { autoStart: true } });
+    const result = binding.patch({ content: { dir: 'docs' } });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected self-heal recovery');
     const after = doc.getText('source').toString();
-    expect(after).toContain('mcp:');
+    expect(after).toContain('content:');
     expect(after).not.toContain('not a mapping');
     binding.dispose();
   });
@@ -178,7 +177,7 @@ describe('bindConfigDoc — patch()', () => {
     const binding = bindConfigDoc(provider, 'project');
     binding.dispose();
 
-    const result = binding.patch({ mcp: { autoStart: true } });
+    const result = binding.patch({ content: { dir: 'docs' } });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected err');
     if (!isKnownConfigError(result.error)) throw new Error('not known error');
@@ -277,7 +276,7 @@ describe('bindConfigDoc — dispose()', () => {
     binding.subscribe(() => {
       fired = true;
     });
-    doc.getText('source').insert(0, 'mcp:\n  autoStart: false\n');
+    doc.getText('source').insert(0, 'content:\n  dir: docs\n');
     expect(fired).toBe(false); // listener cleared on dispose; new sub but observer detached
   });
 

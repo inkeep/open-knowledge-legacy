@@ -2,7 +2,7 @@ import { describe as _bunDescribe, afterAll, beforeAll, expect, test } from 'bun
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
-import type { Config } from '../../config/schema.ts';
+import { type Config, ConfigSchema } from '../../config/schema.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
@@ -13,28 +13,7 @@ import {
   textResult,
 } from './shared.ts';
 
-const TEST_CONFIG: Config = {
-  content: {
-    dir: 'content',
-    include: ['**/*.md', '**/*.mdx'],
-    exclude: [],
-  },
-  github: { oauthAppClientId: 'Ov23liqlSd0V1MwR6rhI' },
-  server: {
-    host: 'localhost',
-    openOnAgentEdit: false,
-  },
-  preview: {},
-  folders: [],
-  mcp: {
-    autoStart: true,
-    tools: {
-      read_document: { historyDepth: 5 },
-      search: { maxResults: 50 },
-    },
-  },
-  appearance: {},
-};
+const TEST_CONFIG: Config = ConfigSchema.parse({ content: { dir: 'content' } });
 
 describe('textResult', () => {
   test('wraps text in MCP content array', () => {

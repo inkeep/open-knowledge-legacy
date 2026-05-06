@@ -14,8 +14,8 @@ describe('buildPatch', () => {
   });
 
   test('nested path produces nested object', () => {
-    expect(buildPatch(['mcp', 'tools', 'grep', 'maxResults'], 100)).toEqual({
-      mcp: { tools: { grep: { maxResults: 100 } } },
+    expect(buildPatch(['mcp', 'tools', 'search', 'maxResults'], 100)).toEqual({
+      mcp: { tools: { search: { maxResults: 100 } } },
     });
   });
 
@@ -41,19 +41,15 @@ describe('resolveLeafSchema against ConfigSchema', () => {
     expect(getLeafTypeTag(requireLeaf(['content', 'dir']))).toBe('string');
   });
 
-  test('descends to a number leaf', () => {
-    const tag = getLeafTypeTag(requireLeaf(['mcp', 'tools', 'grep', 'maxResults']));
-    expect(['number', 'int', 'integer'].includes(tag ?? '')).toBe(true);
-  });
-
-  test('descends to a boolean leaf', () => {
-    expect(getLeafTypeTag(requireLeaf(['mcp', 'autoStart']))).toBe('boolean');
-  });
-
   test('descends to an enum leaf and returns options', () => {
     const leaf = requireLeaf(['appearance', 'theme']);
     expect(getLeafTypeTag(leaf)).toBe('enum');
     expect(getEnumOptions(leaf)).toEqual(['light', 'dark', 'system']);
+  });
+
+  test('descends to an optional URL leaf', () => {
+    const leaf = requireLeaf(['preview', 'baseUrl']);
+    expect(getLeafTypeTag(leaf)).toBe('string');
   });
 
   test('returns undefined for non-existent path', () => {
@@ -64,12 +60,11 @@ describe('resolveLeafSchema against ConfigSchema', () => {
 describe('getFieldDefault against ConfigSchema', () => {
   test('returns scalar defaults for defaulted leaves', () => {
     expect(getFieldDefault(requireLeaf(['content', 'dir']))).toBe('.');
-    expect(getFieldDefault(requireLeaf(['server', 'host']))).toBe('localhost');
-    expect(getFieldDefault(requireLeaf(['mcp', 'tools', 'grep', 'maxResults']))).toBe(50);
   });
 
   test('returns undefined for fields without .default()', () => {
     expect(getFieldDefault(requireLeaf(['appearance', 'theme']))).toBeUndefined();
     expect(getFieldDefault(requireLeaf(['appearance', 'editorModeDefault']))).toBeUndefined();
+    expect(getFieldDefault(requireLeaf(['preview', 'baseUrl']))).toBeUndefined();
   });
 });

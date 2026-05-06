@@ -1,5 +1,5 @@
 import { relative as relativePath, resolve as resolvePath } from 'node:path';
-import { OK_DIR } from '@inkeep/open-knowledge-core';
+import { GREP_MAX_RESULTS, OK_DIR } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 import { type GrepMatch, grep } from '../../bash/index.ts';
 import { resolveContentDir } from '../../config/paths.ts';
@@ -100,7 +100,7 @@ export async function buildGrepResult(
     throw new Error(context.error);
   }
   const { cwd, config, url: resolvedServerUrl } = context;
-  const maxResults = config.mcp.tools.grep.maxResults;
+  const maxResults = GREP_MAX_RESULTS;
 
   const rawMatches = await grep(args.query, cwd, {
     caseInsensitive: !(args.case_sensitive ?? false),
@@ -196,7 +196,7 @@ export async function buildGrepResult(
 
   if (truncated) {
     lines.push(
-      `_${visible.length} of ${rawMatches.length}+ matches shown. Raise \`mcp.tools.grep.maxResults\` in config.yml to see more._`,
+      `_${visible.length} of ${rawMatches.length}+ matches shown (max ${maxResults}). Refine your query to narrow results._`,
     );
   }
 

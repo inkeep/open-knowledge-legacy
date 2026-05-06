@@ -51,17 +51,6 @@ program
       process.chdir(cwd);
     }
     const { config } = loadConfig(cwd);
-
-    const startOpts =
-      thisCommand.args.length === 0 ? opts : (thisCommand.commands[0]?.opts() ?? {});
-    if (startOpts.host !== undefined) {
-      config.server.host = startOpts.host as string;
-    }
-
-    if (process.env.HOST) {
-      config.server.host = process.env.HOST;
-    }
-
     resolvedConfig = config;
   });
 
@@ -102,7 +91,7 @@ program.addCommand(psCommand());
 
 program.addCommand(configCommand());
 
-program.addCommand(authCommand(() => resolvedConfig));
+program.addCommand(authCommand());
 
 program.addCommand(cloneCommand(() => resolvedConfig));
 
