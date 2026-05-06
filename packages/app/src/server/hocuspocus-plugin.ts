@@ -59,6 +59,7 @@ const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 const gitEnabledForTest = isTestIsolated && process.env.OK_TEST_GIT_ENABLED === '1';
 
 const KEEPALIVE_GRACE_MS = 10_000;
+const MAX_COLLAB_MESSAGE_BYTES = 1024 * 1024;
 
 let exitHandlerRegistered = false;
 let latestLockDir: string | null = null;
@@ -114,7 +115,7 @@ export function hocuspocusPlugin(): Plugin {
       const { hocuspocus, sessionManager, agentFocusBroadcaster, agentPresenceBroadcaster } =
         currentSrv;
 
-      const wss = new WebSocketServer({ noServer: true });
+      const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_COLLAB_MESSAGE_BYTES });
       wss.on('error', (err) => {
         console.error('[collab] WebSocketServer error:', err);
       });
@@ -238,10 +239,18 @@ export function hocuspocusPlugin(): Plugin {
               `[collab] handshake complete for ${req.url} (connections before=${beforeCount})`,
             );
             const clientConnection = hocuspocus.handleConnection(ws, req);
+            let closedByPolicy = false;
             ws.on('message', (data: ArrayBuffer | Buffer) => {
-              clientConnection.handleMessage(
-                data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data),
-              );
+              if (closedByPolicy) return;
+              if (data.byteLength > MAX_COLLAB_MESSAGE_BYTES) {
+                closedByPolicy = true;
+                console.warn(
+                  `[collab] frame rejected: ${data.byteLength} bytes exceeds ${MAX_COLLAB_MESSAGE_BYTES} byte limit`,
+                );
+                ws.close(1009, 'Message Too Big');
+                return;
+              }
+              clientConnection.handleMessage(new Uint8Array(data as Buffer));
             });
             ws.on('close', (code: number, reason: Buffer) => {
               clientConnection.handleClose({ code, reason: reason.toString() });
