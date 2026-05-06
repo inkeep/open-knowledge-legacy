@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
-import { isProcessAlive } from './process-alive.ts';
+import { isProcessAlive, isValidLockPid } from './process-alive.ts';
 
 export interface LockMetadata {
   pid: number;
@@ -21,6 +21,12 @@ export function acquireLock(shadowDir: string, worktreeRoot: string): string {
       console.warn(`[shadow-lock] Corrupt lock file at ${lockPath} — replacing`);
     }
 
+    if (existing && !isValidLockPid(existing.pid)) {
+      console.warn(
+        `[shadow-lock] Invalid lock pid (${String(existing.pid)}) at ${lockPath} — replacing`,
+      );
+      existing = null;
+    }
     if (existing) {
       const sameHost = existing.hostname === hostname();
       if (sameHost && existing.pid === process.pid) {

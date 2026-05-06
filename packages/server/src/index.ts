@@ -187,7 +187,7 @@ export {
   safeContentPath,
 } from './persistence.ts';
 export { loadPrincipal } from './principal.ts';
-export { isProcessAlive } from './process-alive.ts';
+export { isProcessAlive, isValidLockPid } from './process-alive.ts';
 export {
   acquireProcessLock,
   type LockName,

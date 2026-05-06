@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
-import { isProcessAlive } from './process-alive.ts';
+import { isProcessAlive, isValidLockPid } from './process-alive.ts';
 import { PROTOCOL_VERSION, RUNTIME_VERSION } from './version-constants.ts';
 
 export type LockName = 'server' | 'ui';
@@ -76,7 +76,7 @@ function dropActiveLockRef(lockPath: string): boolean {
 function parseLock(lockPath: string, logPrefix: string): ProcessLockMetadata | null {
   try {
     const parsed = JSON.parse(readFileSync(lockPath, 'utf-8'));
-    if (parsed && typeof parsed === 'object' && typeof parsed.pid === 'number') {
+    if (parsed && typeof parsed === 'object' && isValidLockPid((parsed as { pid?: unknown }).pid)) {
       return parsed as ProcessLockMetadata;
     }
     console.warn(`${logPrefix} Corrupt lock file at ${lockPath} — replacing`);
@@ -193,7 +193,11 @@ export function updateProcessLockPort(opts: {
   let existing: ProcessLockMetadata;
   try {
     const parsed = JSON.parse(readFileSync(lockPath, 'utf-8'));
-    if (!parsed || typeof parsed !== 'object' || typeof parsed.pid !== 'number') {
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      !isValidLockPid((parsed as { pid?: unknown }).pid)
+    ) {
       console.warn(`${logPrefix} Corrupt lock at ${lockPath} during port update — skipping`);
       return;
     }
@@ -229,7 +233,8 @@ export function readProcessLock(opts: {
   let existing: ProcessLockMetadata;
   try {
     const parsed = JSON.parse(readFileSync(lockPath, 'utf-8'));
-    if (!parsed || typeof parsed !== 'object' || typeof parsed.pid !== 'number') return null;
+    if (!parsed || typeof parsed !== 'object' || !isValidLockPid((parsed as { pid?: unknown }).pid))
+      return null;
     existing = parsed as ProcessLockMetadata;
   } catch {
     return null;
@@ -272,7 +277,7 @@ export function readProcessLockDetailed(opts: {
   }
   const r = raw as Partial<ProcessLockMetadata>;
   if (
-    typeof r.pid !== 'number' ||
+    !isValidLockPid(r.pid) ||
     typeof r.hostname !== 'string' ||
     typeof r.port !== 'number' ||
     typeof r.startedAt !== 'string' ||

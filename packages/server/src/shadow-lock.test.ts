@@ -57,7 +57,7 @@ describe('acquireLock', () => {
     mkdirSync(shadowDir, { recursive: true });
 
     const liveLock: LockMetadata = {
-      pid: 1,
+      pid: process.ppid > 1 ? process.ppid : process.pid + 1,
       hostname: hostname(),
       startedAt: new Date().toISOString(),
       worktreeRoot: '/other/worktree',
@@ -95,7 +95,7 @@ describe('acquireLock', () => {
     mkdirSync(shadowDir, { recursive: true });
 
     const remoteLock: LockMetadata = {
-      pid: 1,
+      pid: 12345,
       hostname: 'some-other-host-that-does-not-exist',
       startedAt: new Date().toISOString(),
       worktreeRoot: '/remote/worktree',
