@@ -70,6 +70,7 @@ interface CloneDialogProps {
   onCloneComplete?: (info: { port?: number; dir: string }) => void;
   transport?: CloneTransport;
   authQueryTransport?: AuthQueryTransport;
+  pickParentFolder?: () => Promise<string | null>;
 }
 
 export function CloneDialog({
@@ -79,9 +80,11 @@ export function CloneDialog({
   onCloneComplete,
   transport,
   authQueryTransport,
+  pickParentFolder,
 }: CloneDialogProps) {
   const resolvedTransport = transport ?? httpCloneTransport();
   const resolvedAuthQuery = authQueryTransport ?? httpAuthQueryTransport();
+  const usePicker = pickParentFolder !== undefined;
   const [urlInput, setUrlInput] = useState('');
   const [localPath, setLocalPath] = useState('');
   const [repos, setRepos] = useState<RepoEntry[] | null>(null);
@@ -133,30 +136,45 @@ export function CloneDialog({
 
   function handleUrlChange(value: string) {
     setUrlInput(value);
+    if (usePicker) return;
     const name = extractRepoName(value);
     if (name) setLocalPath(`~/Documents/${name}`);
   }
 
   function handleRepoSelect(repo: RepoEntry) {
     setUrlInput(repo.clone_url);
+    if (usePicker) return;
     const name = repo.full_name.split('/')[1];
     setLocalPath(`~/Documents/${name}`);
   }
 
   async function handleClone() {
-    if (!urlInput.trim()) {
+    const trimmedUrl = urlInput.trim();
+    if (!trimmedUrl) {
       toast.error('Enter a repository URL or owner/repo');
       return;
     }
 
-    setCloning(true);
+    let dir = localPath || '';
+    if (pickParentFolder) {
+      setCloning(true);
+      const parent = await pickParentFolder();
+      if (!parent) {
+        setCloning(false);
+        return;
+      }
+      const name = extractRepoName(trimmedUrl);
+      dir = `${parent.replace(/\/$/, '')}/${name}`;
+    } else {
+      setCloning(true);
+    }
 
     const toastId = toast.loading('Starting clone…', { duration: Number.POSITIVE_INFINITY });
     toastIdRef.current = toastId;
 
     const handle = resolvedTransport.start({
-      url: urlInput.trim(),
-      dir: localPath || '',
+      url: trimmedUrl,
+      dir,
     });
     cancelRef.current = handle.cancel;
 
@@ -217,7 +235,7 @@ export function CloneDialog({
     onOpenChange(nextOpen);
     if (!nextOpen) {
       setUrlInput('');
-      setLocalPath('');
+      if (!usePicker) setLocalPath('');
       setRepoFilter('');
     }
   }
@@ -318,19 +336,20 @@ export function CloneDialog({
               </div>
             )}
 
-            {/* Local path */}
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="clone-path" className="text-sm font-medium">
-                Local path
-              </label>
-              <Input
-                id="clone-path"
-                placeholder="~/Documents/repo-name"
-                value={localPath}
-                onChange={(e) => setLocalPath(e.target.value)}
-                disabled={cloning}
-              />
-            </div>
+            {!usePicker && (
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="clone-path" className="text-sm font-medium">
+                  Local path
+                </label>
+                <Input
+                  id="clone-path"
+                  placeholder="~/Documents/repo-name"
+                  value={localPath}
+                  onChange={(e) => setLocalPath(e.target.value)}
+                  disabled={cloning}
+                />
+              </div>
+            )}
           </div>
         </DialogBody>
 
@@ -348,9 +367,18 @@ export function CloneDialog({
               >
                 Cancel
               </Button>
-              <Button onClick={() => void handleClone()} disabled={!urlInput.trim()}>
-                Clone
+              <Button
+                onClick={() => void handleClone()}
+                disabled={!urlInput.trim()}
+                aria-describedby={usePicker ? 'clone-picker-hint' : undefined}
+              >
+                {usePicker ? 'Clone…' : 'Clone'}
               </Button>
+              {usePicker && (
+                <span id="clone-picker-hint" className="sr-only">
+                  Opens a folder picker to choose where to clone the repository.
+                </span>
+              )}
             </>
           )}
         </DialogFooter>

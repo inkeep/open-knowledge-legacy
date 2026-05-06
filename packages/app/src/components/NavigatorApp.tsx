@@ -196,6 +196,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
         onOpenChange={setCloneDialogOpen}
         transport={ipcCloneTransport(bridge)}
         authQueryTransport={ipcAuthQueryTransport(bridge)}
+        pickParentFolder={() => bridge.dialog.openFolder()}
         onSignIn={() => {
           setCloneDialogOpen(false);
           setAuthInitialStep('auth');
