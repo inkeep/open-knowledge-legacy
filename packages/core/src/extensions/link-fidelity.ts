@@ -1,4 +1,18 @@
 import Link from '@tiptap/extension-link';
+import { SAFE_URL_SCHEMES } from '../markdown/safe-url.ts';
+
+const ALLOWED_LINK_SCHEMES: ReadonlySet<string> = new Set(SAFE_URL_SCHEMES.map((s) => `${s}:`));
+
+const PLACEHOLDER_BASE = 'https://placeholder.invalid';
+
+function isAllowedLinkUri(url: string): boolean {
+  try {
+    const parsed = new URL(url, PLACEHOLDER_BASE);
+    return ALLOWED_LINK_SCHEMES.has(parsed.protocol.toLowerCase());
+  } catch {
+    return false;
+  }
+}
 
 export const LinkFidelity = Link.extend({
   priority: 60,
@@ -15,16 +29,8 @@ export const LinkFidelity = Link.extend({
         target: '_blank',
         rel: 'noopener noreferrer',
       },
-      isAllowedUri: (url: string) => {
-        try {
-          const parsed = new URL(url, 'https://placeholder.invalid');
-          const scheme = parsed.protocol.toLowerCase();
-          return !['javascript:', 'data:', 'vbscript:'].includes(scheme);
-        } catch {
-          return false;
-        }
-      },
-      validate: () => true,
+      isAllowedUri: isAllowedLinkUri,
+      validate: isAllowedLinkUri,
       shouldAutoLink: () => true,
     };
   },
