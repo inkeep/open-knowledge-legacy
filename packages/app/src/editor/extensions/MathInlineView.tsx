@@ -111,15 +111,17 @@ export function MathInlineView({ node, selected, getPos, editor }: NodeViewProps
   const wasSelected = useRef(false);
 
   useEffect(() => {
-    if (selected && !wasSelected.current) {
+    const isSoleSelection = selected && editor.state.selection instanceof NodeSelection;
+
+    if (isSoleSelection && !wasSelected.current) {
       const pos = typeof getPos === 'function' ? (getPos() ?? 0) : 0;
       consumeAutoOpen(pos);
       setPopoverOpen(true);
-    } else if (!selected && wasSelected.current) {
+    } else if (!isSoleSelection && wasSelected.current) {
       setPopoverOpen(false);
     }
-    wasSelected.current = selected;
-  }, [selected, getPos]);
+    wasSelected.current = isSoleSelection;
+  }, [selected, getPos, editor]);
 
   return (
     <NodeViewWrapper as="span" className={selected ? 'math-inline-selected' : undefined}>
