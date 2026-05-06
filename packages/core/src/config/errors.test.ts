@@ -20,7 +20,7 @@ describe('ConfigValidationErrorSchema', () => {
       code: 'SCHEMA_INVALID',
       issues: [
         {
-          path: ['mcp', 'tools', 'search', 'maxResults'],
+          path: ['mcp', 'tools', 'grep', 'maxResults'],
           message: 'Expected number, got string',
           issueCode: 'invalid_type',
         },
@@ -29,7 +29,7 @@ describe('ConfigValidationErrorSchema', () => {
     expect(parsed.code).toBe('SCHEMA_INVALID');
     if (parsed.code === 'SCHEMA_INVALID') {
       expect(parsed.issues).toHaveLength(1);
-      expect(parsed.issues[0].path).toEqual(['mcp', 'tools', 'search', 'maxResults']);
+      expect(parsed.issues[0].path).toEqual(['mcp', 'tools', 'grep', 'maxResults']);
     }
   });
 
@@ -49,7 +49,7 @@ describe('ConfigValidationErrorSchema', () => {
       code: 'MIXED_SCOPE',
       paths: [
         { path: ['content', 'dir'], scope: 'project' },
-        { path: ['mcp', 'tools', 'search', 'maxResults'], scope: 'user' },
+        { path: ['mcp', 'tools', 'grep', 'maxResults'], scope: 'user' },
       ],
     });
     expect(parsed.code).toBe('MIXED_SCOPE');
@@ -99,7 +99,7 @@ describe('humanFormat', () => {
       code: 'SCHEMA_INVALID',
       issues: [
         {
-          path: ['mcp', 'tools', 'search', 'maxResults'],
+          path: ['mcp', 'tools', 'grep', 'maxResults'],
           message: 'Expected number',
           issueCode: 'invalid_type',
         },
@@ -110,7 +110,7 @@ describe('humanFormat', () => {
         },
       ],
     });
-    expect(out).toContain('mcp.tools.search.maxResults: Expected number');
+    expect(out).toContain('mcp.tools.grep.maxResults: Expected number');
     expect(out).toContain('preview.baseUrl: Invalid URL');
   });
 
@@ -150,11 +150,11 @@ describe('humanFormat', () => {
       code: 'MIXED_SCOPE',
       paths: [
         { path: ['content', 'dir'], scope: 'project' },
-        { path: ['mcp', 'tools', 'search', 'maxResults'], scope: 'user' },
+        { path: ['mcp', 'tools', 'grep', 'maxResults'], scope: 'user' },
       ],
     });
     expect(out).toContain('content.dir → project');
-    expect(out).toContain('mcp.tools.search.maxResults → user');
+    expect(out).toContain('mcp.tools.grep.maxResults → user');
   });
 
   test('UNKNOWN with message renders message; without message renders generic', () => {

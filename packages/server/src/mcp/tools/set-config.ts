@@ -24,7 +24,7 @@ export const DESCRIPTION = [
   '',
   '**Allowlist** (only these paths are agent-settable):',
   '- `folders[]` — folder-rule defaults (whole-array replace; for per-rule upsert use `set_folder_rule`)',
-  '- `mcp.tools.search.maxResults` — search result cap',
+  '- `mcp.tools.grep.maxResults` — grep result cap',
   '- `mcp.tools.read_document.historyDepth` — number of history entries returned',
   '',
   'Other paths are rejected with `NOT_AGENT_SETTABLE`. To inspect what is currently set, call `get_config`.',

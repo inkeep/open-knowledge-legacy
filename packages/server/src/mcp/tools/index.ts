@@ -43,6 +43,7 @@ import {
   DESCRIPTION as GET_ORPHANS_DESCRIPTION,
   register as registerGetOrphans,
 } from './get-orphans.ts';
+import { DESCRIPTION as GREP_DESCRIPTION, register as registerGrep } from './grep.ts';
 import { DESCRIPTION as INGEST_DESCRIPTION, register as registerIngest } from './ingest.ts';
 import {
   DESCRIPTION as LIST_DOCUMENTS_DESCRIPTION,
@@ -101,6 +102,7 @@ const _TOOL_DESCRIPTIONS = {
   rename_document: RENAME_DOCUMENT_DESCRIPTION,
   rename_folder: RENAME_FOLDER_DESCRIPTION,
   search: SEARCH_DESCRIPTION,
+  grep: GREP_DESCRIPTION,
   suggest_links: SUGGEST_LINKS_DESCRIPTION,
   write_document: WRITE_DOCUMENT_DESCRIPTION,
   edit_document: EDIT_DOCUMENT_DESCRIPTION,
@@ -176,6 +178,11 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   });
   registerSearch(registrationServer, {
     resolveCwd: named('search'),
+    config: opts.config,
+    serverUrl: opts.serverUrl,
+  });
+  registerGrep(registrationServer, {
+    resolveCwd: named('grep'),
     config: opts.config,
     serverUrl: opts.serverUrl,
   });

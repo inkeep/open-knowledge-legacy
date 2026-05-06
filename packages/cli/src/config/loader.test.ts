@@ -122,7 +122,7 @@ mcp:
     expect(config.server.host).toBe('0.0.0.0');
     expect(config.server.openOnAgentEdit).toBe(true);
     expect(config.mcp.autoStart).toBe(false);
-    expect(config.mcp.tools.search.maxResults).toBe(50);
+    expect(config.mcp.tools.grep.maxResults).toBe(50);
   });
 
   test('content.include in project config rejects with REMOVED_KEY error directing to .okignore', () => {
@@ -189,11 +189,11 @@ mcp:
   });
 
   test('partial section override preserves sibling defaults within that section', () => {
-    writeWorkspaceConfig('mcp:\n  tools:\n    search:\n      maxResults: 25\n');
+    writeWorkspaceConfig('mcp:\n  tools:\n    grep:\n      maxResults: 25\n');
 
     const { config } = loadConfig(testDir);
 
-    expect(config.mcp.tools.search.maxResults).toBe(25);
+    expect(config.mcp.tools.grep.maxResults).toBe(25);
     expect(config.mcp.tools.read_document.historyDepth).toBe(5); // sibling preserved
   });
 
@@ -207,8 +207,8 @@ mcp:
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 
-  test('negative mcp.tools.search.maxResults throws', () => {
-    writeWorkspaceConfig('mcp:\n  tools:\n    search:\n      maxResults: -1\n');
+  test('negative mcp.tools.grep.maxResults throws', () => {
+    writeWorkspaceConfig('mcp:\n  tools:\n    grep:\n      maxResults: -1\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 
@@ -235,7 +235,7 @@ mcp:
   test('schema-invalid project config emits file:line:col in error message', () => {
     const yaml = `mcp:
   tools:
-    search:
+    grep:
       maxResults: "fifty"
 `;
     writeWorkspaceConfig(yaml);
@@ -248,11 +248,11 @@ mcp:
     expect(caught).toBeDefined();
     const expectedPath = resolve(testDir, OK_DIR, 'config.yml');
     expect(caught?.message).toContain(`${expectedPath}:4:`);
-    expect(caught?.message).toContain('mcp.tools.search.maxResults');
+    expect(caught?.message).toContain('mcp.tools.grep.maxResults');
   });
 
   test('source-located error renders code snippet with caret marker', () => {
-    writeWorkspaceConfig('mcp:\n  tools:\n    search:\n      maxResults: -5\n');
+    writeWorkspaceConfig('mcp:\n  tools:\n    grep:\n      maxResults: -5\n');
     let caught: Error | undefined;
     try {
       loadConfig(testDir);

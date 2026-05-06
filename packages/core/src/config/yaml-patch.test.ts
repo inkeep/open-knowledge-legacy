@@ -44,11 +44,11 @@ describe('applyPatchToDocument — auto-vivification through scalar intermediate
     expect(doc.getIn(['mcp', 'tools'])).toBeNull();
 
     const applied = applyPatchToDocument(doc, {
-      mcp: { tools: { search: { maxResults: 50 } } },
+      mcp: { tools: { grep: { maxResults: 50 } } },
     } as never);
 
-    expect(applied).toEqual(['mcp.tools.search.maxResults']);
-    expect(doc.getIn(['mcp', 'tools', 'search', 'maxResults'])).toBe(50);
+    expect(applied).toEqual(['mcp.tools.grep.maxResults']);
+    expect(doc.getIn(['mcp', 'tools', 'grep', 'maxResults'])).toBe(50);
   });
 
   test('existing populated parent is preserved (no clobber)', () => {

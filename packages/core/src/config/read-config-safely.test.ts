@@ -68,7 +68,7 @@ describe('readConfigSafely', () => {
     const path = resolve(testDir, 'bad.yml');
     const yaml = `mcp:
   tools:
-    search:
+    grep:
       maxResults: "fifty"
 `;
     writeFileSync(path, yaml, 'utf-8');
@@ -82,7 +82,7 @@ describe('readConfigSafely', () => {
       if (isKnownConfigError(result.error) && result.error.code === 'SCHEMA_INVALID') {
         expect(result.error.issues.length).toBeGreaterThan(0);
         const issue = result.error.issues[0];
-        expect(issue.path).toEqual(['mcp', 'tools', 'search', 'maxResults']);
+        expect(issue.path).toEqual(['mcp', 'tools', 'grep', 'maxResults']);
         expect(issue.source).toBeDefined();
         expect(issue.source?.file).toBe(path);
         expect(issue.source?.line).toBe(4);

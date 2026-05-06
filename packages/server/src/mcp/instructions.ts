@@ -3,7 +3,7 @@ import type { Config } from '../config/schema.ts';
 export function buildInstructions(content: Config['content']): string {
   return `# Open Knowledge (OK) — collaborative markdown via MCP
 
-**STOP** *(when \`.ok/\` exists)* — do NOT use native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on in-scope \`.md\` / \`.mdx\`. Reads: \`exec\` / \`read_document\` / \`search\`. Writes: \`write_document\` / \`edit_document\` ONLY.
+**STOP** *(when \`.ok/\` exists)* — do NOT use native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on in-scope \`.md\` / \`.mdx\`. Reads: \`exec\` / \`read_document\` / \`search\` / \`grep\`. Writes: \`write_document\` / \`edit_document\` ONLY.
 
 **Preview:** open the browser at session start if not already open. On \`attach-preview-once\` in a write response, open \`previewUrl\` one-shot.
 
@@ -11,7 +11,7 @@ Content dir: ${content.dir}. Path scope: \`.gitignore\` + \`.okignore\` (gitigno
 
 ## Reads
 
-\`exec("cat <path>.md")\` / \`exec("ls <dir>")\` / \`exec("grep -rn <term> <dir>")\` — primary; returns contents + enrichment. Typed \`read_document\` / \`search\` when you need \`structuredContent\`.
+\`exec("cat <path>.md")\` / \`exec("ls <dir>")\` — primary; returns contents + enrichment. Typed \`read_document\` for one doc, \`search\` for ranked retrieval (cmd-K parity), \`grep\` for every literal-string occurrence — pick by intent.
 
 ## Preview — open at session start
 

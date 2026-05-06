@@ -9,7 +9,7 @@ describe('resolveLeafSchema', () => {
   });
 
   test('descends through nested wrappers to a registered scalar leaf', () => {
-    const leaf = resolveLeafSchema(ConfigSchema, ['mcp', 'tools', 'search', 'maxResults']);
+    const leaf = resolveLeafSchema(ConfigSchema, ['mcp', 'tools', 'grep', 'maxResults']);
     expect(leaf).toBeDefined();
   });
 
@@ -26,7 +26,7 @@ describe('resolveLeafSchema', () => {
 
 describe('getLeafFieldMeta', () => {
   test('returns metadata for an agent-settable scalar leaf', () => {
-    const meta = getLeafFieldMeta(ConfigSchema, ['mcp', 'tools', 'search', 'maxResults']);
+    const meta = getLeafFieldMeta(ConfigSchema, ['mcp', 'tools', 'grep', 'maxResults']);
     expect(meta).toEqual({
       scope: 'either',
       agentSettable: true,

@@ -99,7 +99,7 @@ export const ConfigSchema = z.looseObject({
                 .default(5),
             })
             .default({ historyDepth: 5 }),
-          search: z
+          grep: z
             .looseObject({
               maxResults: z
                 .number()
@@ -116,14 +116,14 @@ export const ConfigSchema = z.looseObject({
         })
         .default({
           read_document: { historyDepth: 5 },
-          search: { maxResults: 50 },
+          grep: { maxResults: 50 },
         }),
     })
     .default({
       autoStart: true,
       tools: {
         read_document: { historyDepth: 5 },
-        search: { maxResults: 50 },
+        grep: { maxResults: 50 },
       },
     }),
   appearance: z

@@ -77,19 +77,19 @@ describe('runCommit — success path', () => {
     const { form, clearErrors, getValues } = createMockForm(() => 100);
     const { binding, patch } = createMockBinding(() => ({
       ok: true,
-      effective: { mcp: { tools: { search: { maxResults: 100 } } } } as unknown as Config,
-      appliedPaths: ['mcp.tools.search.maxResults'],
+      effective: { mcp: { tools: { grep: { maxResults: 100 } } } } as unknown as Config,
+      appliedPaths: ['mcp.tools.grep.maxResults'],
     }));
 
-    const result = runCommit(form, binding, 'mcp.tools.search.maxResults');
+    const result = runCommit(form, binding, 'mcp.tools.grep.maxResults');
 
     expect(result).toBe(true);
-    expect(getValues).toHaveBeenCalledWith('mcp.tools.search.maxResults');
+    expect(getValues).toHaveBeenCalledWith('mcp.tools.grep.maxResults');
     expect(patch).toHaveBeenCalledTimes(1);
     expect(patch.mock.calls[0]?.[0]).toEqual({
-      mcp: { tools: { search: { maxResults: 100 } } },
+      mcp: { tools: { grep: { maxResults: 100 } } },
     });
-    expect(clearErrors).toHaveBeenCalledWith('mcp.tools.search.maxResults');
+    expect(clearErrors).toHaveBeenCalledWith('mcp.tools.grep.maxResults');
   });
 
   test('clears the field-level error after a successful patch', () => {
@@ -110,15 +110,15 @@ describe('runCommit — success path', () => {
     const { form, resetField } = createMockForm(() => 100);
     const { binding } = createMockBinding(() => ({
       ok: true,
-      effective: { mcp: { tools: { search: { maxResults: 100 } } } } as unknown as Config,
-      appliedPaths: ['mcp.tools.search.maxResults'],
+      effective: { mcp: { tools: { grep: { maxResults: 100 } } } } as unknown as Config,
+      appliedPaths: ['mcp.tools.grep.maxResults'],
     }));
 
-    runCommit(form, binding, 'mcp.tools.search.maxResults');
+    runCommit(form, binding, 'mcp.tools.grep.maxResults');
 
     expect(resetField).toHaveBeenCalledTimes(1);
     const [name, options] = resetField.mock.calls[0] ?? [];
-    expect(name).toBe('mcp.tools.search.maxResults');
+    expect(name).toBe('mcp.tools.grep.maxResults');
     expect(options).toEqual({ defaultValue: 100, keepError: false });
   });
 
@@ -147,7 +147,7 @@ describe('runCommit — failure path', () => {
       code: 'SCHEMA_INVALID',
       issues: [
         {
-          path: ['mcp', 'tools', 'search', 'maxResults'],
+          path: ['mcp', 'tools', 'grep', 'maxResults'],
           message: 'Expected number, received string',
           issueCode: 'invalid_type',
         },
@@ -155,18 +155,18 @@ describe('runCommit — failure path', () => {
     };
     const { binding } = createMockBinding(() => ({ ok: false, error }));
 
-    const result = runCommit(form, binding, 'mcp.tools.search.maxResults');
+    const result = runCommit(form, binding, 'mcp.tools.grep.maxResults');
 
     expect(result).toBe(false);
     expect(setError).toHaveBeenCalledTimes(1);
     const [name, errArg] = setError.mock.calls[0] ?? [];
-    expect(name).toBe('mcp.tools.search.maxResults');
+    expect(name).toBe('mcp.tools.grep.maxResults');
     expect(errArg).toMatchObject({
       type: 'config-binding',
       message: 'Expected number, received string',
     });
     expect(clearErrors).toHaveBeenCalledTimes(1);
-    expect(clearErrors).toHaveBeenCalledWith('mcp.tools.search.maxResults');
+    expect(clearErrors).toHaveBeenCalledWith('mcp.tools.grep.maxResults');
     expect(resetField).not.toHaveBeenCalled();
   });
 

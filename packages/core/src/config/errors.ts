@@ -140,7 +140,7 @@ export function humanFormat(error: ConfigValidationError): string {
     case 'NOT_AGENT_SETTABLE':
       return [
         `Field ${error.path.join('.')} is not agent-settable.`,
-        'Agent-settable paths: folders[], mcp.tools.search.maxResults,',
+        'Agent-settable paths: folders[], mcp.tools.grep.maxResults,',
         'mcp.tools.read_document.historyDepth.',
         'Other fields can be edited via the Settings pane or by hand-editing config.yml.',
       ].join(' ');

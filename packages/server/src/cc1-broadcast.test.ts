@@ -431,7 +431,7 @@ describe('CC1Broadcaster', () => {
       code: 'SCHEMA_INVALID',
       issues: [
         {
-          path: ['mcp', 'tools', 'search', 'maxResults'],
+          path: ['mcp', 'tools', 'grep', 'maxResults'],
           message: 'expected number, received string',
           issueCode: 'invalid_type',
           source: { file: '/abs/config.yml', line: 5, column: 19, snippet: '> 5 |  ...' },
@@ -445,7 +445,7 @@ describe('CC1Broadcaster', () => {
     expect(payload.error.issues).toHaveLength(1);
     const issue = payload.error.issues[0];
     if (!issue) throw new Error('issue missing');
-    expect(issue.path).toEqual(['mcp', 'tools', 'search', 'maxResults']);
+    expect(issue.path).toEqual(['mcp', 'tools', 'grep', 'maxResults']);
     expect(issue.source?.line).toBe(5);
   });
 });

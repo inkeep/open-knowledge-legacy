@@ -19,7 +19,7 @@ const BASE_CONFIG: Config = {
     autoStart: true,
     tools: {
       read_document: { historyDepth: 5 },
-      search: { maxResults: 50 },
+      grep: { maxResults: 50 },
     },
   },
   appearance: {},
@@ -67,17 +67,17 @@ describe('get_config tool', () => {
     const handler = captureRegistration(cwd);
     const result = await handler({ path: ['mcp', 'tools'] });
     const value = result.structuredContent?.value as {
-      search: { maxResults: number };
+      grep: { maxResults: number };
       read_document: { historyDepth: number };
     };
-    expect(value.search.maxResults).toBe(50);
+    expect(value.grep.maxResults).toBe(50);
     expect(value.read_document.historyDepth).toBe(5);
   });
 
   test('returns scalar leaf when path resolves to a primitive', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-'));
     const handler = captureRegistration(cwd);
-    const result = await handler({ path: ['mcp', 'tools', 'search', 'maxResults'] });
+    const result = await handler({ path: ['mcp', 'tools', 'grep', 'maxResults'] });
     expect(result.structuredContent?.value).toBe(50);
   });
 
@@ -93,7 +93,7 @@ describe('get_config tool', () => {
   test('content[0].text is JSON-serialized for agent consumption', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-'));
     const handler = captureRegistration(cwd);
-    const result = await handler({ path: ['mcp', 'tools', 'search', 'maxResults'] });
+    const result = await handler({ path: ['mcp', 'tools', 'grep', 'maxResults'] });
     expect(result.content[0]?.text).toBe('50');
   });
 
@@ -110,7 +110,7 @@ describe('get_config tool', () => {
     mkdirSync(join(cwd, '.ok'), { recursive: true });
     writeFileSync(
       join(cwd, '.ok', 'config.yml'),
-      'mcp:\n  tools:\n    search:\n      maxResults: 100\n',
+      'mcp:\n  tools:\n    grep:\n      maxResults: 100\n',
     );
     const merged: Config = {
       ...BASE_CONFIG,
@@ -118,7 +118,7 @@ describe('get_config tool', () => {
         ...BASE_CONFIG.mcp,
         tools: {
           ...BASE_CONFIG.mcp.tools,
-          search: { maxResults: 100 },
+          grep: { maxResults: 100 },
         },
       },
     };
@@ -137,7 +137,7 @@ describe('get_config tool', () => {
     });
     if (!captured) throw new Error('tool not registered');
     const result = await (captured as ToolHandler)({
-      path: ['mcp', 'tools', 'search', 'maxResults'],
+      path: ['mcp', 'tools', 'grep', 'maxResults'],
     });
     expect(result.structuredContent?.value).toBe(100);
   });

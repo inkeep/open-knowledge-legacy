@@ -1,153 +1,264 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import simpleGit from 'simple-git';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { type Config, ConfigSchema } from '../../config/schema.ts';
-import { buildSearchResult } from './search.ts';
+import { DESCRIPTION, register } from './search.ts';
+import type { ServerInstance } from './shared.ts';
 
 const DEFAULT_CONFIG: Config = ConfigSchema.parse({});
 
-let tmpDir: string;
-let originalEnv: string | undefined;
-
-beforeEach(async () => {
-  tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-search-test-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-});
-
-afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
-  await rm(tmpDir, { recursive: true, force: true });
-});
-
-async function bootstrap(): Promise<string> {
-  const project = resolve(tmpDir, 'project');
-  mkdirSync(project, { recursive: true });
-  const git = simpleGit(project);
-  await git.init();
-  await git.raw('config', 'user.name', 'Test');
-  await git.raw('config', 'user.email', 't@t.test');
-  writeFileSync(resolve(project, 'README.md'), '# probe\n');
-  await git.add('README.md');
-  await git.commit('init');
-  return project;
+interface RegisteredTool {
+  name: string;
+  options: {
+    description: string;
+    inputSchema: Record<string, unknown>;
+    annotations?: Record<string, unknown>;
+  };
+  handler: (args: Record<string, unknown>) => Promise<{
+    content?: Array<{ type: string; text?: string }>;
+    structuredContent?: Record<string, unknown>;
+    isError?: boolean;
+  }>;
 }
 
-describe('search — .okignore exclusion', () => {
-  test('files under a .okignore-excluded path do not appear in results', async () => {
-    const project = await bootstrap();
-    const drafts = resolve(project, 'drafts');
-    const articles = resolve(project, 'articles');
-    mkdirSync(drafts, { recursive: true });
-    mkdirSync(articles, { recursive: true });
-    writeFileSync(resolve(drafts, 'wip.md'), '# Draft\n\nsearchterm in draft\n');
-    writeFileSync(resolve(articles, 'pub.md'), '# Article\n\nsearchterm in article\n');
-    writeFileSync(resolve(project, '.okignore'), 'drafts/\n');
+function makeFakeServer(): {
+  server: ServerInstance;
+  registered: RegisteredTool[];
+} {
+  const registered: RegisteredTool[] = [];
+  const server = {
+    registerTool: (
+      name: string,
+      options: RegisteredTool['options'],
+      handler: RegisteredTool['handler'],
+    ) => {
+      registered.push({ name, options, handler });
+    },
+  } as unknown as ServerInstance;
+  return { server, registered };
+}
 
-    const { structured } = await buildSearchResult(
-      { query: 'searchterm' },
-      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
-    );
+function expectOneRegisteredTool(registered: RegisteredTool[]): RegisteredTool {
+  expect(registered).toHaveLength(1);
+  const tool = registered[0];
+  if (!tool) throw new Error('expected one registered tool');
+  return tool;
+}
 
-    const paths = (structured?.results ?? []).map((r) => r.path);
-    expect(paths).toContain('articles/pub.md');
-    expect(paths).not.toContain('drafts/wip.md');
-  });
+let originalFetch: typeof fetch;
 
-  test('cross-source negation — .okignore !pattern re-includes a .gitignore-excluded file', async () => {
-    const project = await bootstrap();
-    writeFileSync(resolve(project, 'secret.md'), '# Secret\n\nsearchterm in secret\n');
-    writeFileSync(resolve(project, '.gitignore'), 'secret.md\n');
-    writeFileSync(resolve(project, '.okignore'), '!secret.md\n');
+beforeEach(() => {
+  originalFetch = globalThis.fetch;
+});
 
-    const { structured } = await buildSearchResult(
-      { query: 'searchterm' },
-      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
-    );
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
-    const paths = (structured?.results ?? []).map((r) => r.path);
-    expect(paths).toContain('secret.md');
-  });
-
-  test('truncated reflects the grep cap even when most raw matches are excluded by .okignore', async () => {
-    const project = await bootstrap();
-    const drafts = resolve(project, 'drafts');
-    mkdirSync(drafts, { recursive: true });
-    for (let i = 0; i < 5; i++) {
-      writeFileSync(resolve(drafts, `wip-${i}.md`), '# Draft\n\nsearchterm here\n');
-    }
-    const articles = resolve(project, 'articles');
-    mkdirSync(articles, { recursive: true });
-    writeFileSync(resolve(articles, 'pub.md'), '# Article\n\nsearchterm here\n');
-    writeFileSync(resolve(project, '.okignore'), 'drafts/\n');
-
-    const config: Config = ConfigSchema.parse({
-      mcp: { tools: { search: { maxResults: 2 } } },
+function mockFetchOk(payload: Record<string, unknown>): void {
+  globalThis.fetch = mock(async (_url: string, _init?: RequestInit) => {
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
     });
+  }) as unknown as typeof fetch;
+}
 
-    const { structured } = await buildSearchResult(
-      { query: 'searchterm' },
-      { resolveCwd: async () => project, serverUrl: undefined, config },
-    );
+describe('search MCP tool — registration', () => {
+  test('registers under the name "search" with read-only annotations', () => {
+    const { server, registered } = makeFakeServer();
+    register(server, {
+      resolveCwd: async () => '/tmp/proj',
+      config: DEFAULT_CONFIG,
+      serverUrl: 'http://localhost:1234',
+    });
+    const tool = expectOneRegisteredTool(registered);
+    expect(tool.name).toBe('search');
+    expect(tool.options.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    });
+  });
 
-    expect(structured?.truncated).toBe(true);
-    const paths = (structured?.results ?? []).map((r) => r.path);
-    expect(paths).toEqual(['articles/pub.md']);
+  test('description sibling-pointer for grep lands in the first 200 characters (FR6)', () => {
+    expect(DESCRIPTION.slice(0, 200)).toContain('grep');
+  });
+
+  test('inputSchema exposes query, intent, scopes, limit, cwd', () => {
+    const { server, registered } = makeFakeServer();
+    register(server, {
+      resolveCwd: async () => '/tmp/proj',
+      config: DEFAULT_CONFIG,
+      serverUrl: 'http://localhost:1234',
+    });
+    const tool = expectOneRegisteredTool(registered);
+    expect(Object.keys(tool.options.inputSchema).sort()).toEqual([
+      'cwd',
+      'intent',
+      'limit',
+      'query',
+      'scopes',
+    ]);
   });
 });
 
-describe('search — previewUrl + ui block', () => {
-  test('each result row includes previewUrl + previewUrlSource when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
-    mkdirSync(resolve(tmpDir, 'articles'), { recursive: true });
-    writeFileSync(resolve(tmpDir, 'articles/auth.md'), '---\ntitle: Auth\n---\nneedle here\n');
-    writeFileSync(resolve(tmpDir, 'articles/sso.md'), '---\ntitle: SSO\n---\nneedle too\n');
+describe('search MCP tool — happy path', () => {
+  test('forwards query / intent / scopes / limit to POST /api/search and normalizes the response', async () => {
+    const captured: { url?: string; init?: RequestInit } = {};
+    globalThis.fetch = mock(async (url: string, init?: RequestInit) => {
+      captured.url = String(url);
+      captured.init = init;
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          query: 'agent presence',
+          intent: 'full_text',
+          results: [
+            {
+              kind: 'page',
+              path: 'specs/agent-presence/SPEC',
+              title: 'Agent Presence',
+              score: 723.5,
+              signals: { lexical: 700, fullText: 1.2, recency: 23.5 },
+              snippet: 'agent presence lives on __system__ awareness…',
+            },
+            {
+              kind: 'folder',
+              path: 'specs/agent-presence',
+              title: 'agent-presence',
+              score: 550,
+              signals: { lexical: 550, fullText: 0, recency: 0 },
+            },
+          ],
+          elapsedMs: 4.2,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as unknown as typeof fetch;
 
-    const { structured } = await buildSearchResult(
-      { query: 'needle' },
-      { resolveCwd: async () => tmpDir, config: DEFAULT_CONFIG, serverUrl: undefined },
-    );
-    expect(structured).toBeTruthy();
-    expect(structured?.matchCount).toBe(2);
-    expect(structured?.fileCount).toBe(2);
-    for (const row of structured?.results ?? []) {
-      expect(row.previewUrl).toBe(`https://env.example/#/${row.docName}`);
-      expect(row.previewUrlSource).toBe('env');
-      expect(row.docName.endsWith('.md')).toBe(false);
-    }
-    expect(structured?.ui).toEqual({ baseUrl: null, port: null });
+    const { server, registered } = makeFakeServer();
+    register(server, {
+      resolveCwd: async () => '/tmp/proj',
+      config: DEFAULT_CONFIG,
+      serverUrl: 'http://localhost:1234',
+    });
+    const tool = expectOneRegisteredTool(registered);
+    const result = await tool.handler({
+      query: 'agent presence',
+      intent: 'full_text',
+      scopes: ['page', 'content'],
+      limit: 5,
+      cwd: '/tmp/proj',
+    });
+
+    expect(result.isError ?? false).toBe(false);
+    expect(captured.url).toBe('http://localhost:1234/api/search');
+    expect(captured.init?.method).toBe('POST');
+    const body = JSON.parse(String(captured.init?.body)) as Record<string, unknown>;
+    expect(body).toEqual({
+      query: 'agent presence',
+      intent: 'full_text',
+      limit: 5,
+      scopes: ['page', 'content'],
+    });
+
+    const structured = result.structuredContent as {
+      query: string;
+      intent: string;
+      resultCount: number;
+      results: Array<{
+        kind: string;
+        path: string;
+        docName: string;
+        title: string | null;
+        score: number;
+        signals: { lexical: number; fullText: number; recency: number };
+        snippet?: string;
+      }>;
+    };
+    expect(structured.query).toBe('agent presence');
+    expect(structured.intent).toBe('full_text');
+    expect(structured.resultCount).toBe(2);
+    expect(structured.results[0]?.kind).toBe('page');
+    expect(structured.results[0]?.path).toBe('specs/agent-presence/SPEC');
+    expect(structured.results[0]?.docName).toBe('specs/agent-presence/SPEC');
+    expect(structured.results[0]?.title).toBe('Agent Presence');
+    expect(structured.results[0]?.snippet).toContain('agent presence');
+    expect(structured.results[0]?.signals).toEqual({
+      lexical: 700,
+      fullText: 1.2,
+      recency: 23.5,
+    });
   });
 
-  test('previewUrl null when resolver returns null', async () => {
-    mkdirSync(resolve(tmpDir, 'articles'), { recursive: true });
-    writeFileSync(resolve(tmpDir, 'articles/auth.md'), '---\ntitle: Auth\n---\nneedle\n');
+  test("default intent is 'full_text' when caller omits it (D4)", async () => {
+    const captured: { body?: string } = {};
+    globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+      captured.body = String(init?.body);
+      return new Response(JSON.stringify({ ok: true, results: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
 
-    const { structured } = await buildSearchResult(
-      { query: 'needle' },
-      { resolveCwd: async () => tmpDir, config: DEFAULT_CONFIG, serverUrl: undefined },
-    );
-    expect(structured?.results[0]?.previewUrl).toBeNull();
-    expect(structured?.ui.baseUrl).toBeNull();
+    const { server, registered } = makeFakeServer();
+    register(server, {
+      resolveCwd: async () => '/tmp/proj',
+      config: DEFAULT_CONFIG,
+      serverUrl: 'http://localhost:1234',
+    });
+    const tool = expectOneRegisteredTool(registered);
+    await tool.handler({ query: 'q', cwd: '/tmp/proj' });
+    const body = JSON.parse(String(captured.body)) as Record<string, unknown>;
+    expect(body.intent).toBe('full_text');
+    expect(body.limit).toBe(20);
   });
 
-  test('zero-match query still emits an empty structured block + ui', async () => {
-    mkdirSync(resolve(tmpDir, 'articles'), { recursive: true });
-    writeFileSync(resolve(tmpDir, 'articles/a.md'), 'no matches');
-
-    const { text, structured } = await buildSearchResult(
-      { query: 'needle' },
-      { resolveCwd: async () => tmpDir, config: DEFAULT_CONFIG, serverUrl: undefined },
-    );
+  test('zero results returns "No matches" text + structured.resultCount = 0', async () => {
+    mockFetchOk({ ok: true, query: 'nope', intent: 'full_text', results: [], elapsedMs: 0.1 });
+    const { server, registered } = makeFakeServer();
+    register(server, {
+      resolveCwd: async () => '/tmp/proj',
+      config: DEFAULT_CONFIG,
+      serverUrl: 'http://localhost:1234',
+    });
+    const tool = expectOneRegisteredTool(registered);
+    const result = await tool.handler({ query: 'nope', cwd: '/tmp/proj' });
+    const text = result.content?.find((c) => c.type === 'text')?.text ?? '';
     expect(text).toContain('No matches');
-    expect(structured?.matchCount).toBe(0);
-    expect(structured?.results).toEqual([]);
-    expect(structured?.ui).toEqual({ baseUrl: null, port: null });
+    const structured = result.structuredContent as { resultCount: number };
+    expect(structured.resultCount).toBe(0);
+  });
+});
+
+describe('search MCP tool — error paths', () => {
+  test('server-not-running returns HOCUSPOCUS_NOT_RUNNING_ERROR + grep fallback hint (FR7, AC4)', async () => {
+    const { server, registered } = makeFakeServer();
+    register(server, {
+      resolveCwd: async () => '/tmp/proj',
+      config: DEFAULT_CONFIG,
+      serverUrl: undefined,
+    });
+    const tool = expectOneRegisteredTool(registered);
+    const result = await tool.handler({ query: 'q', cwd: '/tmp/proj' });
+    expect(result.isError).toBe(true);
+    const text = result.content?.find((c) => c.type === 'text')?.text ?? '';
+    expect(text).toContain('Hocuspocus server is not running');
+    expect(text).toContain('open-knowledge start');
+    expect(text).toContain('grep');
+  });
+
+  test('server returns ok:false → tool reports error', async () => {
+    mockFetchOk({ ok: false, error: 'Query is too long' });
+    const { server, registered } = makeFakeServer();
+    register(server, {
+      resolveCwd: async () => '/tmp/proj',
+      config: DEFAULT_CONFIG,
+      serverUrl: 'http://localhost:1234',
+    });
+    const tool = expectOneRegisteredTool(registered);
+    const result = await tool.handler({ query: 'q', cwd: '/tmp/proj' });
+    expect(result.isError).toBe(true);
+    const text = result.content?.find((c) => c.type === 'text')?.text ?? '';
+    expect(text).toContain('Query is too long');
   });
 });

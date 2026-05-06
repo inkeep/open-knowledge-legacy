@@ -138,7 +138,7 @@ interface ToolCallResult {
   isError?: boolean;
 }
 
-async function callSearchTool(
+async function callGrepTool(
   port: number,
   session: InitializedSession,
   args: { query: string; cwd: string },
@@ -156,7 +156,7 @@ async function callSearchTool(
       jsonrpc: '2.0',
       id: rpcId,
       method: 'tools/call',
-      params: { name: 'search', arguments: args },
+      params: { name: 'grep', arguments: args },
     }),
   });
   expect(res.status).toBe(200);
@@ -182,9 +182,9 @@ afterEach(async () => {
   openHarnesses = [];
 });
 
-test('configured mcp.tools.search.maxResults caps tool output (truncation hint surfaces)', async () => {
-  const config: Config = ConfigSchema.parse({ mcp: { tools: { search: { maxResults: 1 } } } });
-  expect(config.mcp.tools.search.maxResults).toBe(1);
+test('configured mcp.tools.grep.maxResults caps tool output (truncation hint surfaces)', async () => {
+  const config: Config = ConfigSchema.parse({ mcp: { tools: { grep: { maxResults: 1 } } } });
+  expect(config.mcp.tools.grep.maxResults).toBe(1);
 
   const harness = await bootHandler(config);
   openHarnesses.push(harness);
@@ -192,7 +192,7 @@ test('configured mcp.tools.search.maxResults caps tool output (truncation hint s
   seedSearchableFiles(harness.contentDir, 3, 'configured-search-marker');
 
   const session = await openMcpSession(harness.port);
-  const result = await callSearchTool(
+  const result = await callGrepTool(
     harness.port,
     session,
     { query: 'configured-search-marker', cwd: harness.contentDir },
@@ -203,14 +203,14 @@ test('configured mcp.tools.search.maxResults caps tool output (truncation hint s
   const text = result.content?.find((c) => c.type === 'text')?.text ?? '';
   expect(text).toContain('1 of');
   expect(text).toContain('matches shown');
-  expect(text).toContain('mcp.tools.search.maxResults');
+  expect(text).toContain('mcp.tools.grep.maxResults');
   expect(result.structuredContent?.truncated).toBe(true);
   expect(result.structuredContent?.matchCount).toBe(1);
 });
 
-test('higher mcp.tools.search.maxResults surfaces all matches without truncation', async () => {
-  const config: Config = ConfigSchema.parse({ mcp: { tools: { search: { maxResults: 99 } } } });
-  expect(config.mcp.tools.search.maxResults).toBe(99);
+test('higher mcp.tools.grep.maxResults surfaces all matches without truncation', async () => {
+  const config: Config = ConfigSchema.parse({ mcp: { tools: { grep: { maxResults: 99 } } } });
+  expect(config.mcp.tools.grep.maxResults).toBe(99);
 
   const harness = await bootHandler(config);
   openHarnesses.push(harness);
@@ -218,7 +218,7 @@ test('higher mcp.tools.search.maxResults surfaces all matches without truncation
   seedSearchableFiles(harness.contentDir, 3, 'configured-search-marker');
 
   const session = await openMcpSession(harness.port);
-  const result = await callSearchTool(
+  const result = await callGrepTool(
     harness.port,
     session,
     { query: 'configured-search-marker', cwd: harness.contentDir },
@@ -234,10 +234,10 @@ test('higher mcp.tools.search.maxResults surfaces all matches without truncation
 
 test('configured mcp.tools.read_document.historyDepth is the value handed to the read tool', async () => {
   const config: Config = ConfigSchema.parse({
-    mcp: { tools: { read_document: { historyDepth: 7 }, search: { maxResults: 11 } } },
+    mcp: { tools: { read_document: { historyDepth: 7 }, grep: { maxResults: 11 } } },
   });
   expect(config.mcp.tools.read_document.historyDepth).toBe(7);
-  expect(config.mcp.tools.search.maxResults).toBe(11);
+  expect(config.mcp.tools.grep.maxResults).toBe(11);
 
   const harness = await bootHandler(config);
   openHarnesses.push(harness);
@@ -260,9 +260,10 @@ test('configured mcp.tools.read_document.historyDepth is the value handed to the
   const toolNames = toolsBody.result?.tools?.map((t) => t.name) ?? [];
   expect(toolNames).toContain('read_document');
   expect(toolNames).toContain('search');
+  expect(toolNames).toContain('grep');
 
   seedSearchableFiles(harness.contentDir, 12, 'historydepth-co-witness');
-  const result = await callSearchTool(
+  const result = await callGrepTool(
     harness.port,
     session,
     { query: 'historydepth-co-witness', cwd: harness.contentDir },

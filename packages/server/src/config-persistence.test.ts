@@ -294,7 +294,7 @@ describe('storeConfigDoc — rejection + revert', () => {
     const lkgYaml = 'mcp:\n  autoStart: false\n';
     fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, lkgYaml);
     const doc = new Y.Doc();
-    doc.getText('source').insert(0, 'mcp:\n  tools:\n    search:\n      maxResults: "fifty"\n');
+    doc.getText('source').insert(0, 'mcp:\n  tools:\n    grep:\n      maxResults: "fifty"\n');
 
     const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
@@ -307,7 +307,7 @@ describe('storeConfigDoc — rejection + revert', () => {
     expect(err.code).toBe('SCHEMA_INVALID');
     if (err.code === 'SCHEMA_INVALID') {
       expect(err.issues.length).toBeGreaterThan(0);
-      expect(err.issues[0]?.path).toEqual(['mcp', 'tools', 'search', 'maxResults']);
+      expect(err.issues[0]?.path).toEqual(['mcp', 'tools', 'grep', 'maxResults']);
     }
   });
 
@@ -556,7 +556,7 @@ describe('applyExternalConfigChange', () => {
     const doc = new Y.Doc();
     fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'mcp:\n  autoStart: true\n');
 
-    const invalid = 'mcp:\n  tools:\n    search:\n      maxResults: "fast"\n';
+    const invalid = 'mcp:\n  tools:\n    grep:\n      maxResults: "fast"\n';
     const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_PROJECT, invalid, fx.ctx);
 
     expect(outcome).toBe('rejected');
@@ -565,7 +565,7 @@ describe('applyExternalConfigChange', () => {
     expect(error).toBeDefined();
     if (error && isKnownConfigError(error) && error.code === 'SCHEMA_INVALID') {
       expect(error.issues.length).toBeGreaterThan(0);
-      expect(error.issues[0]?.path).toEqual(['mcp', 'tools', 'search', 'maxResults']);
+      expect(error.issues[0]?.path).toEqual(['mcp', 'tools', 'grep', 'maxResults']);
     } else {
       throw new Error('expected SCHEMA_INVALID error');
     }

@@ -203,7 +203,7 @@ test('stdio shim proxies initialize and tool calls to the HTTP MCP server', asyn
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'search',
+          name: 'grep',
           arguments: { query: 'stdio-http-bridge-marker', cwd: harness.contentDir },
         },
       }),

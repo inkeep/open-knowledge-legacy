@@ -6,7 +6,7 @@ describe('locateIssue', () => {
   test('locates a leaf scalar at correct line and column', () => {
     const source = `mcp:
   tools:
-    search:
+    grep:
       maxResults: "fifty"
 `;
     const doc = parseDocument(source);
@@ -14,7 +14,7 @@ describe('locateIssue', () => {
       file: '/abs/config.yml',
       source,
       doc,
-      path: ['mcp', 'tools', 'search', 'maxResults'],
+      path: ['mcp', 'tools', 'grep', 'maxResults'],
     });
     expect(result).toBeDefined();
     expect(result?.file).toBe('/abs/config.yml');
@@ -40,13 +40,13 @@ describe('locateIssue', () => {
   });
 
   test('falls back to nearest ancestor when path does not exist', () => {
-    const source = `mcp:\n  tools:\n    search:\n      maxResults: 50\n`;
+    const source = `mcp:\n  tools:\n    grep:\n      maxResults: 50\n`;
     const doc = parseDocument(source);
     const result = locateIssue({
       file: '/c.yml',
       source,
       doc,
-      path: ['mcp', 'tools', 'search', 'nonExistentField'],
+      path: ['mcp', 'tools', 'grep', 'nonExistentField'],
     });
     expect(result).toBeDefined();
     expect(result?.line).toBeGreaterThanOrEqual(1);
