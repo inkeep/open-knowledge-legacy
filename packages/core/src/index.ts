@@ -353,11 +353,6 @@ export type {
   ShadowContributor,
   TimelineEntry,
 } from './types/timeline.ts';
-export {
-  type AtomicWriteFsAdapter,
-  type AtomicWriteOptions,
-  atomicWriteFile,
-} from './util/atomic-yaml-write.ts';
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export { ChunkedInsertError, chunkedYTextInsert } from './utils/chunked-insert.ts';
 export { createCodeFenceTracker } from './utils/code-fence-tracker.ts';

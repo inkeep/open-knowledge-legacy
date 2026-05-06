@@ -21,3 +21,8 @@ export {
   type WriteConfigPatchSuccess,
   writeConfigPatch,
 } from './config/write-config-patch.ts';
+export {
+  type AtomicWriteFsAdapter,
+  type AtomicWriteOptions,
+  atomicWriteFile,
+} from './util/atomic-yaml-write.ts';
