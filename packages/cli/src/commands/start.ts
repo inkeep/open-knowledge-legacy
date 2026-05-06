@@ -25,6 +25,15 @@ export function resolveHost(opts: { host?: string }, env: { HOST?: string | unde
   return opts.host ?? env.HOST ?? DEFAULT_SERVER_HOST;
 }
 
+export class OkDirMissingError extends Error {
+  readonly cwd: string;
+  constructor(cwd: string) {
+    super("This directory isn't set up yet. Run `ok init` first, then `ok start` again.");
+    this.name = 'OkDirMissingError';
+    this.cwd = cwd;
+  }
+}
+
 export type UiSpawnDecision =
   | { action: 'spawn'; reason: 'absent' }
   | { action: 'spawn'; reason: 'stale'; stalePid: number }
@@ -184,7 +193,6 @@ export interface BootedStartServer {
   degraded: readonly string[];
   uiSpawnDecision: UiSpawnDecision;
   resolvedUiPort: number | null;
-  didAutoInit: boolean;
 }
 
 export async function bootStartServer(opts: BootStartServerOptions): Promise<BootedStartServer> {
@@ -201,26 +209,16 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   const log = opts.log ?? getLogger('start');
 
+  const okDir = resolve(cwd, OK_DIR);
+  if (!skipAutoInit && !existsSync(okDir)) {
+    throw new OkDirMissingError(cwd);
+  }
+
   const contentDir = resolveContentDir(config, cwd);
   if (!existsSync(contentDir)) {
     mkdirSync(contentDir, { recursive: true });
     log.info({ contentDir }, 'Created content directory');
   }
-
-  const okDir = resolve(cwd, OK_DIR);
-  const needsScaffold = !existsSync(okDir);
-  const autoInitFn = skipAutoInit
-    ? undefined
-    : async () => {
-        try {
-          const { initContent } = await import('../content/init.ts');
-          const result = initContent(cwd);
-          return needsScaffold || result.created.length > 0 || result.updated.length > 0;
-        } catch (err) {
-          console.warn('Auto-init failed:', err instanceof Error ? err.message : err);
-          return false;
-        }
-      };
 
   let uiSpawnDecision: UiSpawnDecision | null = null;
   const spawnUiSiblingFn = async ({
@@ -262,8 +260,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     localOpCliArgs: [process.execPath, process.argv[1]],
     attachUiSibling: true,
     idleShutdownMs: idleThresholdMs,
-    skipAutoInit,
-    autoInitFn,
+    skipAutoInit: true, // Guard already ran above; no scaffold fn to pass
     spawnUiSiblingFn,
     idleShutdownHandler: (destroyServer) =>
       buildIdleShutdownHandler({
@@ -313,7 +310,6 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     degraded: booted.degraded,
     uiSpawnDecision,
     resolvedUiPort,
-    didAutoInit: booted.didAutoInit,
   };
 }
 
@@ -323,7 +319,6 @@ interface StartCommandOptions {
   port?: string | number;
   host?: string;
   open?: boolean;
-  init?: boolean;
   mode?: StartMode;
 }
 
@@ -334,7 +329,7 @@ function parseStartMode(value: string): StartMode {
 
 export async function runStartCommand(config: Config, opts: StartCommandOptions): Promise<void> {
   const { renderBanner } = await import('../ui/banner.ts');
-  const { dim, error, info, warning } = await import('../ui/colors.ts');
+  const { dim, error, warning } = await import('../ui/colors.ts');
 
   const cwd = process.cwd();
 
@@ -350,9 +345,13 @@ export async function runStartCommand(config: Config, opts: StartCommandOptions)
       cwd,
       host,
       port,
-      skipAutoInit: opts.init === false,
     });
   } catch (err) {
+    if (err instanceof OkDirMissingError) {
+      console.error(error(err.message));
+      process.exit(1);
+    }
+
     const serverModule = await import('@inkeep/open-knowledge-server');
     const tailored = tryDescribeLockCollision(err, cwd, serverModule);
     if (tailored !== null) {
@@ -404,13 +403,6 @@ export async function runStartCommand(config: Config, opts: StartCommandOptions)
       networkUrl,
     }),
   );
-  if (booted.didAutoInit) {
-    console.log(`  ${info('\u2713')} Scaffolded ${OK_DIR}/ (first run)`);
-    console.log(
-      `  ${dim('Tip: Run `open-knowledge init` to register MCP tools for Claude Code')}\n`,
-    );
-  }
-
   const DEGRADED_IMPACTS: Record<string, string> = {
     'shadow-repo': 'Version history and branch-switch safety unavailable',
     'file-watcher': 'External file changes will not sync to the editor',
@@ -425,21 +417,6 @@ export async function runStartCommand(config: Config, opts: StartCommandOptions)
           console.warn(`  ${warning('\u26a0')} ${warning(id)}: ${dim(impact)}`);
         }
         console.log();
-      }
-
-      if (booted.didAutoInit) {
-        try {
-          const { previewContent, formatPreviewBlock } = await import('../content/preview.ts');
-          const preview = previewContent({
-            projectDir: cwd,
-            contentDir: booted.contentDir,
-          });
-          console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
-        } catch (e) {
-          console.warn(
-            `Content preview unavailable: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
       }
 
       if (opts.open) {
@@ -486,7 +463,6 @@ export function startCommand(getConfig: () => Config): Command {
     .option('-p, --port <port>', 'Server port', undefined)
     .option('-H, --host <host>', 'Server host', undefined)
     .option('--open', 'Open browser after start')
-    .option('--no-init', `Skip auto-scaffolding of ${OK_DIR}/`)
     .option('--mode <mode>', "Force dispatch mode: 'browser' or 'app'", parseStartMode)
     .action(async (opts: StartCommandOptions) => {
       const config = getConfig();
@@ -502,7 +478,6 @@ export function startCommand(getConfig: () => Config): Command {
         const ignored: string[] = [];
         if (opts.port !== undefined) ignored.push('--port');
         if (opts.host !== undefined) ignored.push('--host');
-        if (opts.init === false) ignored.push('--no-init');
         if (ignored.length > 0) {
           const logLevel = process.env.OK_LOG_LEVEL ?? 'info';
           if (logLevel === 'debug' || logLevel === 'trace') {

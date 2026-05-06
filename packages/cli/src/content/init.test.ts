@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { OK_DIR } from '../constants.ts';
@@ -135,6 +143,59 @@ describe('initContent', () => {
     const after = readFileSync(join(okDir, '.gitignore'), 'utf-8');
     expect(after).toContain('my-custom-ignore.tmp');
     expect(after).toContain('local/');
+  });
+
+  describe('symlink-guard against malicious upstream scaffold paths', () => {
+    it('refuses to follow .ok/.gitignore symlink with existing target (read-modify-write)', () => {
+      const okDir = join(testDir, OK_DIR);
+      mkdirSync(okDir, { recursive: true });
+      const victim = resolve(testDir, 'victim-rc');
+      const victimContent = '#!/bin/sh\nexec /usr/local/bin/realprog\n';
+      writeFileSync(victim, victimContent, 'utf-8');
+      symlinkSync(victim, join(okDir, '.gitignore'));
+
+      expect(() => initContent(testDir)).toThrow(/symlink/i);
+      expect(readFileSync(victim, 'utf-8')).toBe(victimContent);
+      expect(lstatSync(join(okDir, '.gitignore')).isSymbolicLink()).toBe(true);
+    });
+
+    it('refuses to follow .ok/.gitignore symlink with non-existent target (write-creates-file)', () => {
+      const okDir = join(testDir, OK_DIR);
+      mkdirSync(okDir, { recursive: true });
+      const phantomTarget = resolve(testDir, 'phantom-victim');
+      symlinkSync(phantomTarget, join(okDir, '.gitignore'));
+
+      expect(() => initContent(testDir)).toThrow(/symlink/i);
+      expect(existsSync(phantomTarget)).toBe(false);
+    });
+
+    it('refuses to follow .ok/config.yml symlink (writeIfMissing path)', () => {
+      const okDir = join(testDir, OK_DIR);
+      mkdirSync(okDir, { recursive: true });
+      const phantomTarget = resolve(testDir, 'phantom-config');
+      symlinkSync(phantomTarget, join(okDir, 'config.yml'));
+
+      expect(() => initContent(testDir)).toThrow(/symlink/i);
+      expect(existsSync(phantomTarget)).toBe(false);
+    });
+
+    it('refuses to follow project-root .okignore symlink (writeIfMissing path)', () => {
+      const phantomTarget = resolve(testDir, 'phantom-okignore-target');
+      symlinkSync(phantomTarget, join(testDir, '.okignore'));
+
+      expect(() => initContent(testDir)).toThrow(/symlink/i);
+      expect(existsSync(phantomTarget)).toBe(false);
+    });
+
+    it('refuses to operate when .ok/ itself is a symlink (would redirect every scaffold write)', () => {
+      const decoy = resolve(testDir, 'decoy-dir');
+      mkdirSync(decoy, { recursive: true });
+      symlinkSync(decoy, join(testDir, OK_DIR));
+
+      expect(() => initContent(testDir)).toThrow(/symlink/i);
+      expect(existsSync(join(decoy, '.gitignore'))).toBe(false);
+      expect(existsSync(join(decoy, 'config.yml'))).toBe(false);
+    });
   });
 
   it('does not duplicate .gitignore entries on repeated initContent calls', () => {

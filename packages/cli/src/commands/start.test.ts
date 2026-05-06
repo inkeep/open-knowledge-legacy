@@ -14,6 +14,7 @@ import {
   bootStartServer,
   buildIdleShutdownHandler,
   decideUiSpawn,
+  OkDirMissingError,
   resolveHost,
   spawnOkUi,
   startCommand,
@@ -607,6 +608,10 @@ describe('bootStartServer — no auto git-init from ok start (US-004)', () => {
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-git-'));
+    const okDir = resolve(tmpDir, '.ok');
+    mkdirSync(okDir, { recursive: true });
+    writeFileSync(resolve(okDir, 'config.yml'), '', 'utf-8');
+    writeFileSync(resolve(okDir, '.gitignore'), '', 'utf-8');
     booted = null;
   });
 
@@ -646,6 +651,78 @@ describe('bootStartServer — no auto git-init from ok start (US-004)', () => {
       expect(booted.degraded).toContain('shadow-repo');
     } finally {
       process.env.PATH = originalPath;
+    }
+  });
+});
+
+describe('bootStartServer — rejects with init-required when .ok/ is absent', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-no-scaffold-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('fresh dir (no .ok/) → bootStartServer throws OkDirMissingError', async () => {
+    await expect(
+      bootStartServer({
+        config: makeTestConfig(),
+        cwd: tmpDir,
+        host: TEST_HOST,
+        skipAutoInit: false,
+        skipUiAutoSpawn: true,
+      }),
+    ).rejects.toBeInstanceOf(OkDirMissingError);
+  });
+
+  test('fresh dir (no .ok/) → OkDirMissingError message contains "ok init"', async () => {
+    await expect(
+      bootStartServer({
+        config: makeTestConfig(),
+        cwd: tmpDir,
+        host: TEST_HOST,
+        skipAutoInit: false,
+        skipUiAutoSpawn: true,
+      }),
+    ).rejects.toThrow('ok init');
+
+    expect(existsSync(join(tmpDir, '.ok'))).toBe(false);
+  });
+
+  test('fresh dir (no .ok/) → bootStartServer does not create config.yml', async () => {
+    await expect(
+      bootStartServer({
+        config: makeTestConfig(),
+        cwd: tmpDir,
+        host: TEST_HOST,
+        skipAutoInit: false,
+        skipUiAutoSpawn: true,
+      }),
+    ).rejects.toBeInstanceOf(OkDirMissingError);
+    expect(existsSync(join(tmpDir, '.ok', 'config.yml'))).toBe(false);
+  });
+
+  test('skipAutoInit: true bypasses the CLI guard — server requires config.yml to be pre-seeded', async () => {
+    const okDir = join(tmpDir, '.ok');
+    mkdirSync(okDir, { recursive: true });
+    writeFileSync(join(okDir, 'config.yml'), '', 'utf-8');
+    writeFileSync(join(okDir, '.gitignore'), '', 'utf-8');
+
+    let booted: BootedStartServer | null = null;
+    try {
+      booted = await bootStartServer({
+        config: makeTestConfig(),
+        cwd: tmpDir,
+        host: TEST_HOST,
+        skipAutoInit: true,
+        skipUiAutoSpawn: true,
+      });
+      expect(booted.port).toBeGreaterThan(0);
+    } finally {
+      if (booted) await booted.destroy();
     }
   });
 });

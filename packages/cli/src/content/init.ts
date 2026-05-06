@@ -1,7 +1,24 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { CONFIG_SCHEMA_MAJOR_PATH, LOCAL_DIR } from '@inkeep/open-knowledge-core';
 import { CONFIG_FILENAME, OK_DIR, PACKAGE_VERSION } from '../constants.ts';
+
+function assertNotSymlink(filePath: string, label: string): void {
+  let lst: ReturnType<typeof lstatSync>;
+  try {
+    lst = lstatSync(filePath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+  if (lst.isSymbolicLink()) {
+    throw new Error(
+      `Refusing to follow symlink at ${label} (${filePath}). ` +
+        `An untrusted upstream may have committed this symlink to redirect writes outside the project. ` +
+        `Remove the symlink and re-run.`,
+    );
+  }
+}
 
 export function packageVersionMajorMinor(version: string): string {
   const [rawMajor = '0', rawMinor = '0'] = version.split('.');
@@ -120,7 +137,8 @@ export function buildConfigYmlContent(_version: string): string {
 `;
 }
 
-function writeIfMissing(filePath: string, content: string): boolean {
+function writeIfMissing(filePath: string, content: string, label: string): boolean {
+  assertNotSymlink(filePath, label);
   if (existsSync(filePath)) return false;
   writeFileSync(filePath, content, 'utf-8');
   return true;
@@ -130,6 +148,7 @@ function ensureGitignoreEntries(
   filePath: string,
   scaffoldContent: string,
 ): 'created' | 'updated' | 'unchanged' {
+  assertNotSymlink(filePath, '.ok/.gitignore');
   if (!existsSync(filePath)) {
     writeFileSync(filePath, scaffoldContent, 'utf-8');
     return 'created';
@@ -177,6 +196,7 @@ export function initContent(projectDir: string): {
   const updated: string[] = [];
   const skipped: string[] = [];
 
+  assertNotSymlink(okDir, '.ok/');
   mkdirSync(okDir, { recursive: true });
 
   const gitignoreAction = ensureGitignoreEntries(join(okDir, '.gitignore'), OK_GITIGNORE_CONTENT);
@@ -188,13 +208,19 @@ export function initContent(projectDir: string): {
     skipped.push('.gitignore');
   }
 
-  if (writeIfMissing(join(okDir, CONFIG_FILENAME), buildConfigYmlContent(PACKAGE_VERSION))) {
+  if (
+    writeIfMissing(
+      join(okDir, CONFIG_FILENAME),
+      buildConfigYmlContent(PACKAGE_VERSION),
+      `.ok/${CONFIG_FILENAME}`,
+    )
+  ) {
     created.push(CONFIG_FILENAME);
   } else {
     skipped.push(CONFIG_FILENAME);
   }
 
-  if (writeIfMissing(join(projectDir, '.okignore'), OK_OKIGNORE_TEMPLATE)) {
+  if (writeIfMissing(join(projectDir, '.okignore'), OK_OKIGNORE_TEMPLATE, '.okignore')) {
     created.push('.okignore');
   } else {
     skipped.push('.okignore');

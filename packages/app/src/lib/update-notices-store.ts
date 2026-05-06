@@ -1,4 +1,8 @@
-import { attachUpdateSubscribers, type UpdateNotice } from '@/components/UpdateNotices.shared';
+import {
+  addSchemaIncompatibilityNotice,
+  attachUpdateSubscribers,
+  type UpdateNotice,
+} from '@/components/UpdateNotices.shared';
 
 let notices: UpdateNotice[] = [];
 const listeners = new Set<() => void>();
@@ -45,4 +49,19 @@ export function installUpdateNoticesBridge(): void {
   if (!bridge) return;
   attached = true;
   attachUpdateSubscribers(bridge, addNotice, dismissNotice);
+  bridge.state.query().then(
+    (snapshot) => {
+      if (snapshot.schemaIncompatibility) {
+        addSchemaIncompatibilityNotice(
+          bridge,
+          snapshot.schemaIncompatibility,
+          addNotice,
+          dismissNotice,
+        );
+      }
+    },
+    (err: unknown) => {
+      console.warn('[update-notices-store] bridge.state.query() failed', err);
+    },
+  );
 }

@@ -1,4 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 interface MockBridge {
   config: {
@@ -152,5 +154,39 @@ describe('NavigatorApp error-state helpers', () => {
     );
     afterAwait = true;
     expect(afterAwait).toBe(true);
+  });
+});
+
+const NAVIGATOR_SRC = readFileSync(join(__dirname, 'NavigatorApp.tsx'), 'utf8');
+
+describe('NavigatorApp launcher-header channel surface', () => {
+  test('imports BetaBadge from the sibling component (cross-window subscription centralized via the hook)', () => {
+    expect(NAVIGATOR_SRC).toMatch(/from\s+['"]\.\/BetaBadge['"]/);
+    expect(NAVIGATOR_SRC).toMatch(/<BetaBadge\b/);
+  });
+
+  test('subscribes to channel state via useUpdateChannel for the About-style row', () => {
+    expect(NAVIGATOR_SRC).toMatch(/from\s+['"]@\/hooks\/use-update-channel['"]/);
+    expect(NAVIGATOR_SRC).toContain('useUpdateChannel(');
+  });
+
+  test('Channel row hides while channel is null (loading / no desktop bridge)', () => {
+    expect(NAVIGATOR_SRC).toMatch(/channel\s*!==\s*null/);
+  });
+
+  test('Channel row text matches the spec wording exactly ("Channel: Stable" / "Channel: Beta")', () => {
+    expect(NAVIGATOR_SRC).toContain('Channel:');
+    expect(NAVIGATOR_SRC).toMatch(
+      /channel\s*===\s*['"]beta['"]\s*\?\s*['"]Beta['"]\s*:\s*['"]Stable['"]/,
+    );
+  });
+
+  test('Channel row carries a stable test seam for cross-window verification', () => {
+    expect(NAVIGATOR_SRC).toContain('data-testid="navigator-channel-row"');
+  });
+
+  test('BetaBadge sits in the title row, not below the version line (chrome-level signal, not About-row info)', () => {
+    const titleMatch = NAVIGATOR_SRC.match(/<h1[^>]*>Open Knowledge<\/h1>\s*<BetaBadge/);
+    expect(titleMatch).not.toBeNull();
   });
 });

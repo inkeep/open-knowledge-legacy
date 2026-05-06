@@ -1,5 +1,6 @@
 import { FolderOpenIcon, Loader2Icon, PlusIcon } from 'lucide-react';
 import { type ComponentType, useEffect, useState } from 'react';
+import { useUpdateChannel } from '@/hooks/use-update-channel';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
 import {
   resolveErrorMessage,
@@ -9,6 +10,7 @@ import { ipcAuthQueryTransport } from '@/lib/transports/auth-query-transport';
 import { ipcAuthTransport } from '@/lib/transports/auth-transport';
 import { ipcCloneTransport } from '@/lib/transports/clone-transport';
 import { AuthModal } from './AuthModal';
+import { BetaBadge } from './BetaBadge';
 import { CloneDialog } from './CloneDialog';
 import { GithubIcon } from './icons/github';
 import { OkIcon } from './icons/ok';
@@ -32,6 +34,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
+  const { channel } = useUpdateChannel();
 
   useEffect(() => {
     let cancelled = false;
@@ -87,8 +90,19 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
       <header className="shrink-0 flex-wrap flex items-center gap-2.5">
         <OkIcon className="size-12 shrink-0" />
         <div className="flex flex-col gap-1">
-          <h1 className="font-medium text-xl tracking-tight">Open Knowledge</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="font-medium text-xl tracking-tight">Open Knowledge</h1>
+            <BetaBadge />
+          </div>
           <p className="text-muted-foreground text-xs font-mono">v{bridge.appVersion}</p>
+          {channel !== null && (
+            <p
+              className="text-muted-foreground text-xs font-mono"
+              data-testid="navigator-channel-row"
+            >
+              Channel: {channel === 'beta' ? 'Beta' : 'Stable'}
+            </p>
+          )}
         </div>
       </header>
 

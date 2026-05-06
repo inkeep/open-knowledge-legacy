@@ -84,6 +84,17 @@ describe('SettingsPane source-level guards', () => {
   });
 });
 
+describe('SettingsPane Channel section guards', () => {
+  test('imports ChannelSection from a sibling module', () => {
+    expect(SRC).toMatch(/from\s+['"]\.\/ChannelSection['"]/);
+    expect(SRC).toContain('ChannelSection');
+  });
+
+  test('Channel section renders only on the User tab', () => {
+    expect(SRC).toMatch(/scope\s*===\s*'user'[^\n]*<ChannelSection\s*\/>/);
+  });
+});
+
 describe('SettingsPane Sync section guards', () => {
   test('Sync section renders only on the project tab', () => {
     expect(SRC).toMatch(/scope\s*===\s*'project'[^\n]*<SyncSection\s*\/>/);

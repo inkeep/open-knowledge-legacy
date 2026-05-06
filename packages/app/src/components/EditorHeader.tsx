@@ -21,6 +21,7 @@ import { emitDocumentsChanged } from '@/lib/documents-events';
 import { useWorkspace } from '@/lib/use-workspace';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { useSyncStatus } from '@/presence/use-sync-status';
+import { BetaBadge } from './BetaBadge';
 import type { EditorMode } from './EditorPane';
 import { HelpPopover } from './HelpPopover';
 import { OpenInAgentMenu } from './handoff/OpenInAgentMenu';
@@ -465,6 +466,7 @@ export function EditorHeader({
         />
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
+        <BetaBadge />
         <HelpPopover />
         <ThemeToggle />
       </div>
