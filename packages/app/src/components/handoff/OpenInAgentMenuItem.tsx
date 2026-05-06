@@ -138,7 +138,7 @@ export function successToastForWebFallback(displayName: string): string {
   return `Opened ${displayName} in your browser.`;
 }
 
-export const CLAUDE_WEB_FALLBACK_LABEL = 'claude.ai';
+const CLAUDE_WEB_FALLBACK_LABEL = 'claude.ai';
 
 export async function dispatchClaudeWebFallback(
   prompt: string,

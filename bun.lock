@@ -279,7 +279,7 @@
     },
     "packages/desktop": {
       "name": "@inkeep/open-knowledge-desktop",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "dependencies": {
         "@inkeep/open-knowledge": "workspace:*",
         "@inkeep/open-knowledge-core": "workspace:*",
@@ -344,7 +344,6 @@
         "zod": "^4.3.6",
       },
       "devDependencies": {
-        "@types/picomatch": "^4.0.3",
         "@types/shell-quote": "^1.7.5",
         "@types/ws": "^8.18.1",
         "@types/yazl": "^2.4.6",
@@ -1564,8 +1563,6 @@
     "@types/ms": ["@types/ms@2.1.0", "", {}, "sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA=="],
 
     "@types/node": ["@types/node@24.12.2", "", { "dependencies": { "undici-types": "~7.16.0" } }, "sha512-A1sre26ke7HDIuY/M23nd9gfB+nrmhtYyMINbjI1zHJxYteKR6qSMX56FsmjMcDb3SMcjJg5BiRRgOCC/yBD0g=="],
-
-    "@types/picomatch": ["@types/picomatch@4.0.3", "", {}, "sha512-iG0T6+nYJ9FAPmx9SsUlnwcq1ZVRuCXcVEvWnntoPlrOpwtSTKNDC9uVAxTsC3PUvJ+99n4RpAcNgBbHX3JSnQ=="],
 
     "@types/plist": ["@types/plist@3.0.5", "", { "dependencies": { "@types/node": "*", "xmlbuilder": ">=11.0.1" } }, "sha512-E6OCaRmAe4WDmWNsL/9RMqdkkzDCY1etutkflWk4c+AcjDU07Pcz1fQwTX0TQz+Pxqn9i4L1TU3UFpjnrcDgxA=="],
 

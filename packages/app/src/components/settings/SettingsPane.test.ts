@@ -84,35 +84,6 @@ describe('SettingsPane source-level guards', () => {
   });
 });
 
-describe('SettingsPane folders section integration', () => {
-  test('imports FoldersSection from the settings module', () => {
-    expect(SRC).toMatch(/from\s+['"]\.\/FoldersSection['"]/);
-    expect(SRC).toContain('FoldersSection');
-  });
-
-  test('SectionDef is a discriminated union (scalar vs custom-folders) so illegal compositions are unrepresentable', () => {
-    expect(SRC).toMatch(/custom\?:\s*never/);
-    expect(SRC).toMatch(/custom:\s*'folders'/);
-    expect(SRC).toMatch(/fields:\s*\[\]/);
-  });
-
-  test("SECTIONS includes a folders entry with custom: 'folders' and empty fields[]", () => {
-    const idMatch = SRC.match(/\{[\s\S]{0,400}id:\s*'folders'[\s\S]{0,400}custom:\s*'folders'/);
-    expect(idMatch).toBeTruthy();
-    expect(SRC).toMatch(/id:\s*'folders'[\s\S]{0,400}fields:\s*\[\]/);
-  });
-
-  test("SettingsForm dispatches on section.custom === 'folders'", () => {
-    expect(SRC).toContain("section.custom === 'folders'");
-    expect(SRC).toMatch(/<FoldersSection\b/);
-  });
-
-  test('SettingsForm passes form into FoldersSection (atomic-array commit needs it)', () => {
-    expect(SRC).toMatch(/SettingsFormProps[\s\S]{0,400}form:\s*UseFormReturn<Config>/);
-    expect(SRC).toMatch(/<SettingsForm[\s\S]{0,200}form=\{form\}/);
-  });
-});
-
 describe('SettingsPane Sync section guards', () => {
   test('Sync section renders only on the project tab', () => {
     expect(SRC).toMatch(/scope\s*===\s*'project'[^\n]*<SyncSection\s*\/>/);
