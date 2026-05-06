@@ -8,6 +8,12 @@ interface RecentProject {
   missing?: boolean;
 }
 
+export type UpdateChannel = 'latest' | 'beta';
+
+export const CURRENT_SCHEMA_VERSION = 1;
+
+export const MAX_SUPPORTED_SCHEMA_VERSION = 1;
+
 export interface AppState {
   recentProjects: RecentProject[];
   lastOpenedProject: string | null;
@@ -16,6 +22,8 @@ export interface AppState {
   lastSuccessfulCheckAt: string | null;
   stuckHintShown: boolean;
   dismissedRepairForBundle: string | null;
+  updateChannel: UpdateChannel;
+  schemaVersion: number;
 }
 
 const RECENT_CAP = 20;
@@ -29,6 +37,8 @@ export function emptyState(): AppState {
     lastSuccessfulCheckAt: null,
     stuckHintShown: false,
     dismissedRepairForBundle: null,
+    updateChannel: 'latest',
+    schemaVersion: CURRENT_SCHEMA_VERSION,
   };
 }
 
@@ -109,6 +119,34 @@ export function saveAppStateToDir(
   }
 }
 
+export interface SchemaIncompatibilityDiagnostic {
+  currentBuild: string;
+  persistedSchemaVersion: number;
+  maxSupported: number;
+}
+
+type SchemaCompatibilityResult =
+  | { status: 'ok' }
+  | { status: 'incompatible'; diagnostic: SchemaIncompatibilityDiagnostic };
+
+export function evaluateSchemaCompatibility(
+  state: Pick<AppState, 'schemaVersion'>,
+  maxSupported: number,
+  currentBuild: string,
+): SchemaCompatibilityResult {
+  if (state.schemaVersion > maxSupported) {
+    return {
+      status: 'incompatible',
+      diagnostic: {
+        currentBuild,
+        persistedSchemaVersion: state.schemaVersion,
+        maxSupported,
+      },
+    };
+  }
+  return { status: 'ok' };
+}
+
 export function parseAppState(raw: unknown): AppState | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const obj = raw as Record<string, unknown>;
@@ -140,6 +178,11 @@ export function parseAppState(raw: unknown): AppState | null {
   const stuckHintShown = obj.stuckHintShown === true;
   const dismissedRepairForBundle =
     typeof obj.dismissedRepairForBundle === 'string' ? obj.dismissedRepairForBundle : null;
+  const updateChannel: UpdateChannel = obj.updateChannel === 'beta' ? 'beta' : 'latest';
+  const schemaVersion =
+    typeof obj.schemaVersion === 'number' && Number.isInteger(obj.schemaVersion)
+      ? obj.schemaVersion
+      : 1;
   return {
     recentProjects,
     lastOpenedProject,
@@ -148,5 +191,7 @@ export function parseAppState(raw: unknown): AppState | null {
     lastSuccessfulCheckAt,
     stuckHintShown,
     dismissedRepairForBundle,
+    updateChannel,
+    schemaVersion,
   };
 }

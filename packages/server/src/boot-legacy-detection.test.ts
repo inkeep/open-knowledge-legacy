@@ -9,7 +9,7 @@ describe('findLegacyRuntimeFiles', () => {
   let okDir: string;
 
   beforeEach(() => {
-    okDir = mkdtempSync(resolve(tmpdir(), 'ok-legacy-test-')) + '/.ok';
+    okDir = `${mkdtempSync(resolve(tmpdir(), 'ok-legacy-test-'))}/.ok`;
     mkdirSync(okDir, { recursive: true });
   });
 

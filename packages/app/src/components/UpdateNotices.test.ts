@@ -1,6 +1,8 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { OkDesktopBridge } from '@/lib/desktop-bridge-types';
 import {
+  addSchemaIncompatibilityNotice,
+  appendErrorDetail,
   attachUpdateSubscribers,
   pickActiveNotice,
   TOAST_A_ACTION,
@@ -9,26 +11,46 @@ import {
   TOAST_B_ACTION,
   TOAST_C_ACTION,
   TOAST_C_BODY,
+  TOAST_D_ACTION_CONTINUE,
+  TOAST_D_ACTION_STAY,
+  TOAST_D_ERROR_BODY,
+  TOAST_E_ACTION_RESET,
+  TOAST_E_ACTION_STAY,
+  TOAST_E_ERROR_BODY,
   toastBBody,
+  toastDBody,
+  toastEBody,
   type UpdateNotice,
 } from './UpdateNotices';
 
 type UpdateDownloadedCb = (info: { version: string }) => void;
 type WhatsNewCb = (info: { version: string; releaseUrl: string }) => void;
 type StuckHintCb = (info: { downloadUrl: string }) => void;
+type DowngradeWarningCb = (info: { currentVersion: string; targetVersion: string }) => void;
 
 interface FakeBridge {
   onUpdateDownloaded: ReturnType<typeof mock>;
   onWhatsNew: ReturnType<typeof mock>;
   onUpdateStuckHint: ReturnType<typeof mock>;
-  update: { relaunchNow: ReturnType<typeof mock> };
+  onUpdateDowngradeWarning: ReturnType<typeof mock>;
+  update: {
+    relaunchNow: ReturnType<typeof mock>;
+    confirmDowngrade: ReturnType<typeof mock>;
+    setChannel: ReturnType<typeof mock>;
+  };
+  state: {
+    query: ReturnType<typeof mock>;
+    resetIncompatible: ReturnType<typeof mock>;
+  };
   shell: { openExternal: ReturnType<typeof mock> };
   _downloaded?: UpdateDownloadedCb;
   _whatsNew?: WhatsNewCb;
   _stuckHint?: StuckHintCb;
+  _downgradeWarning?: DowngradeWarningCb;
   _downloadedUnsub: ReturnType<typeof mock>;
   _whatsNewUnsub: ReturnType<typeof mock>;
   _stuckHintUnsub: ReturnType<typeof mock>;
+  _downgradeWarningUnsub: ReturnType<typeof mock>;
 }
 
 function makeFakeBridge(): FakeBridge {
@@ -36,10 +58,20 @@ function makeFakeBridge(): FakeBridge {
     _downloadedUnsub: mock(() => {}),
     _whatsNewUnsub: mock(() => {}),
     _stuckHintUnsub: mock(() => {}),
+    _downgradeWarningUnsub: mock(() => {}),
     onUpdateDownloaded: mock(() => {}),
     onWhatsNew: mock(() => {}),
     onUpdateStuckHint: mock(() => {}),
-    update: { relaunchNow: mock(() => Promise.resolve(undefined)) },
+    onUpdateDowngradeWarning: mock(() => {}),
+    update: {
+      relaunchNow: mock(() => Promise.resolve(undefined)),
+      confirmDowngrade: mock(() => Promise.resolve(undefined)),
+      setChannel: mock(() => Promise.resolve(undefined)),
+    },
+    state: {
+      query: mock(() => Promise.resolve({ channel: 'latest', schemaIncompatibility: null })),
+      resetIncompatible: mock(() => Promise.resolve(undefined)),
+    },
     shell: { openExternal: mock(() => Promise.resolve(undefined)) },
   };
   b.onUpdateDownloaded = mock((cb: UpdateDownloadedCb) => {
@@ -53,6 +85,10 @@ function makeFakeBridge(): FakeBridge {
   b.onUpdateStuckHint = mock((cb: StuckHintCb) => {
     b._stuckHint = cb;
     return b._stuckHintUnsub;
+  });
+  b.onUpdateDowngradeWarning = mock((cb: DowngradeWarningCb) => {
+    b._downgradeWarning = cb;
+    return b._downgradeWarningUnsub;
   });
   return b;
 }
@@ -74,19 +110,75 @@ describe('copy helpers (minimal-wording revision)', () => {
     expect(TOAST_C_BODY).toBe('Updates paused');
     expect(TOAST_C_ACTION).toBe('Download');
   });
+
+  test('toastDBody interpolates current + target versions in the spec wording', () => {
+    expect(toastDBody('0.4.0-beta.3', '0.3.0')).toBe(
+      'Switching to Stable will replace your current version (0.4.0-beta.3) with the latest stable (0.3.0). Some recent settings or data from beta may be lost.',
+    );
+  });
+
+  test('Notice D action copy reads as the spec-stated buttons', () => {
+    expect(TOAST_D_ACTION_CONTINUE).toBe('Continue to Stable');
+    expect(TOAST_D_ACTION_STAY).toBe('Stay on Beta');
+  });
+
+  test('toastEBody interpolates the running build version into the refuse-downgrade body', () => {
+    expect(toastEBody('0.3.0')).toBe(
+      'Your settings and recent projects were saved by a newer build than this one (v0.3.0). Reset to defaults, or stay on Beta to keep them.',
+    );
+    expect(toastEBody('0.4.0-beta.3')).toBe(
+      'Your settings and recent projects were saved by a newer build than this one (v0.4.0-beta.3). Reset to defaults, or stay on Beta to keep them.',
+    );
+  });
+
+  test('Notice E action copy names the consequence honestly', () => {
+    expect(TOAST_E_ACTION_RESET).toBe('Reset and Continue to Stable');
+    expect(TOAST_E_ACTION_STAY).toBe('Stay on Beta');
+  });
+
+  test('TOAST_E_ERROR_BODY is the shared retry message for both Reset + Stay failures', () => {
+    expect(TOAST_E_ERROR_BODY).toBe('Recovery action failed — please try again');
+  });
+
+  test('TOAST_D_ERROR_BODY is the shared retry message for both Continue + Stay failures', () => {
+    expect(TOAST_D_ERROR_BODY).toBe('Channel switch failed — please try again');
+  });
+});
+
+describe('appendErrorDetail', () => {
+  test('Error with non-empty message → "{base}: {message}"', () => {
+    const result = appendErrorDetail('Channel switch failed', new Error('disk full'));
+    expect(result).toBe('Channel switch failed: disk full');
+  });
+
+  test('Error with empty message → base only (no trailing colon)', () => {
+    const result = appendErrorDetail('Channel switch failed', new Error(''));
+    expect(result).toBe('Channel switch failed');
+  });
+
+  test('non-Error rejection (string) → base only', () => {
+    const result = appendErrorDetail('Channel switch failed', 'string-throw');
+    expect(result).toBe('Channel switch failed');
+  });
+
+  test('undefined rejection → base only', () => {
+    const result = appendErrorDetail('Channel switch failed', undefined);
+    expect(result).toBe('Channel switch failed');
+  });
 });
 
 describe('attachUpdateSubscribers — registration', () => {
-  test('subscribes to all three update channels on the bridge', () => {
+  test('subscribes to all four update channels on the bridge', () => {
     const bridge = makeFakeBridge();
     const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
     attachUpdateSubscribers(castBridge(bridge), addNotice);
     expect(bridge.onUpdateDownloaded).toHaveBeenCalledTimes(1);
     expect(bridge.onWhatsNew).toHaveBeenCalledTimes(1);
     expect(bridge.onUpdateStuckHint).toHaveBeenCalledTimes(1);
+    expect(bridge.onUpdateDowngradeWarning).toHaveBeenCalledTimes(1);
   });
 
-  test('returns a single unsubscribe closure that detaches ALL three listeners', () => {
+  test('returns a single unsubscribe closure that detaches ALL four listeners', () => {
     const bridge = makeFakeBridge();
     const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
     const unsubscribe = attachUpdateSubscribers(castBridge(bridge), addNotice);
@@ -94,6 +186,7 @@ describe('attachUpdateSubscribers — registration', () => {
     expect(bridge._downloadedUnsub).toHaveBeenCalledTimes(1);
     expect(bridge._whatsNewUnsub).toHaveBeenCalledTimes(1);
     expect(bridge._stuckHintUnsub).toHaveBeenCalledTimes(1);
+    expect(bridge._downgradeWarningUnsub).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -123,7 +216,7 @@ describe('Notice A — ok:update:downloaded', () => {
     expect(bridge.update.relaunchNow).toHaveBeenCalledTimes(1);
   });
 
-  test('relaunchNow rejection → error notice is appended', async () => {
+  test('relaunchNow rejection → error notice with appended detail', async () => {
     const bridge = makeFakeBridge();
     bridge.update.relaunchNow = mock(() => Promise.reject(new Error('quitAndInstall failed')));
     const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
@@ -135,11 +228,25 @@ describe('Notice A — ok:update:downloaded', () => {
     await Promise.resolve();
     expect(addNotice).toHaveBeenCalledTimes(2);
     const errorNotice = addNotice.mock.calls[1]?.[0] as UpdateNotice;
-    expect(errorNotice.body).toBe(TOAST_A_ERROR_BODY);
+    expect(errorNotice.body).toBe(`${TOAST_A_ERROR_BODY}: quitAndInstall failed`);
     expect(errorNotice.id).toBe('relaunch-error-0.1.1');
     expect(errorNotice.variant).toBe('error');
     expect(errorNotice.action).toBeUndefined();
     expect(errorNotice.priority).toBe(1); // relaunch-error = higher than A
+  });
+
+  test('relaunchNow non-Error rejection (string throw) → error notice without trailing colon', async () => {
+    const bridge = makeFakeBridge();
+    bridge.update.relaunchNow = mock(() => Promise.reject('not-an-error'));
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice);
+    bridge._downloaded?.({ version: '0.1.1' });
+    const noticeA = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    noticeA.action?.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+    const errorNotice = addNotice.mock.calls[1]?.[0] as UpdateNotice;
+    expect(errorNotice.body).toBe(TOAST_A_ERROR_BODY);
   });
 
   test('relaunchNow success → no error notice', async () => {
@@ -251,6 +358,312 @@ describe('Notice C — ok:update:stuck-hint', () => {
   });
 });
 
+describe('Notice D — ok:update:downgrade-warning', () => {
+  const payload = { currentVersion: '0.4.0-beta.3', targetVersion: '0.3.0' };
+
+  test('emits notice with spec body, two action buttons, and priority 1', () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice);
+    bridge._downgradeWarning?.(payload);
+    expect(addNotice).toHaveBeenCalledTimes(1);
+    const [notice] = addNotice.mock.calls[0] as [UpdateNotice];
+    expect(notice.id).toBe('downgrade-warning-0.4.0-beta.3-0.3.0');
+    expect(notice.body).toBe(toastDBody('0.4.0-beta.3', '0.3.0'));
+    expect(notice.action?.label).toBe(TOAST_D_ACTION_CONTINUE);
+    expect(notice.secondaryAction?.label).toBe(TOAST_D_ACTION_STAY);
+    expect(notice.variant).toBeUndefined();
+    expect(notice.priority).toBe(1);
+  });
+
+  test('Continue → bridge.update.confirmDowngrade is invoked once', () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice);
+    bridge._downgradeWarning?.(payload);
+    const notice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    notice.action?.onClick();
+    expect(bridge.update.confirmDowngrade).toHaveBeenCalledTimes(1);
+    expect(bridge.update.setChannel).not.toHaveBeenCalled();
+  });
+
+  test('Stay on Beta → bridge.update.setChannel is invoked with "beta"', () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice);
+    bridge._downgradeWarning?.(payload);
+    const notice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    notice.secondaryAction?.onClick();
+    expect(bridge.update.setChannel).toHaveBeenCalledTimes(1);
+    expect(bridge.update.setChannel).toHaveBeenCalledWith('beta');
+    expect(bridge.update.confirmDowngrade).not.toHaveBeenCalled();
+  });
+
+  test('Continue success → dismissNotice fires with the warning id', async () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    const dismissNotice = mock<(id: string) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice, dismissNotice);
+    bridge._downgradeWarning?.(payload);
+    const notice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    notice.action?.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(dismissNotice).toHaveBeenCalledTimes(1);
+    expect(dismissNotice).toHaveBeenCalledWith('downgrade-warning-0.4.0-beta.3-0.3.0');
+  });
+
+  test('Stay on Beta success → dismissNotice fires with the warning id', async () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    const dismissNotice = mock<(id: string) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice, dismissNotice);
+    bridge._downgradeWarning?.(payload);
+    const notice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    notice.secondaryAction?.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(dismissNotice).toHaveBeenCalledTimes(1);
+    expect(dismissNotice).toHaveBeenCalledWith('downgrade-warning-0.4.0-beta.3-0.3.0');
+  });
+
+  test('Continue rejection → parent notice dismissed + error notice appended with detail', async () => {
+    const bridge = makeFakeBridge();
+    bridge.update.confirmDowngrade = mock(() => Promise.reject(new Error('IPC failed')));
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    const dismissNotice = mock<(id: string) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice, dismissNotice);
+    bridge._downgradeWarning?.(payload);
+    const warningNotice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    warningNotice.action?.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(addNotice).toHaveBeenCalledTimes(2);
+    const errorNotice = addNotice.mock.calls[1]?.[0] as UpdateNotice;
+    expect(errorNotice.id).toBe('downgrade-error-0.4.0-beta.3-0.3.0');
+    expect(errorNotice.body).toBe(`${TOAST_D_ERROR_BODY}: IPC failed`);
+    expect(errorNotice.variant).toBe('error');
+    expect(errorNotice.priority).toBe(1);
+    expect(errorNotice.action).toBeUndefined();
+    expect(errorNotice.secondaryAction).toBeUndefined();
+    expect(dismissNotice).toHaveBeenCalledTimes(1);
+    expect(dismissNotice).toHaveBeenCalledWith(warningNotice.id);
+  });
+
+  test('Stay on Beta rejection → parent notice dismissed + error notice appended with detail', async () => {
+    const bridge = makeFakeBridge();
+    bridge.update.setChannel = mock(() => Promise.reject(new Error('writeState failed')));
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    const dismissNotice = mock<(id: string) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice, dismissNotice);
+    bridge._downgradeWarning?.(payload);
+    const warningNotice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    warningNotice.secondaryAction?.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(addNotice).toHaveBeenCalledTimes(2);
+    const errorNotice = addNotice.mock.calls[1]?.[0] as UpdateNotice;
+    expect(errorNotice.id).toBe('downgrade-error-0.4.0-beta.3-0.3.0');
+    expect(errorNotice.body).toBe(`${TOAST_D_ERROR_BODY}: writeState failed`);
+    expect(dismissNotice).toHaveBeenCalledTimes(1);
+    expect(dismissNotice).toHaveBeenCalledWith(warningNotice.id);
+  });
+
+  test('non-Error rejection (string throw) falls back to canonical body without detail', async () => {
+    const bridge = makeFakeBridge();
+    bridge.update.confirmDowngrade = mock(() => Promise.reject('not-an-error'));
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    const dismissNotice = mock<(id: string) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice, dismissNotice);
+    bridge._downgradeWarning?.(payload);
+    const warningNotice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    warningNotice.action?.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+    const errorNotice = addNotice.mock.calls[1]?.[0] as UpdateNotice;
+    expect(errorNotice.body).toBe(TOAST_D_ERROR_BODY);
+  });
+
+  test('Error with empty message falls back to canonical body without trailing colon', async () => {
+    const bridge = makeFakeBridge();
+    bridge.update.confirmDowngrade = mock(() => Promise.reject(new Error('')));
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    const dismissNotice = mock<(id: string) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice, dismissNotice);
+    bridge._downgradeWarning?.(payload);
+    const warningNotice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    warningNotice.action?.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+    const errorNotice = addNotice.mock.calls[1]?.[0] as UpdateNotice;
+    expect(errorNotice.body).toBe(TOAST_D_ERROR_BODY);
+  });
+
+  test('different version pairs produce distinct warning ids', () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice);
+    bridge._downgradeWarning?.({ currentVersion: '0.4.0-beta.3', targetVersion: '0.3.0' });
+    bridge._downgradeWarning?.({ currentVersion: '0.5.0-beta.1', targetVersion: '0.3.0' });
+    const ids = addNotice.mock.calls.map((c) => (c[0] as UpdateNotice).id);
+    expect(ids).toEqual([
+      'downgrade-warning-0.4.0-beta.3-0.3.0',
+      'downgrade-warning-0.5.0-beta.1-0.3.0',
+    ]);
+  });
+
+  test('repeat dispatch with same versions reuses the same id (list-level dedup)', () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice);
+    bridge._downgradeWarning?.(payload);
+    bridge._downgradeWarning?.(payload);
+    const ids = addNotice.mock.calls.map((c) => (c[0] as UpdateNotice).id);
+    expect(ids).toEqual([
+      'downgrade-warning-0.4.0-beta.3-0.3.0',
+      'downgrade-warning-0.4.0-beta.3-0.3.0',
+    ]);
+  });
+
+  test('does NOT fire if onUpdateDowngradeWarning never receives an event', () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice);
+    bridge._downloaded?.({ version: '0.5.0' });
+    bridge._whatsNew?.({ version: '0.5.0', releaseUrl: 'https://x/y' });
+    bridge._stuckHint?.({ downloadUrl: 'https://x/y' });
+    const ids = addNotice.mock.calls.map((c) => (c[0] as UpdateNotice).id);
+    expect(ids.some((id) => id.startsWith('downgrade-warning-'))).toBe(false);
+  });
+});
+
+describe('Notice E — schema-incompatibility refuse-downgrade', () => {
+  const diagnostic = {
+    currentBuild: '0.3.0',
+    persistedSchemaVersion: 2,
+    maxSupported: 1,
+  };
+
+  test('emits notice with spec body, two action buttons, and priority 0', () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    addSchemaIncompatibilityNotice(castBridge(bridge), diagnostic, addNotice);
+    expect(addNotice).toHaveBeenCalledTimes(1);
+    const notice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    expect(notice.id).toBe('schema-incompatibility-2');
+    expect(notice.body).toBe(toastEBody('0.3.0'));
+    expect(notice.priority).toBe(0);
+    expect(notice.action?.label).toBe(TOAST_E_ACTION_RESET);
+    expect(notice.secondaryAction?.label).toBe(TOAST_E_ACTION_STAY);
+  });
+
+  test('Reset action invokes bridge.state.resetIncompatible', () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    addSchemaIncompatibilityNotice(castBridge(bridge), diagnostic, addNotice);
+    const notice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    notice.action?.onClick();
+    expect(bridge.state.resetIncompatible).toHaveBeenCalledTimes(1);
+    expect(bridge.update.setChannel).not.toHaveBeenCalled();
+  });
+
+  test('Stay action invokes bridge.update.setChannel("beta")', () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    addSchemaIncompatibilityNotice(castBridge(bridge), diagnostic, addNotice);
+    const notice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    notice.secondaryAction?.onClick();
+    expect(bridge.update.setChannel).toHaveBeenCalledTimes(1);
+    expect(bridge.update.setChannel).toHaveBeenCalledWith('beta');
+    expect(bridge.state.resetIncompatible).not.toHaveBeenCalled();
+  });
+
+  test('Reset success → dismissNotice fires for the active id', async () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    const dismissNotice = mock<(id: string) => void>(() => {});
+    addSchemaIncompatibilityNotice(castBridge(bridge), diagnostic, addNotice, dismissNotice);
+    const notice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    notice.action?.onClick();
+    await Promise.resolve();
+    expect(dismissNotice).toHaveBeenCalledTimes(1);
+    expect(dismissNotice).toHaveBeenCalledWith('schema-incompatibility-2');
+  });
+
+  test('Stay success → dismissNotice fires for the active id', async () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    const dismissNotice = mock<(id: string) => void>(() => {});
+    addSchemaIncompatibilityNotice(castBridge(bridge), diagnostic, addNotice, dismissNotice);
+    const notice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    notice.secondaryAction?.onClick();
+    await Promise.resolve();
+    expect(dismissNotice).toHaveBeenCalledTimes(1);
+    expect(dismissNotice).toHaveBeenCalledWith('schema-incompatibility-2');
+  });
+
+  test('Reset rejection → parent dismissed + error notice with spec shape and appended detail', async () => {
+    const bridge = makeFakeBridge();
+    bridge.state.resetIncompatible = mock(() => Promise.reject(new Error('disk fail')));
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    const dismissNotice = mock<(id: string) => void>(() => {});
+    addSchemaIncompatibilityNotice(castBridge(bridge), diagnostic, addNotice, dismissNotice);
+    const initial = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    initial.action?.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(dismissNotice).toHaveBeenCalledTimes(1);
+    expect(dismissNotice).toHaveBeenCalledWith(initial.id);
+    const errorNotice = addNotice.mock.calls.at(-1)?.[0] as UpdateNotice;
+    expect(errorNotice.id).toBe('schema-incompatibility-error-2');
+    expect(errorNotice.body).toBe(`${TOAST_E_ERROR_BODY}: disk fail`);
+    expect(errorNotice.variant).toBe('error');
+    expect(errorNotice.priority).toBe(0);
+    expect(errorNotice.action).toBeUndefined();
+    expect(errorNotice.secondaryAction).toBeUndefined();
+  });
+
+  test('Stay rejection → parent dismissed + error notice with spec shape and appended detail', async () => {
+    const bridge = makeFakeBridge();
+    bridge.update.setChannel = mock(() => Promise.reject(new Error('ipc fail')));
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    const dismissNotice = mock<(id: string) => void>(() => {});
+    addSchemaIncompatibilityNotice(castBridge(bridge), diagnostic, addNotice, dismissNotice);
+    const initial = addNotice.mock.calls[0]?.[0] as UpdateNotice;
+    initial.secondaryAction?.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(dismissNotice).toHaveBeenCalledTimes(1);
+    expect(dismissNotice).toHaveBeenCalledWith(initial.id);
+    const errorNotice = addNotice.mock.calls.at(-1)?.[0] as UpdateNotice;
+    expect(errorNotice.id).toBe('schema-incompatibility-error-2');
+    expect(errorNotice.body).toBe(`${TOAST_E_ERROR_BODY}: ipc fail`);
+    expect(errorNotice.variant).toBe('error');
+  });
+
+  test('different persistedSchemaVersion produces distinct notice ids', () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    addSchemaIncompatibilityNotice(castBridge(bridge), diagnostic, addNotice);
+    addSchemaIncompatibilityNotice(
+      castBridge(bridge),
+      { ...diagnostic, persistedSchemaVersion: 7 },
+      addNotice,
+    );
+    const ids = addNotice.mock.calls.map((c) => (c[0] as UpdateNotice).id);
+    expect(ids).toEqual(['schema-incompatibility-2', 'schema-incompatibility-7']);
+  });
+
+  test('repeat call with same diagnostic reuses the same id (list-level dedup)', () => {
+    const bridge = makeFakeBridge();
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    addSchemaIncompatibilityNotice(castBridge(bridge), diagnostic, addNotice);
+    addSchemaIncompatibilityNotice(castBridge(bridge), diagnostic, addNotice);
+    const ids = addNotice.mock.calls.map((c) => (c[0] as UpdateNotice).id);
+    expect(ids).toEqual(['schema-incompatibility-2', 'schema-incompatibility-2']);
+  });
+});
+
 describe('pickActiveNotice', () => {
   const a: UpdateNotice = { id: 'a', body: 'A', priority: 2 };
   const b: UpdateNotice = { id: 'b', body: 'B', priority: 3 };
@@ -280,7 +693,7 @@ describe('pickActiveNotice', () => {
 });
 
 describe('unsubscribe semantics', () => {
-  test('after unsubscribe, all three per-channel unsub closures fire', () => {
+  test('after unsubscribe, all four per-channel unsub closures fire', () => {
     const bridge = makeFakeBridge();
     const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
     const unsubscribe = attachUpdateSubscribers(castBridge(bridge), addNotice);
@@ -288,5 +701,6 @@ describe('unsubscribe semantics', () => {
     expect(bridge._downloadedUnsub).toHaveBeenCalledTimes(1);
     expect(bridge._whatsNewUnsub).toHaveBeenCalledTimes(1);
     expect(bridge._stuckHintUnsub).toHaveBeenCalledTimes(1);
+    expect(bridge._downgradeWarningUnsub).toHaveBeenCalledTimes(1);
   });
 });

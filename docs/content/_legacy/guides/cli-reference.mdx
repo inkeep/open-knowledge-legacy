@@ -49,7 +49,6 @@ npx @inkeep/open-knowledge start [options]
 | `--open`               | Open the editor in your default browser                        |
 | `--mode <browser\|app>` | Force dispatch mode (defaults to browser; `app` requires desktop bundle and exits if absent — mutually exclusive with `--open`) |
 | `--content-dir <path>` | Content directory to serve                                     |
-| `--no-init`            | Skip `.ok/` scaffolding and parent-repo `git init` |
 
 The content directory comes from your project's `.ok/config.yml`
 (or `~/.ok/config.yml` at user level) or the current working
@@ -58,9 +57,7 @@ by running `open-knowledge start` from inside the target directory.
 
 The server binds to `localhost:3000` by default. Only one server can run per content directory -- a second attempt fails with a lock collision error.
 
-If the content directory has no `.git/`, `start` runs `git init --initial-branch=main` before the attribution journal is created. The CLI's first-run preview block discloses the auto-init with the line `Initialized git repo at <cwd>/.git/ (default branch: main)`. If git is not on PATH, `start` exits non-zero with a clear install-or-init-yourself message.
-
-To opt out of both `.ok/` scaffolding and the parent-repo auto-`git init`, pass `--no-init`. The flag is a single opt-out for both scaffolding behaviors — `start` will boot against whatever state the directory is in, and the attribution journal still initializes if a `.git/` exists. Useful for non-interactive smoke tests and for operators who prefer to manage `git init` themselves.
+`ok start` requires the project to already be initialized. If `.ok/` is absent, run `ok init` first.
 
 ## `init`
 

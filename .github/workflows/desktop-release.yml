@@ -13,8 +13,12 @@ name: Desktop release
 #
 # What this workflow does: downloads the tagged ref, builds a signed +
 # notarized + stapled + fuse-verified Universal DMG + Universal ZIP,
-# and uploads `.dmg`, `.dmg.blockmap`, `.zip`, `.zip.blockmap`, and
-# `latest-mac.yml` to the GitHub Release matching the tag. The upload is
+# and uploads `.dmg`, `.dmg.blockmap`, `.zip`, `.zip.blockmap`, and the
+# channel-appropriate manifest (`latest-mac.yml` for stable releases,
+# `beta-mac.yml` for `*-beta.*` prereleases) to the GitHub Release
+# matching the tag. The channel is detected from the package version's
+# prerelease tag in a step below; both manifests are uploaded under the
+# `*-mac.yml` glob to the workflow audit artifact. The upload is
 # driven by `electron-builder --publish always` reading the same
 # `publish: [{ provider: github, owner: inkeep, repo: open-knowledge }]`
 # block from `packages/desktop/electron-builder.yml` that the ad-hoc
@@ -206,12 +210,49 @@ jobs:
         working-directory: packages/desktop
         run: node scripts/prepare-universal.mjs
 
+      # Detect channel from packages/desktop/package.json#version. Maps the
+      # version's prerelease tag to electron-builder's `--config.publish.channel`
+      # (writes beta-mac.yml vs latest-mac.yml) and `--config.publish.releaseType`
+      # (sets the GitHub Release `prerelease` flag). Fail-fast on anything other
+      # than `-beta.*` or plain semver — `-rc.*` / `-canary.*` etc. would ship a
+      # manifest with a channel name that electron-updater's GitHub provider
+      # treats as exact-match-only (no cascade walk), producing a release that
+      # can't be picked up by any client subscribed to a recognized channel.
+      - name: Detect channel from version
+        id: channel
+        working-directory: packages/desktop
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "$VERSION" == *-beta.* ]]; then
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+            echo "release_type=prerelease" >> "$GITHUB_OUTPUT"
+            echo "::notice::Building BETA channel from version $VERSION"
+          elif [[ "$VERSION" == *-beta ]]; then
+            # The `*-beta.*` glob above requires a dot after `beta` (i.e.
+            # `0.4.0-beta.0`, not `0.4.0-beta`). Trap the dotless form here
+            # with a targeted message rather than letting it fall through
+            # to the generic catch-all below — Changesets prerelease mode
+            # always emits `-beta.N`, but a hand-edited package.json could
+            # land here.
+            echo "::error::Version $VERSION is missing the .N suffix — beta releases must be tagged -beta.N (e.g. -beta.0, -beta.1) so electron-updater's cascade walk can order them. See packages/desktop/README.md beta-channel runbook."
+            exit 1
+          elif [[ "$VERSION" == *-* ]]; then
+            echo "::error::Unsupported prerelease ID in version $VERSION — only -beta.N is supported. See packages/desktop/README.md beta-channel runbook for the supported lifecycle."
+            exit 1
+          else
+            echo "channel=latest" >> "$GITHUB_OUTPUT"
+            echo "release_type=release" >> "$GITHUB_OUTPUT"
+            echo "::notice::Building LATEST channel from version $VERSION"
+          fi
+
       - name: Build + sign + notarize + publish DMG/ZIP
         # electron-builder picks up CSC_LINK / CSC_KEY_PASSWORD from env +
         # signs. afterSign.mjs picks up APPLE_* + notarizes + staples +
         # fuse-verifies. `--publish always` makes electron-builder upload
-        # the artifacts (.dmg, .dmg.blockmap, .zip, .zip.blockmap,
-        # latest-mac.yml) to the GitHub Release matching the current tag
+        # the artifacts (.dmg, .dmg.blockmap, .zip, .zip.blockmap, and the
+        # channel-appropriate manifest — `latest-mac.yml` or `beta-mac.yml`
+        # depending on `--config.publish.channel` set below from the
+        # detected channel) to the GitHub Release matching the current tag
         # — via the publish block in electron-builder.yml (A1) + GH_TOKEN
         # in env. No separate `gh release upload` step needed.
         env:
@@ -234,7 +275,10 @@ jobs:
           # `gh release create`). F14 audit: no App-token required.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: packages/desktop
-        run: bun run build:desktop && bunx electron-builder --mac --publish always
+        run: |
+          bun run build:desktop && bunx electron-builder --mac --publish always \
+            --config.publish.channel=${{ steps.channel.outputs.channel }} \
+            --config.publish.releaseType=${{ steps.channel.outputs.release_type }}
 
       # Defense-in-depth: even though electron-builder --publish always
       # does the upload, upload the artifacts to the workflow's run log
@@ -251,6 +295,6 @@ jobs:
             packages/desktop/dist-desktop/*.dmg.blockmap
             packages/desktop/dist-desktop/*-mac.zip
             packages/desktop/dist-desktop/*-mac.zip.blockmap
-            packages/desktop/dist-desktop/latest-mac.yml
+            packages/desktop/dist-desktop/*-mac.yml
           retention-days: 14
           if-no-files-found: error

@@ -76,6 +76,26 @@ interface OkUpdateStuckHintInfo {
   readonly downloadUrl: string;
 }
 
+type OkUpdateChannel = 'latest' | 'beta';
+
+interface OkUpdateDowngradeWarningInfo {
+  readonly currentVersion: string;
+  readonly targetVersion: string;
+}
+
+interface OkChannelChangedInfo {
+  readonly channel: OkUpdateChannel;
+}
+
+interface OkStateSnapshot {
+  readonly channel: OkUpdateChannel;
+  readonly schemaIncompatibility: {
+    readonly currentBuild: string;
+    readonly persistedSchemaVersion: number;
+    readonly maxSupported: number;
+  } | null;
+}
+
 export type OkMcpWiringEditorId =
   | 'claude'
   | 'claude-desktop'
@@ -151,6 +171,8 @@ export interface OkDesktopBridge {
   onUpdateDownloaded(cb: (info: OkUpdateDownloadedInfo) => void): OkUnsubscribe;
   onWhatsNew(cb: (info: OkWhatsNewInfo) => void): OkUnsubscribe;
   onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void): OkUnsubscribe;
+  onUpdateDowngradeWarning(cb: (info: OkUpdateDowngradeWarningInfo) => void): OkUnsubscribe;
+  onChannelChanged(cb: (info: OkChannelChangedInfo) => void): OkUnsubscribe;
   onDeepLink(cb: (evt: { doc: string }) => void): OkUnsubscribe;
   dialog: {
     openFolder(): Promise<string | null>;
@@ -232,6 +254,12 @@ export interface OkDesktopBridge {
   };
   update: {
     relaunchNow(): Promise<void>;
+    setChannel(channel: OkUpdateChannel): Promise<void>;
+    confirmDowngrade(): Promise<void>;
+  };
+  state: {
+    query(): Promise<OkStateSnapshot>;
+    resetIncompatible(): Promise<void>;
   };
   mcpWiring: {
     onShow(cb: (payload: OkMcpWiringShowPayload) => void): OkUnsubscribe;

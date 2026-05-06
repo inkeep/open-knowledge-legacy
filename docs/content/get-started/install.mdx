@@ -34,6 +34,12 @@ If you'd prefer a native app, install Open Knowledge from the macOS DMG. The fir
 
 The DMG bundles its own CLI; put it on your PATH from **File → Install Command-Line Tools…** if you want `ok` available everywhere.
 
+### Update channels
+
+The desktop app ships on two channels: **Stable** (default, recommended) and **Beta** (opt-in early access). Both auto-update silently in the background and install on next quit. Beta builds get fixes and new desktop features earlier in exchange for less soak time.
+
+To opt in to Beta, open **Settings → User → Channel → Beta**. Switching back to Stable shows a confirmation prompt before downgrading, since some recent settings or data shapes may not round-trip cleanly to an older version. The window header shows a small `BETA` badge while you're on the beta channel.
+
 <Callout type="warn">
 Open Knowledge is macOS and Linux only. Windows is not supported.
 </Callout>
