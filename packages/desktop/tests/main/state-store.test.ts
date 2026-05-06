@@ -6,10 +6,12 @@ import {
   addRecentProject,
   annotateMissing,
   emptyState,
+  getProjectSessionState,
   parseAppState,
   removeRecentProject,
   type SaveAppStateFs,
   saveAppStateToDir,
+  setProjectSessionState,
 } from '../../src/main/state-store.ts';
 
 describe('state-store (recent projects + LRU)', () => {
@@ -56,6 +58,38 @@ describe('state-store (recent projects + LRU)', () => {
     expect(next.lastOpenedProject).toBe(null);
   });
 
+  test('project session state persists by project path', () => {
+    const state = setProjectSessionState(emptyState(), '/tmp/a', {
+      openTabs: ['README', 'docs/guide'],
+      activeDocName: 'docs/guide',
+      updatedAt: '2026-05-06T00:00:00Z',
+    });
+    expect(getProjectSessionState(state, '/tmp/a')).toEqual({
+      openTabs: ['README', 'docs/guide'],
+      activeDocName: 'docs/guide',
+      updatedAt: '2026-05-06T00:00:00Z',
+    });
+    expect(getProjectSessionState(state, '/tmp/b')).toEqual({
+      openTabs: [],
+      activeDocName: null,
+      updatedAt: null,
+    });
+  });
+
+  test('removeRecentProject drops matching session state', () => {
+    const withSession = setProjectSessionState(emptyState(), '/tmp/a', {
+      openTabs: ['README'],
+      activeDocName: 'README',
+      updatedAt: '2026-05-06T00:00:00Z',
+    });
+    const next = removeRecentProject(withSession, '/tmp/a');
+    expect(getProjectSessionState(next, '/tmp/a')).toEqual({
+      openTabs: [],
+      activeDocName: null,
+      updatedAt: null,
+    });
+  });
+
   test('annotateMissing flips missing for non-existent paths', () => {
     let s = addRecentProject(emptyState(), '/tmp/exists', 'exists');
     s = addRecentProject(s, '/tmp/missing', 'missing');
@@ -68,11 +102,23 @@ describe('state-store (recent projects + LRU)', () => {
     const raw = {
       recentProjects: [{ path: '/tmp/a', name: 'a', lastOpenedAt: '2026-04-20T00:00:00Z' }],
       lastOpenedProject: '/tmp/a',
+      projectSessions: {
+        '/tmp/a': {
+          openTabs: ['README', 'README', '', 'docs/guide'],
+          activeDocName: 'docs/guide',
+          updatedAt: '2026-05-06T00:00:00Z',
+        },
+      },
     };
     const parsed = parseAppState(raw);
     expect(parsed).not.toBeNull();
     expect(parsed?.recentProjects.length).toBe(1);
     expect(parsed?.lastOpenedProject).toBe('/tmp/a');
+    expect(parsed?.projectSessions['/tmp/a']).toEqual({
+      openTabs: ['README', 'docs/guide'],
+      activeDocName: 'docs/guide',
+      updatedAt: '2026-05-06T00:00:00Z',
+    });
   });
 
   test('parseAppState filters malformed entries silently', () => {

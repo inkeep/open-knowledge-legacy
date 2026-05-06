@@ -59,6 +59,7 @@ import {
   applyRenameToDocuments,
   type FileTreeTarget,
   type RenamedDocMapping,
+  type RenamePathResponse,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
 import {
@@ -178,13 +179,6 @@ function isAgentTreePath(treePath: string): boolean {
   return !!name && AGENT_FILE_NAMES.has(name);
 }
 
-interface RenamePathResponse {
-  ok: boolean;
-  renamed?: RenamedDocMapping[];
-  rewrittenDocs?: Array<{ docName: string; rewrites: number }>;
-  error?: string;
-}
-
 interface DeletePathResponse {
   ok: boolean;
   deletedDocNames?: string[];
@@ -278,6 +272,20 @@ function asDirectoryHandle(
 ): FileTreeDirectoryHandle | null {
   if (!item?.isDirectory()) return null;
   return item as FileTreeDirectoryHandle;
+}
+
+function selectOnlyTreeItem(
+  model: PierreFileTreeModel,
+  item: NonNullable<ReturnType<PierreFileTreeModel['getItem']>>,
+): void {
+  const targetPath = item.getPath();
+  for (const selectedPath of model.getSelectedPaths()) {
+    if (selectedPath === targetPath) continue;
+    model.getItem(selectedPath)?.deselect();
+  }
+  if (!item.isSelected()) {
+    item.select();
+  }
 }
 
 function FileTreeMenu({
@@ -450,8 +458,14 @@ export interface FileTreeHandle {
 }
 
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
-  const { activeDocName, activeTarget, closeDocument, closeAndClearForRename, prewarm } =
-    useDocumentContext();
+  const {
+    activeDocName,
+    activeTarget,
+    closeDocument,
+    closeAndClearForRename,
+    prewarm,
+    remapTabsForRename,
+  } = useDocumentContext();
   const { notifySidebarFileSelected } = useSidebar();
   const { resolvedTheme } = useTheme();
   function navigateToWithPulse(targetPath: string) {
@@ -485,7 +499,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     selectedFilePath,
     selectedFolderPath,
     navigationPath: activeNavigationPath,
-  } = resolveFileTreeSelection(activeTarget, activeDocName);
+  } = resolveFileTreeSelection(activeTarget, activeDocName, {
+    isKnownDocument: (docName) =>
+      documents.some((entry) => isDocumentEntry(entry) && entry.docName === docName),
+  });
   const activeTreePath = selectedFilePath
     ? docNameToTreePath(
         selectedFilePath,
@@ -682,7 +699,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     const item = model.getItem(activeTreePath);
     if (!item) return;
     suppressSelectionRef.current = true;
-    item.select();
+    selectOnlyTreeItem(model, item);
     item.focus();
     queueMicrotask(() => {
       suppressSelectionRef.current = false;
@@ -711,6 +728,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         closeAndClearForRename(entry.toDocName),
       ]),
     );
+    remapTabsForRename(renamed);
 
     setDocuments((current) => {
       const next = applyRenameToDocuments(current, renamed);
@@ -719,8 +737,8 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     });
     emitDocumentsChanged(['files', 'backlinks', 'graph']);
 
-    if (currentActiveDocName && nextActiveDocName !== currentActiveDocName) {
-      window.location.hash = `#/${nextActiveDocName}`;
+    if (nextActiveDocName && nextActiveDocName !== currentActiveDocName) {
+      window.location.hash = hashFromDocName(nextActiveDocName);
     }
   };
 
@@ -803,7 +821,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       const data: RenamePathResponse = await res.json();
 
       if (!res.ok || !data.ok) {
-        const msg = data.error ?? 'Failed to rename path';
+        const msg = data.ok ? 'Failed to rename path' : data.error || 'Failed to rename path';
         toast.error(msg);
         setError(msg);
         resetModelToDocuments();
@@ -812,7 +830,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         return;
       }
 
-      await applyRenamedDocuments(Array.isArray(data.renamed) ? data.renamed : []);
+      await applyRenamedDocuments(data.renamed);
       pendingCreateRef.current = null;
       setBusyPath(null);
     } catch (err) {
@@ -868,14 +886,14 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         const data: RenamePathResponse = await res.json();
 
         if (!res.ok || !data.ok) {
-          const msg = data.error ?? 'Failed to move';
+          const msg = data.ok ? 'Failed to move' : data.error || 'Failed to move';
           toast.error(msg);
           setError(msg);
           resetModelToDocuments();
           setBusyPath(null);
           return;
         }
-        renamed = renamed.concat(Array.isArray(data.renamed) ? data.renamed : []);
+        renamed = renamed.concat(data.renamed);
       }
 
       await applyRenamedDocuments(renamed);

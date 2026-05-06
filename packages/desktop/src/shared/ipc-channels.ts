@@ -37,6 +37,12 @@ interface ProjectOpenRequest {
   target: 'new-window';
 }
 
+export interface ProjectSessionState {
+  openTabs: string[];
+  activeDocName: string | null;
+  updatedAt: string | null;
+}
+
 export type SpawnOutcome =
   | { ok: true }
   | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' };
@@ -111,6 +117,8 @@ export interface RequestChannels {
   'ok:clipboard:write-text': { args: [text: string]; result: undefined };
   'ok:project:get-info': { args: []; result: OkDesktopConfig };
   'ok:project:list-recent': { args: []; result: RecentProject[] };
+  'ok:project:get-session-state': { args: []; result: ProjectSessionState };
+  'ok:project:set-session-state': { args: [state: ProjectSessionState]; result: undefined };
   'ok:project:open': { args: [request: ProjectOpenRequest]; result: undefined };
   'ok:project:close': { args: []; result: undefined };
   'ok:navigator:open': { args: []; result: undefined };

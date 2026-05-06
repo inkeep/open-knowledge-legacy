@@ -81,10 +81,12 @@ import {
   annotateMissing,
   emptyState,
   evaluateSchemaCompatibility,
+  getProjectSessionState,
   MAX_SUPPORTED_SCHEMA_VERSION,
   parseAppState,
   type SchemaIncompatibilityDiagnostic,
   saveAppStateToDir,
+  setProjectSessionState,
 } from './state-store.ts';
 import {
   applyConfirmDowngrade,
@@ -664,6 +666,24 @@ function registerIpcHandlers() {
 
   handle('ok:project:list-recent', async () => {
     return annotateMissing(appState) as RecentProject[];
+  });
+
+  handle('ok:project:get-session-state', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || !wm) return { openTabs: [], activeDocName: null, updatedAt: null };
+    const ctx = wm.getContextForBrowserWindow(win as unknown as BrowserWindowLike);
+    if (!ctx) return { openTabs: [], activeDocName: null, updatedAt: null };
+    return getProjectSessionState(appState, ctx.projectPath);
+  });
+
+  handle('ok:project:set-session-state', async (event, state) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || !wm) return undefined;
+    const ctx = wm.getContextForBrowserWindow(win as unknown as BrowserWindowLike);
+    if (!ctx) return undefined;
+    appState = setProjectSessionState(appState, ctx.projectPath, state);
+    saveAppState(appState);
+    return undefined;
   });
 
   handle('ok:project:open', async (_event, request) => {

@@ -80,8 +80,6 @@ export function EditorPane() {
     <>
       <ConflictBanner onOpenResolver={() => setConflictResolverOpen(true)} />
       <EditorHeader
-        editorMode={editorMode}
-        onModeChange={handleModeChange}
         onSaveVersion={handleSaveVersion}
         saving={saving}
         onSignIn={() => {
@@ -94,7 +92,12 @@ export function EditorPane() {
         }}
         onOpenConflictResolver={() => setConflictResolverOpen(true)}
       />
-      <EditorArea editorMode={editorMode} activeTab={activeTab} onActiveTabChange={setActiveTab} />
+      <EditorArea
+        editorMode={editorMode}
+        onModeChange={handleModeChange}
+        activeTab={activeTab}
+        onActiveTabChange={setActiveTab}
+      />
       <ConflictResolver open={conflictResolverOpen} onOpenChange={setConflictResolverOpen} />
       <AuthModal
         open={authModalOpen}

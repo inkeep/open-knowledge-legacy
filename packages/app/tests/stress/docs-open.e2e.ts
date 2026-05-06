@@ -159,7 +159,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await page.waitForSelector('.ProseMirror');
     await expect(page.locator('.ProseMirror')).toContainText('Doc A Bottom Marker');
 
-    const scroller = page.locator('.subtle-scrollbar').first();
+    const scroller = page
+      .getByTestId('editor-scroll-container')
+      .filter({ hasText: 'Doc A Bottom Marker' });
     await scroller.evaluate((el) => {
       el.scrollTo({ top: el.scrollHeight, behavior: 'instant' });
     });

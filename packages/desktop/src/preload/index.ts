@@ -225,6 +225,8 @@ const bridge: OkDesktopBridge = {
 
   project: {
     listRecent: () => invoke('ok:project:list-recent'),
+    getSessionState: () => invoke('ok:project:get-session-state'),
+    setSessionState: (state) => invoke('ok:project:set-session-state', state),
     open: (request) => invoke('ok:project:open', request),
     close: () => invoke('ok:project:close'),
   },

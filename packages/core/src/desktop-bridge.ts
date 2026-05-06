@@ -29,6 +29,12 @@ interface RecentProjectEntry {
   missing?: boolean;
 }
 
+interface ProjectSessionState {
+  openTabs: string[];
+  activeDocName: string | null;
+  updatedAt: string | null;
+}
+
 interface OkProjectOpenRequest {
   path: string;
   target: 'new-window';
@@ -227,6 +233,8 @@ export interface OkDesktopBridge {
 
   project: {
     listRecent(): Promise<RecentProjectEntry[]>;
+    getSessionState(): Promise<ProjectSessionState>;
+    setSessionState(state: ProjectSessionState): Promise<void>;
     open(request: OkProjectOpenRequest): Promise<void>;
     close(): Promise<void>;
   };

@@ -2,7 +2,7 @@ import { hashFromAssetPath } from '@/lib/doc-hash';
 import { fileEntryToTreePath, treePathToAppPath } from './file-tree-adapter';
 import type { FileEntry } from './file-tree-utils';
 import { isAssetEntry, isDocumentEntry } from './file-tree-utils';
-import type { ResolvedNavigationTarget } from './navigation-targets';
+import { docNameForNavigationTarget, type ResolvedNavigationTarget } from './navigation-targets';
 
 interface FileTreeSelection {
   selectedFilePath: string | null;
@@ -10,30 +10,42 @@ interface FileTreeSelection {
   navigationPath: string | null;
 }
 
+interface ResolveFileTreeSelectionOptions {
+  isKnownDocument?: (docName: string) => boolean;
+}
+
 type FileTreeSelectionAction =
   | { kind: 'none' }
   | { kind: 'asset'; hash: string }
   | { kind: 'document-or-folder'; path: string };
 
+function documentSelection(docName: string | null): FileTreeSelection {
+  return {
+    selectedFilePath: docName,
+    selectedFolderPath: null,
+    navigationPath: docName,
+  };
+}
+
 export function resolveFileTreeSelection(
   activeTarget: ResolvedNavigationTarget | null,
   activeDocName: string | null,
+  options: ResolveFileTreeSelectionOptions = {},
 ): FileTreeSelection {
   if (!activeTarget) {
-    return {
-      selectedFilePath: activeDocName,
-      selectedFolderPath: null,
-      navigationPath: activeDocName,
-    };
+    return documentSelection(activeDocName);
+  }
+
+  const targetDocName = docNameForNavigationTarget(activeTarget);
+  if (activeDocName && targetDocName !== activeDocName) {
+    return documentSelection(activeDocName);
   }
 
   switch (activeTarget.kind) {
-    case 'doc':
-      return {
-        selectedFilePath: activeTarget.docName,
-        selectedFolderPath: null,
-        navigationPath: activeTarget.docName,
-      };
+    case 'doc': {
+      const docName = activeDocName ?? activeTarget.docName;
+      return documentSelection(docName);
+    }
     case 'folder':
     case 'folder-index':
       return {
@@ -42,6 +54,14 @@ export function resolveFileTreeSelection(
         navigationPath: activeTarget.folderPath,
       };
     case 'missing':
+      if (activeDocName && options.isKnownDocument?.(activeDocName)) {
+        return documentSelection(activeDocName);
+      }
+      return {
+        selectedFilePath: null,
+        selectedFolderPath: null,
+        navigationPath: null,
+      };
     case 'asset':
       return {
         selectedFilePath: null,
