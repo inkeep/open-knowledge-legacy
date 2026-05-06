@@ -1206,3 +1206,234 @@ describe("createServer() — onAuthenticate rejects 'branch-mismatch'", () => {
     }
   });
 });
+
+describe('createServer() — config-doc admission guard', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'ok-config-admission-'));
+  });
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function getConfigDocAdmissionGuard(server: Awaited<ReturnType<typeof createServer>>): {
+    onAuthenticate: (payload: unknown) => Promise<void>;
+  } {
+    const ext = server.hocuspocus.configuration.extensions.find(
+      (e) => (e as { __kind?: string }).__kind === 'config-doc-admission-guard',
+    ) as { onAuthenticate: (payload: unknown) => Promise<void> } | undefined;
+    if (!ext) throw new Error('expected configDocAdmissionGuard on hocuspocus.configuration');
+    return ext;
+  }
+
+  function makePayload(opts: {
+    documentName: string;
+    peer?: string;
+    host?: string | null;
+  }): unknown {
+    const headers: Record<string, string> = {};
+    if (opts.host !== null && opts.host !== undefined) headers.host = opts.host;
+    return {
+      token: undefined,
+      documentName: opts.documentName,
+      context: {} as Record<string, unknown>,
+      request: {
+        socket: opts.peer === undefined ? undefined : { remoteAddress: opts.peer },
+        headers,
+      },
+      requestHeaders: new Headers(opts.host ? { host: opts.host } : {}),
+    };
+  }
+
+  test('non-config doc bypasses the gate (no peer, no host)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const guard = getConfigDocAdmissionGuard(server);
+      await guard.onAuthenticate(
+        makePayload({ documentName: 'some-user-doc', peer: undefined, host: null }),
+      );
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('config doc accepts loopback IPv4 peer + localhost Host', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const guard = getConfigDocAdmissionGuard(server);
+      await guard.onAuthenticate(
+        makePayload({
+          documentName: '__config__/project',
+          peer: '127.0.0.1',
+          host: 'localhost:5173',
+        }),
+      );
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('config doc accepts IPv6 loopback peer + bracketed Host', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const guard = getConfigDocAdmissionGuard(server);
+      await guard.onAuthenticate(
+        makePayload({ documentName: '__user__/config.yml', peer: '::1', host: '[::1]:5173' }),
+      );
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('config doc rejects non-loopback peer (LAN)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const guard = getConfigDocAdmissionGuard(server);
+      let thrown: unknown = null;
+      try {
+        await guard.onAuthenticate(
+          makePayload({
+            documentName: '__config__/project',
+            peer: '192.168.1.5',
+            host: 'localhost:5173',
+          }),
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).not.toBeNull();
+      expect((thrown as Error).message).toContain('loopback peer');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('config doc rejects IPv4-mapped non-loopback peer', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const guard = getConfigDocAdmissionGuard(server);
+      let thrown: unknown = null;
+      try {
+        await guard.onAuthenticate(
+          makePayload({
+            documentName: '__user__/config.yml',
+            peer: '::ffff:192.168.1.5',
+            host: 'localhost',
+          }),
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).not.toBeNull();
+      expect((thrown as Error).message).toContain('loopback peer');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('config doc rejects loopback peer with attacker-domain Host (DNS rebinding)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const guard = getConfigDocAdmissionGuard(server);
+      let thrown: unknown = null;
+      try {
+        await guard.onAuthenticate(
+          makePayload({
+            documentName: '__config__/project',
+            peer: '127.0.0.1',
+            host: 'attacker.example.com',
+          }),
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).not.toBeNull();
+      expect((thrown as Error).message).toContain('loopback Host header');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('config doc rejects missing Host header (no fallback to permissive accept)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const guard = getConfigDocAdmissionGuard(server);
+      let thrown: unknown = null;
+      try {
+        await guard.onAuthenticate(
+          makePayload({ documentName: '__config__/project', peer: '127.0.0.1', host: null }),
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).not.toBeNull();
+      expect((thrown as Error).message).toContain('loopback Host header');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('config doc accepts undefined peer when Host is loopback (test harness shape)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const guard = getConfigDocAdmissionGuard(server);
+      await guard.onAuthenticate(
+        makePayload({ documentName: '__config__/project', peer: undefined, host: 'localhost' }),
+      );
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('config doc rejects attacker Host when peer is undefined (DNS rebinding with no socket)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const guard = getConfigDocAdmissionGuard(server);
+      let thrown: unknown = null;
+      try {
+        await guard.onAuthenticate(
+          makePayload({
+            documentName: '__config__/project',
+            peer: undefined,
+            host: 'attacker.example.com',
+          }),
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).not.toBeNull();
+      expect((thrown as Error).message).toContain('loopback Host header');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('config doc accepts loopback Host via req.headers fallback when requestHeaders absent', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const guard = getConfigDocAdmissionGuard(server);
+      await guard.onAuthenticate({
+        token: undefined,
+        documentName: '__config__/project',
+        context: {},
+        request: {
+          socket: { remoteAddress: '127.0.0.1' },
+          headers: { host: 'localhost:5173' },
+        },
+      } as unknown as Parameters<typeof guard.onAuthenticate>[0]);
+    } finally {
+      await server.destroy();
+    }
+  });
+});
