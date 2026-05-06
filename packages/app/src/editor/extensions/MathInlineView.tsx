@@ -136,6 +136,7 @@ export function MathInlineView({ node, selected, getPos, editor }: NodeViewProps
           <span
             className="math-inline-trigger"
             data-component-type="math-inline"
+            data-formula={formula}
             {...(id ? { id } : {})}
           >
             {formula ? (

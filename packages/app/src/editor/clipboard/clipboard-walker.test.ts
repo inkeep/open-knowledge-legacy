@@ -1,9 +1,24 @@
+/**
+ * Unit tests for the live-DOM clipboard walker pure helpers.
+ *
+ * The walker's full DOM behavior (cloneNode parallel walk, view.nodeDOM
+ * lookup, fallback palette firing on Activity-hidden subtrees) requires a
+ * real browser and is exercised in Playwright. Here we test the pure
+ * transformation helpers + the static surface (allowlist / blocklist
+ * contents) that live in this file.
+ *
+ * The cross-app re-emit sanitization helpers (URL classification,
+ * embedded-URL substitution, event-handler / style-payload filters) live
+ * in `clipboard-sanitize.ts` and are tested in `clipboard-sanitize.test.ts`.
+ */
+
 import { describe, expect, test } from 'bun:test';
 import {
   ATTR_BLOCKLIST,
   applyUrlClassifierPostPass,
   applyWikiLinkTransform,
   buildInlineStyleFrom,
+  buildWikiEmbedMarkdownSource,
   CLASS_BLOCKLIST,
   type ComputedStyleLike,
   chooseEmissionClass,
@@ -942,5 +957,29 @@ describe('applyUrlClassifierPostPass — decision rules', () => {
       .filter((e) => e.event === 'clipboard-walker-url-source-emitted');
     expect(emitted).toHaveLength(1);
     expect(emitted[0].class).toBe('mdx-component');
+  });
+});
+
+describe('buildWikiEmbedMarkdownSource — drift fence vs canonical wikiLinkEmbedHandler', () => {
+  test('bare target', () => {
+    expect(buildWikiEmbedMarkdownSource('photo.png', null, null)).toBe('![[photo.png]]');
+  });
+
+  test('target + anchor', () => {
+    expect(buildWikiEmbedMarkdownSource('file.pdf', 'page=3', null)).toBe('![[file.pdf#page=3]]');
+  });
+
+  test('target + alias', () => {
+    expect(buildWikiEmbedMarkdownSource('file.pdf', null, 'My PDF')).toBe('![[file.pdf|My PDF]]');
+  });
+
+  test('target + anchor + alias (full form)', () => {
+    expect(buildWikiEmbedMarkdownSource('file.pdf', 'page=3', 'Page 3')).toBe(
+      '![[file.pdf#page=3|Page 3]]',
+    );
+  });
+
+  test('empty target produces a malformed `![[]]` — guarded at the call site', () => {
+    expect(buildWikiEmbedMarkdownSource('', null, null)).toBe('![[]]');
   });
 });

@@ -20,8 +20,12 @@ describe('PALETTE_DESCRIPTOR_NAMES — registry coverage', () => {
     );
   });
 
+  test('covers non-portable-render descriptors (Math + Mermaid)', () => {
+    expect([...PALETTE_DESCRIPTOR_NAMES]).toEqual(expect.arrayContaining(['Math', 'Mermaid']));
+  });
+
   test('exact size — adding a name requires intentional update of this list', () => {
-    expect(PALETTE_DESCRIPTOR_NAMES.length).toBe(8);
+    expect(PALETTE_DESCRIPTOR_NAMES.length).toBe(10);
   });
 });
 

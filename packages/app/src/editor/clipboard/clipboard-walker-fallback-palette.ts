@@ -10,6 +10,7 @@ import {
   logWalkerUrlSourceEmitted,
   type WalkerUrlSourceTag,
 } from './instrument.ts';
+import { nonPortableRenderSourceFallback } from './non-portable-render-source-fallback.ts';
 
 export const TYPE_TO_TONE: Record<string, { color: string; bg: string }> = {
   note: { color: '#0969da', bg: '#dbeafe' },
@@ -32,6 +33,8 @@ export const PALETTE_DESCRIPTOR_NAMES = [
   'GFMCallout',
   'CommonMarkImage',
   'HtmlDetailsAccordion',
+  'Math',
+  'Mermaid',
 ] as const;
 
 function calloutPalette(props: Record<string, unknown>): Element {
@@ -160,6 +163,9 @@ export function paletteFor(node: PmNode): Element | null {
       return videoPalette(props);
     case 'audio':
       return audioPalette(props);
+    case 'Math':
+    case 'Mermaid':
+      return nonPortableRenderSourceFallback(node, document);
     default:
       return null;
   }
