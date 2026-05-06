@@ -40,17 +40,22 @@ function makeWindow(opts?: { minimized?: boolean }): BrowserWindowLike & {
   let domReadyHandler: (() => void) | null = null;
   let minimized = opts?.minimized ?? false;
   let destroyed = false;
+  let visible = false;
   return {
     focus: mock(() => {}),
-    show: mock(() => {}),
+    show: mock(() => {
+      visible = true;
+    }),
     restore: mock(() => {
       minimized = false;
     }),
     isMinimized: mock(() => minimized),
     isDestroyed: mock(() => destroyed),
+    isVisible: mock(() => visible),
     on: mock((_event: 'closed', cb: () => void) => {
       closeHandler = cb;
     }) as BrowserWindowLike['on'],
+    once: mock((_event: 'ready-to-show', _cb: () => void) => {}) as BrowserWindowLike['once'],
     webContents: {
       send: mock(() => {}),
       once: mock((event: 'dom-ready', cb: () => void) => {

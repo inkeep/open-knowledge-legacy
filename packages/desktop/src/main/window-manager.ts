@@ -50,7 +50,9 @@ export interface BrowserWindowLike {
   restore?(): void;
   isMinimized?(): boolean;
   isDestroyed?(): boolean;
+  isVisible?(): boolean;
   on(event: 'closed', cb: () => void): void;
+  once(event: 'ready-to-show', cb: () => void): void;
   webContents: {
     send(channel: string, ...args: unknown[]): void;
     once(event: 'dom-ready', cb: () => void): void;
@@ -370,6 +372,18 @@ export class WindowManager {
       });
     }
 
+    window.once('ready-to-show', () => {
+      window.show?.();
+    });
+    this.deps.setTimeout(() => {
+      if (window.isDestroyed?.() || window.isVisible?.()) return;
+      this.deps.log?.warn(
+        { event: 'ready-to-show-timeout' },
+        'ready-to-show did not fire within 5s — falling back',
+      );
+      window.show?.();
+    }, 5000);
+
     if (this.deps.rendererDevUrl) {
       await window.loadURL(this.deps.rendererDevUrl);
     } else {
@@ -495,6 +509,18 @@ export class WindowManager {
         sendToRenderer(window.webContents, 'ok:deep-link', { doc });
       });
     }
+
+    window.once('ready-to-show', () => {
+      window.show?.();
+    });
+    this.deps.setTimeout(() => {
+      if (window.isDestroyed?.() || window.isVisible?.()) return;
+      this.deps.log?.warn(
+        { event: 'ready-to-show-timeout' },
+        'ready-to-show did not fire within 5s — falling back',
+      );
+      window.show?.();
+    }, 5000);
 
     if (this.deps.rendererDevUrl) {
       await window.loadURL(this.deps.rendererDevUrl);
