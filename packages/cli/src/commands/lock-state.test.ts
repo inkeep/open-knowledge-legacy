@@ -37,7 +37,7 @@ describe('inspectLock', () => {
     writeFileSync(
       join(dir, 'server.lock'),
       JSON.stringify({
-        pid: 1,
+        pid: 12345,
         hostname: 'other-box',
         port: 3000,
         startedAt: '2026-04-16T00:00:00Z',

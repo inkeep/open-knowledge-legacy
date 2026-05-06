@@ -812,11 +812,12 @@ describe('createServer() server-lock integration (V0-1)', () => {
     await first.ready;
 
     const { hostname } = await import('node:os');
+    const foreignPid = process.ppid > 1 ? process.ppid : process.pid + 1;
     const lockPath = join(tmpDir, '.ok', LOCAL_DIR, 'server.lock');
     writeFileSync(
       lockPath,
       JSON.stringify({
-        pid: 1,
+        pid: foreignPid,
         hostname: hostname(),
         port: 9999,
         startedAt: new Date().toISOString(),

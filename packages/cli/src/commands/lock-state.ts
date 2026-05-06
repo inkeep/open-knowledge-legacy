@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import {
   isProcessAlive,
+  isValidLockPid,
   type LockName,
   lockFilePath,
   type ProcessLockMetadata,
@@ -33,11 +34,7 @@ export function inspectLock(
   } catch {
     return { status: 'corrupt', lockPath };
   }
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    typeof (parsed as { pid?: unknown }).pid !== 'number'
-  ) {
+  if (!parsed || typeof parsed !== 'object' || !isValidLockPid((parsed as { pid?: unknown }).pid)) {
     return { status: 'corrupt', lockPath };
   }
   const lock = parsed as ProcessLockMetadata;

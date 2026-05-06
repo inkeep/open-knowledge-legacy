@@ -11,10 +11,11 @@ async function pollLockReleasedDefault(lockDir: string, deadlineMs: number): Pro
     if (!existsSync(lockPath)) return true;
     try {
       const raw = readFileSync(lockPath, 'utf-8');
-      const parsed = JSON.parse(raw) as { pid?: number };
-      if (typeof parsed.pid === 'number' && !isProcessAliveLocal(parsed.pid)) {
+      const parsed = JSON.parse(raw) as { pid?: unknown };
+      if (!isValidLockPidLocal(parsed.pid)) {
         return true;
       }
+      if (!isProcessAliveLocal(parsed.pid)) return true;
     } catch {
       return true;
     }
@@ -38,6 +39,14 @@ function isProcessAliveLocal(pid: number): boolean {
     }
     return false;
   }
+}
+
+function isValidLockPidLocal(value: unknown): value is number {
+  if (typeof value !== 'number') return false;
+  if (!Number.isInteger(value)) return false;
+  if (value < 2) return false;
+  if (value > 0x7fffffff) return false;
+  return true;
 }
 
 function formatEditorTitle(projectName: string): string {
@@ -282,13 +291,33 @@ export class WindowManager {
           kind?: string;
           existingLock?: ServerLockMetadataLike;
         };
+        const candidatePid = richErr.existingLock?.pid;
         const collidedWithMcp =
           attempt === 1 &&
           richErr.name === 'LockCollisionError' &&
           richErr.existingLock?.kind === 'mcp-spawned' &&
-          typeof richErr.existingLock.pid === 'number';
-        if (!collidedWithMcp) throw err;
-        const holderPid = (richErr.existingLock as ServerLockMetadataLike).pid;
+          isValidLockPidLocal(candidatePid) &&
+          candidatePid !== process.pid;
+        if (!collidedWithMcp) {
+          if (
+            attempt === 1 &&
+            richErr.name === 'LockCollisionError' &&
+            richErr.existingLock?.kind === 'mcp-spawned'
+          ) {
+            this.deps.log?.warn(
+              {
+                event: 'desktop-attach-refused',
+                reason: 'invalid-holder-pid',
+                holderPid: richErr.existingLock.pid,
+                lockDir,
+              },
+              '[window-manager] refusing to auto-kill collision holder with invalid pid',
+            );
+          }
+          throw err;
+        }
+        const collisionLock = richErr.existingLock as ServerLockMetadataLike;
+        const holderPid = collisionLock.pid;
         this.deps.log?.warn(
           { event: 'desktop-attach-refused', reason: 'collision-mcp-spawned', holderPid, lockDir },
           '[window-manager] mcp-spawned holder collided — sending SIGTERM and retrying',
@@ -298,25 +327,56 @@ export class WindowManager {
           ((pid: number, signal: NodeJS.Signals) => {
             process.kill(pid, signal);
           });
-        try {
-          kill(holderPid, 'SIGTERM');
-        } catch {}
+        const verifyHolderStillOwnsLock = (): boolean => {
+          if (!isValidLockPidLocal(holderPid)) return false;
+          if (holderPid === process.pid) return false;
+          const reader = this.deps.readServerLock;
+          if (!reader) return true;
+          const current = reader(lockDir);
+          if (!current) return false;
+          if (current.pid !== holderPid) return false;
+          if (current.kind !== 'mcp-spawned') return false;
+          if (
+            typeof collisionLock.startedAt === 'string' &&
+            current.startedAt !== collisionLock.startedAt
+          ) {
+            return false;
+          }
+          return true;
+        };
+        if (verifyHolderStillOwnsLock()) {
+          try {
+            kill(holderPid, 'SIGTERM');
+          } catch {}
+        } else {
+          this.deps.log?.warn(
+            { event: 'desktop-attach-refused', reason: 'holder-changed', holderPid, lockDir },
+            '[window-manager] holder identity changed before SIGTERM — skipping signal',
+          );
+        }
         const SIGTERM_GRACE_MS = 5_000;
         const released = await (this.deps.waitForLockReleased
           ? this.deps.waitForLockReleased(lockDir, SIGTERM_GRACE_MS)
           : pollLockReleasedDefault(lockDir, SIGTERM_GRACE_MS));
         let finalReleased = released;
         if (!released) {
-          this.deps.log?.warn(
-            { holderPid },
-            '[window-manager] SIGTERM did not take within grace — escalating to SIGKILL',
-          );
-          try {
-            kill(holderPid, 'SIGKILL');
-          } catch {}
-          finalReleased = await (this.deps.waitForLockReleased
-            ? this.deps.waitForLockReleased(lockDir, 2_000)
-            : pollLockReleasedDefault(lockDir, 2_000));
+          if (verifyHolderStillOwnsLock()) {
+            this.deps.log?.warn(
+              { holderPid },
+              '[window-manager] SIGTERM did not take within grace — escalating to SIGKILL',
+            );
+            try {
+              kill(holderPid, 'SIGKILL');
+            } catch {}
+            finalReleased = await (this.deps.waitForLockReleased
+              ? this.deps.waitForLockReleased(lockDir, 2_000)
+              : pollLockReleasedDefault(lockDir, 2_000));
+          } else {
+            this.deps.log?.warn(
+              { event: 'desktop-attach-refused', reason: 'holder-changed', holderPid, lockDir },
+              '[window-manager] holder identity changed before SIGKILL — skipping signal',
+            );
+          }
         }
         if (!finalReleased) {
           const stuck = Object.assign(
@@ -446,6 +506,7 @@ export class WindowManager {
       );
       return null;
     };
+    if (!isValidLockPidLocal(lock.pid)) return refuse('invalid-lock-pid');
     if (lock.hostname !== getHost()) return refuse('foreign-hostname');
     if (!alive(lock.pid)) return refuse('lock-pid-dead');
     if (lock.port <= 0) return refuse('lock-port-zero');

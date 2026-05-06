@@ -738,6 +738,172 @@ describe('WindowManager', () => {
       expect(kill).not.toHaveBeenCalled();
       expect(env.utilities.length).toBe(1);
     });
+
+    const HOSTILE_PIDS: ReadonlyArray<{ pid: unknown; label: string }> = [
+      { pid: 0, label: 'PID 0 (process group)' },
+      { pid: 1, label: 'PID 1 (init/launchd)' },
+      { pid: -42, label: 'negative PID' },
+      { pid: 1.5, label: 'non-integer PID' },
+      { pid: Number.NaN, label: 'NaN PID' },
+      { pid: 0x80000000, label: 'PID above 2^31-1' },
+      { pid: 'abc', label: 'string PID' },
+    ];
+    for (const { pid, label } of HOSTILE_PIDS) {
+      test(`hostile holder pid (${label}) — error propagates, no kill`, async () => {
+        const kill = mock((_pid: number, _signal: NodeJS.Signals) => undefined);
+        env.deps.killProcess = kill;
+
+        const wm = new WindowManager(env.deps);
+        const p = wm.createProjectWindow({ projectPath: '/tmp/collision' });
+        await new Promise((r) => setTimeout(r, 5));
+        env.utilities[0]?.fire({
+          type: 'error',
+          message: 'collision',
+          kind: 'lock-collision',
+          existingLock: {
+            ...collisionExisting,
+            pid: pid as number,
+            kind: 'mcp-spawned',
+          },
+        });
+        await expect(p).rejects.toThrow(/collision/);
+        expect(kill).not.toHaveBeenCalled();
+        expect(env.utilities.length).toBe(1);
+      });
+    }
+
+    test('lock holder changes between collision and SIGTERM — no kill', async () => {
+      const kill = mock((_pid: number, _signal: NodeJS.Signals) => undefined);
+      const waitReleased = mock(() => Promise.resolve(true));
+      env.deps.killProcess = kill;
+      env.deps.waitForLockReleased = waitReleased;
+      env.deps.readServerLock = () => ({
+        ...collisionExisting,
+        pid: collisionExisting.pid + 1,
+      });
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/collision' });
+      await new Promise((r) => setTimeout(r, 5));
+      env.utilities[0]?.fire({
+        type: 'error',
+        message: 'collision',
+        kind: 'lock-collision',
+        existingLock: collisionExisting,
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(env.utilities.length).toBe(2);
+      env.utilities[1]?.fire({ type: 'ready', port: 60010, apiOrigin: 'http://localhost:60010' });
+      await p;
+      expect(kill).not.toHaveBeenCalled();
+    });
+
+    test('lock startedAt changes (same pid, different holder) — no kill', async () => {
+      const kill = mock((_pid: number, _signal: NodeJS.Signals) => undefined);
+      const waitReleased = mock(() => Promise.resolve(true));
+      env.deps.killProcess = kill;
+      env.deps.waitForLockReleased = waitReleased;
+      env.deps.readServerLock = () => ({
+        ...collisionExisting,
+        startedAt: '2099-01-01T00:00:00.000Z',
+      });
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/collision' });
+      await new Promise((r) => setTimeout(r, 5));
+      env.utilities[0]?.fire({
+        type: 'error',
+        message: 'collision',
+        kind: 'lock-collision',
+        existingLock: collisionExisting,
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(env.utilities.length).toBe(2);
+      env.utilities[1]?.fire({ type: 'ready', port: 60011, apiOrigin: 'http://localhost:60011' });
+      await p;
+      expect(kill).not.toHaveBeenCalled();
+    });
+
+    test('lock kind changes from mcp-spawned to interactive — no kill', async () => {
+      const kill = mock((_pid: number, _signal: NodeJS.Signals) => undefined);
+      const waitReleased = mock(() => Promise.resolve(true));
+      env.deps.killProcess = kill;
+      env.deps.waitForLockReleased = waitReleased;
+      env.deps.readServerLock = () => ({
+        ...collisionExisting,
+        kind: 'interactive',
+      });
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/collision' });
+      await new Promise((r) => setTimeout(r, 5));
+      env.utilities[0]?.fire({
+        type: 'error',
+        message: 'collision',
+        kind: 'lock-collision',
+        existingLock: collisionExisting,
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(env.utilities.length).toBe(2);
+      env.utilities[1]?.fire({ type: 'ready', port: 60012, apiOrigin: 'http://localhost:60012' });
+      await p;
+      expect(kill).not.toHaveBeenCalled();
+    });
+
+    test('lock released between collision and SIGTERM — no kill, retry succeeds', async () => {
+      const kill = mock((_pid: number, _signal: NodeJS.Signals) => undefined);
+      const waitReleased = mock(() => Promise.resolve(true));
+      env.deps.killProcess = kill;
+      env.deps.waitForLockReleased = waitReleased;
+      env.deps.readServerLock = () => null;
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/collision' });
+      await new Promise((r) => setTimeout(r, 5));
+      env.utilities[0]?.fire({
+        type: 'error',
+        message: 'collision',
+        kind: 'lock-collision',
+        existingLock: collisionExisting,
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(env.utilities.length).toBe(2);
+      env.utilities[1]?.fire({ type: 'ready', port: 60013, apiOrigin: 'http://localhost:60013' });
+      await p;
+      expect(kill).not.toHaveBeenCalled();
+    });
+
+    test('lock holder changes between SIGTERM and SIGKILL — only SIGTERM sent', async () => {
+      const kill = mock((_pid: number, _signal: NodeJS.Signals) => undefined);
+      let released = 0;
+      const waitReleased = mock(() => {
+        released += 1;
+        return Promise.resolve(false);
+      });
+      env.deps.killProcess = kill;
+      env.deps.waitForLockReleased = waitReleased;
+      let lookups = 0;
+      env.deps.readServerLock = () => {
+        lookups += 1;
+        return lookups === 1
+          ? collisionExisting
+          : { ...collisionExisting, pid: collisionExisting.pid + 7 };
+      };
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/collision' });
+      await new Promise((r) => setTimeout(r, 5));
+      env.utilities[0]?.fire({
+        type: 'error',
+        message: 'collision',
+        kind: 'lock-collision',
+        existingLock: collisionExisting,
+      });
+      await expect(p).rejects.toThrow(/still holding the server lock/);
+      expect(released).toBe(1); // Only the SIGTERM grace wait — SIGKILL was skipped.
+      expect(kill).toHaveBeenCalledTimes(1);
+      expect(kill).toHaveBeenCalledWith(collisionExisting.pid, 'SIGTERM');
+    });
   });
 });
 

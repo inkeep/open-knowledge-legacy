@@ -9,3 +9,11 @@ export function isProcessAlive(pid: number): boolean {
     return false;
   }
 }
+
+export function isValidLockPid(value: unknown): value is number {
+  if (typeof value !== 'number') return false;
+  if (!Number.isInteger(value)) return false;
+  if (value < 2) return false;
+  if (value > 0x7fffffff) return false;
+  return true;
+}

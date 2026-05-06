@@ -13,6 +13,20 @@ import {
   updateServerLockPort,
 } from './server-lock';
 
+function aliveForeignPid(): number {
+  if (process.ppid > 1 && process.ppid !== process.pid) return process.ppid;
+  for (let candidate = process.pid + 1; candidate < process.pid + 5000; candidate++) {
+    try {
+      process.kill(candidate, 0);
+      return candidate;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EPERM') return candidate;
+    }
+  }
+  throw new Error('aliveForeignPid: could not find a live foreign pid for the test');
+}
+
 let tmpDir: string;
 let lockDir: string;
 let lockPath: string;
@@ -69,8 +83,9 @@ describe('acquireServerLock', () => {
 
   test('throws ServerLockCollisionError when lock owner is alive', () => {
     acquireServerLock(lockDir, { port: 0, worktreeRoot: '/seed' });
+    const livePid = aliveForeignPid();
     const live: ServerLockMetadata = {
-      pid: 1, // PID 1 (init/launchd) is always running on POSIX
+      pid: livePid,
       hostname: hostname(),
       port: 9000,
       startedAt: new Date().toISOString(),
@@ -85,7 +100,7 @@ describe('acquireServerLock', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(ServerLockCollisionError);
       if (err instanceof ServerLockCollisionError) {
-        expect(err.existing.pid).toBe(1);
+        expect(err.existing.pid).toBe(livePid);
         expect(err.existing.port).toBe(9000);
         expect(err.message).toContain('already running on port 9000');
       }

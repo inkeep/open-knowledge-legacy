@@ -19,6 +19,20 @@ import { PROTOCOL_VERSION, RUNTIME_VERSION } from './version-constants';
 
 const LOCK_NAME: LockName = 'ui';
 
+function aliveForeignPid(): number {
+  if (process.ppid > 1 && process.ppid !== process.pid) return process.ppid;
+  for (let candidate = process.pid + 1; candidate < process.pid + 5000; candidate++) {
+    try {
+      process.kill(candidate, 0);
+      return candidate;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EPERM') return candidate;
+    }
+  }
+  throw new Error('aliveForeignPid: could not find a live foreign pid for the test');
+}
+
 let tmpDir: string;
 let lockDir: string;
 let lockPath: string;
@@ -123,8 +137,9 @@ describe('acquireProcessLock', () => {
       lockDir,
       metadata: { port: 0, worktreeRoot: '/seed' },
     });
+    const livePid = aliveForeignPid();
     const live: ProcessLockMetadata = {
-      pid: 1, // init/launchd, always alive on POSIX
+      pid: livePid,
       hostname: hostname(),
       port: 9000,
       startedAt: new Date().toISOString(),
@@ -144,7 +159,7 @@ describe('acquireProcessLock', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(ProcessLockCollisionError);
       if (err instanceof ProcessLockCollisionError) {
-        expect(err.existing.pid).toBe(1);
+        expect(err.existing.pid).toBe(livePid);
         expect(err.existing.port).toBe(9000);
         expect(err.lockName).toBe(LOCK_NAME);
         expect(err.lockPath).toBe(lockPath);
@@ -592,7 +607,7 @@ describe('readProcessLockDetailed', () => {
 
   test('returns incompatible.missing-fields for a live lock missing protocolVersion', () => {
     const versionless = {
-      pid: 1,
+      pid: aliveForeignPid(),
       hostname: hostname(),
       port: 6000,
       startedAt: new Date().toISOString(),
@@ -609,7 +624,7 @@ describe('readProcessLockDetailed', () => {
 
   test('returns incompatible.missing-fields for a live lock missing runtimeVersion only', () => {
     const partial = {
-      pid: 1,
+      pid: aliveForeignPid(),
       hostname: hostname(),
       port: 6500,
       startedAt: new Date().toISOString(),
@@ -661,7 +676,7 @@ describe('readProcessLockDetailed', () => {
 
   test('returns stale (without cleanup) on cross-host lock', () => {
     const remote: ProcessLockMetadata = {
-      pid: 1, // alive on POSIX, but cross-host
+      pid: aliveForeignPid(),
       hostname: 'some-other-host',
       port: 7100,
       startedAt: new Date().toISOString(),
@@ -675,5 +690,94 @@ describe('readProcessLockDetailed', () => {
     const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
     expect(result.status).toBe('stale');
     expect(existsSync(lockPath)).toBe(true);
+  });
+});
+
+describe('lock-pid security validation', () => {
+  const HOSTILE_PIDS: ReadonlyArray<{ pid: unknown; label: string }> = [
+    { pid: 0, label: 'PID 0 (process group)' },
+    { pid: 1, label: 'PID 1 (init/launchd)' },
+    { pid: -42, label: 'negative PID (process group syntax)' },
+    { pid: 1.5, label: 'non-integer PID' },
+    { pid: Number.NaN, label: 'NaN PID' },
+    { pid: Number.POSITIVE_INFINITY, label: 'Infinity PID' },
+    { pid: 0x80000000, label: 'PID above 2^31-1 (corrupt or tampered)' },
+    { pid: '12345', label: 'string PID (not a number)' },
+    { pid: null, label: 'null PID' },
+  ];
+
+  for (const { pid, label } of HOSTILE_PIDS) {
+    test(`acquireProcessLock replaces hostile lock with ${label}`, () => {
+      acquireProcessLock({
+        lockName: LOCK_NAME,
+        lockDir,
+        metadata: { port: 0, worktreeRoot: '/seed' },
+      });
+      const hostile = {
+        pid,
+        hostname: hostname(),
+        port: 9000,
+        startedAt: new Date().toISOString(),
+        worktreeRoot: '/attacker',
+      };
+      writeFileSync(lockPath, JSON.stringify(hostile), 'utf-8');
+
+      acquireProcessLock({
+        lockName: LOCK_NAME,
+        lockDir,
+        metadata: { port: 4242, worktreeRoot: '/me' },
+      });
+      const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
+      expect(md.pid).toBe(process.pid);
+      expect(md.port).toBe(4242);
+    });
+
+    test(`readProcessLock returns null for hostile lock with ${label}`, () => {
+      const hostile = {
+        pid,
+        hostname: hostname(),
+        port: 9000,
+        startedAt: new Date().toISOString(),
+        worktreeRoot: '/attacker',
+      };
+      require('node:fs').mkdirSync(lockDir, { recursive: true });
+      writeFileSync(lockPath, JSON.stringify(hostile), 'utf-8');
+
+      expect(readProcessLock({ lockName: LOCK_NAME, lockDir })).toBeNull();
+    });
+
+    test(`readProcessLockDetailed returns incompatible.corrupt for hostile lock with ${label}`, () => {
+      const hostile = {
+        pid,
+        hostname: hostname(),
+        port: 9000,
+        startedAt: new Date().toISOString(),
+        worktreeRoot: '/attacker',
+        protocolVersion: 1,
+        runtimeVersion: '1.0.0',
+      };
+      require('node:fs').mkdirSync(lockDir, { recursive: true });
+      writeFileSync(lockPath, JSON.stringify(hostile), 'utf-8');
+
+      const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
+      expect(result.status).toBe('incompatible');
+      if (result.status !== 'incompatible') throw new Error('expected incompatible');
+      expect(result.reason).toBe('corrupt');
+    });
+  }
+
+  test('isValidLockPid rejects hostile sentinels', async () => {
+    const { isValidLockPid } = await import('./process-alive.ts');
+    expect(isValidLockPid(0)).toBe(false);
+    expect(isValidLockPid(1)).toBe(false);
+    expect(isValidLockPid(-1)).toBe(false);
+    expect(isValidLockPid(1.5)).toBe(false);
+    expect(isValidLockPid(Number.NaN)).toBe(false);
+    expect(isValidLockPid(Number.POSITIVE_INFINITY)).toBe(false);
+    expect(isValidLockPid(0x80000000)).toBe(false);
+    expect(isValidLockPid('123')).toBe(false);
+    expect(isValidLockPid(null)).toBe(false);
+    expect(isValidLockPid(process.pid)).toBe(true);
+    expect(isValidLockPid(process.ppid > 1 ? process.ppid : 12345)).toBe(true);
   });
 });
