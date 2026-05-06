@@ -1,10 +1,4 @@
 export {
-  type ApplyFolderRulesUpsertOptions,
-  type ApplyFolderRulesUpsertResult,
-  applyFolderRulesUpsert,
-  type FolderRuleUpsert,
-} from './config/apply-folder-rules-upsert.ts';
-export {
   type ConfigPathPresence,
   type InspectConfigPathsOptions,
   inspectConfigPaths,

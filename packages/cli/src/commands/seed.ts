@@ -156,7 +156,7 @@ async function confirm(prompt: string, input?: NodeJS.ReadableStream): Promise<b
 export function seedCommand(): Command {
   return new Command('seed')
     .description(
-      'Scaffold the Karpathy three-layer knowledge-base structure (external-sources/, research/, articles/) + log.md + config.yml folders: entries. Use --root to place them inside a subfolder instead of the project root.',
+      'Scaffold the Karpathy three-layer knowledge-base structure (external-sources/, research/, articles/) + log.md + per-folder .ok/frontmatter.yml defaults. Use --root to place them inside a subfolder instead of the project root.',
     )
     .argument('[path]', 'Project directory (defaults to cwd)')
     .option(

@@ -58,7 +58,6 @@
     "test": "bun test"
   },
   "devDependencies": {
-    "@types/picomatch": "^4.0.3",
     "@types/shell-quote": "^1.7.5",
     "@types/ws": "^8.18.1",
     "@types/yazl": "^2.4.6",
