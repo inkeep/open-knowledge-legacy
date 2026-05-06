@@ -258,6 +258,28 @@ describe('bindFrontmatterDoc — current()', () => {
     const snapshot = binding.current();
     expect(snapshot.parseError).toBeDefined();
   });
+
+  test('surfaces no parseError when frontmatter has a mixed-scalar array', () => {
+    const fixture =
+      '---\n' +
+      'title: Sample\n' +
+      'tags: [travel, spain, barcelona, mallorca, palma, balearics, sailing, 2026]\n' +
+      '---\nbody\n';
+    const provider = makeProvider(fixture);
+    const binding = bindFrontmatterDoc(provider);
+    const snapshot = binding.current();
+    expect(snapshot.parseError).toBeUndefined();
+    expect(snapshot.map.tags).toEqual([
+      'travel',
+      'spain',
+      'barcelona',
+      'mallorca',
+      'palma',
+      'balearics',
+      'sailing',
+      '2026',
+    ]);
+  });
 });
 
 describe('bindFrontmatterDoc — subscribe()', () => {

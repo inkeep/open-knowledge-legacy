@@ -15,6 +15,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { dispatchExternalLinkClick } from '@/lib/external-link';
 import { type AuthTransport, httpAuthTransport } from '@/lib/transports/auth-transport';
 import { consumeAuthEventStream } from './auth-event-stream';
 import { Button } from './ui/button';
@@ -179,7 +180,9 @@ function DeviceFlowPanel({ onSuccess, onCancel, transport }: DeviceFlowPanelProp
             <a
               href={verificationUri}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
+              onClick={(e) => dispatchExternalLinkClick(e, verificationUri)}
+              onAuxClick={(e) => dispatchExternalLinkClick(e, verificationUri)}
               className="underline underline-offset-2"
             >
               {verificationUri}
@@ -301,7 +304,9 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
         <a
           href="https://github.com/settings/tokens"
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
+          onClick={(e) => dispatchExternalLinkClick(e, 'https://github.com/settings/tokens')}
+          onAuxClick={(e) => dispatchExternalLinkClick(e, 'https://github.com/settings/tokens')}
           className="underline underline-offset-2"
         >
           github.com/settings/tokens

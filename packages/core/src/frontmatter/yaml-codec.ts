@@ -1,4 +1,11 @@
-import { Document, type Pair, parseDocument, type ToStringOptions } from 'yaml';
+import {
+  Document,
+  isSeq,
+  type Pair,
+  parseDocument,
+  type ToStringOptions,
+  type YAMLSeq,
+} from 'yaml';
 import { type FrontmatterMap, FrontmatterMapSchema, FrontmatterValueSchema } from './schema.ts';
 
 export const STRINGIFY_OPTIONS: ToStringOptions = {
@@ -68,6 +75,14 @@ export function applyPatchToDocument(doc: Document, patch: Record<string, unknow
     const result = FrontmatterValueSchema.safeParse(value);
     if (!result.success) {
       throw new Error(`Invalid frontmatter value for "${key}": ${result.error.message}`);
+    }
+    if (Array.isArray(result.data)) {
+      const existing = doc.get(key, true);
+      const existingFlow = isSeq(existing) ? (existing as YAMLSeq).flow : undefined;
+      const newNode = doc.createNode(result.data) as YAMLSeq;
+      if (existingFlow !== undefined) newNode.flow = existingFlow;
+      doc.set(key, newNode);
+      continue;
     }
     doc.set(key, result.data);
   }

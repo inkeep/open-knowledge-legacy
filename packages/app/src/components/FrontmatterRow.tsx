@@ -1,3 +1,22 @@
+/**
+ * Reusable frontmatter-row primitives — extracted from `PropertyPanel.tsx`
+ * so file frontmatter (PropertyPanel, CRDT-bound) and folder frontmatter
+ * (FolderDefaultsCard, HTTP-bound) share the same row chrome.
+ *
+ * Affordances are opt-in:
+ *   - `sortableId` enables `@dnd-kit` drag-handle for reorder
+ *   - `rename` enables the click-to-rename UX
+ *   - `isDuplicate` renders the duplicate-name warning marker
+ *   - `onRemove` renders the delete-icon
+ *   - `badge` renders an extra inline label after the key (e.g. "inherited")
+ *
+ * PropertyPanel passes every affordance. FolderDefaultsCard skips
+ * `sortableId` (cascade is order-independent) but takes the rest. Each
+ * card decides its commit transport — PropertyPanel routes through
+ * `bindFrontmatterDoc.patch()` (CRDT); FolderDefaultsCard fires
+ * `saveFolderConfig` (HTTP). The row component is transport-agnostic.
+ */
+
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { FrontmatterType, FrontmatterValue } from '@inkeep/open-knowledge-core';
@@ -11,8 +30,10 @@ import {
   TextWidget,
   TypeIconButton,
 } from '@/components/PropertyWidgets';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 export interface AddDraft {
   name: string;
@@ -45,6 +66,7 @@ interface FrontmatterRowProps {
   rename?: FrontmatterRowRenameApi;
   isDuplicate?: boolean;
   badge?: ReactNode;
+  isInherited?: boolean;
   onCommit: (next: FrontmatterValue) => void;
   onChangeType: (next: FrontmatterType) => void;
   onRemove?: () => void;
@@ -60,6 +82,7 @@ export function FrontmatterRow({
   rename,
   isDuplicate = false,
   badge,
+  isInherited = false,
   onCommit,
   onChangeType,
   onRemove,
@@ -71,37 +94,46 @@ export function FrontmatterRow({
       declared={declared}
       error={error}
       isDuplicate={isDuplicate}
+      isInherited={isInherited}
     >
       {(dragHandle) => (
         <>
           <div className="flex items-center gap-1">
             {dragHandle}
-            <TypeIconButton keyName={keyName} type={declared} onChangeType={onChangeType} />
-            <div className="w-32 shrink-0">
-              {rename?.state ? (
-                <RenameInput
-                  keyName={keyName}
-                  draft={rename.state.draft}
-                  error={rename.state.error}
-                  onChangeDraft={rename.onChangeDraft}
-                  onCommit={rename.onCommit}
-                  onCancel={rename.onCancel}
-                />
-              ) : (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  data-testid="property-name-button"
-                  data-key={keyName}
-                  onClick={rename?.onBegin}
-                  disabled={!rename}
-                  className="block h-7 w-full truncate px-2 py-0.5 text-left text-sm rounded-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground disabled:opacity-100 disabled:cursor-default"
-                >
-                  {keyName}
-                </Button>
-              )}
+            {/* Identity column (type icon + key name) is the only part dimmed
+                on inherited rows. The value widget stays full-opacity since
+                editing it materializes a local override; the badge stays
+                full-opacity so the affordance label remains readable. */}
+            <div
+              className={`flex items-center gap-1${isInherited ? ' opacity-60' : ''}`}
+              data-testid="property-row-identity"
+            >
+              <TypeIconButton
+                keyName={keyName}
+                type={declared}
+                onChangeType={onChangeType}
+                disabled={isInherited}
+              />
+              <div className="w-32 shrink-0">
+                {rename?.state ? (
+                  <RenameInput
+                    keyName={keyName}
+                    draft={rename.state.draft}
+                    error={rename.state.error}
+                    onChangeDraft={rename.onChangeDraft}
+                    onCommit={rename.onCommit}
+                    onCancel={rename.onCancel}
+                  />
+                ) : (
+                  <KeyNameButton
+                    keyName={keyName}
+                    onBegin={rename?.onBegin}
+                    disabled={!rename}
+                    isInherited={isInherited}
+                  />
+                )}
+              </div>
             </div>
-            {badge ? <div className="shrink-0">{badge}</div> : null}
             {isDuplicate ? (
               <span
                 data-testid="property-duplicate-marker"
@@ -113,14 +145,19 @@ export function FrontmatterRow({
               </span>
             ) : null}
             <div className="flex-1">
-              <Widget
-                key={`widget-${resetCounter}`}
-                keyName={keyName}
-                value={value}
-                widgetType={declared}
-                onCommit={onCommit}
-              />
+              {isInherited && declared === 'list' ? (
+                <ReadOnlyChipList keyName={keyName} value={Array.isArray(value) ? value : []} />
+              ) : (
+                <Widget
+                  key={`widget-${resetCounter}`}
+                  keyName={keyName}
+                  value={value}
+                  widgetType={declared}
+                  onCommit={onCommit}
+                />
+              )}
             </div>
+            {badge ? <div className="shrink-0">{badge}</div> : null}
             {onRemove ? (
               <Button
                 type="button"
@@ -158,6 +195,7 @@ function SortableShell({
   declared,
   error,
   isDuplicate,
+  isInherited,
   children,
 }: {
   sortableId: string | undefined;
@@ -165,6 +203,7 @@ function SortableShell({
   declared: FrontmatterType;
   error?: string | null;
   isDuplicate: boolean;
+  isInherited: boolean;
   children: (dragHandle: ReactNode) => ReactNode;
 }) {
   if (sortableId) {
@@ -180,6 +219,7 @@ function SortableShell({
       </SortableRowBody>
     );
   }
+  const dragHandleSlot = isInherited ? <span aria-hidden className="h-7 w-4 shrink-0" /> : null;
   return (
     <div
       className="group py-0.5"
@@ -188,8 +228,9 @@ function SortableShell({
       data-widget-type={declared}
       data-error={error ?? undefined}
       data-duplicate={isDuplicate || undefined}
+      data-inherited={isInherited || undefined}
     >
-      {children(null)}
+      {children(dragHandleSlot)}
     </div>
   );
 }
@@ -302,6 +343,44 @@ function RenameInput({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function KeyNameButton({
+  keyName,
+  onBegin,
+  disabled,
+  isInherited,
+}: {
+  keyName: string;
+  onBegin: (() => void) | undefined;
+  disabled: boolean;
+  isInherited: boolean;
+}) {
+  const button = (
+    <Button
+      type="button"
+      variant="ghost"
+      data-testid="property-name-button"
+      data-key={keyName}
+      onClick={onBegin}
+      disabled={disabled}
+      className="block h-7 w-full truncate px-2 py-0.5 text-left text-sm rounded-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground disabled:opacity-100 disabled:cursor-default"
+    >
+      {keyName}
+    </Button>
+  );
+  if (!isInherited) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {/* biome-ignore lint/a11y/noNoninteractiveTabindex: shadcn's tooltip-on-disabled-button pattern requires a focusable <span> wrapper so keyboard users can reach the tooltip — the inner <button disabled> is removed from tab order. https://ui.shadcn.com/docs/components/radix/tooltip#disabled-button */}
+        <span tabIndex={0} className="block w-full">
+          {button}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>Inherited — set a value to override.</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -422,4 +501,44 @@ function Widget({ keyName, value, widgetType, onCommit }: WidgetProps) {
   const str =
     typeof value === 'string' ? value : Array.isArray(value) ? value.join(', ') : String(value);
   return <TextWidget keyName={keyName} value={str} onCommit={onCommit} />;
+}
+
+export function InheritedBadge({ source }: { source: string }) {
+  const path = source === '' ? '.ok/frontmatter.yml' : `${source}/.ok/frontmatter.yml`;
+  return (
+    <Badge
+      variant="gray"
+      data-testid="property-inherited-badge"
+      title={`Inherited from ${path}`}
+      className="text-2xs"
+    >
+      inherited
+    </Badge>
+  );
+}
+
+function ReadOnlyChipList({ keyName, value }: { keyName: string; value: unknown[] }) {
+  return (
+    <div
+      data-testid="list-widget-readonly"
+      data-key={keyName}
+      className="flex h-7 min-h-7 flex-wrap items-center gap-1 rounded-md px-2"
+    >
+      {value.length === 0 ? (
+        <span className="text-sm text-muted-foreground/60">Empty</span>
+      ) : (
+        value.map((chip, i) => (
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: chips are positional
+            key={`${i}-${String(chip)}`}
+            data-testid="list-chip-readonly"
+            data-index={i}
+            className="inline-flex items-center text-1sm rounded-full bg-muted py-0.5 px-2"
+          >
+            {String(chip)}
+          </span>
+        ))
+      )}
+    </div>
+  );
 }

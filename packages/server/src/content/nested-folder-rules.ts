@@ -51,6 +51,18 @@ export function resolveNestedFrontmatter(
   projectDir: string,
   folderRelPath: string,
 ): FolderFrontmatter {
+  return resolveNestedFrontmatterWithSources(projectDir, folderRelPath).merged;
+}
+
+interface ResolvedFrontmatterWithSources {
+  merged: FolderFrontmatter;
+  sources: Record<string, string>;
+}
+
+export function resolveNestedFrontmatterWithSources(
+  projectDir: string,
+  folderRelPath: string,
+): ResolvedFrontmatterWithSources {
   const normalized = folderRelPath.replace(/^\.\//, '').replace(/^\/+/, '').replace(/\/+$/, '');
   const segments =
     normalized === '' || normalized === '.'
@@ -58,23 +70,29 @@ export function resolveNestedFrontmatter(
       : normalized.split('/').filter((s) => s.length > 0);
 
   let result: FrontmatterRecord = {};
+  const sources: Record<string, string> = {};
   let anyMatch = false;
 
   for (let depth = 0; depth <= segments.length; depth++) {
+    const folderForLevel = depth === 0 ? '' : segments.slice(0, depth).join('/');
     const yamlPath =
       depth === 0
         ? resolve(projectDir, '.ok', 'frontmatter.yml')
-        : resolve(projectDir, segments.slice(0, depth).join('/'), '.ok', 'frontmatter.yml');
+        : resolve(projectDir, folderForLevel, '.ok', 'frontmatter.yml');
     if (!existsSync(yamlPath)) continue;
 
     const parsed = readFrontmatterYaml(yamlPath);
     if (parsed == null) continue;
 
     result = mergeCascade(result, parsed);
+    for (const key of Object.keys(parsed)) {
+      if (parsed[key] === undefined) continue;
+      sources[key] = folderForLevel;
+    }
     anyMatch = true;
   }
 
-  return anyMatch ? coerceWellKnown(result) : {};
+  return anyMatch ? { merged: coerceWellKnown(result), sources } : { merged: {}, sources: {} };
 }
 
 function coerceWellKnown(raw: Record<string, unknown>): FolderFrontmatter {

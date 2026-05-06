@@ -1,4 +1,12 @@
-import { Document, type Pair, parseDocument, type Scalar, type YAMLMap } from 'yaml';
+import {
+  Document,
+  isSeq,
+  type Pair,
+  parseDocument,
+  type Scalar,
+  type YAMLMap,
+  type YAMLSeq,
+} from 'yaml';
 import { FRONTMATTER_RE, unwrapFrontmatterFences } from '../extensions/frontmatter.ts';
 import {
   type FrontmatterMap,
@@ -204,6 +212,14 @@ export function applyPatchToFm(
             reason: parsed.error.issues[0]?.message ?? 'invalid value',
           },
         };
+      }
+      if (Array.isArray(parsed.data)) {
+        const existing = doc.get(key, true);
+        const existingFlow = isSeq(existing) ? (existing as YAMLSeq).flow : undefined;
+        const newNode = doc.createNode(parsed.data) as YAMLSeq;
+        if (existingFlow !== undefined) newNode.flow = existingFlow;
+        doc.set(key, newNode);
+        continue;
       }
       doc.set(key, parsed.data);
     }

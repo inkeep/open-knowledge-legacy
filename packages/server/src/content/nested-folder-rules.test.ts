@@ -3,7 +3,12 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { nestedOkPath, parentFolderOf, resolveNestedFrontmatter } from './nested-folder-rules.ts';
+import {
+  nestedOkPath,
+  parentFolderOf,
+  resolveNestedFrontmatter,
+  resolveNestedFrontmatterWithSources,
+} from './nested-folder-rules.ts';
 
 describe('resolveNestedFrontmatter', () => {
   let projectDir: string;
@@ -196,6 +201,77 @@ describe('resolveNestedFrontmatter', () => {
       'bob',
       'carol',
     ]);
+  });
+});
+
+describe('resolveNestedFrontmatterWithSources', () => {
+  let projectDir: string;
+
+  beforeEach(async () => {
+    projectDir = await mkdtemp(join(tmpdir(), 'nested-folder-rules-sources-'));
+  });
+
+  afterEach(async () => {
+    await rm(projectDir, { recursive: true, force: true });
+  });
+
+  test('returns empty merged + sources when no .ok/frontmatter.yml exists anywhere', () => {
+    expect(resolveNestedFrontmatterWithSources(projectDir, 'meetings')).toEqual({
+      merged: {},
+      sources: {},
+    });
+  });
+
+  test('records project-root cascade source as empty string', () => {
+    mkdirSync(join(projectDir, '.ok'), { recursive: true });
+    writeFileSync(join(projectDir, '.ok', 'frontmatter.yml'), 'title: Project\ntags: [common]\n');
+
+    const result = resolveNestedFrontmatterWithSources(projectDir, 'meetings');
+    expect(result.merged).toEqual({ title: 'Project', tags: ['common'] });
+    expect(result.sources).toEqual({ title: '', tags: '' });
+  });
+
+  test('per-key source is the deepest contributor for scalars (last-wins)', () => {
+    mkdirSync(join(projectDir, 'meetings', '.ok'), { recursive: true });
+    writeFileSync(
+      join(projectDir, 'meetings', '.ok', 'frontmatter.yml'),
+      'title: Meetings\ndescription: Notes\n',
+    );
+    mkdirSync(join(projectDir, 'meetings', 'prep-notes', '.ok'), { recursive: true });
+    writeFileSync(
+      join(projectDir, 'meetings', 'prep-notes', '.ok', 'frontmatter.yml'),
+      'title: Prep Notes\n',
+    );
+
+    const result = resolveNestedFrontmatterWithSources(projectDir, 'meetings/prep-notes');
+    expect(result.merged).toEqual({ title: 'Prep Notes', description: 'Notes' });
+    expect(result.sources).toEqual({
+      title: 'meetings/prep-notes',
+      description: 'meetings',
+    });
+  });
+
+  test('array source is the deepest contributing folder', () => {
+    mkdirSync(join(projectDir, 'a', '.ok'), { recursive: true });
+    writeFileSync(join(projectDir, 'a', '.ok', 'frontmatter.yml'), 'tags: [root]\n');
+    mkdirSync(join(projectDir, 'a', 'b', '.ok'), { recursive: true });
+    writeFileSync(join(projectDir, 'a', 'b', '.ok', 'frontmatter.yml'), 'tags: [leaf]\n');
+
+    const result = resolveNestedFrontmatterWithSources(projectDir, 'a/b');
+    expect(result.merged.tags).toEqual(['root', 'leaf']);
+    expect(result.sources.tags).toBe('a/b');
+  });
+
+  test('arbitrary keys (not just title/description/tags) get sources tracked', () => {
+    mkdirSync(join(projectDir, 'rfcs', '.ok'), { recursive: true });
+    writeFileSync(
+      join(projectDir, 'rfcs', '.ok', 'frontmatter.yml'),
+      'status: draft\nteam: platform\n',
+    );
+
+    const result = resolveNestedFrontmatterWithSources(projectDir, 'rfcs');
+    expect(result.merged).toMatchObject({ status: 'draft', team: 'platform' });
+    expect(result.sources).toEqual({ status: 'rfcs', team: 'rfcs' });
   });
 });
 
