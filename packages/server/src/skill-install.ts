@@ -278,7 +278,6 @@ export interface BuildAndOpenSkillResult {
   outputPath?: string;
   size?: number;
   sha256?: string;
-  cliVersion?: string;
   skillVersion?: string;
   handoffError?: { reason: 'unsupported-platform' | 'spawn-error'; message: string };
   buildError?: string;
@@ -407,7 +406,7 @@ export async function buildAndOpenSkill(
 
   let build: BuildSkillZipResult;
   try {
-    build = await buildSkillZip({ outputPath, skipVersionCheck: true });
+    build = await buildSkillZip({ outputPath });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await report('failed', undefined, `build-failed:${message}`);
@@ -422,7 +421,6 @@ export async function buildAndOpenSkill(
     outputPath: build.outputPath,
     size: build.size,
     sha256: build.sha256,
-    cliVersion: build.cliVersion,
     skillVersion: build.skillVersion,
   };
 
