@@ -28,10 +28,11 @@ ok                     # equivalent
 ```
 
 | Flag | Description |
+| --- | --- |
 | `-p, --port <port>` | Server port (overrides config and the `PORT` env) |
 | `-H, --host <host>` | Bind address (overrides config and the `HOST` env) |
 | `--open` | Open the editor in your default browser |
-| `--open` | Open the editor in your default browser |
+| `--mode <browser\|app>` | Force dispatch mode. `app` hands off to the desktop bundle when installed |
 | `--no-init` | Skip `.ok/` scaffolding |
 
 The content directory comes from `content.dir` in `.ok/config.yml` (see [Configuration](/reference/configuration)).
@@ -119,6 +120,7 @@ ok ui [--port <port>] [--host <host>]
 
 ```bash
 ok status [--json]   # Show running server + editor (add --json for structured output)
+ok ps [--all] [--json] # List running servers; --all includes stale/foreign entries
 ok stop              # Stop the server and editor
 ok clean             # Clean up after a crashed run
 ```

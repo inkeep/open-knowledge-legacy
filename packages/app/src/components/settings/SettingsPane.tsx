@@ -43,12 +43,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { Check, RotateCcw, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import {
-  type ControllerRenderProps,
-  type FieldPath,
-  type UseFormReturn,
-  useFormContext,
-} from 'react-hook-form';
+import { type ControllerRenderProps, type FieldPath, useFormContext } from 'react-hook-form';
 import { toast } from 'sonner';
 import * as Y from 'yjs';
 import { EnableSyncConfirmDialog } from '@/components/EnableSyncConfirmDialog';
@@ -73,7 +68,6 @@ import { useEnableSyncWithConfirm } from '@/hooks/use-enable-sync-with-confirm';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
 import type { SettingsScope } from '@/lib/use-settings-route';
-import { FoldersSection } from './FoldersSection';
 import {
   getEnumOptions,
   getFieldDefault,
@@ -89,21 +83,12 @@ interface SettingsPaneProps {
   onScopeChange: (scope: SettingsScope) => void;
 }
 
-type SectionDef =
-  | {
-      id: string;
-      title: string;
-      description: string;
-      fields: FieldDef[];
-      custom?: never;
-    }
-  | {
-      id: string;
-      title: string;
-      description: string;
-      fields: [];
-      custom: 'folders';
-    };
+interface SectionDef {
+  id: string;
+  title: string;
+  description: string;
+  fields: FieldDef[];
+}
 
 interface FieldDef {
   path: string[];
@@ -124,14 +109,6 @@ const SECTIONS: SectionDef[] = [
         description: 'URL of your team’s deployed wiki (project-only).',
       },
     ],
-  },
-  {
-    id: 'folders',
-    title: 'Folders',
-    description:
-      'Default frontmatter applied to documents matching glob patterns. Order matters: later rules override earlier ones.',
-    fields: [],
-    custom: 'folders',
   },
   {
     id: 'appearance',
@@ -330,33 +307,21 @@ function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
 
   return (
     <Form {...form}>
-      <SettingsForm scope={scope} form={form} commitField={commitField} flashedPath={flashedPath} />
+      <SettingsForm scope={scope} commitField={commitField} flashedPath={flashedPath} />
     </Form>
   );
 }
 
 interface SettingsFormProps {
   scope: SettingsScope;
-  form: UseFormReturn<Config>;
   commitField: (name: FieldPath<Config>) => boolean;
   flashedPath: string | null;
 }
 
-function SettingsForm({ scope, form, commitField, flashedPath }: SettingsFormProps) {
+function SettingsForm({ scope, commitField, flashedPath }: SettingsFormProps) {
   return (
     <div className="mx-auto max-w-3xl space-y-8 p-6">
       {SECTIONS.map((section) => {
-        if (section.custom === 'folders') {
-          return (
-            <FoldersSection
-              key={section.id}
-              form={form}
-              commitField={commitField}
-              scope={scope}
-              flashedPath={flashedPath}
-            />
-          );
-        }
         const visibleFields = section.fields.filter((field) =>
           isFieldVisibleAtScope(field.path, scope),
         );

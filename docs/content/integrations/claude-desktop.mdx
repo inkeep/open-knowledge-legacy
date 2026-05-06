@@ -42,6 +42,10 @@ Claude should recognize the skill and use Open Knowledge's tools.
 
 ## Cowork: skill won't fire after install
 
+<Callout type="info">
+Upstream Cowork bugs — last verified May 2026. Drop this section once Anthropic ships a fix.
+</Callout>
+
 Claude Cowork has [an open bug](https://github.com/anthropics/claude-code/issues/26254) where custom skills register in the UI but don't mount in the session VM. Symptom: the skill shows enabled but Cowork tells you it isn't available.
 
 Workaround:
@@ -50,8 +54,6 @@ Workaround:
 2. Run `npx @inkeep/open-knowledge install-skill` again.
 3. Re-upload (the same 5-click sequence).
 4. Start a fresh Cowork session.
-
-A related ["Save and Replace" bug](https://github.com/anthropics/claude-code/issues/46836) silently no-ops same-name reinstalls. Same workaround: delete first, then re-upload.
 
 ## Team and Enterprise
 
