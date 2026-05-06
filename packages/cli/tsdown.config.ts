@@ -46,6 +46,7 @@ export default defineConfig({
   deps: {
     neverBundle: ['@parcel/watcher', '@napi-rs/keyring'],
     alwaysBundle: [
+      /^@inquirer\/checkbox(\/|$)/,
       /^@inquirer\/password(\/|$)/,
       /^@modelcontextprotocol\/sdk(\/|$)/,
       /^@octokit\/auth-oauth-device(\/|$)/,

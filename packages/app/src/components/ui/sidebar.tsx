@@ -53,7 +53,12 @@ function getInitialSidebarWidth(defaultWidth: string) {
 
   if (!savedWidth) return defaultWidth;
 
-  const decodedWidth = decodeURIComponent(savedWidth);
+  let decodedWidth: string;
+  try {
+    decodedWidth = decodeURIComponent(savedWidth);
+  } catch {
+    return defaultWidth;
+  }
   return SIDEBAR_WIDTH_VALUE_PATTERN.test(decodedWidth) ? decodedWidth : defaultWidth;
 }
 
