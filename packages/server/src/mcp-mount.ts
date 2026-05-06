@@ -40,9 +40,10 @@ import { isAllowedApiOrigin } from './api-origin.ts';
 import type { PinoLogger } from './logger.ts';
 import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import type { McpHttpHandler } from './mcp-http.ts';
-import { handleCollabSocketError } from './metrics.ts';
+import { handleCollabSocketError, incrementCollabMessageTooLarge } from './metrics.ts';
 
 const DEFAULT_KEEPALIVE_GRACE_MS = 10_000;
+const MAX_COLLAB_MESSAGE_BYTES = 1024 * 1024;
 const MCP_CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers':
@@ -78,7 +79,7 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
   } = opts;
   const keepaliveGraceMs = opts.keepaliveGraceMs ?? DEFAULT_KEEPALIVE_GRACE_MS;
 
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_COLLAB_MESSAGE_BYTES });
   wss.on('error', (err) => {
     log.error({ err }, 'WebSocketServer error');
   });
@@ -256,15 +257,35 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
           ws as unknown as WebSocket,
           req as unknown as Request,
         );
+        let closedByPolicy = false;
         ws.on('message', (data: ArrayBuffer | Buffer) => {
-          clientConnection.handleMessage(
-            data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data),
-          );
+          if (closedByPolicy) return;
+          const bytes = data.byteLength;
+          if (bytes > MAX_COLLAB_MESSAGE_BYTES) {
+            closedByPolicy = true;
+            incrementCollabMessageTooLarge();
+            log.warn(
+              { event: 'collab-message-too-large', bytes, limit: MAX_COLLAB_MESSAGE_BYTES },
+              'Collab WebSocket message rejected before Yjs processing',
+            );
+            ws.close(1009, 'Message Too Big');
+            return;
+          }
+          clientConnection.handleMessage(new Uint8Array(data as Buffer));
         });
         ws.on('close', (code: number, reason: Buffer) => {
           clientConnection.handleClose({ code, reason: reason.toString() });
         });
         ws.on('error', (err: NodeJS.ErrnoException) => {
+          if (err.code === 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH') {
+            incrementCollabMessageTooLarge();
+            log.warn(
+              { event: 'collab-message-too-large', limit: MAX_COLLAB_MESSAGE_BYTES },
+              'Collab WebSocket frame rejected by ws maxPayload before Yjs processing',
+            );
+            ws.terminate();
+            return;
+          }
           if (!handleCollabSocketError(err)) {
             log.error({ err }, 'WebSocket error');
           }

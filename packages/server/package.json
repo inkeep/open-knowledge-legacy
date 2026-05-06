@@ -59,6 +59,7 @@
   },
   "devDependencies": {
     "@types/shell-quote": "^1.7.5",
+    "lib0": "^0.2.117",
     "@types/ws": "^8.18.1",
     "@types/yazl": "^2.4.6",
     "sirv": "^3.0.1",

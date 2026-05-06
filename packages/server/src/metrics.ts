@@ -27,6 +27,7 @@ export interface ReconciliationMetrics {
   persistenceForceFlushDuringBurst: number;
   collabSocketEpipeCount: number;
   collabSocketEconnresetCount: number;
+  collabMessageTooLargeCount: number;
   shadowMigrationLegacyRefsDeleted: number;
   effectDiffCaptureFailures: number;
   agentPresenceMutationErrors: number;
@@ -68,6 +69,7 @@ const counters: ReconciliationMetrics = {
   persistenceForceFlushDuringBurst: 0,
   collabSocketEpipeCount: 0,
   collabSocketEconnresetCount: 0,
+  collabMessageTooLargeCount: 0,
   shadowMigrationLegacyRefsDeleted: 0,
   effectDiffCaptureFailures: 0,
   agentPresenceMutationErrors: 0,
@@ -210,6 +212,10 @@ export function incrementCollabSocketFilteredError(code: 'EPIPE' | 'ECONNRESET')
   else counters.collabSocketEconnresetCount++;
 }
 
+export function incrementCollabMessageTooLarge(): void {
+  counters.collabMessageTooLargeCount++;
+}
+
 export function incrementShadowMigrationLegacyRefsDeleted(count: number): void {
   counters.shadowMigrationLegacyRefsDeleted += count;
 }
@@ -269,6 +275,7 @@ export function resetMetrics(): void {
   counters.persistenceForceFlushDuringBurst = 0;
   counters.collabSocketEpipeCount = 0;
   counters.collabSocketEconnresetCount = 0;
+  counters.collabMessageTooLargeCount = 0;
   counters.shadowMigrationLegacyRefsDeleted = 0;
   counters.effectDiffCaptureFailures = 0;
   counters.agentPresenceMutationErrors = 0;
