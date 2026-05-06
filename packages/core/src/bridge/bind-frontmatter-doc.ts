@@ -177,6 +177,8 @@ function frontmatterValuesEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
+const FM_OPEN_FENCE_MIN_BYTES = 5;
+
 function readSnapshotFromYText(ytext: Y.Text): { snapshot: FrontmatterSnapshot; raw: string } {
   const raw = ytext.toString();
   return { snapshot: snapshotFromRaw(raw), raw };
@@ -188,6 +190,10 @@ function snapshotFromRaw(raw: string): FrontmatterSnapshot {
   return { map, keys, parseError };
 }
 
+function detectOpenFencePrefix(raw: string): boolean {
+  return /^---\r?\n/.test(raw);
+}
+
 export function bindFrontmatterDoc(provider: FrontmatterDocProvider): FrontmatterBinding {
   const ydoc = provider.document;
   const ytext = ydoc.getText('source');
@@ -196,6 +202,7 @@ export function bindFrontmatterDoc(provider: FrontmatterDocProvider): Frontmatte
   const initial = readSnapshotFromYText(ytext);
   let lastSnapshot: FrontmatterSnapshot = initial.snapshot;
   let lastFenced = detectFmRegion(initial.raw).fenced;
+  let hasOpenFencePrefix = detectOpenFencePrefix(initial.raw);
   let disposed = false;
 
   function fireListeners(force = false): void {
@@ -211,10 +218,12 @@ export function bindFrontmatterDoc(provider: FrontmatterDocProvider): Frontmatte
       return;
     }
     if (!force && snapshotsEqual(lastSnapshot, next)) {
+      hasOpenFencePrefix = detectOpenFencePrefix(raw);
       return;
     }
     lastSnapshot = next;
     lastFenced = detectFmRegion(raw).fenced;
+    hasOpenFencePrefix = detectOpenFencePrefix(raw);
     for (const listener of listeners) {
       try {
         listener(next);
@@ -226,7 +235,7 @@ export function bindFrontmatterDoc(provider: FrontmatterDocProvider): Frontmatte
 
   const onYTextChange = (event: Y.YTextEvent): void => {
     if (disposed) return;
-    if (touchesFmRegion(event, lastFenced.length)) {
+    if (touchesFmRegion(event, lastFenced.length, hasOpenFencePrefix)) {
       fireListeners();
     }
   };
@@ -364,10 +373,15 @@ export function bindFrontmatterDoc(provider: FrontmatterDocProvider): Frontmatte
   };
 }
 
-function touchesFmRegion(event: Y.YTextEvent, fmLength: number): boolean {
-  if (fmLength === 0) {
+export function touchesFmRegion(
+  event: Pick<Y.YTextEvent, 'delta'>,
+  fmLength: number,
+  hasOpenFencePrefix: boolean,
+): boolean {
+  if (fmLength === 0 && hasOpenFencePrefix) {
     return true;
   }
+  const threshold = fmLength > 0 ? fmLength : FM_OPEN_FENCE_MIN_BYTES;
   let cursor = 0;
   for (const op of event.delta) {
     if (typeof op.retain === 'number') {
@@ -375,17 +389,17 @@ function touchesFmRegion(event: Y.YTextEvent, fmLength: number): boolean {
       continue;
     }
     if (typeof op.insert === 'string') {
-      if (cursor < fmLength) return true;
+      if (cursor < threshold) return true;
       cursor += op.insert.length;
       continue;
     }
     if (op.insert !== undefined) {
-      if (cursor < fmLength) return true;
+      if (cursor < threshold) return true;
       cursor += 1;
       continue;
     }
     if (typeof op.delete === 'number') {
-      if (cursor < fmLength) return true;
+      if (cursor < threshold) return true;
     }
   }
   return false;

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { extractOkBinaryPath } from '../utils/process-scan.ts';
 import type { LockState } from './lock-state.ts';
 import { renderTable, runPs, timeAgo } from './ps.ts';
 
@@ -236,6 +237,9 @@ describe('runPs --json', () => {
     await runPs({
       discover: async () => ['/tmp/notes/.ok'],
       inspect: (_lockDir, name) => (name === 'server' ? aliveServerState : aliveUiState),
+      resolveCommand: () => '/usr/local/bin/node /tmp/open-knowledge/packages/cli/src/cli.ts start',
+      resolveUsage: (pid) =>
+        pid === 12345 ? { cpuPercent: 1.2, memPercent: 3.4 } : { cpuPercent: 5.6, memPercent: 7.8 },
       json: true,
       log: (msg) => lines.push(msg),
     });
@@ -243,10 +247,24 @@ describe('runPs --json', () => {
     const output = lines.join('\n');
     const parsed = JSON.parse(output) as Array<{
       directory: string;
-      server: { port: number; status: string; pid: number; startedAt: string };
-      ui: { port: number; status: string; pid: number; startedAt: string } | null;
+      server: {
+        port: number;
+        status: string;
+        pid: number;
+        startedAt: string;
+        usage: { cpuPercent: number; memPercent: number } | null;
+      };
+      ui: {
+        port: number;
+        status: string;
+        pid: number;
+        startedAt: string;
+        usage: { cpuPercent: number; memPercent: number } | null;
+      } | null;
       hostname: string;
       lockPath: string;
+      binary: string | null;
+      command: string | null;
     }>;
 
     expect(parsed).toHaveLength(1);
@@ -259,9 +277,15 @@ describe('runPs --json', () => {
     expect(typeof entry.server.startedAt).toBe('string');
     expect(entry.ui).not.toBeNull();
     expect(entry.ui?.port).toBe(3001);
+    expect(entry.server.usage).toEqual({ cpuPercent: 1.2, memPercent: 3.4 });
     expect(entry.ui?.status).toBe('alive');
+    expect(entry.ui?.usage).toEqual({ cpuPercent: 5.6, memPercent: 7.8 });
     expect(entry.hostname).toBe('test-host');
     expect(typeof entry.lockPath).toBe('string');
+    expect(entry.binary).toBe('/tmp/open-knowledge/packages/cli/src/cli.ts');
+    expect(entry.command).toBe(
+      '/usr/local/bin/node /tmp/open-knowledge/packages/cli/src/cli.ts start',
+    );
   });
 
   test('ui is null when ui lock is missing', async () => {
@@ -384,7 +408,7 @@ describe('renderTable', () => {
     expect(output).toBe('No open-knowledge servers found.');
   });
 
-  test('table has DIRECTORY, PORTS, STATUS, PID, STARTED header columns', () => {
+  test('table has DIRECTORY, PORTS, CPU/MEM, STATUS, PID, STARTED, BINARY header columns', () => {
     const entry = {
       directory: '/tmp/notes',
       server: {
@@ -392,18 +416,47 @@ describe('renderTable', () => {
         status: 'alive' as const,
         pid: 12345,
         startedAt: '2026-05-05T08:00:00.000Z',
+        usage: { cpuPercent: 1.2, memPercent: 3.4 },
       },
       ui: null,
       hostname: 'test-host',
       lockPath: '/tmp/notes/.ok/server.lock',
+      binary: '/tmp/open-knowledge/packages/cli/src/cli.ts',
+      command: '/usr/local/bin/node /tmp/open-knowledge/packages/cli/src/cli.ts start',
     };
 
     const output = renderTable([entry]);
     const firstLine = output.split('\n')[0] ?? '';
     expect(firstLine).toContain('DIRECTORY');
     expect(firstLine).toContain('PORTS');
+    expect(firstLine).toContain('CPU/MEM');
     expect(firstLine).toContain('STATUS');
     expect(firstLine).toContain('PID');
     expect(firstLine).toContain('STARTED');
+    expect(firstLine).toContain('BINARY');
+    expect(output).toContain('1.2% / 3.4% | —');
+    expect(output).toContain('/tmp/open-knowledge/packages/cli/src/cli.ts');
+  });
+});
+
+describe('extractOkBinaryPath', () => {
+  test('extracts source cli path from node invocation', () => {
+    expect(
+      extractOkBinaryPath(
+        'node /Users/mike/src/agents-private/public/open-knowledge/packages/cli/src/cli.ts start',
+      ),
+    ).toBe('/Users/mike/src/agents-private/public/open-knowledge/packages/cli/src/cli.ts');
+  });
+
+  test('extracts npx-installed open-knowledge bin path', () => {
+    expect(
+      extractOkBinaryPath(
+        '/usr/local/bin/node /Users/mike/.npm/_npx/64e3e56af53daa3b/node_modules/.bin/open-knowledge start',
+      ),
+    ).toBe('/Users/mike/.npm/_npx/64e3e56af53daa3b/node_modules/.bin/open-knowledge');
+  });
+
+  test('ignores package specifier in npm exec parent command', () => {
+    expect(extractOkBinaryPath('npm exec @inkeep/open-knowledge mcp HOME=/Users/mike')).toBeNull();
   });
 });

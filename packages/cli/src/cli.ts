@@ -16,6 +16,7 @@ import { cleanCommand } from './commands/clean.ts';
 import { cloneCommand } from './commands/clone.ts';
 import { configCommand } from './commands/config.ts';
 import { createRealDetectDeps, detectDesktop, launchDesktop } from './commands/desktop-dispatch.ts';
+import { diagnoseCommand } from './commands/diagnose.ts';
 import { initCommand } from './commands/init.ts';
 import { installSkillCommand } from './commands/install-skill.ts';
 import { mcpCommand } from './commands/mcp.ts';
@@ -88,6 +89,8 @@ program.addCommand(cleanCommand(() => resolvedConfig));
 program.addCommand(statusCommand(() => resolvedConfig));
 
 program.addCommand(psCommand());
+
+program.addCommand(diagnoseCommand());
 
 program.addCommand(configCommand());
 

@@ -42,8 +42,22 @@ describe('findOkProcessPids', () => {
 
     const pids = await findOkProcessPids();
     expect(pids).toEqual([12345]);
-    const [cmd] = spawnSyncSpy.mock.calls[0] as [string, string[]];
+    const [cmd, args] = spawnSyncSpy.mock.calls[0] as [string, string[]];
     expect(cmd).toBe('pgrep');
+    expect(args.join(' ')).toContain('open-knowledge');
+  });
+
+  it('finds npx-installed open-knowledge bin processes', async () => {
+    spawnSyncSpy.mockReturnValue(
+      makeSpawnResult({
+        stdout:
+          '54321 /usr/local/bin/node /Users/mike/.npm/_npx/64e3e56af53daa3b/node_modules/.bin/open-knowledge start\n',
+        status: 0,
+      }),
+    );
+
+    const pids = await findOkProcessPids();
+    expect(pids).toEqual([54321]);
   });
 
   it('falls back to ps when pgrep is unavailable (ENOENT)', async () => {
@@ -75,6 +89,22 @@ describe('findOkProcessPids', () => {
     const pids = await findOkProcessPids();
     expect(pids).toEqual([]);
     expect(spawnSyncSpy.mock.calls.length).toBe(1);
+  });
+
+  it('falls back to ps when pgrep returns PID-only lines', async () => {
+    spawnSyncSpy
+      .mockReturnValueOnce(makeSpawnResult({ stdout: '12345\n', status: 0 }))
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout:
+            'PID COMMAND\n 12345 /usr/local/bin/node /path/node_modules/.bin/open-knowledge start\n',
+          status: 0,
+        }),
+      );
+
+    const pids = await findOkProcessPids();
+    expect(pids).toEqual([12345]);
+    expect(spawnSyncSpy.mock.calls.map((call) => call[0])).toEqual(['pgrep', 'ps']);
   });
 
   it('filters out non-ok processes from ps output', async () => {
@@ -182,14 +212,17 @@ describe('discoverLockDirs', () => {
         }),
       );
 
-    existsSyncSpy.mockImplementation((p: unknown) => p === '/Users/mike/notes/.ok/local');
+    existsSyncSpy.mockImplementation(
+      (p: unknown) =>
+        p === '/Users/mike/notes/.ok/local' || p === '/Users/mike/notes/.ok/local/server.lock',
+    );
 
     const dirs = await discoverLockDirs();
     expect(dirs).toHaveLength(1);
     expect(dirs[0]).toContain('.ok/local');
   });
 
-  it('returns empty array when no ok processes and no .ok/local dirs exist', async () => {
+  it('returns empty array when no ok processes and no lock dirs exist', async () => {
     spawnSyncSpy
       .mockReturnValueOnce(makeSpawnResult({ stdout: '', status: 1 }))
       .mockReturnValueOnce(makeSpawnResult({ stdout: 'COMMAND PID USER\n', status: 0 }));
@@ -198,6 +231,34 @@ describe('discoverLockDirs', () => {
 
     const dirs = await discoverLockDirs();
     expect(dirs).toHaveLength(0);
+  });
+
+  it('discovers legacy .ok/.openknowledge lock dirs for already-running older servers', async () => {
+    spawnSyncSpy
+      .mockReturnValueOnce(makeSpawnResult({ stdout: '55\n', status: 0 }))
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout:
+            'PID COMMAND\n 55 /usr/local/bin/node /path/node_modules/.bin/open-knowledge start\n',
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: 'p55\nfcwd\nn/Users/mike/legacy-notes\n',
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(makeSpawnResult({ stdout: 'COMMAND PID USER\n', status: 0 }));
+
+    existsSyncSpy.mockImplementation(
+      (p: unknown) =>
+        p === '/Users/mike/legacy-notes/.openknowledge' ||
+        p === '/Users/mike/legacy-notes/.openknowledge/server.lock',
+    );
+
+    const dirs = await discoverLockDirs();
+    expect(dirs[0]).toContain('.openknowledge');
   });
 
   it('degrades gracefully when lsof is unavailable for pidCwd calls', async () => {
