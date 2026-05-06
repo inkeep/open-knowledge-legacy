@@ -31,7 +31,7 @@
  */
 
 import { normalizeNullableString, wikiLinkHref } from '@inkeep/open-knowledge-core';
-import type { Slice } from '@tiptap/pm/model';
+import type { Node as PmNode, Slice } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import {
   classifyUrlPortability,
@@ -156,6 +156,20 @@ export function stripBlocklistedClasses(
   return kept || null;
 }
 
+export function selectionPartiallyCoversTopLevelNode(
+  doc: PmNode,
+  from: number,
+  to: number,
+): boolean {
+  let partial = false;
+  doc.nodesBetween(from, to, (node, pos, parent) => {
+    if (parent !== doc) return false;
+    if (from > pos || to < pos + node.nodeSize) partial = true;
+    return false;
+  });
+  return partial;
+}
+
 export function walkLiveDomToInlineStyledFragment(
   _slice: Slice,
   view: EditorView,
@@ -164,6 +178,8 @@ export function walkLiveDomToInlineStyledFragment(
   const fragment = document.createDocumentFragment();
   const { from, to } = view.state.selection;
   if (from === to) return fragment;
+
+  if (selectionPartiallyCoversTopLevelNode(view.state.doc, from, to)) return fragment;
 
   view.state.doc.nodesBetween(from, to, (node, pos, parent) => {
     if (parent !== view.state.doc) return false;

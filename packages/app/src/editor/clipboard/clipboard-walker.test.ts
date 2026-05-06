@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { Schema } from '@tiptap/pm/model';
 import {
   ATTR_BLOCKLIST,
   applyUrlClassifierPostPass,
@@ -25,6 +26,7 @@ import {
   glyphForLucide,
   LUCIDE_GLYPH_MAP,
   STYLE_ALLOWLIST,
+  selectionPartiallyCoversTopLevelNode,
   stripBlocklistedClasses,
   type WalkerEnv,
 } from './clipboard-walker.ts';
@@ -189,6 +191,64 @@ describe('buildInlineStyleFrom — modern CSS color downgrade', () => {
     const out = buildInlineStyleFrom(styles);
     expect(out).toContain('color: rgb(20, 20, 20)');
     expect(out).toContain('background-color: #fef3c7');
+  });
+});
+
+describe('selectionPartiallyCoversTopLevelNode — selection-bound containment guard', () => {
+  const schema = new Schema({
+    nodes: {
+      doc: { content: 'block+' },
+      paragraph: {
+        group: 'block',
+        content: 'text*',
+        toDOM: () => ['p', 0],
+        parseDOM: [{ tag: 'p' }],
+      },
+      text: { group: 'inline' },
+    },
+  });
+
+  function buildDoc(...paragraphs: string[]) {
+    return schema.node(
+      'doc',
+      null,
+      paragraphs.map((p) => schema.node('paragraph', null, p.length > 0 ? [schema.text(p)] : [])),
+    );
+  }
+
+  test('full single-paragraph selection → not partial (whole top-level node covered)', () => {
+    const doc = buildDoc('hello');
+    expect(selectionPartiallyCoversTopLevelNode(doc, 0, doc.nodeSize - 2)).toBe(false);
+  });
+
+  test('partial mid-paragraph selection → partial (leaks surrounding text in walker)', () => {
+    const doc = buildDoc('Hello world');
+    expect(selectionPartiallyCoversTopLevelNode(doc, 4, 6)).toBe(true);
+  });
+
+  test('selection from start of paragraph but ending mid-paragraph → partial', () => {
+    const doc = buildDoc('Hello world');
+    expect(selectionPartiallyCoversTopLevelNode(doc, 1, 6)).toBe(true);
+  });
+
+  test('selection mid-paragraph to end → partial', () => {
+    const doc = buildDoc('Hello world');
+    expect(selectionPartiallyCoversTopLevelNode(doc, 6, 12)).toBe(true);
+  });
+
+  test('selection spanning two whole paragraphs → not partial', () => {
+    const doc = buildDoc('foo', 'bar');
+    expect(selectionPartiallyCoversTopLevelNode(doc, 0, 10)).toBe(false);
+  });
+
+  test('selection straddling a top-level boundary → partial', () => {
+    const doc = buildDoc('foo', 'bar');
+    expect(selectionPartiallyCoversTopLevelNode(doc, 2, 7)).toBe(true);
+  });
+
+  test('selection covering all paragraphs → not partial', () => {
+    const doc = buildDoc('foo', 'bar', 'baz');
+    expect(selectionPartiallyCoversTopLevelNode(doc, 0, doc.content.size)).toBe(false);
   });
 });
 

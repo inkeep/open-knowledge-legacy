@@ -250,6 +250,132 @@ describe('lowercase HTML-primitive shortcut (img / video / audio)', () => {
     expect(out).not.toMatch(/<picture\b/);
   });
 
+  test('unsafe srcset on native <img> is stripped by rehypeSanitizeUrls (per-candidate URL-scheme check)', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        { type: 'mdxJsxAttribute', name: 'srcset', value: 'javascript:alert(1) 1x' },
+      ],
+      children: [],
+      data: {
+        sourceRaw: '<img src="https://x.example/img.png" srcset="javascript:alert(1) 1x" />',
+      },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/<img\b/);
+    expect(out).not.toContain('javascript:');
+    expect(out).not.toMatch(/<img\b[^>]*\bsrcset=/);
+    expect(out).toMatch(/<img\b[^>]*src="https:\/\/x\.example\/img\.png"/);
+  });
+
+  test('safe srcset survives the rehypeSanitizeUrls filter (legitimate retina image set)', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        {
+          type: 'mdxJsxAttribute',
+          name: 'srcset',
+          value: 'https://x.example/img@2x.png 2x, https://x.example/img@3x.png 3x',
+        },
+      ],
+      children: [],
+      data: { sourceRaw: '<img />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(
+      /srcset="https:\/\/x\.example\/img@2x\.png 2x, https:\/\/x\.example\/img@3x\.png 3x"/,
+    );
+  });
+
+  test('unsafe poster on native <video> is stripped by rehypeSanitizeUrls', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'video',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/v.mp4' },
+        { type: 'mdxJsxAttribute', name: 'poster', value: 'javascript:alert(1)' },
+      ],
+      children: [],
+      data: { sourceRaw: '<video />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/<video\b/);
+    expect(out).not.toContain('javascript:');
+    expect(out).not.toMatch(/poster=/);
+    expect(out).toMatch(/src="https:\/\/x\.example\/v\.mp4"/);
+  });
+
+  test('safe poster survives the rehypeSanitizeUrls filter', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'video',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/v.mp4' },
+        { type: 'mdxJsxAttribute', name: 'poster', value: 'https://x.example/poster.jpg' },
+      ],
+      children: [],
+      data: { sourceRaw: '<video />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toContain('poster="https://x.example/poster.jpg"');
+  });
+
+  test('style with url(javascript:...) is dropped by rehypeSanitizeUrls (defense-in-depth)', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        {
+          type: 'mdxJsxAttribute',
+          name: 'style',
+          value: 'background-image: url(javascript:alert(1))',
+        },
+      ],
+      children: [],
+      data: { sourceRaw: '<img />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/<img\b/);
+    expect(out).not.toContain('javascript:');
+    expect(out).not.toMatch(/style=/);
+  });
+
+  test('style with expression(...) is dropped (legacy IE CSS-expression vector)', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        { type: 'mdxJsxAttribute', name: 'style', value: 'width: expression(alert(1))' },
+      ],
+      children: [],
+      data: { sourceRaw: '<img />' },
+    };
+    const out = html(wrap(node));
+    expect(out).not.toContain('expression(');
+    expect(out).not.toMatch(/style=/);
+  });
+
+  test('safe style survives the rehypeSanitizeUrls filter', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        { type: 'mdxJsxAttribute', name: 'style', value: 'border: 1px solid #000; color: red' },
+      ],
+      children: [],
+      data: { sourceRaw: '<img />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toContain('style="border: 1px solid #000; color: red"');
+  });
+
   test('javascript: src on native <img> is stripped by downstream rehypeSanitizeUrls (composition-boundary lock)', () => {
     const node: MdxJsxFlowElement = {
       type: 'mdxJsxFlowElement',
