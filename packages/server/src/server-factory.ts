@@ -51,6 +51,7 @@ import {
 import { type HeadWatcherHandle, readBranchFromHead, startHeadWatcher } from './head-watcher.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
+import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import { recoverPendingManagedRename } from './managed-rename-journal.ts';
 import { mdManager, schema } from './md-manager.ts';
 import {
@@ -342,6 +343,34 @@ export function createServer(options: ServerOptions): ServerInstance {
       },
     };
     hocuspocus.configuration.extensions.push(principalAuthExtension);
+
+    const configDocAdmissionGuard: Extension & { __kind: 'config-doc-admission-guard' } = {
+      __kind: 'config-doc-admission-guard',
+      async onAuthenticate(payload) {
+        if (!isConfigDoc(payload.documentName)) return;
+        const req = payload.request as unknown as {
+          socket?: { remoteAddress?: string };
+          headers?: { host?: string };
+        };
+        const peer = req.socket?.remoteAddress;
+        if (peer !== undefined && !isLoopbackAddress(peer)) {
+          throw new Error(
+            `config-doc admission requires loopback peer (peer=${peer}, doc=${payload.documentName})`,
+          );
+        }
+        const headersBag = (payload as { requestHeaders?: Headers }).requestHeaders;
+        const host =
+          (headersBag && typeof headersBag.get === 'function' ? headersBag.get('host') : null) ??
+          req.headers?.host ??
+          undefined;
+        if (!isAllowedWorkspaceHostHeader(host)) {
+          throw new Error(
+            `config-doc admission requires loopback Host header (host=${host ?? '<absent>'}, doc=${payload.documentName})`,
+          );
+        }
+      },
+    };
+    hocuspocus.configuration.extensions.push(configDocAdmissionGuard);
 
     const systemDocBroadcastGuard: Extension & { __kind: 'system-doc-broadcast-guard' } = {
       __kind: 'system-doc-broadcast-guard',
