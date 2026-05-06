@@ -129,31 +129,61 @@ Knowledge-base docs are factual artifacts — whether the project is a wiki, an 
 
 ## Frontmatter conventions
 
-Open Knowledge has two metadata surfaces that merge at read time:
-
-**Per-file frontmatter.** Every `.md` / `.mdx` file in the knowledge base should have YAML frontmatter:
+Every `.md` / `.mdx` file in the knowledge base needs YAML frontmatter — `title` and `description` required, `tags` recommended:
 
 ```yaml
 ---
-title: Article Title (required)
-description: Brief summary (required)
+title: Article Title
+description: Brief summary
 tags:
   - relevant
   - tags
 ---
 ```
 
-**Folder-level defaults via opt-in nested `<folder>/.ok/frontmatter.yml`.** See "Folder structure + metadata" below.
+Folder-level defaults that any new doc here inherits live in opt-in nested `<folder>/.ok/frontmatter.yml` and merge at read time — see *Folder structure + metadata* below.
 
-## Follow project conventions — read folder defaults before writing
+## Follow project conventions — read folder defaults before writing (MUST)
 
-Before creating or editing docs in a folder, look at `list_documents(<folder>)` (or `exec("ls <folder>")`) and skim:
+Before creating or editing docs in a folder, **always** call `list_documents(<folder>)` (or `exec("ls <folder>")`) once and act on what it returns. Skipping this step is how agents land docs that violate the folder's discipline (wrong tags, no template, missing frontmatter shape) and force a follow-up cleanup pass.
 
-- **`frontmatter_defaults`** — the merged folder defaults (title shape, description, tags) that any new doc here will inherit. Surfaces nested `<folder>/.ok/frontmatter.yml` cascade walked root → leaf, leaf wins per-key.
-- **`templates_available`** — the menu of starter shapes for `write_document({ template })`. Each entry has `name`, `title`, `description`, and `scope` (`local` / `inherited` / `descendant`). Pick one that matches the doc's purpose.
-- **Content scope** — `content.dir` (in `.ok/config.yml`) defines the content root. `.gitignore` and `.okignore` files (gitignore syntax, nested at any depth) define which paths are excluded from the document index. Anything excluded is regular source code, not a knowledge-base doc.
+Pre-write checklist:
+
+1. **Read `frontmatter_defaults`** — the merged folder defaults (title shape, description, tags) that any new doc here will inherit. Surfaces nested `<folder>/.ok/frontmatter.yml` cascade walked root → leaf, leaf wins per-key. **Don't redeclare** keys the cascade already provides — let inheritance carry them. Override per-file only when the file truly differs.
+2. **Read `templates_available`** — the menu of starter shapes for `write_document({ template })`. Each entry has `name`, `title`, `description`, and `scope` (`local` / `inherited`). If an entry matches, prefer it over free-form markdown — see "When to use a template" and "When to create a template" below.
+3. **Read recent siblings** — `list_documents` enrichment shows recent edits and per-child frontmatter. New docs should match the shape of existing ones (filename pattern, frontmatter keys, body structure). Inconsistency is the enemy.
+4. **Confirm content scope** — `content.dir` (in `.ok/config.yml`) defines the content root. `.gitignore` and `.okignore` files (gitignore syntax, nested at any depth) define which paths are excluded from the document index. Anything excluded is regular source code, not a knowledge-base doc.
 
 If a project uses `ok seed` to scaffold the Karpathy three-layer layout (`external-sources/` → `research/` → `articles/`), the seed encodes layer rules in the project config so each layer's defaults show up in `list_documents` enrichment for that folder. Projects with custom layouts put their own discipline in their own folder defaults. Either way: **read the folder before writing**.
+
+**Once per folder per session.** If you already ran the checklist for a folder earlier in the session, you can skip re-running it for subsequent docs in the same folder — unless you (or the user) changed a folder rule or template since.
+
+### When to use a template (MUST when one fits)
+
+If `templates_available` lists a template whose `title` / `description` matches what you're about to write, instantiate it via `write_document({ template, docName, position: "replace" })` instead of free-form `markdown:`. This is not a stylistic preference — it's the folder's contract:
+
+- Templates carry frontmatter (title shape, tags, status) that hand-authored docs routinely miss.
+- Templates encode body structure (required sections, attendee/agenda blocks, status fields) that downstream tooling and humans rely on.
+- Inherited templates (`scope: "inherited"`) are equally valid — when you write a doc in a subfolder, a template defined on an ancestor folder still surfaces in `templates_available` and is the right tool. Don't dismiss inherited entries because they don't live in the leaf folder's `.ok/`.
+
+Skip the template only when (a) `templates_available` is empty, (b) no entry matches the doc's purpose, OR (c) the user explicitly asked for free-form content. If you skip, briefly note why in chat so the user can correct course (e.g. "no template matched — writing free-form").
+
+### When to create a template (encouraged — don't wait to be asked)
+
+Templates are how a folder's structure becomes durable. Create them proactively, not just when asked:
+
+- **You're about to write a doc in a folder where no template fits, AND the shape you're about to use is reusable.** Save it as a template the same turn (`write_template` with the body you'd have hand-authored), then instantiate via `template:`. The first doc carries the same body either way; the difference is whether the next agent gets a menu entry or re-derives it from a sibling.
+- **You spot a sibling pattern in a folder that has no template.** Two or more docs sharing the same body skeleton (heading order, required sections, frontmatter shape) is enough — extract the skeleton via `write_template` so subsequent docs pick from `templates_available` instead of copying a sibling.
+- **You're scaffolding a new folder for a doc category.** Pair the folder rule (`set_folder_rule` for tags/title shape) with a template (`write_template` for body structure) in the same turn. Don't ship a folder-with-discipline-but-no-template — it leaves the next agent to invent the body each time.
+- **The user describes a recurring doc shape.** "We always log meetings with attendees, agenda, action items" → that's a template request whether or not the word "template" was used. Author it once.
+
+Authoring API (frontmatter requirements, substitution allowlist, `{shape}` semantics): see "Creating templates" below. When you create a template, briefly note it in chat ("saved this as a template at `meetings/.ok/templates/prep-notes.md` for next time") so the user understands the folder's discipline grew.
+
+### When to declare folder defaults (MUST when a pattern emerges)
+
+If you find yourself writing the **same** frontmatter (tags, title prefix, description shape) on multiple sibling docs by hand, that's the signal to call `set_folder_rule` once and let the cascade do it. Pair it with a template (above) when the body skeleton repeats too — folder rules cover frontmatter; templates cover body shape.
+
+Repetition is the smell; folder rules and templates are the fix. Don't accumulate ad-hoc per-file frontmatter when one folder rule would carry it.
 
 ## Folder structure + metadata — nested `<folder>/.ok/`
 
@@ -221,37 +251,36 @@ To delete a template: `delete_template({ folder, name })` — auto-cleans empty 
 
 ### Creating a doc from a template
 
-```ts
-// 1. Inspect the menu
-list_documents("meetings/", { depth: 1 })
-//    → templates_available: [{ name: "prep-notes", title: ..., scope: "local" }, ...]
+This is the default path when `templates_available` (from the pre-write checklist) shows a matching entry. Three steps:
 
-// 2. Instantiate (template + markdown are mutually exclusive — pass one)
+```ts
+// 1. Inspect the menu (same call you already made in the pre-write checklist).
+list_documents("meetings/", { depth: 1 })
+//    → templates_available: [{ name: "prep-notes", title: "Meeting Prep Notes", scope: "local" }, ...]
+
+// 2. Instantiate. `template` and `markdown` are mutually exclusive — pass `template`.
 write_document({
   docName: "meetings/2026-05-02-roadmap-sync",
   template: "prep-notes",
   position: "replace",
 })
+
+// 3. Fill the literal `{shape}` placeholders the template body declares
+//    (e.g. "{Meeting Title}", "{Attendees}") via follow-up `edit_document`
+//    calls — those are author-fill markers, not server-side substitutions.
 ```
 
-Templates resolve via leaf → root walk-up at the target's parent folder, with closest-wins on filename collision (D7). The `scope` field has two values: `"local"` (template lives in this folder's `.ok/templates/`) and `"inherited"` (template lives in an ancestor's). Descendant templates do NOT appear in the parent's array — they surface only inside `subfolders[].templates_available` when `list_documents` is called with `depth > 1`.
+Templates resolve via leaf → root walk-up at the target's parent folder, with closest-wins on filename collision (D7). The `scope` field has two values: `"local"` (template lives in this folder's `.ok/templates/`) and `"inherited"` (template lives in an ancestor's) — both are first-class menu entries. Descendant templates do NOT appear in the parent's array — they surface only inside `subfolders[].templates_available` when `list_documents` is called with `depth > 1`.
 
-**`template` and `markdown` are mutually exclusive** (D21). Passing both errors with `TEMPLATE_AND_MARKDOWN_BOTH_SET`. The template body becomes the new doc's body verbatim (after `{{date}}`/`{{user}}` substitution); fill placeholders via subsequent `edit_document` calls.
-
-## Organization
-
-- **Folders are the organizational unit.** Group related docs in a shared folder.
-- **Folder-level metadata lives in nested `<folder>/.ok/frontmatter.yml`** (sparse, opt-in, auto-clean).
-- **Don't create `INDEX.md` / `README.md` hub files** solely to catalog children — `exec("ls <folder>")` returns the same view live, with per-file frontmatter + backlink counts.
-- If a hub doc exists from prior work, keep it updated as children change — but don't create new ones.
+**`template` and `markdown` are mutually exclusive** (D21). Passing both errors with `TEMPLATE_AND_MARKDOWN_BOTH_SET`. The template body becomes the new doc's body verbatim (after `{{date}}`/`{{user}}` substitution); fill `{shape}`-style placeholders via subsequent `edit_document` calls.
 
 ## Cadence
 
 When you make a multi-step change (batch of new docs, folder restructure), pause between steps to let the browser preview catch up. The CRDT edit streams live; the preview follows your edit cadence. Don't batch 10 writes in a row — interleave the writes so the user watching the browser sees the narrative progress.
 
-If a hub doc exists in a folder, update it as you change children. Don't batch five child edits and then update the hub — write child → update hub → write next child.
-
 This is primarily a human-watchability concern — the user watches edits land in the preview; interleaved cadence makes the narrative legible.
+
+**Hub docs.** Don't *create* `INDEX.md` / `README.md` hub files solely to catalog children — `exec("ls <folder>")` returns the same view live, with per-file frontmatter + backlink counts. But if a hub doc *already exists* from prior work, keep it updated as children change — interleave: write child → update hub → write next child, rather than batching five child edits and a single trailing hub update.
 
 ## Log discipline — check for a project log when KB content changes
 
@@ -278,6 +307,12 @@ The skill carries the trigger ("KB content changed this turn — go look"). The 
 | Finish a turn that changed KB content           | move on without checking for a log                                                 | check for a `log.md` and follow its contract per Log discipline                    |
 | Add an image                                    | empty alt `![](./x.png)` or generic alt `![image](./x)`                            | meaningful alt + source caption below                                             |
 | Catalog folder contents                         | create `INDEX.md` hub file                                                         | `set_folder_rule({ rules: [{ match, frontmatter }] })` writes `<folder>/.ok/frontmatter.yml` |
+| Write a doc in an unfamiliar folder             | go straight to `write_document` with hand-authored markdown                        | `list_documents(<folder>)` first — read `frontmatter_defaults` + `templates_available` before writing |
+| Author a doc when a matching template exists    | `write_document({ markdown: "..." })` from scratch                                 | `write_document({ template, position: "replace" })` — templates carry the folder's frontmatter + body discipline |
+| Repeat the same frontmatter on sibling docs     | hand-set identical `tags` / `title` prefix on every new file                       | `set_folder_rule(...)` once — the cascade carries it to every child                |
+| Re-derive the same body skeleton repeatedly     | copy-paste the structure from a sibling each time                                  | `write_template(...)` once, then pick from `templates_available` thereafter        |
+| Scaffold a new folder for a doc category        | `set_folder_rule` for frontmatter and stop there                                   | pair `set_folder_rule` with `write_template` in the same turn — discipline + body shape |
+| Author a reusable doc shape "just this once"    | hand-author the body and move on                                                   | `write_template(...)` first, then instantiate — slightly more setup, but durable for every subsequent doc |
 | Delete a markdown doc                           | `Bash: rm` / `unlink` / native deletion on in-scope `.md`                          | `delete_document` — `save_version` first if rollback may be needed                |
 | Fork a skill and expect no stomp                | Edit installed SKILL.md                                                            | `npx skills remove` before CLI upgrade                                            |
 
