@@ -172,6 +172,43 @@ test('active MCP session cap refuses new sessions before allocation', async () =
   expect(await second.text()).toContain('Too many active MCP sessions');
 });
 
+test('mcp-tool-path-traversal: explicit cwd outside configured project root is rejected', async () => {
+  const config: Config = ConfigSchema.parse({});
+  const harness = await bootHandler(config);
+  openHarnesses.push(harness);
+
+  const session = await openMcpSession(harness.port);
+
+  const callRead = async (cwd: string) =>
+    fetch(`http://localhost:${harness.port}/mcp`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+        'mcp-session-id': session.sessionId,
+        'mcp-protocol-version': session.protocolVersion,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 999,
+        method: 'tools/call',
+        params: {
+          name: 'read_document',
+          arguments: { path: 'passwd', cwd },
+        },
+      }),
+    });
+
+  const escapeResponse = await callRead('/etc');
+  expect(escapeResponse.status).toBe(200);
+  const body = (await escapeResponse.json()) as {
+    result?: { isError?: boolean; content?: Array<{ text?: string }> };
+  };
+  expect(body.result?.isError).toBe(true);
+  const text = body.result?.content?.[0]?.text ?? '';
+  expect(text).toMatch(/not within the configured project root|escapes the configured root/);
+});
+
 test('inactive MCP sessions expire and return 404 on later use', async () => {
   const config: Config = ConfigSchema.parse({});
   const harness = await bootHandler(config, { sessionTtlMs: 250 });

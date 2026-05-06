@@ -71,6 +71,48 @@ function makeDeps(): ReadDocumentDeps {
   };
 }
 
+describe('read_document — path containment (mcp-tool-path-traversal cluster)', () => {
+  test('rejects `../`-relative escape from project root', async () => {
+    const siblingName = `escape-${Date.now()}.md`;
+    const outsideFile = resolve(tmpDir, '..', siblingName);
+    await writeFile(outsideFile, '# SECRET\n', 'utf-8');
+
+    try {
+      const { server, getTool } = createFakeServer();
+      register(server, makeDeps());
+
+      const result = await getTool().handler({ path: `../${siblingName}` });
+
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? '';
+      expect(text).toContain('Refusing to read outside project root');
+      expect(text).not.toContain('SECRET');
+    } finally {
+      await rm(outsideFile, { force: true });
+    }
+  });
+
+  test('rejects absolute path outside the project root', async () => {
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({ path: '/etc/passwd' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text ?? '').toContain('Refusing to read outside project root');
+  });
+
+  test('rejects deep `../../` escape even when target file does not exist', async () => {
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({ path: '../../../../etc/passwd' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text ?? '').toContain('Refusing to read outside project root');
+  });
+});
+
 describe('read_document — previewUrl emission', () => {
   test('emits previewUrl in structuredContent when resolver resolves', async () => {
     process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';

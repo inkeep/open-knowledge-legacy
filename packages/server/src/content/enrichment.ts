@@ -18,6 +18,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, relative, resolve } from 'node:path';
 import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { parse as parseYaml } from 'yaml';
+import { resolveWithinRoot } from '../mcp/tools/path-safety.ts';
 import { httpGet } from '../mcp/tools/shared.ts';
 import { mergeCascade } from './frontmatter-merge.ts';
 import { parentFolderOf, resolveNestedFrontmatter } from './nested-folder-rules.ts';
@@ -277,8 +278,12 @@ export async function enrichPath(
   deps: EnrichPathDeps,
   options: EnrichPathOptions = {},
 ): Promise<EnrichedMeta> {
-  const relPath = relPathInput.replace(/^\.\//, '').replace(/^\/+/, '');
-  const absPath = resolve(deps.projectDir, relPath);
+  const contained = resolveWithinRoot(deps.projectDir, relPathInput);
+  if (!contained.ok) {
+    throw new Error(`enrichPath: ${contained.reason}`);
+  }
+  const relPath = contained.rel;
+  const absPath = contained.abs;
   const historyDepth = deps.historyDepth ?? 5;
   const rich = options.includeRichFields === true;
 
@@ -403,8 +408,12 @@ export async function enrichDirectory(
   relPathInput: string,
   deps: Pick<EnrichPathDeps, 'projectDir'>,
 ): Promise<DirectoryMeta> {
-  const relPath = relPathInput.replace(/^\.\//, '').replace(/^\/+/, '').replace(/\/+$/, '');
-  const absDir = resolve(deps.projectDir, relPath);
+  const contained = resolveWithinRoot(deps.projectDir, relPathInput);
+  if (!contained.ok) {
+    throw new Error(`enrichDirectory: ${contained.reason}`);
+  }
+  const relPath = contained.rel;
+  const absDir = contained.abs;
   const scan = await scanDirectory(absDir, deps.projectDir);
 
   let mostRecentMd: DirectoryMeta['mostRecentMd'];

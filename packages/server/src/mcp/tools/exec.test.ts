@@ -605,6 +605,35 @@ describe('exec — per-row previewUrl + top-level ui block (FR-2.2 / FR-2.6)', (
     expect(s.ui).toEqual({ baseUrl: null, port: null });
   });
 
+  test('mcp-tool-path-traversal: `ls ../etc/` does not enrich a directory outside cwd', async () => {
+    const project = await bootstrap();
+    const result = (await buildExecResult(
+      { command: 'ls ../' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    for (const entry of s.enrichedPaths) {
+      expect(entry.path.startsWith('../')).toBe(false);
+      expect(entry.path).not.toBe('..');
+      expect(entry.path.startsWith('/')).toBe(false);
+    }
+  });
+
+  test('mcp-tool-path-traversal: `cat /etc/passwd.md`-style absolute path is dropped from enrichedPaths', async () => {
+    const project = await bootstrap();
+    const result = (await buildExecResult(
+      { command: 'cat /etc/passwd' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    for (const entry of s.enrichedPaths) {
+      expect(entry.path.startsWith('/')).toBe(false);
+      expect(entry.path.startsWith('../')).toBe(false);
+    }
+  });
+
   test('FR13: nested .ok/ paths are filtered from enrichedPaths (not surfaced as listings)', async () => {
     const project = await bootstrap();
     const meetings = resolve(project, 'meetings');

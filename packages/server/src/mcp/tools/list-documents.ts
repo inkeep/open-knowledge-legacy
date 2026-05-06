@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { type DirectoryMeta, enrichDirectoryRecursive } from '../../content/enrichment.ts';
+import { resolveWithinRoot } from './path-safety.ts';
 import { buildListResolver, type PreviewUrlDeps } from './preview-url.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
@@ -61,7 +62,15 @@ export function register(server: ServerInstance, deps: ListDocumentsDeps): void 
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       const { cwd, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
-      const query = args.dir ? `?dir=${encodeURIComponent(args.dir)}` : '';
+      let containedDir: string | null = null;
+      if (args.dir !== undefined) {
+        const contained = resolveWithinRoot(cwd, args.dir);
+        if (!contained.ok) {
+          return textResult(`Error: ${contained.reason}`, true);
+        }
+        containedDir = contained.rel;
+      }
+      const query = containedDir !== null ? `?dir=${encodeURIComponent(containedDir)}` : '';
       const result = await httpGet(url, `/api/documents${query}`);
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       const { ok: _ok, ...rest } = result;
@@ -78,10 +87,10 @@ export function register(server: ServerInstance, deps: ListDocumentsDeps): void 
       });
 
       let folder: DirectoryMeta | undefined;
-      if (args.dir) {
+      if (containedDir !== null) {
         const depth = args.depth ?? 1;
         try {
-          folder = await enrichDirectoryRecursive(args.dir, depth, {
+          folder = await enrichDirectoryRecursive(containedDir, depth, {
             projectDir: cwd,
           });
         } catch {

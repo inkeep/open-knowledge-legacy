@@ -7,6 +7,7 @@ import { MCP_SERVER_NAME } from './constants.ts';
 import type { AgentIdentity } from './mcp/agent-identity.ts';
 import { buildInstructions } from './mcp/instructions.ts';
 import { registerAllTools } from './mcp/tools/index.ts';
+import { resolveWithinRoot } from './mcp/tools/path-safety.ts';
 import { RUNTIME_VERSION } from './version-constants.ts';
 
 interface McpHttpSession {
@@ -92,9 +93,19 @@ function createSessionServer(
     };
   };
 
+  const configuredRoot = opts.projectDir ?? opts.contentDir;
   registerAllTools(server, {
     serverUrl: async () => opts.getServerUrl(),
-    resolveCwd: async (explicit?: string) => explicit ?? opts.projectDir ?? opts.contentDir,
+    resolveCwd: async (explicit?: string) => {
+      if (explicit === undefined) return configuredRoot;
+      const result = resolveWithinRoot(configuredRoot, explicit);
+      if (!result.ok) {
+        throw new Error(
+          `cwd "${explicit}" is not within the configured project root: ${result.reason}`,
+        );
+      }
+      return result.abs;
+    },
     config,
     identityRef,
   });

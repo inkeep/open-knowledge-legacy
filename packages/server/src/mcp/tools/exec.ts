@@ -40,6 +40,7 @@ import {
   fetchBacklinkCountsBatch,
   pathToDocName,
 } from '../../content/enrichment.ts';
+import { resolveWithinRoot } from './path-safety.ts';
 import {
   buildListResolver,
   docNameFromPath,
@@ -385,7 +386,8 @@ export async function buildExecResult(
 
   const capped = applySoftCap(stdout);
 
-  const paths = extractReferencedPaths(stdout, stages);
+  const rawPaths = extractReferencedPaths(stdout, stages);
+  const paths = rawPaths.filter((p) => resolveWithinRoot(cwd, p).ok);
   const { files, dirs } = await classifyPaths(cwd, paths);
   const isSinglePathCat = stages.length === 1 && stages[0].command === 'cat' && files.length === 1;
   const fileEnriched: EnrichedMeta[] = await Promise.all(
