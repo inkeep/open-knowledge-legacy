@@ -55,10 +55,10 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
     if (!focusedRef.current) setDraft(value);
   }, [value]);
   return (
-    <Input
+    <textarea
       data-testid="text-widget"
       data-key={keyName}
-      type="text"
+      rows={1}
       value={draft}
       placeholder="Empty"
       aria-label={`${keyName} value`}
@@ -75,18 +75,18 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
         if (draft !== value) onCommit(draft);
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
           e.preventDefault();
           if (draft !== value) onCommit(draft);
-          (e.currentTarget as HTMLInputElement).blur();
+          (e.currentTarget as HTMLTextAreaElement).blur();
         } else if (e.key === 'Escape') {
           e.preventDefault();
           revertingRef.current = true;
           setDraft(value);
-          (e.currentTarget as HTMLInputElement).blur();
+          (e.currentTarget as HTMLTextAreaElement).blur();
         }
       }}
-      className="h-7 border-transparent dark:bg-transparent bg-transparent px-2 text-sm shadow-none placeholder:text-muted-foreground/60 focus-visible:border-transparent focus-visible:bg-muted focus-visible:ring-0 rounded-sm dark:focus-visible:bg-muted"
+      className="block w-full min-h-7 resize-none field-sizing-content border-transparent bg-transparent px-2 py-1 text-sm leading-tight shadow-none placeholder:text-muted-foreground/60 focus-visible:border-transparent focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-0 rounded-sm dark:bg-transparent dark:focus-visible:bg-muted"
     />
   );
 }
@@ -355,7 +355,7 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
     <div
       data-testid="list-widget"
       data-key={keyName}
-      className="flex h-7 min-h-7 flex-wrap items-center gap-1 rounded-md px-2 focus-within:bg-background"
+      className="flex min-h-7 w-full min-w-0 flex-wrap items-center gap-1 rounded-md px-2 py-1 focus-within:bg-background"
     >
       {value.map((chip, i) => {
         const renderAsTag = isTagsField && FRONTMATTER_TAG_VALUE_RE.test(chip);
@@ -473,7 +473,7 @@ export function TypeIconButton({
               data-key={keyName}
               data-type={type}
               aria-label={`${keyName} type: ${TYPE_LABEL[type]} (inherited from folder defaults; not editable here)`}
-              className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground disabled:cursor-default"
+              className="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground disabled:cursor-default"
             >
               <Icon className="size-3.5" />
             </button>
@@ -490,7 +490,7 @@ export function TypeIconButton({
         data-key={keyName}
         data-type={type}
         aria-label={`${keyName} type: ${TYPE_LABEL[type]}. Click to change.`}
-        className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <Icon className="size-3.5" />
       </DropdownMenuTrigger>

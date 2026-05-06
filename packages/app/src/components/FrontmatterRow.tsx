@@ -98,7 +98,7 @@ export function FrontmatterRow({
     >
       {(dragHandle) => (
         <>
-          <div className="flex items-center gap-1">
+          <div className="flex items-start gap-1">
             {dragHandle}
             {/* Identity column (type icon + key name) is the only part dimmed
                 on inherited rows. The value widget stays full-opacity since
@@ -144,7 +144,7 @@ export function FrontmatterRow({
                 <AlertTriangle className="size-3.5" />
               </span>
             ) : null}
-            <div className="flex-1">
+            <div className="min-w-0 flex-1">
               {isInherited && declared === 'list' ? (
                 <ReadOnlyChipList keyName={keyName} value={Array.isArray(value) ? value : []} />
               ) : (
@@ -157,7 +157,7 @@ export function FrontmatterRow({
                 />
               )}
             </div>
-            {badge ? <div className="shrink-0">{badge}</div> : null}
+            {badge ? <div className="shrink-0 min-h-7 flex items-center">{badge}</div> : null}
             {onRemove ? (
               <Button
                 type="button"
@@ -407,7 +407,7 @@ export function AddPropertyRow({
       className="mt-1 rounded border border-dashed bg-background/40 p-1"
       data-testid="add-property-row"
     >
-      <div className="flex items-center gap-1">
+      <div className="flex items-start gap-1">
         <TypeIconButton keyName="__add__" type={draft.type} onChangeType={onChangeType} />
         <Input
           data-testid="add-property-name-input"
@@ -430,7 +430,7 @@ export function AddPropertyRow({
           }}
           className="h-7 w-32 border-transparent bg-transparent px-2 text-sm shadow-none placeholder:text-muted-foreground/60 focus-visible:border-transparent focus-visible:bg-muted focus-visible:ring-0 rounded-sm"
         />
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <Widget
             keyName="__add__"
             value={draft.value}
@@ -522,7 +522,7 @@ function ReadOnlyChipList({ keyName, value }: { keyName: string; value: unknown[
     <div
       data-testid="list-widget-readonly"
       data-key={keyName}
-      className="flex h-7 min-h-7 flex-wrap items-center gap-1 rounded-md px-2"
+      className="flex min-h-7 w-full min-w-0 flex-wrap items-center gap-1 rounded-md px-2"
     >
       {value.length === 0 ? (
         <span className="text-sm text-muted-foreground/60">Empty</span>
