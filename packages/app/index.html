@@ -20,6 +20,27 @@
     nothing for the formatter to reindent.
   -->
   <script>(() => { let mode = 'wysiwyg'; try { const raw = localStorage.getItem('ok-editor-mode-v1'); if (raw === 'wysiwyg' || raw === 'source') mode = raw; } catch {} window.__OK_EDITOR_MODE__ = mode; })();</script>
+  <!--
+    Theme FOUC prevention. Reads the persisted theme synchronously before
+    React mounts so the first painted frame is in the user's chosen theme
+    (avoids the native-pref → user-pref flip when the OS preference
+    disagrees with the user's choice). Paired consumer: next-themes
+    <ThemeProvider storageKey='ok-theme-v1'> in `src/main.tsx` — keep keys
+    in sync. next-themes stores the value as a plain string, not JSON.
+
+    The inline <style> below paints the html background to match the
+    body's resolved background (body uses `bg-sidebar` per globals.css —
+    `oklch(0.985 0 0) ≈ #fafafa` light, `oklch(0.205 0 0) ≈ #171717`
+    dark). The `html.dark` literal must match the BrowserWindow
+    `backgroundColor` constructor in packages/desktop/src/main/index.ts —
+    drift produces a sub-frame composite mismatch when the OS-level
+    window first shows.
+
+    Single-line script body — same biome HTML-formatter constraint as
+    the editor-mode FOUC above.
+  -->
+  <script>(() => { let t = 'system'; try { const r = localStorage.getItem('ok-theme-v1'); if (r === 'light' || r === 'dark' || r === 'system') t = r; } catch {} let dark = t === 'dark'; if (t === 'system') { try { dark = window.matchMedia('(prefers-color-scheme: dark)').matches; } catch {} } if (dark) document.documentElement.classList.add('dark'); })();</script>
+  <style>html { background-color: #fafafa } html.dark { background-color: #171717 }</style>
 </head>
 
 <body class="antialiased">

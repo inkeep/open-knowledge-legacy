@@ -94,7 +94,8 @@ import {
 const DEFAULT_WIN_OPTS = {
   width: 1280,
   height: 800,
-  show: true,
+  show: false,
+  backgroundColor: '#171717',
   webPreferences: {
     contextIsolation: true,
     nodeIntegration: false,

@@ -19,6 +19,14 @@ export function createNavigatorWindow(deps: NavigatorDeps): BrowserWindowLike {
     ],
     title: 'Open Knowledge',
   });
+  window.once('ready-to-show', () => {
+    window.show?.();
+  });
+  setTimeout(() => {
+    if (window.isDestroyed?.() || window.isVisible?.()) return;
+    console.warn('[main] ready-to-show did not fire within 5s — falling back');
+    window.show?.();
+  }, 5000);
   if (deps.rendererDevUrl) {
     void window.loadURL(deps.rendererDevUrl);
   } else {
