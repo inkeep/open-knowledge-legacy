@@ -158,16 +158,17 @@ append_jsonl_atomic() {
       fi
       sleep 0.1
     done
-    # trap EXIT for this append scope (not a subshell — runs in the caller's
-    # shell context; the caller scripts set their own EXIT traps BEFORE
-    # sourcing this library, so the two don't collide because we restore
-    # with `trap - EXIT` immediately after the rmdir below). Guards against
-    # crashes between `mkdir` and `rmdir`: the lockdir would otherwise wedge
-    # until the next invocation's stale-lock recovery removed it.
-    trap "rmdir '$lockdir' 2>/dev/null || true" EXIT
-    printf '%s\n' "$record" >> "$log"
-    rmdir "$lockdir" 2>/dev/null || true
-    trap - EXIT
+    # Scope the lockdir-cleanup EXIT trap to a subshell so it cannot clobber
+    # the caller's own EXIT trap. Setting `trap ... EXIT` here at function
+    # scope would replace the caller's trap (e.g. measure-fuzz.sh's tmpfile
+    # cleanup), and `trap - EXIT` afterward would not restore it — bash has
+    # no native trap-stack. The subshell's trap fires on subshell exit
+    # (success or failure), guaranteeing rmdir without touching the parent
+    # script's trap state. Mirrors the flock branch above.
+    (
+      trap "rmdir '$lockdir' 2>/dev/null || true" EXIT
+      printf '%s\n' "$record" >> "$log"
+    )
   fi
 }
 
