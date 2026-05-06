@@ -342,4 +342,123 @@ describe('M1 smoke', () => {
       );
     }
   });
+
+  test('M1 invariant: project session state shape drift catcher', async () => {
+    const appEditorTabsPath = join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'app',
+      'src',
+      'editor',
+      'editor-tabs.ts',
+    );
+    const appBridgePath = join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'app',
+      'src',
+      'lib',
+      'desktop-bridge-types.ts',
+    );
+    const desktopBridgePath = join(__dirname, '..', '..', 'src', 'shared', 'bridge-contract.ts');
+    const ipcChannelsPath = join(__dirname, '..', '..', 'src', 'shared', 'ipc-channels.ts');
+    const stateStorePath = join(__dirname, '..', '..', 'src', 'main', 'state-store.ts');
+    const { readFileSync } = await import('node:fs');
+
+    const extractInterfaceFields = (src: string, interfaceName: string): Set<string> => {
+      const names = new Set<string>();
+      const lines = src.split('\n');
+      const declRegex = new RegExp(`interface\\s+${interfaceName}\\s*\\{`);
+      let inInterface = false;
+      let depth = 0;
+      for (const line of lines) {
+        if (!inInterface) {
+          if (declRegex.test(line)) {
+            inInterface = true;
+            depth = (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+          }
+          continue;
+        }
+        const opens = (line.match(/\{/g) ?? []).length;
+        const closes = (line.match(/\}/g) ?? []).length;
+        if (depth === 1) {
+          const trimmed = line.trim();
+          const memberMatch = trimmed.match(/^(?:readonly\s+)?(\w+)\s*[:?]/);
+          if (memberMatch?.[1]) names.add(memberMatch[1]);
+        }
+        depth += opens - closes;
+        if (depth === 0) break;
+      }
+      return names;
+    };
+
+    const sources = [
+      {
+        label: 'app/editor-tabs.ts (EditorTabSessionState)',
+        fields: extractInterfaceFields(
+          readFileSync(appEditorTabsPath, 'utf-8'),
+          'EditorTabSessionState',
+        ),
+      },
+      {
+        label: 'app/desktop-bridge-types.ts (ProjectSessionState)',
+        fields: extractInterfaceFields(readFileSync(appBridgePath, 'utf-8'), 'ProjectSessionState'),
+      },
+      {
+        label: 'desktop/bridge-contract.ts (ProjectSessionState)',
+        fields: extractInterfaceFields(
+          readFileSync(desktopBridgePath, 'utf-8'),
+          'ProjectSessionState',
+        ),
+      },
+      {
+        label: 'desktop/ipc-channels.ts (ProjectSessionState)',
+        fields: extractInterfaceFields(
+          readFileSync(ipcChannelsPath, 'utf-8'),
+          'ProjectSessionState',
+        ),
+      },
+      {
+        label: 'desktop/state-store.ts (ProjectSessionState)',
+        fields: extractInterfaceFields(
+          readFileSync(stateStorePath, 'utf-8'),
+          'ProjectSessionState',
+        ),
+      },
+    ] as const;
+
+    for (const source of sources) {
+      expect(source.fields.size).toBeGreaterThan(0);
+    }
+
+    const canonical = sources[0];
+    const diff = (a: Set<string>, b: Set<string>) => Array.from(a).filter((x) => !b.has(x));
+    const failures: string[] = [];
+    for (const source of sources.slice(1)) {
+      const canonicalMinusSource = diff(canonical.fields, source.fields);
+      const sourceMinusCanonical = diff(source.fields, canonical.fields);
+      if (canonicalMinusSource.length || sourceMinusCanonical.length) {
+        failures.push(
+          `  ${source.label} drift vs ${canonical.label}:\n` +
+            `    canonical has but copy missing: [${canonicalMinusSource.join(', ')}]\n` +
+            `    copy has but canonical missing: [${sourceMinusCanonical.join(', ')}]`,
+        );
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(
+        [
+          'ProjectSessionState / EditorTabSessionState shape drift across session-state copies:',
+          ...failures,
+          '',
+          'Fix: update every session-state interface so all copies agree on the field set.',
+        ].join('\n'),
+      );
+    }
+  });
 });

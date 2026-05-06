@@ -8,6 +8,12 @@ interface RecentProject {
   missing?: boolean;
 }
 
+export interface ProjectSessionState {
+  openTabs: string[];
+  activeDocName: string | null;
+  updatedAt: string | null;
+}
+
 export type UpdateChannel = 'latest' | 'beta';
 
 export const CURRENT_SCHEMA_VERSION = 1;
@@ -22,6 +28,7 @@ export interface AppState {
   lastSuccessfulCheckAt: string | null;
   stuckHintShown: boolean;
   dismissedRepairForBundle: string | null;
+  projectSessions: Record<string, ProjectSessionState>;
   updateChannel: UpdateChannel;
   schemaVersion: number;
 }
@@ -37,9 +44,57 @@ export function emptyState(): AppState {
     lastSuccessfulCheckAt: null,
     stuckHintShown: false,
     dismissedRepairForBundle: null,
+    projectSessions: {},
     updateChannel: 'latest',
     schemaVersion: CURRENT_SCHEMA_VERSION,
   };
+}
+
+export function emptyProjectSessionState(): ProjectSessionState {
+  return {
+    openTabs: [],
+    activeDocName: null,
+    updatedAt: null,
+  };
+}
+
+function sanitizeDocTabs(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const tabs: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    if (item.length === 0) continue;
+    if (seen.has(item)) continue;
+    seen.add(item);
+    tabs.push(item);
+  }
+  return tabs;
+}
+
+export function parseProjectSessionState(raw: unknown): ProjectSessionState {
+  if (typeof raw !== 'object' || raw === null) return emptyProjectSessionState();
+  const obj = raw as Record<string, unknown>;
+  const openTabs = sanitizeDocTabs(obj.openTabs);
+  const activeDocName =
+    typeof obj.activeDocName === 'string' && openTabs.includes(obj.activeDocName)
+      ? obj.activeDocName
+      : null;
+  return {
+    openTabs,
+    activeDocName,
+    updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : null,
+  };
+}
+
+function parseProjectSessions(raw: unknown): Record<string, ProjectSessionState> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const sessions: Record<string, ProjectSessionState> = {};
+  for (const [projectPath, session] of Object.entries(raw)) {
+    if (projectPath.length === 0) continue;
+    sessions[projectPath] = parseProjectSessionState(session);
+  }
+  return sessions;
 }
 
 export function addRecentProject(state: AppState, projectPath: string, name: string): AppState {
@@ -53,10 +108,31 @@ export function addRecentProject(state: AppState, projectPath: string, name: str
 }
 
 export function removeRecentProject(state: AppState, projectPath: string): AppState {
+  const projectSessions = { ...state.projectSessions };
+  delete projectSessions[projectPath];
   return {
     ...state,
     recentProjects: state.recentProjects.filter((p) => p.path !== projectPath),
     lastOpenedProject: state.lastOpenedProject === projectPath ? null : state.lastOpenedProject,
+    projectSessions,
+  };
+}
+
+export function getProjectSessionState(state: AppState, projectPath: string): ProjectSessionState {
+  return state.projectSessions[projectPath] ?? emptyProjectSessionState();
+}
+
+export function setProjectSessionState(
+  state: AppState,
+  projectPath: string,
+  session: ProjectSessionState,
+): AppState {
+  return {
+    ...state,
+    projectSessions: {
+      ...state.projectSessions,
+      [projectPath]: parseProjectSessionState(session),
+    },
   };
 }
 
@@ -183,6 +259,7 @@ export function parseAppState(raw: unknown): AppState | null {
     typeof obj.schemaVersion === 'number' && Number.isInteger(obj.schemaVersion)
       ? obj.schemaVersion
       : 1;
+  const projectSessions = parseProjectSessions(obj.projectSessions);
   return {
     recentProjects,
     lastOpenedProject,
@@ -191,6 +268,7 @@ export function parseAppState(raw: unknown): AppState | null {
     lastSuccessfulCheckAt,
     stuckHintShown,
     dismissedRepairForBundle,
+    projectSessions,
     updateChannel,
     schemaVersion,
   };

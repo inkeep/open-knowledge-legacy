@@ -5,6 +5,19 @@ export interface RenamedDocMapping {
   toDocName: string;
 }
 
+export interface RenamePathRewrittenDoc {
+  docName: string;
+  rewrites: number;
+}
+
+export type RenamePathResponse =
+  | {
+      ok: true;
+      renamed: RenamedDocMapping[];
+      rewrittenDocs: RenamePathRewrittenDoc[];
+    }
+  | { ok: false; error: string };
+
 export interface FileTreeTarget {
   kind: 'folder' | 'file';
   path: string;
@@ -30,6 +43,41 @@ export function buildRenamedNodePath(target: FileTreeTarget, nextName: string): 
   const segments = target.path.split('/');
   segments[segments.length - 1] = normalizedName;
   return segments.join('/');
+}
+
+function isRenamedDocMapping(v: unknown): v is RenamedDocMapping {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { fromDocName: unknown }).fromDocName === 'string' &&
+    typeof (v as { toDocName: unknown }).toDocName === 'string'
+  );
+}
+
+function isRenamePathRewrittenDoc(v: unknown): v is RenamePathRewrittenDoc {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { docName: unknown }).docName === 'string' &&
+    typeof (v as { rewrites: unknown }).rewrites === 'number'
+  );
+}
+
+export function isRenamePathResponse(v: unknown): v is RenamePathResponse {
+  if (typeof v !== 'object' || v === null) return false;
+  const obj = v as Record<string, unknown>;
+  if (obj.ok === true) {
+    return (
+      Array.isArray(obj.renamed) &&
+      obj.renamed.every(isRenamedDocMapping) &&
+      Array.isArray(obj.rewrittenDocs) &&
+      obj.rewrittenDocs.every(isRenamePathRewrittenDoc)
+    );
+  }
+  if (obj.ok === false) {
+    return typeof obj.error === 'string';
+  }
+  return false;
 }
 
 export function applyRenameToDocuments(

@@ -19,6 +19,42 @@ describe('resolveFileTreeSelection', () => {
     });
   });
 
+  test('uses the active document when a doc target lags a tab switch', () => {
+    expect(
+      resolveFileTreeSelection(
+        {
+          kind: 'doc',
+          target: 'AGENTS',
+          docName: 'AGENTS',
+        },
+        'CLAUDE',
+      ),
+    ).toEqual({
+      selectedFilePath: 'CLAUDE',
+      selectedFolderPath: null,
+      navigationPath: 'CLAUDE',
+    });
+  });
+
+  test('uses the active document when a folder target lags a tab switch', () => {
+    expect(
+      resolveFileTreeSelection(
+        {
+          kind: 'folder-index',
+          target: 'reports',
+          folderPath: 'reports',
+          docName: 'reports/index',
+          noteKind: 'canonical-index',
+        },
+        'CLAUDE',
+      ),
+    ).toEqual({
+      selectedFilePath: 'CLAUDE',
+      selectedFolderPath: null,
+      navigationPath: 'CLAUDE',
+    });
+  });
+
   test('keeps the folder row active when a folder click resolves to an index note', () => {
     expect(
       resolveFileTreeSelection(
@@ -62,12 +98,31 @@ describe('resolveFileTreeSelection', () => {
           kind: 'missing',
           target: 'reports',
         },
-        'reports/index',
+        'reports',
       ),
     ).toEqual({
       selectedFilePath: null,
       selectedFolderPath: null,
       navigationPath: null,
+    });
+  });
+
+  test('keeps a known document selected when route metadata temporarily says missing', () => {
+    expect(
+      resolveFileTreeSelection(
+        {
+          kind: 'missing',
+          target: 'CLAUDE',
+        },
+        'CLAUDE',
+        {
+          isKnownDocument: (docName) => docName === 'CLAUDE',
+        },
+      ),
+    ).toEqual({
+      selectedFilePath: 'CLAUDE',
+      selectedFolderPath: null,
+      navigationPath: 'CLAUDE',
     });
   });
 });

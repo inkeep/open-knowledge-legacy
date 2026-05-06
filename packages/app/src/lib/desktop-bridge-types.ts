@@ -63,6 +63,12 @@ export interface RecentProjectEntry {
   missing?: boolean;
 }
 
+export interface ProjectSessionState {
+  openTabs: string[];
+  activeDocName: string | null;
+  updatedAt: string | null;
+}
+
 interface OkUpdateDownloadedInfo {
   readonly version: string;
 }
@@ -224,6 +230,8 @@ export interface OkDesktopBridge {
   };
   project: {
     listRecent(): Promise<RecentProjectEntry[]>;
+    getSessionState(): Promise<ProjectSessionState>;
+    setSessionState(state: ProjectSessionState): Promise<void>;
     open(request: { path: string; target: 'new-window' }): Promise<void>;
     close(): Promise<void>;
   };

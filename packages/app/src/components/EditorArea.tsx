@@ -11,27 +11,33 @@ import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { EmptyEditorState } from '@/components/EmptyEditorState';
 import { FolderOverview } from '@/components/FolderOverview';
 import { PropertyProvider, useProperties } from '@/components/PropertyContext';
-
-const SettingsPane = lazy(() =>
-  import('@/components/settings/SettingsPane').then((m) => ({ default: m.SettingsPane })),
-);
-
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui/button.tsx';
+import { ButtonGroup } from '@/components/ui/button-group.tsx';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
+import type { EditorModeValue } from '@/editor/use-editor-mode.ts';
 import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
 import { useDocumentStats } from '@/hooks/use-document-stats';
 import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 import { ProfilerBoundary } from '@/lib/perf';
 import { useSettingsRoute } from '@/lib/use-settings-route';
+import { useSyncStatus } from '@/presence/use-sync-status';
 import { EditorActivityPool } from './EditorActivityPool';
 import { EditorFooter } from './EditorFooter';
 import type { EditorMode } from './EditorPane';
+import { Markdown } from './icons/markdown';
+import { Textbox } from './icons/textbox';
+
+const SettingsPane = lazy(() =>
+  import('@/components/settings/SettingsPane').then((m) => ({ default: m.SettingsPane })),
+);
 
 interface EditorAreaProps {
   editorMode: EditorMode;
+  onModeChange: (mode: EditorMode) => void;
   activeTab: PanelTab;
   onActiveTabChange: (tab: PanelTab) => void;
 }
@@ -52,7 +58,12 @@ export function EditorArea(props: EditorAreaProps) {
   );
 }
 
-function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAreaProps) {
+function EditorAreaInner({
+  editorMode,
+  onModeChange,
+  activeTab,
+  onActiveTabChange,
+}: EditorAreaProps) {
   const settingsRoute = useSettingsRoute();
   const {
     activeDocName,
@@ -65,6 +76,8 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
   const { openDocumentTransition } = useDocumentTransition();
   const { requestAddProperty } = useProperties();
   const stats = useDocumentStats(activeProvider, activeDocName);
+  const syncStatus = useSyncStatus(activeProvider);
+  const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
   const deferredActiveDocName = useDeferredValue(activeDocName);
   const isNewDoc = activeTarget?.kind === 'missing';
   const showFooter = !!activeDocName && activeTarget?.kind !== 'folder';
@@ -158,6 +171,7 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
   }
 
   const isSourceMode = editorMode === 'source';
+  const sourceDisabled = !isConnected;
 
   const showPanelOpen = isSheetMode ? !sheetOpen : isCollapsed;
 
@@ -165,30 +179,73 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
     if (!activeDocName) return;
     requestAddProperty(activeDocName);
   }
+  const containerClass = 'shrink-0 rounded-lg bg-background/90 p-0.5 shadow-sm backdrop-blur';
 
   const toggleButton = (
     <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
-      {!isSourceMode && (
+      <ToggleGroup
+        type="single"
+        value={isSourceMode ? 'source' : 'wysiwyg'}
+        onValueChange={(v: EditorModeValue | '') => {
+          if (v) onModeChange(v);
+        }}
+        aria-label="Editor mode"
+        variant="outline"
+        className={containerClass}
+      >
+        <Tooltip>
+          <ToggleGroupItem value="wysiwyg" aria-label="Visual editor" asChild>
+            <TooltipTrigger>
+              <Textbox />
+            </TooltipTrigger>
+          </ToggleGroupItem>
+          <TooltipContent side="bottom">Visual</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
+            {/**
+             * Wrap the disabled button in a <div> that can receive hover events since disabled <button> elements
+             * don't trigger pointer events in the browser
+             **/}
+            <div>
+              <ToggleGroupItem
+                value="source"
+                aria-label="Markdown source"
+                disabled={sourceDisabled}
+                className="rounded-s-none! border-s-0!"
+              >
+                <Markdown />
+              </ToggleGroupItem>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            {sourceDisabled
+              ? 'Source mode requires a live connection — your edits are saved and will appear when you reconnect.'
+              : 'Markdown'}
+          </TooltipContent>
+        </Tooltip>
+      </ToggleGroup>
+      <ButtonGroup className={containerClass}>
+        {!isSourceMode && (
+          <Tooltip>
             <Button
-              variant="ghost"
+              variant="outline"
               size="icon"
               aria-label="Add properties"
               onClick={openAddPropertyForm}
               data-testid="add-properties-button"
-              className="text-muted-foreground"
+              asChild
             >
-              <ListPlus className="size-4" />
+              <TooltipTrigger>
+                <ListPlus />
+              </TooltipTrigger>
             </Button>
-          </TooltipTrigger>
-          <TooltipContent side="left">Add properties</TooltipContent>
-        </Tooltip>
-      )}
-      <Tooltip>
-        <TooltipTrigger asChild>
+            <TooltipContent side="bottom">Add properties</TooltipContent>
+          </Tooltip>
+        )}
+        <Tooltip>
           <Button
-            variant="ghost"
+            variant="outline"
             size="icon"
             onClick={() => {
               if (isSheetMode) {
@@ -202,17 +259,17 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
               }
             }}
             aria-label={showPanelOpen ? 'Show document panel' : 'Hide document panel'}
-            className="text-muted-foreground"
+            asChild
           >
-            {showPanelOpen ? (
-              <PanelRightOpen className="size-4" />
-            ) : (
-              <PanelRightClose className="size-4" />
-            )}
+            <TooltipTrigger>
+              {showPanelOpen ? <PanelRightOpen /> : <PanelRightClose />}
+            </TooltipTrigger>
           </Button>
-        </TooltipTrigger>
-        <TooltipContent side="left">{showPanelOpen ? 'Show panel' : 'Hide panel'}</TooltipContent>
-      </Tooltip>
+          <TooltipContent side="bottom">
+            {showPanelOpen ? 'Show panel' : 'Hide panel'}
+          </TooltipContent>
+        </Tooltip>
+      </ButtonGroup>
     </div>
   );
 

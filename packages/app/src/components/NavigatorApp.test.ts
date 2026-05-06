@@ -12,6 +12,8 @@ interface MockBridge {
   };
   project: {
     listRecent: ReturnType<typeof mock>;
+    getSessionState: ReturnType<typeof mock>;
+    setSessionState: ReturnType<typeof mock>;
     open: ReturnType<typeof mock>;
     close: ReturnType<typeof mock>;
   };
@@ -32,6 +34,10 @@ function makeBridge(overrides: Partial<MockBridge> = {}): MockBridge {
     },
     project: {
       listRecent: mock(() => Promise.resolve([])),
+      getSessionState: mock(() =>
+        Promise.resolve({ openTabs: [], activeDocName: null, updatedAt: null }),
+      ),
+      setSessionState: mock(() => Promise.resolve()),
       open: mock(() => Promise.resolve()),
       close: mock(() => Promise.resolve()),
     },
@@ -60,6 +66,10 @@ describe('NavigatorApp bridge contract', () => {
             { path: '/tmp/b', name: 'b', lastOpenedAt: '2026-04-19T00:00:00Z', missing: true },
           ]),
         ),
+        getSessionState: mock(() =>
+          Promise.resolve({ openTabs: [], activeDocName: null, updatedAt: null }),
+        ),
+        setSessionState: mock(() => Promise.resolve()),
         open: mock(() => Promise.resolve()),
         close: mock(() => Promise.resolve()),
       },

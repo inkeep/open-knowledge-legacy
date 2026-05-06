@@ -3,6 +3,7 @@ import {
   applyDeleteToDocuments,
   applyRenameToDocuments,
   buildRenamedNodePath,
+  isRenamePathResponse,
   isValidNodeName,
   normalizeRenameValue,
   remapActiveDocName,
@@ -83,5 +84,17 @@ describe('file-tree-operations', () => {
     expect(
       remapActiveDocName('README', [{ fromDocName: 'docs/notes', toDocName: 'docs/renamed' }]),
     ).toBe('README');
+  });
+
+  test('isRenamePathResponse validates the managed rename response shape', () => {
+    expect(
+      isRenamePathResponse({
+        ok: true,
+        renamed: [{ fromDocName: 'docs/notes', toDocName: 'docs/renamed' }],
+        rewrittenDocs: [{ docName: 'README', rewrites: 1 }],
+      }),
+    ).toBe(true);
+    expect(isRenamePathResponse({ ok: false, error: 'Destination already exists' })).toBe(true);
+    expect(isRenamePathResponse({ ok: true, renamed: [], rewrittenDocs: [{}] })).toBe(false);
   });
 });
