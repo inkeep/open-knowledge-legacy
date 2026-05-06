@@ -100,7 +100,7 @@ export async function handleBuildAndOpen(deps: InstallSkillIpcDeps): Promise<Bui
 
   let builtVersion: string | undefined;
   try {
-    const build = await buildSkillZip({ outputPath, skipVersionCheck: true });
+    const build = await buildSkillZip({ outputPath });
     builtVersion = build.skillVersion;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -215,6 +215,7 @@ export {
   reconcile,
   splitMarkdownBlocks,
 } from './reconciliation.ts';
+export { resolvePackageVersion } from './resolve-package-version.ts';
 export {
   type ApplyError,
   type ApplyResult,

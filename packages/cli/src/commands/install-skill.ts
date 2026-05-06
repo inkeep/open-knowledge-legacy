@@ -55,11 +55,10 @@ function formatSkipCurrentMessage(result: BuildAndOpenSkillResult): string {
 }
 
 function formatInstalledMessage(result: BuildAndOpenSkillResult): string {
+  const versionSuffix = result.skillVersion ? `  •  Skill v${result.skillVersion}` : '';
   return [
     success(`Built ${result.outputPath}`),
-    dim(
-      `  ${result.size} bytes  •  sha256 ${result.sha256?.slice(0, 12)}…  •  CLI v${result.cliVersion}`,
-    ),
+    dim(`  ${result.size} bytes  •  sha256 ${result.sha256?.slice(0, 12)}…${versionSuffix}`),
     info('  Claude Desktop App opened. Now upload the file manually:'),
     ...UPLOAD_STEPS,
     dim(

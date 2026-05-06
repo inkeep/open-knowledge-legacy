@@ -10,14 +10,13 @@ const MAX_ZIP_BYTES = 102_400;
 export interface BuildSkillZipOptions {
   sourceDir?: string;
   outputPath?: string;
-  skipVersionCheck?: boolean;
+  expectedSkillVersion?: string;
 }
 
 export interface BuildSkillZipResult {
   outputPath: string;
   size: number;
   sha256: string;
-  cliVersion: string;
   skillVersion?: string;
 }
 
@@ -33,25 +32,6 @@ export function resolveBundledSkillDir(): string {
     `Bundled skill asset directory not found. Tried: ${tried.join(', ')}. ` +
       'This usually means the CLI build did not copy packages/server/assets into dist/assets. ' +
       'Run `cd packages/cli && bun run build` before publishing.',
-  );
-}
-
-async function readCliVersion(): Promise<string> {
-  const candidates = [
-    '../../cli/package.json', // dev: packages/server/src/../../cli/package.json → packages/cli/package.json
-    '../package.json', // published cli: .../dist/chunks/... → .../package.json
-  ];
-  for (const rel of candidates) {
-    const candidate = fileURLToPath(new URL(rel, import.meta.url));
-    if (!existsSync(candidate)) continue;
-    const raw = await readFile(candidate, 'utf-8');
-    const parsed = JSON.parse(raw) as { name?: string; version?: string };
-    if (parsed.name === '@inkeep/open-knowledge' && typeof parsed.version === 'string') {
-      return parsed.version;
-    }
-  }
-  throw new Error(
-    'Could not resolve @inkeep/open-knowledge CLI version — no package.json with matching name found in candidate paths.',
   );
 }
 
@@ -133,8 +113,7 @@ function extractMetadataVersion(markdown: string): string | undefined {
 
 export async function validateSkillZip(
   outputPath: string,
-  expectedCliVersion: string,
-  opts: { skipVersionCheck?: boolean } = {},
+  expectedSkillVersion: string | undefined,
 ): Promise<{ size: number; sha256: string; skillVersion?: string }> {
   const size = statSync(outputPath).size;
   if (size > MAX_ZIP_BYTES) {
@@ -153,15 +132,15 @@ export async function validateSkillZip(
   }
 
   const skillVersion = extractMetadataVersion(skillMd);
-  if (!opts.skipVersionCheck) {
+  if (expectedSkillVersion !== undefined) {
     if (!skillVersion) {
       throw new Error(
         `SKILL.md metadata.version missing. Add it to packages/server/assets/skills/open-knowledge/SKILL.md or run \`bash scripts/sync-skill-version.sh\`.`,
       );
     }
-    if (skillVersion !== expectedCliVersion) {
+    if (skillVersion !== expectedSkillVersion) {
       throw new Error(
-        `SKILL.md metadata.version (${skillVersion}) does not match CLI version (${expectedCliVersion}). Run \`bash scripts/sync-skill-version.sh\` after bumping package versions.`,
+        `SKILL.md metadata.version (${skillVersion}) does not match expected version (${expectedSkillVersion}). Run \`bash scripts/sync-skill-version.sh\` after bumping package versions.`,
       );
     }
   }
@@ -172,14 +151,14 @@ export async function validateSkillZip(
 export async function buildSkillZip(opts: BuildSkillZipOptions = {}): Promise<BuildSkillZipResult> {
   const sourceDir = opts.sourceDir ?? resolveBundledSkillDir();
   const outputPath = opts.outputPath ?? join(process.cwd(), 'openknowledge.skill');
-  const cliVersion = await readCliVersion();
 
   await zipDirectory(sourceDir, outputPath);
-  const { size, sha256, skillVersion } = await validateSkillZip(outputPath, cliVersion, {
-    skipVersionCheck: opts.skipVersionCheck,
-  });
+  const { size, sha256, skillVersion } = await validateSkillZip(
+    outputPath,
+    opts.expectedSkillVersion,
+  );
 
-  return { outputPath, size, sha256, cliVersion, skillVersion };
+  return { outputPath, size, sha256, skillVersion };
 }
 
 export const __testing = { extractMetadataVersion, computeWrapperFolderName, toPosixZipPath };

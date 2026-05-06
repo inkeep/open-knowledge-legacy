@@ -44,7 +44,7 @@ describe('runInstallSkill', () => {
     expect(existsSync(outPath)).toBe(true);
     expect(statSync(outPath).size).toBeGreaterThan(0);
     expect(result.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(result.cliVersion).toMatch(/^\d+\.\d+\.\d+/);
+    expect(result.skillVersion).toMatch(/^\d+\.\d+\.\d+/);
     expect(result.message).toContain('Customize → Skills');
     expect(result.message).toContain('Upload skill');
   });
