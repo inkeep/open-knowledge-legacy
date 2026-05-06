@@ -113,11 +113,18 @@ export function isPathWithinProject(
   try {
     const canonicalUser = p.resolve(userPath);
     const canonicalProject = p.resolve(projectPath);
+    if (platform === 'win32') {
+      const userRoot = p.parse(canonicalUser).root.toLowerCase();
+      const projectRoot = p.parse(canonicalProject).root.toLowerCase();
+      if (!userRoot || !projectRoot || userRoot !== projectRoot) return false;
+    }
     if (canonicalUser === canonicalProject) return true;
     const rel = p.relative(canonicalProject, canonicalUser);
     if (rel === '' || rel === '.') return true;
     if (rel === '..' || rel.startsWith(`..${p.sep}`)) return false;
-    if (platform === 'win32' && /^[a-zA-Z]:[\\/]/.test(rel)) return false;
+    if (platform === 'win32' && (/^[a-zA-Z]:[\\/]/.test(rel) || rel.startsWith('\\\\'))) {
+      return false;
+    }
     if (platform !== 'win32' && rel.startsWith('/')) return false;
     return true;
   } catch {
