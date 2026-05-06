@@ -3,14 +3,15 @@ title: MCP
 description: Tools the Open Knowledge MCP server exposes to AI agents.
 ---
 
-The MCP server gives AI agents structured access to your knowledge base. Most tools work whether or not the editor is open. Write tools require the editor — Open Knowledge starts it for you on the first write.
+The MCP server gives AI agents structured access to your knowledge base. Most read tools work without the editor running — `grep`, `read_document`, `exec`, and the link-graph tools all operate on disk. The `search` tool needs the server because it reuses the cmd-K Orama corpus; if the server is down it returns an error suggesting `grep` as a server-free alternative. Write tools require the editor — Open Knowledge starts it for you on the first write.
 
 ## Tools
 
 | Tool | Purpose |
 | --- | --- |
 | `read_document` | Read a doc with its frontmatter, backlinks, and recent history |
-| `search` | Full-text search |
+| `search` | Ranked workspace search (title boost + body BM25 + recency — same engine the cmd-K palette uses) |
+| `grep` | Literal-string search across content, grouped by file, with frontmatter enrichment |
 | `list_documents` | List every doc |
 | `exec` | Read-only shell (`ls`, `cat`, `grep`, `find`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`) |
 | `write_document` | Write a full doc, including frontmatter |

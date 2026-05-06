@@ -16,7 +16,7 @@ const BASE_CONFIG: Config = {
     autoStart: true,
     tools: {
       read_document: { historyDepth: 5 },
-      search: { maxResults: 50 },
+      grep: { maxResults: 50 },
     },
   },
   appearance: {},
@@ -85,9 +85,9 @@ function readUserYaml(home: string): string | null {
 describe('collectPatchLeaves', () => {
   test('walks nested object to scalar leaves', () => {
     const leaves = collectPatchLeaves({
-      mcp: { tools: { search: { maxResults: 100 } } },
+      mcp: { tools: { grep: { maxResults: 100 } } },
     });
-    expect(leaves).toEqual([['mcp', 'tools', 'search', 'maxResults']]);
+    expect(leaves).toEqual([['mcp', 'tools', 'grep', 'maxResults']]);
   });
 
   test('treats arrays as leaves (no descent)', () => {
@@ -108,30 +108,30 @@ describe('collectPatchLeaves', () => {
     const leaves = collectPatchLeaves({
       mcp: {
         tools: {
-          search: { maxResults: 100 },
+          grep: { maxResults: 100 },
           read_document: { historyDepth: 7 },
         },
       },
     });
-    expect(leaves).toContainEqual(['mcp', 'tools', 'search', 'maxResults']);
+    expect(leaves).toContainEqual(['mcp', 'tools', 'grep', 'maxResults']);
     expect(leaves).toContainEqual(['mcp', 'tools', 'read_document', 'historyDepth']);
     expect(leaves).toHaveLength(2);
   });
 
   test('skips undefined values', () => {
     const leaves = collectPatchLeaves({
-      mcp: { tools: { search: { maxResults: undefined } } },
+      mcp: { tools: { grep: { maxResults: undefined } } },
     });
     expect(leaves).toEqual([]);
   });
 });
 
 describe('set_config — happy paths', () => {
-  test('writes mcp.tools.search.maxResults to user-global (no scope already set, defaultScope=user)', async () => {
+  test('writes mcp.tools.grep.maxResults to user-global (no scope already set, defaultScope=user)', async () => {
     const project = newProjectWithHome();
     const handler = captureHandler(project);
     const result = await handler({
-      patch: { mcp: { tools: { search: { maxResults: 100 } } } },
+      patch: { mcp: { tools: { grep: { maxResults: 100 } } } },
     });
     expect(result.isError).toBeUndefined();
     const success = result.structuredContent?.result as {
@@ -141,7 +141,7 @@ describe('set_config — happy paths', () => {
     };
     expect(success.ok).toBe(true);
     expect(success.scope).toBe('user');
-    expect(success.applied).toEqual(['mcp.tools.search.maxResults']);
+    expect(success.applied).toEqual(['mcp.tools.grep.maxResults']);
 
     const userYaml = readUserYaml(project.home);
     expect(userYaml).toContain('maxResults: 100');
@@ -151,11 +151,11 @@ describe('set_config — happy paths', () => {
     const project = newProjectWithHome();
     writeFileSync(
       join(project.cwd, '.ok', 'config.yml'),
-      'mcp:\n  tools:\n    search:\n      maxResults: 75\n',
+      'mcp:\n  tools:\n    grep:\n      maxResults: 75\n',
     );
     const handler = captureHandler(project);
     const result = await handler({
-      patch: { mcp: { tools: { search: { maxResults: 200 } } } },
+      patch: { mcp: { tools: { grep: { maxResults: 200 } } } },
     });
     expect(result.isError).toBeUndefined();
     const success = result.structuredContent?.result as { scope: string };
@@ -194,14 +194,14 @@ describe('set_config — error paths', () => {
     const project = newProjectWithHome();
     const handler = captureHandler(project);
     const result = await handler({
-      patch: { mcp: { tools: { search: { maxResults: 'not-a-number' } } } },
+      patch: { mcp: { tools: { grep: { maxResults: 'not-a-number' } } } },
     });
     expect(result.isError).toBe(true);
     const payload = result.structuredContent?.result as {
       error: { code: string; issues: Array<{ path: (string | number)[] }> };
     };
     expect(payload.error.code).toBe('SCHEMA_INVALID');
-    expect(payload.error.issues[0]?.path).toEqual(['mcp', 'tools', 'search', 'maxResults']);
+    expect(payload.error.issues[0]?.path).toEqual(['mcp', 'tools', 'grep', 'maxResults']);
   });
 
   test('error response includes humanFormat + retry framing in content[].text', async () => {

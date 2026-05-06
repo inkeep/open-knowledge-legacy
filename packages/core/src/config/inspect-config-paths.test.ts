@@ -15,11 +15,11 @@ function makeTempProject(): { cwd: string; home: string } {
 describe('inspectConfigPaths', () => {
   test('returns false/false when neither file exists', () => {
     const { cwd, home } = makeTempProject();
-    const result = inspectConfigPaths([['mcp', 'tools', 'search', 'maxResults']], {
+    const result = inspectConfigPaths([['mcp', 'tools', 'grep', 'maxResults']], {
       cwd,
       homedirOverride: home,
     });
-    expect(result.get('mcp.tools.search.maxResults')).toEqual({
+    expect(result.get('mcp.tools.grep.maxResults')).toEqual({
       user: false,
       project: false,
     });
@@ -29,13 +29,13 @@ describe('inspectConfigPaths', () => {
     const { cwd, home } = makeTempProject();
     writeFileSync(
       join(cwd, '.ok', 'config.yml'),
-      'mcp:\n  tools:\n    search:\n      maxResults: 100\n',
+      'mcp:\n  tools:\n    grep:\n      maxResults: 100\n',
     );
-    const result = inspectConfigPaths([['mcp', 'tools', 'search', 'maxResults']], {
+    const result = inspectConfigPaths([['mcp', 'tools', 'grep', 'maxResults']], {
       cwd,
       homedirOverride: home,
     });
-    expect(result.get('mcp.tools.search.maxResults')).toEqual({
+    expect(result.get('mcp.tools.grep.maxResults')).toEqual({
       user: false,
       project: true,
     });
@@ -58,17 +58,17 @@ describe('inspectConfigPaths', () => {
     const { cwd, home } = makeTempProject();
     writeFileSync(
       join(cwd, '.ok', 'config.yml'),
-      'mcp:\n  tools:\n    search:\n      maxResults: 100\n',
+      'mcp:\n  tools:\n    grep:\n      maxResults: 100\n',
     );
     writeFileSync(
       join(home, '.ok', 'config.yml'),
-      'mcp:\n  tools:\n    search:\n      maxResults: 50\n',
+      'mcp:\n  tools:\n    grep:\n      maxResults: 50\n',
     );
-    const result = inspectConfigPaths([['mcp', 'tools', 'search', 'maxResults']], {
+    const result = inspectConfigPaths([['mcp', 'tools', 'grep', 'maxResults']], {
       cwd,
       homedirOverride: home,
     });
-    expect(result.get('mcp.tools.search.maxResults')).toEqual({
+    expect(result.get('mcp.tools.grep.maxResults')).toEqual({
       user: true,
       project: true,
     });
@@ -78,18 +78,18 @@ describe('inspectConfigPaths', () => {
     const { cwd, home } = makeTempProject();
     writeFileSync(
       join(cwd, '.ok', 'config.yml'),
-      'mcp:\n  tools:\n    search:\n      maxResults: 100\n',
+      'mcp:\n  tools:\n    grep:\n      maxResults: 100\n',
     );
     writeFileSync(join(home, '.ok', 'config.yml'), 'appearance:\n  theme: dark\n');
     const result = inspectConfigPaths(
       [
-        ['mcp', 'tools', 'search', 'maxResults'],
+        ['mcp', 'tools', 'grep', 'maxResults'],
         ['appearance', 'theme'],
         ['nonexistent', 'path'],
       ],
       { cwd, homedirOverride: home },
     );
-    expect(result.get('mcp.tools.search.maxResults')).toEqual({
+    expect(result.get('mcp.tools.grep.maxResults')).toEqual({
       user: false,
       project: true,
     });
@@ -106,11 +106,11 @@ describe('inspectConfigPaths', () => {
   test('reports false when YAML parses but path traverses through a scalar', () => {
     const { cwd, home } = makeTempProject();
     writeFileSync(join(cwd, '.ok', 'config.yml'), 'mcp:\n  tools: hello\n');
-    const result = inspectConfigPaths([['mcp', 'tools', 'search', 'maxResults']], {
+    const result = inspectConfigPaths([['mcp', 'tools', 'grep', 'maxResults']], {
       cwd,
       homedirOverride: home,
     });
-    expect(result.get('mcp.tools.search.maxResults')).toEqual({
+    expect(result.get('mcp.tools.grep.maxResults')).toEqual({
       user: false,
       project: false,
     });
@@ -119,11 +119,11 @@ describe('inspectConfigPaths', () => {
   test('reports false when YAML is malformed (parse error → null tree)', () => {
     const { cwd, home } = makeTempProject();
     writeFileSync(join(cwd, '.ok', 'config.yml'), 'mcp: {[[ broken');
-    const result = inspectConfigPaths([['mcp', 'tools', 'search', 'maxResults']], {
+    const result = inspectConfigPaths([['mcp', 'tools', 'grep', 'maxResults']], {
       cwd,
       homedirOverride: home,
     });
-    expect(result.get('mcp.tools.search.maxResults')).toEqual({
+    expect(result.get('mcp.tools.grep.maxResults')).toEqual({
       user: false,
       project: false,
     });

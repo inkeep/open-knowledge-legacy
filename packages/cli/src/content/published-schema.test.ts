@@ -93,7 +93,7 @@ describe('published dist/config-schema.json', () => {
     const ajv = new Ajv({ allErrors: true, strict: false });
     addFormats(ajv);
     const validate = ajv.compile(parsed);
-    const fixture = { mcp: { tools: { search: { maxResults: 'fast' } } } };
+    const fixture = { mcp: { tools: { grep: { maxResults: 'fast' } } } };
     expect(validate(fixture)).toBe(false);
     expect(validate.errors?.length).toBeGreaterThan(0);
   });

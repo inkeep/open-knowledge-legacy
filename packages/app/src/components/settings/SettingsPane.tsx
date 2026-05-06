@@ -179,9 +179,9 @@ const SECTIONS: SectionDef[] = [
         description: 'How many history entries the agent’s read_document tool returns.',
       },
       {
-        path: ['mcp', 'tools', 'search', 'maxResults'],
-        label: 'search max results',
-        description: 'Cap on results returned by the agent’s search tool.',
+        path: ['mcp', 'tools', 'grep', 'maxResults'],
+        label: 'grep max results',
+        description: 'Cap on results returned by the agent’s grep tool.',
       },
     ],
   },

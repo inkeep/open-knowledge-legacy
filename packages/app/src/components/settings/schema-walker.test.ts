@@ -14,8 +14,8 @@ describe('buildPatch', () => {
   });
 
   test('nested path produces nested object', () => {
-    expect(buildPatch(['mcp', 'tools', 'search', 'maxResults'], 100)).toEqual({
-      mcp: { tools: { search: { maxResults: 100 } } },
+    expect(buildPatch(['mcp', 'tools', 'grep', 'maxResults'], 100)).toEqual({
+      mcp: { tools: { grep: { maxResults: 100 } } },
     });
   });
 
@@ -42,7 +42,7 @@ describe('resolveLeafSchema against ConfigSchema', () => {
   });
 
   test('descends to a number leaf', () => {
-    const tag = getLeafTypeTag(requireLeaf(['mcp', 'tools', 'search', 'maxResults']));
+    const tag = getLeafTypeTag(requireLeaf(['mcp', 'tools', 'grep', 'maxResults']));
     expect(['number', 'int', 'integer'].includes(tag ?? '')).toBe(true);
   });
 
@@ -65,7 +65,7 @@ describe('getFieldDefault against ConfigSchema', () => {
   test('returns scalar defaults for defaulted leaves', () => {
     expect(getFieldDefault(requireLeaf(['content', 'dir']))).toBe('.');
     expect(getFieldDefault(requireLeaf(['server', 'host']))).toBe('localhost');
-    expect(getFieldDefault(requireLeaf(['mcp', 'tools', 'search', 'maxResults']))).toBe(50);
+    expect(getFieldDefault(requireLeaf(['mcp', 'tools', 'grep', 'maxResults']))).toBe(50);
   });
 
   test('returns undefined for fields without .default()', () => {

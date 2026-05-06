@@ -120,7 +120,7 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
       .map((l) => l.path.join('.'))
       .sort();
     expect(allowlisted).toEqual(
-      ['mcp.tools.read_document.historyDepth', 'mcp.tools.search.maxResults'].sort(),
+      ['mcp.tools.read_document.historyDepth', 'mcp.tools.grep.maxResults'].sort(),
     );
   });
 

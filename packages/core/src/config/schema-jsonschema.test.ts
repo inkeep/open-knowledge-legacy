@@ -61,13 +61,13 @@ const FIXTURES: Fixture[] = [
     shouldAccept: false,
   },
   {
-    name: 'mcp.tools.search.maxResults=25 accepted',
-    input: { mcp: { tools: { search: { maxResults: 25 } } } },
+    name: 'mcp.tools.grep.maxResults=25 accepted',
+    input: { mcp: { tools: { grep: { maxResults: 25 } } } },
     shouldAccept: true,
   },
   {
-    name: 'mcp.tools.search.maxResults=0 rejected (min 1)',
-    input: { mcp: { tools: { search: { maxResults: 0 } } } },
+    name: 'mcp.tools.grep.maxResults=0 rejected (min 1)',
+    input: { mcp: { tools: { grep: { maxResults: 0 } } } },
     shouldAccept: false,
   },
   {

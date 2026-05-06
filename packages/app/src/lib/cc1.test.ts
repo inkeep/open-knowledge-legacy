@@ -378,7 +378,7 @@ describe('parseCC1ConfigValidationRejected', () => {
         code: 'SCHEMA_INVALID',
         issues: [
           {
-            path: ['mcp', 'tools', 'search', 'maxResults'],
+            path: ['mcp', 'tools', 'grep', 'maxResults'],
             message: 'Expected number',
             issueCode: 'invalid_type',
           },

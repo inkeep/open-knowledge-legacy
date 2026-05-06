@@ -20,12 +20,12 @@ When this workspace has Open Knowledge MCP configured, do **not** use your host'
 - **Native `Read` / `Grep` / `Glob` on in-scope `.md` / `.mdx`** — the original case.
 - **`Bash ls` / `Bash find` / `Bash cat` on dirs containing in-scope markdown** — use `exec("ls …")` / `exec("find … -name '*.md'")` / `exec("cat …")` instead. Native returns bare names; `exec` returns frontmatter, backlink counts, and recent activity per child.
 - **Glob patterns that target markdown** (`**/*.md`, any dir known to be markdown-heavy like `specs/**`, `reports/**`, `docs/**`) — use `exec` with `find`, or `list_documents({ dir })`.
-- **Dispatching the Explore / general-purpose subagent for markdown-heavy exploration** — subagents use native `Read` / `Grep` / `Glob` internally and bypass Open Knowledge entirely. Do markdown exploration yourself via `exec` / `search`. Subagents remain appropriate for **source-code** exploration.
+- **Dispatching the Explore / general-purpose subagent for markdown-heavy exploration** — subagents use native `Read` / `Grep` / `Glob` internally and bypass Open Knowledge entirely. Do markdown exploration yourself via `exec` / `search` / `grep`. Subagents remain appropriate for **source-code** exploration.
 - **Reading `.ok/AGENTS.md` via native `Read`** — observed failure mode during M1 testing. The `.ok/` directory is in-scope; treat its contents the same as any other knowledge-base file.
 
 Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project git history that OK's tools return for every matched knowledge-base file. `exec` is the primary read surface; it runs read-only bash (`cat`, `ls`, `grep`, `find`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut` — pipes OK) and returns raw stdout plus enriched metadata per file.
 
-**MCP tool visibility — not seeing `exec` is NOT the escape hatch.** MCP wiring varies by client. Claude Code, Cursor, Codex, Windsurf, VS Code — each surfaces MCP differently. Server labels are user-defined; tools may not appear as top-level symbols named `exec` in your specific UI. If Open Knowledge is registered as an MCP server in this workspace, route markdown reads through its `exec` / `search` / `read_document` via your client's documented MCP invocation (including any generic "call MCP tool" flow). Registration is the test, not top-level-symbol visibility.
+**MCP tool visibility — not seeing `exec` is NOT the escape hatch.** MCP wiring varies by client. Claude Code, Cursor, Codex, Windsurf, VS Code — each surfaces MCP differently. Server labels are user-defined; tools may not appear as top-level symbols named `exec` in your specific UI. If Open Knowledge is registered as an MCP server in this workspace, route markdown reads through its `exec` / `search` / `grep` / `read_document` via your client's documented MCP invocation (including any generic "call MCP tool" flow). Registration is the test, not top-level-symbol visibility.
 
 **Escape hatch.** Native `Read` / `Grep` / `Glob` on `.md` / `.mdx` is allowed **only** when no Open Knowledge MCP server is registered for this project, **or** immediately after you tried an MCP call and it failed — then begin a user-visible sentence with `Open Knowledge MCP unavailable:`. Never use the hatch because you skipped your client's MCP path, didn't see `exec` as a top-level tool, or rationalized the skill wasn't necessary.
 
@@ -36,7 +36,7 @@ Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project
 - Read a file: `exec("cat <path>.md")` — contents + full rich enrichment
 - List a directory: `exec("ls <dir>")` — per-child frontmatter, recursive markdown counts, most-recently-updated doc per subdir
 - Search: `exec("grep -rn <term> <dir> | head -5")` — matches + enrichment on matched files
-- Typed tools (`read_document`, `search`, `list_documents`) remain available — prefer them when a structured `structuredContent` shape is useful (e.g., passing results to another tool). For interactive reads, `exec` is lighter.
+- Typed tools (`read_document`, `search`, `grep`, `list_documents`) remain available — prefer them when a structured `structuredContent` shape is useful (e.g., passing results to another tool). For interactive reads, `exec` is lighter. **Pick the right search:** `search` for ranked retrieval (cmd-K parity — title boost + body BM25 + recency); `grep` for every literal-string occurrence grouped by file with frontmatter enrichment.
 
 ## Preview — open the browser at session start
 
@@ -265,7 +265,8 @@ The skill carries the trigger ("KB content changed this turn — go look"). The 
 | ----------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | List a markdown-heavy dir                       | `Bash: ls specs/`                                                                  | `exec("ls specs/")`                                                               |
 | Find all SPEC.md files                          | `Glob: **/SPEC.md`                                                                 | `exec("find specs -name SPEC.md")`                                                |
-| Search a phrase across markdown                 | `Grep: "pattern" *.md`                                                             | `search({ query: "pattern" })`                                                    |
+| Find the most relevant page for a query         | `Grep: "pattern" *.md` then read three files                                       | `search({ query: "pattern" })` (ranked: title + body BM25 + recency)              |
+| Find every literal occurrence of a phrase       | `Grep: "pattern" *.md`                                                             | `grep({ query: "pattern" })` (literal, grouped by file, with frontmatter)         |
 | Read an individual doc                          | `Read: specs/foo/SPEC.md`                                                          | `exec("cat specs/foo/SPEC.md")` or `read_document(...)`                           |
 | Explore a markdown-heavy dir                    | `Agent(Explore): "..."`                                                            | Do `exec`-based exploration yourself                                              |
 | Wait for the server to tell you to open preview | Skip the session-start preview open and wait for the `attach-preview-once` hint    | Open the preview browser at session start; the hint is a fallback when you didn't |

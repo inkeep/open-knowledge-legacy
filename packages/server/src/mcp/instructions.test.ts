@@ -34,12 +34,13 @@ test('buildInstructions points readers at the Agent Skill for full guidance (wik
   expect(text).toContain('anti-patterns');
 });
 
-test('buildInstructions documents the read tool routing (exec / read_document / search)', () => {
+test('buildInstructions documents the read tool routing (exec / read_document / search / grep)', () => {
   const text = buildInstructions(defaultContent());
   expect(text).toContain('## Reads');
   expect(text).toContain('exec(');
   expect(text).toContain('read_document');
   expect(text).toContain('search');
+  expect(text).toContain('grep');
 });
 
 test('buildInstructions surfaces an explicit native-tool escape hatch', () => {
