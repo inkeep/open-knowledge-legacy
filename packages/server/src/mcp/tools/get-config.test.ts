@@ -5,25 +5,15 @@ const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Config } from '../../config/schema.ts';
+import { type Config, ConfigSchema } from '../../config/schema.ts';
 import { register } from './get-config.ts';
 import type { ServerInstance } from './shared.ts';
 
-const BASE_CONFIG: Config = {
-  content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
-  github: { oauthAppClientId: 'Ov23liqlSd0V1MwR6rhI' },
-  server: { host: 'localhost', openOnAgentEdit: false },
-  preview: {},
-  folders: [],
-  mcp: {
-    autoStart: true,
-    tools: {
-      read_document: { historyDepth: 5 },
-      grep: { maxResults: 50 },
-    },
-  },
-  appearance: {},
-};
+const BASE_CONFIG: Config = ConfigSchema.parse({
+  content: { dir: '.' },
+  preview: { baseUrl: 'https://example.com/wiki' },
+  appearance: { theme: 'dark', editorModeDefault: 'wysiwyg' },
+});
 
 interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
@@ -58,27 +48,27 @@ describe('get_config tool', () => {
     const result = await handler({});
     expect(result.isError).toBeUndefined();
     const value = result.structuredContent?.value as Record<string, unknown>;
-    expect(value.mcp).toBeDefined();
-    expect((value.content as { include: string[] }).include).toEqual(['**/*.md', '**/*.mdx']);
+    expect(value.preview).toBeDefined();
+    expect((value.content as { dir: string }).dir).toBe('.');
   });
 
   test('returns sub-tree when path is provided', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-'));
     const handler = captureRegistration(cwd);
-    const result = await handler({ path: ['mcp', 'tools'] });
+    const result = await handler({ path: ['appearance'] });
     const value = result.structuredContent?.value as {
-      grep: { maxResults: number };
-      read_document: { historyDepth: number };
+      theme: string;
+      editorModeDefault: string;
     };
-    expect(value.grep.maxResults).toBe(50);
-    expect(value.read_document.historyDepth).toBe(5);
+    expect(value.theme).toBe('dark');
+    expect(value.editorModeDefault).toBe('wysiwyg');
   });
 
   test('returns scalar leaf when path resolves to a primitive', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-'));
     const handler = captureRegistration(cwd);
-    const result = await handler({ path: ['mcp', 'tools', 'grep', 'maxResults'] });
-    expect(result.structuredContent?.value).toBe(50);
+    const result = await handler({ path: ['preview', 'baseUrl'] });
+    expect(result.structuredContent?.value).toBe('https://example.com/wiki');
   });
 
   test('returns null + exists:false for a nonexistent path', async () => {
@@ -93,16 +83,16 @@ describe('get_config tool', () => {
   test('content[0].text is JSON-serialized for agent consumption', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-'));
     const handler = captureRegistration(cwd);
-    const result = await handler({ path: ['mcp', 'tools', 'grep', 'maxResults'] });
-    expect(result.content[0]?.text).toBe('50');
+    const result = await handler({ path: ['appearance', 'theme'] });
+    expect(result.content[0]?.text).toBe('"dark"');
   });
 
-  test('reads no allowlist on read — returns github.oauthAppClientId without error', async () => {
+  test('reads any field — no allowlist gating on read', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-'));
     const handler = captureRegistration(cwd);
-    const result = await handler({ path: ['github', 'oauthAppClientId'] });
+    const result = await handler({ path: ['preview', 'baseUrl'] });
     expect(result.isError).toBeUndefined();
-    expect(result.structuredContent?.value).toBe('Ov23liqlSd0V1MwR6rhI');
+    expect(result.structuredContent?.value).toBe('https://example.com/wiki');
   });
 
   test('reflects on-disk config when caller passes a resolver that loads it', async () => {
@@ -110,17 +100,11 @@ describe('get_config tool', () => {
     mkdirSync(join(cwd, '.ok'), { recursive: true });
     writeFileSync(
       join(cwd, '.ok', 'config.yml'),
-      'mcp:\n  tools:\n    grep:\n      maxResults: 100\n',
+      'preview:\n  baseUrl: https://disk.example.com/wiki\n',
     );
     const merged: Config = {
       ...BASE_CONFIG,
-      mcp: {
-        ...BASE_CONFIG.mcp,
-        tools: {
-          ...BASE_CONFIG.mcp.tools,
-          grep: { maxResults: 100 },
-        },
-      },
+      preview: { baseUrl: 'https://disk.example.com/wiki' },
     };
     let captured: ToolHandler | null = null;
     const server = {
@@ -137,8 +121,8 @@ describe('get_config tool', () => {
     });
     if (!captured) throw new Error('tool not registered');
     const result = await (captured as ToolHandler)({
-      path: ['mcp', 'tools', 'grep', 'maxResults'],
+      path: ['preview', 'baseUrl'],
     });
-    expect(result.structuredContent?.value).toBe(100);
+    expect(result.structuredContent?.value).toBe('https://disk.example.com/wiki');
   });
 });

@@ -112,16 +112,14 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     }
   });
 
-  test('agentSettable allowlist is exactly the 3 expected paths', () => {
+  test('no fields are agent-settable in the current schema', () => {
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
     const allowlisted = leaves
       .filter((l) => getFieldMeta(l.schema)?.agentSettable === true)
       .map((l) => l.path.join('.'))
       .sort();
-    expect(allowlisted).toEqual(
-      ['mcp.tools.read_document.historyDepth', 'mcp.tools.grep.maxResults'].sort(),
-    );
+    expect(allowlisted).toEqual([]);
   });
 
   test('project-strict fields cover content.dir + preview.baseUrl + autoSync.onboardingResolvedAt', () => {

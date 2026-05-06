@@ -51,22 +51,18 @@ describe('loadConfig', () => {
 
     expect(config.content.dir).toBe('.');
 
-    expect(config.server.host).toBe('localhost');
-    expect(config.server.openOnAgentEdit).toBe(false);
-
-    expect(config.mcp.autoStart).toBe(true);
-
     expect(config.appearance.theme).toBeUndefined();
     expect(config.appearance.editorModeDefault).toBeUndefined();
+
+    expect(config.autoSync.onboardingResolvedAt).toBeNull();
   });
 
   test('empty YAML file → all defaults resolve', () => {
     writeWorkspaceConfig('');
     const { config } = loadConfig(testDir);
 
-    expect(config.server.host).toBe('localhost');
     expect(config.content.dir).toBe('.');
-    expect(config.mcp.autoStart).toBe(true);
+    expect(config.autoSync.onboardingResolvedAt).toBeNull();
   });
 
   test('comments-only YAML (scaffolded config) → all defaults resolve', () => {
@@ -74,55 +70,61 @@ describe('loadConfig', () => {
 # This is a fully commented config
 # content:
 #   dir: .
-# server:
-#   host: localhost
 `);
     const { config, sources } = loadConfig(testDir);
 
     expect(sources).toHaveLength(0);
-    expect(config.server.host).toBe('localhost');
     expect(config.content.dir).toBe('.');
   });
 
-  test('stale dropped fields (sync.*, persistence.debounceMs, server.port) load via loose-mode (D34)', () => {
+  test('stale dropped fields load via loose-mode and emit deprecation warns', () => {
     writeWorkspaceConfig(
-      'sync:\n  pushIntervalSeconds: 30\npersistence:\n  debounceMs: 2000\nserver:\n  port: 3000\n  host: example.dev\n',
+      'sync:\n  pushIntervalSeconds: 30\nserver:\n  port: 3000\n  host: example.dev\n  openOnAgentEdit: true\nmcp:\n  autoStart: false\n  tools:\n    grep:\n      maxResults: 100\n    search:\n      maxResults: 100\nupload:\n  maxBytes: 100000\ngithub:\n  oauthAppClientId: abc\ncontent:\n  dir: docs\n',
     );
-    const { config } = loadConfig(testDir);
-    expect(config.server.host).toBe('example.dev');
-  });
-
-  test('mcp.autoStart: false disables auto-spawn', () => {
-    writeWorkspaceConfig('mcp:\n  autoStart: false\n');
-    const { config } = loadConfig(testDir);
-    expect(config.mcp.autoStart).toBe(false);
+    const warns: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warns.push(args.map((a) => String(a)).join(' '));
+    };
+    try {
+      const { config } = loadConfig(testDir);
+      expect(config.content.dir).toBe('docs');
+    } finally {
+      console.warn = originalWarn;
+    }
+    const findWarn = (path: string) => warns.find((w) => w.includes(path)) ?? '';
+    expect(findWarn('server.host')).toContain('--host');
+    expect(findWarn('server.host')).toContain('HOST');
+    expect(findWarn('github.oauthAppClientId')).toContain('OPEN_KNOWLEDGE_GITHUB_CLIENT_ID');
+    expect(findWarn('mcp.autoStart')).toContain('OK_MCP_AUTOSTART');
+    expect(findWarn('server.openOnAgentEdit')).toContain('hardcoded');
+    expect(findWarn('mcp.tools.grep.maxResults')).toContain('hardcoded');
+    expect(findWarn('mcp.tools.search.maxResults')).toContain('hardcoded');
+    expect(findWarn('upload.maxBytes')).toContain('streaming uploads have no user-facing cap');
   });
 
   test('project config overrides a single field, other defaults preserved', () => {
-    writeWorkspaceConfig('server:\n  host: 0.0.0.0\n');
+    writeWorkspaceConfig('content:\n  dir: docs\n');
 
     const { config, sources } = loadConfig(testDir);
 
     expect(sources).toHaveLength(1);
-    expect(config.server.host).toBe('0.0.0.0');
-    expect(config.server.openOnAgentEdit).toBe(false);
-    expect(config.content.dir).toBe('.');
+    expect(config.content.dir).toBe('docs');
+    expect(config.appearance.theme).toBeUndefined();
+    expect(config.preview.baseUrl).toBeUndefined();
   });
 
   test('project config overrides multiple sections at once', () => {
     writeWorkspaceConfig(`
-server:
-  host: 0.0.0.0
-  openOnAgentEdit: true
-mcp:
-  autoStart: false
+content:
+  dir: docs
+preview:
+  baseUrl: https://wiki.acme.com
 `);
     const { config } = loadConfig(testDir);
 
-    expect(config.server.host).toBe('0.0.0.0');
-    expect(config.server.openOnAgentEdit).toBe(true);
-    expect(config.mcp.autoStart).toBe(false);
-    expect(config.mcp.tools.grep.maxResults).toBe(50);
+    expect(config.content.dir).toBe('docs');
+    expect(config.preview.baseUrl).toBe('https://wiki.acme.com');
   });
 
   test('content.include in project config rejects with REMOVED_KEY error directing to .okignore', () => {
@@ -188,27 +190,13 @@ mcp:
     expect(caught?.message).toContain('1:1 migration');
   });
 
-  test('partial section override preserves sibling defaults within that section', () => {
-    writeWorkspaceConfig('mcp:\n  tools:\n    grep:\n      maxResults: 25\n');
-
-    const { config } = loadConfig(testDir);
-
-    expect(config.mcp.tools.grep.maxResults).toBe(25);
-    expect(config.mcp.tools.read_document.historyDepth).toBe(5); // sibling preserved
-  });
-
-  test('invalid host type throws descriptive error', () => {
-    writeWorkspaceConfig('server:\n  host: 12345\n');
-    expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
-  });
-
   test('appearance.theme outside the enum throws', () => {
     writeWorkspaceConfig('appearance:\n  theme: midnight\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 
-  test('negative mcp.tools.grep.maxResults throws', () => {
-    writeWorkspaceConfig('mcp:\n  tools:\n    grep:\n      maxResults: -1\n');
+  test('preview.baseUrl with non-URL value throws', () => {
+    writeWorkspaceConfig('preview:\n  baseUrl: "not a url"\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 
@@ -216,27 +204,25 @@ mcp:
     writeWorkspaceConfig('future_feature:\n  enabled: true\n');
     const { config } = loadConfig(testDir);
 
-    expect(config.server.host).toBe('localhost');
+    expect(config.content.dir).toBe('.');
   });
 
   test('unknown nested keys within known sections are silently ignored', () => {
-    writeWorkspaceConfig('server:\n  host: 0.0.0.0\n  unknownKey: hello\n');
+    writeWorkspaceConfig('content:\n  dir: docs\n  unknownKey: hello\n');
     const { config } = loadConfig(testDir);
 
-    expect(config.server.host).toBe('0.0.0.0');
+    expect(config.content.dir).toBe('docs');
   });
 
   test('malformed YAML does not crash — returns defaults', () => {
-    writeWorkspaceConfig('server:\n  host: [invalid yaml');
+    writeWorkspaceConfig('content:\n  dir: [invalid yaml');
     const { config } = loadConfig(testDir);
-    expect(config.server.host).toBe('localhost');
+    expect(config.content.dir).toBe('.');
   });
 
   test('schema-invalid project config emits file:line:col in error message', () => {
-    const yaml = `mcp:
-  tools:
-    grep:
-      maxResults: "fifty"
+    const yaml = `appearance:
+  theme: midnight
 `;
     writeWorkspaceConfig(yaml);
     let caught: Error | undefined;
@@ -247,12 +233,12 @@ mcp:
     }
     expect(caught).toBeDefined();
     const expectedPath = resolve(testDir, OK_DIR, 'config.yml');
-    expect(caught?.message).toContain(`${expectedPath}:4:`);
-    expect(caught?.message).toContain('mcp.tools.grep.maxResults');
+    expect(caught?.message).toContain(`${expectedPath}:2:`);
+    expect(caught?.message).toContain('appearance.theme');
   });
 
   test('source-located error renders code snippet with caret marker', () => {
-    writeWorkspaceConfig('mcp:\n  tools:\n    grep:\n      maxResults: -5\n');
+    writeWorkspaceConfig('appearance:\n  theme: midnight\n');
     let caught: Error | undefined;
     try {
       loadConfig(testDir);
@@ -289,23 +275,6 @@ describe('createProjectConfigResolver', () => {
     });
     await expect(resolveConfig(projectB)).resolves.toMatchObject({
       content: { dir: 'docs-b' },
-    });
-  });
-
-  test('applies process env overrides on top of per-cwd config', async () => {
-    writeWorkspaceConfig('server:\n  host: localhost\n');
-    const startupConfig = loadConfig(testDir).config;
-    const resolveConfig = createProjectConfigResolver({
-      startupCwd: testDir,
-      startupConfig,
-      env: {
-        ...process.env,
-        HOST: '0.0.0.0',
-      },
-    });
-
-    await expect(resolveConfig()).resolves.toMatchObject({
-      server: { host: '0.0.0.0' },
     });
   });
 

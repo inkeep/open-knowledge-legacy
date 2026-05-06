@@ -9,12 +9,14 @@ import {
 export const DESCRIPTION = [
   '[Operates on disk; no running OK server required] Read the effective merged Open Knowledge config (defaults → user → project).',
   '',
-  'Use this when you need to inspect the config mid-session — e.g., after a write that may have changed disk state, or to re-confirm the value of a field before composing a `set_config` patch.',
+  'Use this when you need to inspect the config mid-session — e.g., after a write that may have changed disk state, or to re-confirm the value of a field before reading it again.',
   '',
   'Read returns the FULL merged config or a sub-tree when `path` is provided. There is no allowlist on reads — every field is readable.',
   '',
+  'Note: the `server.*`, `mcp.*`, and `github.*` config sub-trees were removed; their values are now built-in constants in `@inkeep/open-knowledge-core`. Reading those paths returns `exists: false`.',
+  '',
   '**Parameters:**',
-  '- `path` (optional) — Dotted-segments array. `["folders"]` returns the folders array; `["mcp", "tools"]` returns the mcp.tools sub-tree. Omit for full config.',
+  '- `path` (optional) — Dotted-segments array. `["content"]` returns the content sub-tree; `["preview", "baseUrl"]` returns just that leaf. Omit for full config.',
   '- `cwd` (optional) — Project root (see `cwd` description below).',
 ].join('\n');
 
@@ -28,7 +30,7 @@ const InputSchema = {
     .array(z.string())
     .optional()
     .describe(
-      'Dotted path as array of segments (e.g. ["mcp","tools","search"]). Omit to return the full merged config.',
+      'Dotted path as array of segments (e.g. ["preview","baseUrl"]). Omit to return the full merged config.',
     ),
   cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
 } as const;

@@ -81,7 +81,7 @@ describe('runValidate', () => {
     const project = makeTempProject();
     try {
       const wsPath = projectConfigPath(project.cwd);
-      writeConfigYaml(wsPath, `mcp:\n  tools:\n    grep:\n      maxResults: "fifty"\n`);
+      writeConfigYaml(wsPath, `appearance:\n  theme: midnight\n`);
       const stderr: string[] = [];
       const outcome = runValidate({
         cwd: project.cwd,

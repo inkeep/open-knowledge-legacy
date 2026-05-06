@@ -7,12 +7,8 @@ import { closeSync, existsSync as fsExistsSync, mkdirSync as fsMkdirSync, openSy
 import type { Server as HttpServer } from 'node:http';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import {
-  type BootedServer,
-  type Config,
-  getLocalDir,
-  type PinoLogger,
-} from '@inkeep/open-knowledge-server';
+import { DEFAULT_SERVER_HOST } from '@inkeep/open-knowledge-core';
+import type { BootedServer, Config, PinoLogger } from '@inkeep/open-knowledge-server';
 import { Command, InvalidArgumentError } from 'commander';
 import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 import {
@@ -24,6 +20,10 @@ import {
 import { resolveSelfSpawn } from './self-spawn.ts';
 
 const DEFAULT_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
+
+export function resolveHost(opts: { host?: string }, env: { HOST?: string | undefined }): string {
+  return opts.host ?? env.HOST ?? DEFAULT_SERVER_HOST;
+}
 
 export type UiSpawnDecision =
   | { action: 'spawn'; reason: 'absent' }
@@ -164,6 +164,7 @@ export function buildIdleShutdownHandler(
 interface BootStartServerOptions {
   config: Config;
   cwd: string;
+  host: string;
   port?: number;
   skipAutoInit?: boolean;
   skipUiAutoSpawn?: boolean;
@@ -187,7 +188,7 @@ export interface BootedStartServer {
 }
 
 export async function bootStartServer(opts: BootStartServerOptions): Promise<BootedStartServer> {
-  const { config, cwd } = opts;
+  const { config, cwd, host } = opts;
   const skipAutoInit = opts.skipAutoInit ?? false;
   const skipUiAutoSpawn = opts.skipUiAutoSpawn ?? false;
   const idleThresholdMs = opts.idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
@@ -220,21 +221,6 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
           return false;
         }
       };
-
-  let agentEditOpened = false;
-  const lockDirForUiLookup = getLocalDir(contentDir);
-  const onAgentWrite = config.server.openOnAgentEdit
-    ? () => {
-        if (agentEditOpened) return;
-        const ui = readUiLock(lockDirForUiLookup);
-        if (!ui || ui.port <= 0 || !isProcessAlive(ui.pid)) return;
-        agentEditOpened = true;
-        const uiUrl = `http://localhost:${ui.port}`;
-        import('../utils/open-browser.ts')
-          .then(({ openBrowser }) => openBrowser(uiUrl))
-          .catch(() => {});
-      }
-    : undefined;
 
   let uiSpawnDecision: UiSpawnDecision | null = null;
   const spawnUiSiblingFn = async ({
@@ -271,9 +257,8 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     projectDir: cwd,
     contentRoot: config.content.dir,
     port: opts.port,
-    host: config.server.host,
+    host,
     quiet: false,
-    onAgentWrite,
     localOpCliArgs: [process.execPath, process.argv[1]],
     attachUiSibling: true,
     idleShutdownMs: idleThresholdMs,
@@ -353,8 +338,7 @@ export async function runStartCommand(config: Config, opts: StartCommandOptions)
 
   const cwd = process.cwd();
 
-  if (opts.host !== undefined) config.server.host = opts.host;
-
+  const host = resolveHost(opts, process.env);
   const portFromCli = opts.port !== undefined ? Number(opts.port) : undefined;
   const portFromEnv = process.env.PORT ? Number(process.env.PORT) : undefined;
   const port = portFromCli ?? portFromEnv;
@@ -364,6 +348,7 @@ export async function runStartCommand(config: Config, opts: StartCommandOptions)
     booted = await bootStartServer({
       config,
       cwd,
+      host,
       port,
       skipAutoInit: opts.init === false,
     });
@@ -403,15 +388,12 @@ export async function runStartCommand(config: Config, opts: StartCommandOptions)
     void shutdown('SIGTERM');
   });
 
-  const apiUrl = `http://${config.server.host}:${booted.port}`;
+  const apiUrl = `http://${host}:${booted.port}`;
   const networkUrl =
-    config.server.host === '0.0.0.0' || config.server.host === '::'
-      ? `http://0.0.0.0:${booted.port}`
-      : undefined;
+    host === '0.0.0.0' || host === '::' ? `http://0.0.0.0:${booted.port}` : undefined;
 
   const uiPort = booted.resolvedUiPort;
-  const localUrl =
-    uiPort !== null && uiPort > 0 ? `http://${config.server.host}:${uiPort}` : apiUrl;
+  const localUrl = uiPort !== null && uiPort > 0 ? `http://${host}:${uiPort}` : apiUrl;
 
   console.log(
     renderBanner({

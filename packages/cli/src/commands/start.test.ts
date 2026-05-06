@@ -14,12 +14,31 @@ import {
   bootStartServer,
   buildIdleShutdownHandler,
   decideUiSpawn,
+  resolveHost,
   spawnOkUi,
   startCommand,
   tryDescribeLockCollision,
   type UiSpawnDecision,
 } from './start.ts';
 import { closeHttpServers, startUiServer, type UiServerHandle } from './ui.ts';
+
+describe('resolveHost', () => {
+  test('returns --host flag when present (highest priority)', () => {
+    expect(resolveHost({ host: '0.0.0.0' }, { HOST: '127.0.0.2' })).toBe('0.0.0.0');
+  });
+
+  test('falls back to HOST env when --host is absent', () => {
+    expect(resolveHost({}, { HOST: '0.0.0.0' })).toBe('0.0.0.0');
+  });
+
+  test('falls back to DEFAULT_SERVER_HOST (localhost) when both flag and env are absent', () => {
+    expect(resolveHost({}, {})).toBe('localhost');
+  });
+
+  test('explicit undefined --host falls through to env (precedence: flag > env > default)', () => {
+    expect(resolveHost({ host: undefined }, { HOST: '0.0.0.0' })).toBe('0.0.0.0');
+  });
+});
 
 describe('decideUiSpawn', () => {
   test('absent lock → spawn(absent)', () => {
@@ -305,19 +324,10 @@ describe('spawnOkUi', () => {
 });
 
 function makeTestConfig(): Config {
-  return {
-    content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
-    github: { oauthAppClientId: 'Ov23liqlSd0V1MwR6rhI' },
-    server: { host: '127.0.0.1', openOnAgentEdit: false },
-    preview: {},
-    folders: [],
-    mcp: {
-      tools: { read_document: { historyDepth: 5 }, search: { maxResults: 50 } },
-      autoStart: true,
-    },
-    appearance: {},
-  } as Config;
+  return ConfigSchema.parse({});
 }
+
+const TEST_HOST = '127.0.0.1';
 
 function fetchText(
   port: number,
@@ -371,6 +381,7 @@ describe('bootStartServer (integration)', () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
     });
@@ -386,6 +397,7 @@ describe('bootStartServer (integration)', () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
     });
@@ -400,6 +412,7 @@ describe('bootStartServer (integration)', () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
     });
@@ -426,6 +439,7 @@ describe('bootStartServer (integration)', () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
     });
@@ -452,6 +466,7 @@ describe('bootStartServer (integration)', () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       spawn: fakeSpawn,
     });
@@ -490,6 +505,7 @@ describe('bootStartServer (integration)', () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       spawn: fakeSpawn,
     });
@@ -517,6 +533,7 @@ describe('bootStartServer (integration)', () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
       spawn: fakeSpawn,
@@ -530,6 +547,7 @@ describe('bootStartServer (integration)', () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
     });
@@ -542,6 +560,7 @@ describe('bootStartServer (integration)', () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
     });
@@ -553,6 +572,7 @@ describe('bootStartServer (integration)', () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
     });
@@ -604,6 +624,7 @@ describe('bootStartServer — no auto git-init from ok start (US-004)', () => {
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: false,
       skipUiAutoSpawn: true,
     });
@@ -618,6 +639,7 @@ describe('bootStartServer — no auto git-init from ok start (US-004)', () => {
       booted = await bootStartServer({
         config: makeTestConfig(),
         cwd: tmpDir,
+        host: TEST_HOST,
         skipAutoInit: false,
         skipUiAutoSpawn: true,
       });
@@ -749,6 +771,7 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       spawn: fakeSpawn,
       uiBindTimeoutMs: 10_000,
@@ -789,6 +812,7 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
     });
 
@@ -805,6 +829,7 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
     });
@@ -825,6 +850,7 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
     booted = await bootStartServer({
       config: makeTestConfig(),
       cwd: tmpDir,
+      host: TEST_HOST,
       skipAutoInit: true,
       spawn: silentSpawn,
       uiBindTimeoutMs: 200,

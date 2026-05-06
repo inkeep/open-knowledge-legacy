@@ -38,8 +38,6 @@ const FIXTURES: Fixture[] = [
     input: { content: { dir: 12345 } },
     shouldAccept: false,
   },
-  { name: 'invalid host (number)', input: { server: { host: 12345 } }, shouldAccept: false },
-  { name: 'valid host string', input: { server: { host: '0.0.0.0' } }, shouldAccept: true },
   {
     name: 'preview.baseUrl valid URL',
     input: { preview: { baseUrl: 'https://wiki.acme.com' } },
@@ -61,13 +59,13 @@ const FIXTURES: Fixture[] = [
     shouldAccept: false,
   },
   {
-    name: 'mcp.tools.grep.maxResults=25 accepted',
-    input: { mcp: { tools: { grep: { maxResults: 25 } } } },
+    name: 'appearance.editorModeDefault=source accepted',
+    input: { appearance: { editorModeDefault: 'source' } },
     shouldAccept: true,
   },
   {
-    name: 'mcp.tools.grep.maxResults=0 rejected (min 1)',
-    input: { mcp: { tools: { grep: { maxResults: 0 } } } },
+    name: 'appearance.editorModeDefault=invalid rejected',
+    input: { appearance: { editorModeDefault: 'plaintext' } },
     shouldAccept: false,
   },
   {
@@ -81,6 +79,7 @@ const FIXTURES: Fixture[] = [
       sync: { pushIntervalSeconds: 30 },
       persistence: { debounceMs: 2000 },
       server: { port: 3000, host: 'localhost' },
+      mcp: { autoStart: false },
     },
     shouldAccept: true,
   },
@@ -106,11 +105,12 @@ describe('loose-mode forgiveness', () => {
       sync: { pushIntervalSeconds: 30, autoCommit: true },
       persistence: { debounceMs: 2000 },
       server: { port: 3000, host: 'example.dev' },
+      mcp: { autoStart: false },
+      content: { dir: 'docs' },
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.server.host).toBe('example.dev');
-      expect(result.data.mcp.autoStart).toBe(true);
+      expect(result.data.content.dir).toBe('docs');
       expect((result.data as Record<string, unknown>).sync).toEqual({
         pushIntervalSeconds: 30,
         autoCommit: true,
