@@ -3,6 +3,7 @@ import { ArrowUpRight, CornerDownLeft, Link, Trash2 } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { openHashHrefInNewTab } from '../internal-link-helpers';
 
 export function LinkEditPopover({ editor }: { editor: Editor }) {
   const [showInput, setShowInput] = useState(false);
@@ -92,7 +93,7 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
                   aria-label="Open link in new tab"
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    window.open(currentUrl, '_blank', 'noopener,noreferrer');
+                    openHashHrefInNewTab(currentUrl);
                   }}
                 >
                   <ArrowUpRight className="size-3.5" />

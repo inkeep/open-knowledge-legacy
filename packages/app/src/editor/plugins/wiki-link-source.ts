@@ -18,7 +18,11 @@ import {
   filterPages,
   type PageItem,
 } from '../extensions/wiki-link-suggestion';
-import { openInternalHashHrefInNewTab, shouldOpenInNewTab } from '../internal-link-helpers';
+import {
+  openHashHrefInNewTab,
+  openInternalHashHrefInNewTab,
+  shouldOpenInNewTab,
+} from '../internal-link-helpers';
 
 const PAGES_CACHE_TTL_MS = 5_000;
 
@@ -172,7 +176,7 @@ const wikiLinkClickHandler = EditorView.domEventHandlers({
           if (!classified) return false;
           event.preventDefault();
           if (classified.kind === 'external') {
-            window.open(classified.url, '_blank', 'noopener,noreferrer');
+            openHashHrefInNewTab(classified.url);
           } else if (classified.kind === 'asset') {
             const assetPath =
               resolveWikiLinkAssetTarget(
