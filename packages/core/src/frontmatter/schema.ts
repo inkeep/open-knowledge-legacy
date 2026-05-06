@@ -9,7 +9,7 @@ export const FrontmatterValueSchema = z.union([
   z.string(),
   z.number(),
   z.boolean(),
-  z.array(z.string()),
+  z.array(z.union([z.string(), z.number(), z.boolean()]).transform((v) => String(v))),
 ]);
 export type FrontmatterValue = z.infer<typeof FrontmatterValueSchema>;
 
