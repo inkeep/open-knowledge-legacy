@@ -6,20 +6,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { OK_DIR } from '@inkeep/open-knowledge-core';
-import type { Config } from '../../config/schema.ts';
+import { type Config, ConfigSchema } from '../../config/schema.ts';
 import { acquireUiLock, updateUiLockPort } from '../../ui-lock.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
 
-const BASE_CONFIG: Config = {
-  content: { dir: '.', include: ['**/*.md'], exclude: [] },
-  server: { host: 'localhost', openOnAgentEdit: false },
-  mcp: {
-    tools: {
-      read_document: { historyDepth: 5 },
-      search: { maxResults: 50 },
-    },
-  },
-};
+const BASE_CONFIG: Config = ConfigSchema.parse({});
 
 let tmpDir: string;
 let lockDir: string;

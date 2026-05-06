@@ -114,36 +114,6 @@ interface FieldDef {
 
 const SECTIONS: SectionDef[] = [
   {
-    id: 'server',
-    title: 'Server',
-    description: 'Local server bind and behavior.',
-    fields: [
-      {
-        path: ['server', 'host'],
-        label: 'Host',
-        description: 'Bind interface (e.g. localhost, 0.0.0.0).',
-      },
-      {
-        path: ['server', 'openOnAgentEdit'],
-        label: 'Open preview on agent edit',
-        description: 'When enabled, an agent write opens the preview tab if not already open.',
-      },
-    ],
-  },
-  {
-    id: 'github',
-    title: 'GitHub',
-    description: 'OAuth app identity for sign-in. Tokens are stored in your OS keychain, not here.',
-    fields: [
-      {
-        path: ['github', 'oauthAppClientId'],
-        label: 'OAuth App client ID',
-        description:
-          'Public client ID for the GitHub OAuth app. Defaults to the published Open Knowledge app.',
-      },
-    ],
-  },
-  {
     id: 'preview',
     title: 'Preview',
     description: 'Where the preview tab points when no local UI is running.',
@@ -162,28 +132,6 @@ const SECTIONS: SectionDef[] = [
       'Default frontmatter applied to documents matching glob patterns. Order matters: later rules override earlier ones.',
     fields: [],
     custom: 'folders',
-  },
-  {
-    id: 'mcp',
-    title: 'MCP',
-    description: 'Model Context Protocol agent integration tuning.',
-    fields: [
-      {
-        path: ['mcp', 'autoStart'],
-        label: 'Auto-start server',
-        description: 'When enabled, `ok mcp` spawns `ok start` automatically.',
-      },
-      {
-        path: ['mcp', 'tools', 'read_document', 'historyDepth'],
-        label: 'read_document history depth',
-        description: 'How many history entries the agent’s read_document tool returns.',
-      },
-      {
-        path: ['mcp', 'tools', 'grep', 'maxResults'],
-        label: 'grep max results',
-        description: 'Cap on results returned by the agent’s grep tool.',
-      },
-    ],
   },
   {
     id: 'appearance',

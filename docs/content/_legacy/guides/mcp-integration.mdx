@@ -2,6 +2,9 @@
 title: MCP integration
 description: How the HTTP MCP server and stdio shim connect AI agents to your knowledge base.
 ---
+
+> **Legacy guide.** This page documents `set_config` and the `search` (literal-string grep) MCP tools that have since been removed and renamed. `set_config` is gone (the agent-settable surface dropped to zero with the schema cleanup). The literal-string `search` tool is now `grep`; the new `search` tool is ranked workspace retrieval. See the current [MCP reference](/reference/mcp) for the supported tool surface.
+
 The Open Knowledge MCP server gives AI agents structured access to your knowledge base. The server implementation lives in the running `ok start` process at `/mcp`; editors still launch `ok mcp` over stdio, but that command is only a transport shim that proxies JSON-RPC frames to the HTTP MCP endpoint.
 
 ## Startup and connection model

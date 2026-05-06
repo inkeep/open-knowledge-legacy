@@ -80,24 +80,20 @@ mac:
   # (`build/icon.png`) because Electron's runtime nativeImage API can't
   # consume `.icon` bundles yet — tracked in electron/electron#48476.
   icon: build/okglass.icon
-  # arm64-only until the universal-DMG keyring SHA-parity fix lands (NG1 in
-  # specs/2026-04-24-desktop-packaging-first-boot/). bun installs only the
-  # host-arch keyring native (@napi-rs/keyring-darwin-arm64), so
-  # @electron/universal.makeUniversalApp rejects the SHA-identical binary in
-  # both slices. Narrowing to arm64 keeps the packaged-boot path green; Intel
-  # Mac support returns when NG1 ships.
+  # Universal target. scripts/prepare-universal.mjs force-installs both
+  # darwin keyring prebuilds (@napi-rs/keyring-darwin-{arm64,x64}) before
+  # electron-builder runs so @electron/universal.makeUniversalApp's lipo
+  # merge has matching native binaries in both slices.
   target:
     - target: dmg
-      arch: [arm64]
+      arch: [universal]
     # `.zip` is required by the electron-updater / Squirrel.Mac swap path.
     # MacUpdater.ts:~89 calls `findFile(files, "zip", ["pkg", "dmg"])` — it
     # downloads the ZIP variant (not the DMG) and pipes it to Squirrel.Mac
     # for the in-place swap. Without this target, auto-update would surface
-    # ERR_UPDATER_ZIP_FILE_NOT_FOUND at every check. M3 is the first consumer
-    # that needs `.zip`; M2 shipped DMG-only because auto-update was out of
-    # M2's scope (NG4). See specs/2026-04-21-m3-electron-updater/ D6.
+    # ERR_UPDATER_ZIP_FILE_NOT_FOUND at every check.
     - target: zip
-      arch: [arm64]
+      arch: [universal]
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist

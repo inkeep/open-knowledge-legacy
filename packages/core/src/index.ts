@@ -123,8 +123,11 @@ export {
   type ConfigDocName,
   SYSTEM_DOC_NAME,
 } from './constants/cc1.ts';
+export { DEFAULT_GITHUB_OAUTH_CLIENT_ID } from './constants/github.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
+export { GREP_MAX_RESULTS, READ_DOCUMENT_HISTORY_DEPTH } from './constants/mcp.ts';
 export { LOCAL_DIR, OK_DIR } from './constants/ok-dir.ts';
+export { DEFAULT_SERVER_HOST } from './constants/server.ts';
 export {
   ALLOWED_AUDIO_MIME_TYPES,
   ALLOWED_IMAGE_MIME_TYPES,

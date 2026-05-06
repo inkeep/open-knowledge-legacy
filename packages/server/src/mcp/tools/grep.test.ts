@@ -75,32 +75,6 @@ describe('grep —.okignore exclusion', () => {
     const paths = (structured?.results ?? []).map((r) => r.path);
     expect(paths).toContain('secret.md');
   });
-
-  test('truncated reflects the grep cap even when most raw matches are excluded by .okignore', async () => {
-    const project = await bootstrap();
-    const drafts = resolve(project, 'drafts');
-    mkdirSync(drafts, { recursive: true });
-    for (let i = 0; i < 5; i++) {
-      writeFileSync(resolve(drafts, `wip-${i}.md`), '# Draft\n\nsearchterm here\n');
-    }
-    const articles = resolve(project, 'articles');
-    mkdirSync(articles, { recursive: true });
-    writeFileSync(resolve(articles, 'pub.md'), '# Article\n\nsearchterm here\n');
-    writeFileSync(resolve(project, '.okignore'), 'drafts/\n');
-
-    const config: Config = ConfigSchema.parse({
-      mcp: { tools: { grep: { maxResults: 2 } } },
-    });
-
-    const { structured } = await buildGrepResult(
-      { query: 'searchterm' },
-      { resolveCwd: async () => project, serverUrl: undefined, config },
-    );
-
-    expect(structured?.truncated).toBe(true);
-    const paths = (structured?.results ?? []).map((r) => r.path);
-    expect(paths).toEqual(['articles/pub.md']);
-  });
 });
 
 describe('grep —previewUrl + ui block', () => {

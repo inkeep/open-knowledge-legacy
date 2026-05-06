@@ -1,4 +1,3 @@
-import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { createTokenStore } from '../../auth/token-store.ts';
 import { gitCredentialCommand } from './git-credential.ts';
@@ -8,14 +7,13 @@ import { reposCommand } from './repos.ts';
 import { signoutCommand } from './signout.ts';
 import { statusCommand } from './status.ts';
 
-export function authCommand(getConfig?: () => Config): Command {
+export function authCommand(): Command {
   const cmd = new Command('auth');
   cmd.description('GitHub authentication management');
 
   const getTokenStore = () => createTokenStore();
-  const cfg = getConfig ?? (() => ({}) as Config);
 
-  cmd.addCommand(loginCommand(cfg, getTokenStore));
+  cmd.addCommand(loginCommand(getTokenStore));
   cmd.addCommand(statusCommand(getTokenStore));
   cmd.addCommand(reposCommand(getTokenStore));
   cmd.addCommand(signoutCommand(getTokenStore));

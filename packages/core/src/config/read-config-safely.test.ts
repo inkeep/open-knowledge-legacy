@@ -25,25 +25,25 @@ describe('readConfigSafely', () => {
     expect(result.valid).toBe(true);
     if (result.valid) {
       expect(result.source).toBeUndefined();
-      expect(result.value.server.host).toBe('localhost');
-      expect(result.value.mcp.autoStart).toBe(true);
+      expect(result.value.content.dir).toBe('.');
+      expect(result.value.autoSync.onboardingResolvedAt).toBeNull();
     }
   });
 
   test('valid file → valid=true, value is parsed config', () => {
     const path = resolve(testDir, 'good.yml');
-    writeFileSync(path, 'server:\n  host: 0.0.0.0\n', 'utf-8');
+    writeFileSync(path, 'content:\n  dir: docs\n', 'utf-8');
     const result = readConfigSafely({ absPath: path });
     expect(result.valid).toBe(true);
     if (result.valid) {
-      expect(result.value.server.host).toBe('0.0.0.0');
+      expect(result.value.content.dir).toBe('docs');
       expect(result.source).toBe(path);
     }
   });
 
   test('malformed YAML → valid=false, error.code=YAML_PARSE, file sidelined, value is defaults', () => {
     const path = resolve(testDir, 'broken.yml');
-    writeFileSync(path, 'server:\n  host: [invalid yaml', 'utf-8');
+    writeFileSync(path, 'content:\n  dir: [invalid yaml', 'utf-8');
     const warnings: string[] = [];
     const result = readConfigSafely({
       absPath: path,
@@ -53,7 +53,7 @@ describe('readConfigSafely', () => {
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(result.error.code).toBe('YAML_PARSE');
-      expect(result.value.server.host).toBe('localhost'); // defaults
+      expect(result.value.content.dir).toBe('.'); // defaults
       expect(existsSync(path)).toBe(false);
       expect(result.sidelinedTo).toBeDefined();
       if (result.sidelinedTo) {
@@ -66,10 +66,8 @@ describe('readConfigSafely', () => {
 
   test('schema-invalid YAML → valid=false, error.code=SCHEMA_INVALID with structured issues + source', () => {
     const path = resolve(testDir, 'bad.yml');
-    const yaml = `mcp:
-  tools:
-    grep:
-      maxResults: "fifty"
+    const yaml = `appearance:
+  theme: midnight
 `;
     writeFileSync(path, yaml, 'utf-8');
     const result = readConfigSafely({
@@ -82,10 +80,10 @@ describe('readConfigSafely', () => {
       if (isKnownConfigError(result.error) && result.error.code === 'SCHEMA_INVALID') {
         expect(result.error.issues.length).toBeGreaterThan(0);
         const issue = result.error.issues[0];
-        expect(issue.path).toEqual(['mcp', 'tools', 'grep', 'maxResults']);
+        expect(issue.path).toEqual(['appearance', 'theme']);
         expect(issue.source).toBeDefined();
         expect(issue.source?.file).toBe(path);
-        expect(issue.source?.line).toBe(4);
+        expect(issue.source?.line).toBe(2);
       }
       expect(existsSync(path)).toBe(false);
       expect(result.sidelinedTo).toBeDefined();
@@ -94,7 +92,7 @@ describe('readConfigSafely', () => {
 
   test('sideline=false leaves file in place when invalid', () => {
     const path = resolve(testDir, 'broken.yml');
-    writeFileSync(path, 'server:\n  host: [invalid yaml', 'utf-8');
+    writeFileSync(path, 'content:\n  dir: [invalid yaml', 'utf-8');
     const result = readConfigSafely({
       absPath: path,
       sideline: false,
@@ -109,7 +107,7 @@ describe('readConfigSafely', () => {
 
   test('sideline rename failure logs warning and falls through (file stays in place)', () => {
     const path = resolve(testDir, 'broken.yml');
-    writeFileSync(path, 'server:\n  host: 12345\n', 'utf-8');
+    writeFileSync(path, 'appearance:\n  theme: midnight\n', 'utf-8');
     const warnings: string[] = [];
     const result = readConfigSafely({
       absPath: path,
@@ -123,7 +121,7 @@ describe('readConfigSafely', () => {
 
   test('sidelined filename is filesystem-safe (no colons or dots from ISO timestamp)', () => {
     const path = resolve(testDir, 'broken.yml');
-    writeFileSync(path, 'mcp:\n  autoStart: notabool\n', 'utf-8');
+    writeFileSync(path, 'appearance:\n  theme: midnight\n', 'utf-8');
     const result = readConfigSafely({
       absPath: path,
       timestamp: '2026-04-29T01:23:45.678Z',
@@ -138,34 +136,30 @@ describe('readConfigSafely', () => {
 
   test('schema defaults are used regardless of failure mode', () => {
     const path = resolve(testDir, 'broken.yml');
-    writeFileSync(path, 'mcp:\n  autoStart: "not-bool"\n', 'utf-8');
+    writeFileSync(path, 'appearance:\n  theme: midnight\n', 'utf-8');
     const result = readConfigSafely({ absPath: path, warn: () => {} });
     expect(result.valid).toBe(false);
-    expect(result.value.mcp.autoStart).toBe(true); // schema default
+    expect(result.value.content.dir).toBe('.'); // schema default
   });
 
   test('valid YAML with unknown fields (looseObject) is accepted', () => {
     const path = resolve(testDir, 'loose.yml');
-    writeFileSync(
-      path,
-      'sync:\n  pushIntervalSeconds: 30\nserver:\n  host: example.dev\n',
-      'utf-8',
-    );
+    writeFileSync(path, 'sync:\n  pushIntervalSeconds: 30\ncontent:\n  dir: docs\n', 'utf-8');
     const result = readConfigSafely({ absPath: path });
     expect(result.valid).toBe(true);
     if (result.valid) {
-      expect(result.value.server.host).toBe('example.dev');
+      expect(result.value.content.dir).toBe('docs');
     }
   });
 
   test('sideline does not run if input is valid', () => {
     const path = resolve(testDir, 'good.yml');
-    writeFileSync(path, 'server:\n  host: 0.0.0.0\n', 'utf-8');
+    writeFileSync(path, 'content:\n  dir: docs\n', 'utf-8');
     const result = readConfigSafely({ absPath: path });
     expect(result.valid).toBe(true);
     expect(existsSync(path)).toBe(true);
     const siblings = readdirSync(testDir).filter((f) => f.includes('.invalid-'));
     expect(siblings).toEqual([]);
-    expect(readFileSync(path, 'utf-8')).toContain('host: 0.0.0.0');
+    expect(readFileSync(path, 'utf-8')).toContain('dir: docs');
   });
 });

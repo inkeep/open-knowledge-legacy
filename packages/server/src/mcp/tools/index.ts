@@ -72,10 +72,6 @@ import {
 } from './save-version.ts';
 import { register as registerSearch, DESCRIPTION as SEARCH_DESCRIPTION } from './search.ts';
 import {
-  register as registerSetConfig,
-  DESCRIPTION as SET_CONFIG_DESCRIPTION,
-} from './set-config.ts';
-import {
   register as registerSetFolderRule,
   DESCRIPTION as SET_FOLDER_RULE_DESCRIPTION,
 } from './set-folder-rule.ts';
@@ -117,7 +113,6 @@ const _TOOL_DESCRIPTIONS = {
   get_hubs: GET_HUBS_DESCRIPTION,
   get_dead_links: GET_DEAD_LINKS_DESCRIPTION,
   get_config: GET_CONFIG_DESCRIPTION,
-  set_config: SET_CONFIG_DESCRIPTION,
   set_folder_rule: SET_FOLDER_RULE_DESCRIPTION,
   write_template: WRITE_TEMPLATE_DESCRIPTION,
   delete_template: DELETE_TEMPLATE_DESCRIPTION,
@@ -274,10 +269,6 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   registerGetConfig(registrationServer, {
     config: opts.config,
     resolveCwd: named('get_config'),
-  });
-  registerSetConfig(registrationServer, {
-    config: opts.config,
-    resolveCwd: named('set_config'),
   });
   registerSetFolderRule(registrationServer, {
     config: opts.config,

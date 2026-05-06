@@ -1,4 +1,3 @@
-import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { runDeviceFlow } from '../../auth/device-flow.ts';
 import type { TokenStore } from '../../auth/token-store.ts';
@@ -19,10 +18,9 @@ function emit(json: boolean, obj: Record<string, unknown>): void {
 async function runLogin(
   opts: LoginOptions,
   tokenStore: TokenStore,
-  config: Config,
   runDeviceFlowFn = runDeviceFlow,
 ): Promise<void> {
-  const clientId = getOAuthClientId(config);
+  const clientId = getOAuthClientId();
   const { host, json } = opts;
   validateGitHubHost(host);
 
@@ -88,16 +86,13 @@ async function runLogin(
   void verificationUri;
 }
 
-export function loginCommand(
-  getConfig: () => Config,
-  getTokenStore: () => Promise<TokenStore>,
-): Command {
+export function loginCommand(getTokenStore: () => Promise<TokenStore>): Command {
   return new Command('login')
     .description('Authenticate with GitHub via Device Flow')
     .option('--host <host>', 'GitHub or GitHub Enterprise hostname', 'github.com')
     .option('--json', 'Output JSONL progress events', false)
     .action(async (opts: LoginOptions) => {
       const store = await getTokenStore();
-      await runLogin(opts, store, getConfig());
+      await runLogin(opts, store);
     });
 }

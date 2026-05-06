@@ -2,6 +2,9 @@
 title: Configuration
 description: Config schema, YAML hierarchy, environment variables, CLI flag overrides, and the in-app Settings pane.
 ---
+
+> **Legacy guide.** This page reflects an earlier schema that included `server.*`, `github.oauthAppClientId`, and `mcp.*` fields. Those fields were removed; their values are now built-in constants in `@inkeep/open-knowledge-core` and runtime overrides survive as the `--host` flag, `HOST` / `OPEN_KNOWLEDGE_GITHUB_CLIENT_ID` / `OK_MCP_AUTOSTART` env vars. The `set_config` MCP tool was removed alongside them. See the current [Configuration reference](/reference/configuration) and [MCP reference](/reference/mcp) for the supported surface.
+
 Open Knowledge uses hierarchical YAML configuration stored in `.ok/config.yml` files. Both config files are optional -- sensible defaults cover everything.
 
 There are three ways to edit config:
