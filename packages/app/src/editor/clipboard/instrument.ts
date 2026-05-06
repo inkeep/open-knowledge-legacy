@@ -13,6 +13,7 @@ type ClipboardEventName =
   | 'clipboard-walker-url-blocked'
   | 'clipboard-walker-unmapped-lucide-detected'
   | 'clipboard-walker-url-source-emitted'
+  | 'clipboard-walker-non-portable-render-source-emitted'
   | 'clipboard-walker-url-classifier-failed';
 
 type ClipboardView = 'wysiwyg' | 'source';
@@ -132,6 +133,19 @@ export function logWalkerFallback(info: { descriptor: string; view: ClipboardVie
   console.warn(
     JSON.stringify({
       event: 'clipboard-walker-fallback-fired' satisfies ClipboardEventName,
+      descriptor: info.descriptor,
+      view: info.view,
+    }),
+  );
+}
+
+export function logNonPortableRenderSourceEmitted(info: {
+  descriptor: string;
+  view: ClipboardView;
+}): void {
+  console.warn(
+    JSON.stringify({
+      event: 'clipboard-walker-non-portable-render-source-emitted' satisfies ClipboardEventName,
       descriptor: info.descriptor,
       view: info.view,
     }),

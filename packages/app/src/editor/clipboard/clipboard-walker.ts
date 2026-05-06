@@ -49,6 +49,7 @@ import {
 import { paletteFor } from './clipboard-walker-fallback-palette.ts';
 import {
   classifyError,
+  logNonPortableRenderSourceEmitted,
   logUnmappedLucideIcon,
   logWalkerFallback,
   logWalkerUrlBlocked,
@@ -57,6 +58,7 @@ import {
   type WalkerUrlSourceClass,
   type WalkerUrlSourceTag,
 } from './instrument.ts';
+import { nonPortableRenderSourceFallback } from './non-portable-render-source-fallback.ts';
 
 export const STYLE_ALLOWLIST = [
   'color',
@@ -176,6 +178,16 @@ export function walkLiveDomToInlineStyledFragment(
     if (!(liveDom instanceof Element)) return false;
     if (liveDom.getAttribute(OPT_OUT_ATTR) === 'true') return false;
 
+    const sourceFallback = nonPortableRenderSourceFallback(node, document);
+    if (sourceFallback !== null) {
+      fragment.appendChild(sourceFallback);
+      logNonPortableRenderSourceEmitted({
+        view: 'wysiwyg',
+        descriptor: (node.attrs.componentName as string | undefined) ?? node.type.name,
+      });
+      return false;
+    }
+
     fragment.appendChild(cloneAndStyle(liveDom, env));
     return false;
   });
@@ -187,9 +199,48 @@ function cloneAndStyle(live: Element, env: WalkerEnv): Element {
   const clone = live.cloneNode(true) as Element;
   walkPair(live, clone, env);
   applyWikiLinkTransform(clone);
+  applyNonPortableInlineAtomReplacement(clone);
   applyUrlClassifierPostPass(live, clone, env);
   replaceLucideIconsWithGlyphs(clone);
   return clone;
+}
+
+function applyNonPortableInlineAtomReplacement(clone: Element): void {
+  const mathMatches = Array.from(clone.querySelectorAll('[data-component-type="math-inline"]'));
+  for (const el of mathMatches) {
+    if (!el.parentNode) continue;
+    const formula = el.getAttribute('data-formula') ?? '';
+    const span = clone.ownerDocument.createElement('span');
+    span.className = 'mdx-inline';
+    span.textContent = `$$${formula}$$`;
+    el.replaceWith(span);
+    logNonPortableRenderSourceEmitted({ view: 'wysiwyg', descriptor: 'mathInline' });
+  }
+
+  const embedMatches = Array.from(clone.querySelectorAll('a[data-wiki-embed]'));
+  for (const el of embedMatches) {
+    if (!el.parentNode) continue;
+    const target = el.getAttribute('data-target') ?? '';
+    if (!target) continue; // sanity guard — wiki-link parser rejects empty targets upstream
+    const alias = el.getAttribute('data-alias') || null;
+    const anchor = el.getAttribute('data-anchor') || null;
+    const span = clone.ownerDocument.createElement('span');
+    span.className = 'mdx-inline';
+    span.textContent = buildWikiEmbedMarkdownSource(target, anchor, alias);
+    el.replaceWith(span);
+    logNonPortableRenderSourceEmitted({ view: 'wysiwyg', descriptor: 'wikiLinkEmbed' });
+  }
+}
+
+export function buildWikiEmbedMarkdownSource(
+  target: string,
+  anchor: string | null,
+  alias: string | null,
+): string {
+  let body = target;
+  if (anchor) body += `#${anchor}`;
+  if (alias) body += `|${alias}`;
+  return `![[${body}]]`;
 }
 
 export const LUCIDE_GLYPH_MAP: Record<string, string> = {
