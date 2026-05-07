@@ -10,10 +10,11 @@ name: Release
 #    auto-merged "Version Packages (open-knowledge)" PR) lands. Detects
 #    the new version on the canonical desktop package; if it carries a
 #    -beta.* suffix, tags vX.Y.Z-beta.N at HEAD, creates a prerelease
-#    GitHub Release, publishes npm with `--tag beta --provenance`, and
-#    aliases the `dev` dist-tag to the same version. desktop-release.yml
-#    fires automatically on `release: published` and uploads the signed
-#    DMG.
+#    GitHub Release, publishes npm with `--tag beta --provenance`,
+#    aliases the `dev` dist-tag to the same version, and finally fires
+#    `repository_dispatch` event_type=`desktop-release` so
+#    desktop-release.yml builds the signed DMG and uploads it +
+#    `beta-mac.yml` to the prerelease.
 #
 # 2. repository_dispatch (event_type: publish-stable):
 #    Fired by promote-stable.yml on the same repo (legacy) once it has
@@ -21,7 +22,17 @@ name: Release
 #    Checks out the stable tag, transiently overrides package.json
 #    versions to the clean stable string (the legacy commit at the beta
 #    SHA still has -beta.N), then publishes npm with `--tag latest
-#    --provenance`. desktop-release.yml fires automatically.
+#    --provenance`. promote-stable.yml separately fires its own
+#    `desktop-release` dispatch so the stable DMG + `latest-mac.yml`
+#    land on the stable Release.
+#
+# Why explicit `repository_dispatch` instead of relying on
+# `release: published` to cascade: GitHub deliberately suppresses
+# downstream workflow runs from GITHUB_TOKEN-authored events. The
+# `gh release create` calls here and in promote-stable.yml use
+# GITHUB_TOKEN, so `release: published` does NOT fire downstream.
+# `repository_dispatch` and `workflow_dispatch` are the documented
+# exemption to that rule and cascade even when fired via GITHUB_TOKEN.
 #
 # Why ONE workflow handles both: npm Trusted Publishing only allows ONE
 # trusted publisher per package. Centralizing all `bun changeset
@@ -190,6 +201,31 @@ jobs:
               --title "$TAG" \
               --notes-file "$BODY_FILE"
           fi
+
+      # The `gh release create` above runs as GITHUB_TOKEN, and GitHub
+      # deliberately suppresses cascading workflow runs from
+      # GITHUB_TOKEN-authored events to prevent recursion — so
+      # `release: published` does NOT fire desktop-release.yml on its
+      # own. The exemption to that rule is `repository_dispatch` (and
+      # `workflow_dispatch`), which DO cascade even when fired via
+      # GITHUB_TOKEN. Same-repo dispatch needs no PAT or App token —
+      # the default `contents: write` token is enough. promote-stable.yml
+      # already uses this pattern to fire release.yml's dispatch path.
+      - name: Trigger desktop-release.yml to build + upload DMG (beta path)
+        if: github.event_name == 'push' && steps.detect.outputs.kind == 'beta'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.detect.outputs.current }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+
+          payload=$(jq -nc \
+            --arg tag "$TAG" \
+            --arg ref "$TAG" \
+            '{event_type: "desktop-release", client_payload: {release_tag: $tag, ref: $ref}}')
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/dispatches" --input - <<<"$payload"
+          echo "Dispatched desktop-release for ${TAG}; desktop-release.yml will build the signed DMG and upload it + beta-mac.yml to the prerelease."
 
       # --- STABLE PATH (repository_dispatch trigger) ---
 
