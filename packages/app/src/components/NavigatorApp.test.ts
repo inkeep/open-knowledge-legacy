@@ -175,24 +175,20 @@ describe('NavigatorApp launcher-header channel surface', () => {
     expect(NAVIGATOR_SRC).toMatch(/<BetaBadge\b/);
   });
 
-  test('subscribes to channel state via useUpdateChannel for the About-style row', () => {
+  test('subscribes to channel state via useUpdateChannel for the channel badge', () => {
     expect(NAVIGATOR_SRC).toMatch(/from\s+['"]@\/hooks\/use-update-channel['"]/);
     expect(NAVIGATOR_SRC).toContain('useUpdateChannel(');
   });
 
-  test('Channel row hides while channel is null (loading / no desktop bridge)', () => {
+  test('Channel badge hides while channel is null (loading / no desktop bridge)', () => {
     expect(NAVIGATOR_SRC).toMatch(/channel\s*!==\s*null/);
   });
 
-  test('Channel row text matches the spec wording exactly ("Channel: Stable" / "Channel: Beta")', () => {
-    expect(NAVIGATOR_SRC).toContain('Channel:');
+  test('Channel badge renders "Beta" / "Stable" via the shared Badge component', () => {
     expect(NAVIGATOR_SRC).toMatch(
       /channel\s*===\s*['"]beta['"]\s*\?\s*['"]Beta['"]\s*:\s*['"]Stable['"]/,
     );
-  });
-
-  test('Channel row carries a stable test seam for cross-window verification', () => {
-    expect(NAVIGATOR_SRC).toContain('data-testid="navigator-channel-row"');
+    expect(NAVIGATOR_SRC).toMatch(/<Badge\b[^>]*>\s*\{\s*channel\s*===\s*['"]beta['"]/);
   });
 
   test('BetaBadge sits in the title row, not below the version line (chrome-level signal, not About-row info)', () => {
