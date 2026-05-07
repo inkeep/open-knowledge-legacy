@@ -1,6 +1,10 @@
 import { expect, test } from './_helpers';
 
 test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / US-010 / US-011 / US-012 / US-013)', () => {
+  test.beforeEach(async ({ api }) => {
+    await api.testReset();
+  });
+
   test('project tab shows the section, empty-state, primer link, and add-pattern affordance', async ({
     page,
   }) => {
