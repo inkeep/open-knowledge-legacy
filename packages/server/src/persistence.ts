@@ -683,9 +683,36 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             );
             try {
               const requestedDiskPath = safeContentPath(documentName, contentDir);
-              const diskContent = existsSync(requestedDiskPath)
-                ? readFileSync(requestedDiskPath, 'utf-8')
-                : currentBase;
+              let diskContent: string;
+              if (existsSync(requestedDiskPath)) {
+                let canonical: string | null = null;
+                try {
+                  canonical = realpathSync(requestedDiskPath);
+                } catch (realpathErr) {
+                  log.warn(
+                    { err: realpathErr, documentName },
+                    `[persistence] Tripwire reset realpath failed for ${documentName}; using currentBase`,
+                  );
+                }
+                if (canonical && isWithinContentDir(canonical, contentDir)) {
+                  diskContent = readFileSync(canonical, 'utf-8');
+                } else {
+                  if (canonical) {
+                    console.warn(
+                      `[persistence] symlink-escape on tripwire reset: ${requestedDiskPath} → ${canonical}, using currentBase`,
+                      {
+                        docName: documentName,
+                        originalPath: requestedDiskPath,
+                        canonical,
+                        contentDir,
+                      },
+                    );
+                  }
+                  diskContent = currentBase;
+                }
+              } else {
+                diskContent = currentBase;
+              }
               document.transact(() => {
                 applyDiskContent(document, diskContent);
               }, FILE_WATCHER_ORIGIN);
