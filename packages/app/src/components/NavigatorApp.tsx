@@ -83,7 +83,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
 
   return (
     <div
-      className={`flex h-screen w-screen flex-col overflow-hidden bg-primary-foreground dark:bg-background p-12 pb-2 text-foreground max-w-5xl space-y-10 mx-auto ${
+      className={`flex h-screen w-screen flex-col overflow-hidden bg-primary-foreground dark:bg-background p-12 text-foreground max-w-5xl space-y-10 mx-auto ${
         !loading && recents.length === 0 ? 'justify-center' : ''
       }`}
     >
@@ -94,15 +94,14 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
             <h1 className="font-medium text-xl tracking-tight">Open Knowledge</h1>
             <BetaBadge />
           </div>
-          <p className="text-muted-foreground text-xs font-mono">v{bridge.appVersion}</p>
-          {channel !== null && (
-            <p
-              className="text-muted-foreground text-xs font-mono"
-              data-testid="navigator-channel-row"
-            >
-              Channel: {channel === 'beta' ? 'Beta' : 'Stable'}
-            </p>
-          )}
+          <div className="flex items-center gap-2">
+            <p className="text-muted-foreground text-xs font-mono">v{bridge.appVersion}</p>
+            {channel !== null && (
+              <Badge variant="gray" className="text-2xs font-mono">
+                {channel === 'beta' ? 'Beta' : 'Stable'}
+              </Badge>
+            )}
+          </div>
         </div>
       </header>
 
@@ -160,7 +159,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
             Recent
           </h2>
           <ul
-            className="min-h-0 flex-1 subtle-scrollbar overflow-y-auto space-y-0.5 -mx-4"
+            className="min-h-0 flex-1 subtle-scrollbar overflow-y-auto scroll-fade-mask space-y-0.5 -mx-4"
             data-testid="nav-recent-list"
           >
             {recents.map((r) => (

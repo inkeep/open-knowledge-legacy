@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { toast as sonnerToast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogBody,
@@ -10,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import type { OkMcpWiringEditorId, OkMcpWiringShowPayload } from '@/lib/desktop-bridge-types';
 import { type McpConsentStore, mcpConsentStore } from '@/lib/mcp-consent-store';
 
@@ -81,6 +83,7 @@ function McpConsentDialogForm({ payload, store, toast }: McpConsentDialogFormPro
     computeInitialSelection(detectedEditors),
   );
   const [busy, setBusy] = useState(false);
+  const idPrefix = useId();
 
   function onToggle(id: OkMcpWiringEditorId) {
     setSelection((prev) => toggleSelectedId(prev, id));
@@ -114,26 +117,25 @@ function McpConsentDialogForm({ payload, store, toast }: McpConsentDialogFormPro
        * Radix Dialog auto-wires `aria-labelledby` / `aria-describedby` on
        * `DialogContent` from `DialogTitle` / `DialogDescription` via context
        * — no manual `useId` plumbing needed (Review Pass 0 Major #11 +
-       * Minor #4). Each editor row's `<label>` provides the implicit
-       * accessible name for its checkbox; no `aria-describedby` on the
-       * input either, since duplicating the label content via that attr
-       * causes screen readers to either announce the label twice or drop
-       * the implicit association.
+       * Minor #4). Each row's `<Label>` is associated to its `<Checkbox>` by
+       * `htmlFor` + matching `id`, providing the accessible name; no
+       * `aria-describedby` on the checkbox itself, since duplicating the
+       * label content via that attr causes screen readers to either
+       * announce the label twice or drop the association.
        */}
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Add Open Knowledge to your AI tools</DialogTitle>
           <DialogDescription>
-            Connect Open Knowledge to your AI tools so they can read and write your notes. Once
-            added, asking Claude to summarize or update a page works without copy-paste. Detected
-            editors are preselected — you can toggle any row.
+            Connect Open Knowledge to your AI tools so they can read and write your notes.
           </DialogDescription>
         </DialogHeader>
 
         <DialogBody>
-          <ul className="rounded-md border border-border bg-card/50 divide-y divide-border">
+          <ul className="rounded-md border border-border bg-card/50 divide-y divide-border overflow-hidden">
             {detectedEditors.map((editor) => {
               const checked = selection.has(editor.id);
+              const checkboxId = `${idPrefix}-${editor.id}`;
               const statusLabel = editor.willReplace
                 ? 'Will replace existing Open Knowledge entry'
                 : editor.detected
@@ -144,22 +146,25 @@ function McpConsentDialogForm({ payload, store, toast }: McpConsentDialogFormPro
                 : 'text-xs text-muted-foreground';
               return (
                 <li key={editor.id}>
-                  <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-accent">
-                    <input
-                      type="checkbox"
+                  <Label
+                    htmlFor={checkboxId}
+                    className="flex cursor-pointer items-start gap-2.5 px-3 py-2.5 font-normal hover:bg-accent"
+                  >
+                    <Checkbox
+                      id={checkboxId}
                       checked={checked}
                       disabled={busy}
-                      onChange={() => onToggle(editor.id)}
-                      className="size-4 shrink-0 rounded accent-primary"
+                      onCheckedChange={() => onToggle(editor.id)}
+                      className="mt-0.5"
                       data-testid={`mcp-consent-checkbox-${editor.id}`}
                     />
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <span className="font-medium text-foreground">{editor.label}</span>
+                      <span className="text-sm font-medium text-foreground">{editor.label}</span>
                       <span className={statusClass} data-testid={`mcp-consent-status-${editor.id}`}>
                         {statusLabel}
                       </span>
                     </span>
-                  </label>
+                  </Label>
                 </li>
               );
             })}
