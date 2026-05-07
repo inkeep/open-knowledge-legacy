@@ -154,6 +154,20 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   );
 }
 
+export function computeVisibleSearchResults({
+  searchResults,
+  fallbackSearchResults,
+  searchStatus,
+}: {
+  searchResults: readonly WorkspaceSearchEntry[];
+  fallbackSearchResults: readonly WorkspaceEntry[];
+  searchStatus: 'idle' | 'loading' | 'success' | 'error';
+}): readonly (WorkspaceEntry | WorkspaceSearchEntry)[] {
+  if (searchResults.length > 0) return searchResults;
+  if (searchStatus === 'success') return [];
+  return fallbackSearchResults;
+}
+
 export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
@@ -174,6 +188,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
     'idle',
   );
   const tagsListFetchedRef = useRef(false);
+  const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { activeDocName, activeTarget } = useDocumentContext();
   const { pages, pageTitles, pageMeta, folderPaths } = usePageList();
@@ -229,6 +244,11 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
     setTagDocs([]);
     setTagDocsStatus('idle');
   }, [open, bridge, refreshInstallStates]);
+
+  useEffect(() => {
+    void query;
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [query]);
 
   const knownTagNames = new Set(tagsList.map((t) => t.name));
   const paletteMode = parseTagPaletteQuery(deferredQuery, knownTagNames);
@@ -293,7 +313,6 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
 
     const controller = new AbortController();
     setSearchStatus('loading');
-    setSearchResults([]);
     let timedOut = false;
     const timeout = window.setTimeout(() => {
       timedOut = true;
@@ -347,8 +366,11 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
 
   const showRecentNavigation =
     !isTagMode && trimmedDeferredQuery === '' && visibleRecents.length > 0;
-  const visibleSearchResults =
-    searchResults.length > 0 || searchStatus === 'success' ? searchResults : fallbackSearchResults;
+  const visibleSearchResults = computeVisibleSearchResults({
+    searchResults,
+    fallbackSearchResults,
+    searchStatus,
+  });
   const showNavigation = !isTagMode && visibleSearchResults.length > 0;
   const showSearchLoading =
     !isTagMode && trimmedDeferredQuery !== '' && searchStatus === 'loading' && !showNavigation;
@@ -462,7 +484,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
             <span>By tag</span>
           </button>
         </div>
-        <CommandList className="subtle-scrollbar">
+        <CommandList ref={listRef} className="subtle-scrollbar">
           {showSearchLoading && !showNavigation ? <CommandEmpty>Searching…</CommandEmpty> : null}
           {!hasAnyResults ? (
             <CommandEmpty>
