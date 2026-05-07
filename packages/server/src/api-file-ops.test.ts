@@ -75,12 +75,12 @@ function buildFileIndex(contentDir: string): ReadonlyMap<string, FileIndexEntry>
   return index;
 }
 
-function buildBacklinkIndex(contentDir: string): BacklinkIndex {
+async function buildBacklinkIndex(contentDir: string): Promise<BacklinkIndex> {
   const index = new BacklinkIndex({
     projectDir: contentDir,
     contentDir,
   });
-  index.rebuildFromDisk();
+  await index.rebuildFromDisk();
   return index;
 }
 
@@ -90,7 +90,7 @@ async function callApi(
   method: string,
   body: unknown,
   options?: {
-    backlinkIndex?: BacklinkIndex;
+    backlinkIndex?: BacklinkIndex | Promise<BacklinkIndex>;
     hocuspocus?: Parameters<typeof createApiExtension>[0]['hocuspocus'];
     sessionManager?: Parameters<typeof createApiExtension>[0]['sessionManager'];
     getFileIndex?: () => ReadonlyMap<string, FileIndexEntry>;
@@ -98,6 +98,7 @@ async function callApi(
     projectDir?: string;
   },
 ): Promise<CapturedResponse> {
+  const resolvedBacklinkIndex = await (options?.backlinkIndex ?? buildBacklinkIndex(contentDir));
   const ext = createApiExtension({
     hocuspocus:
       options?.hocuspocus ??
@@ -114,7 +115,7 @@ async function callApi(
       } as unknown as Parameters<typeof createApiExtension>[0]['sessionManager']),
     contentDir,
     getFileIndex: options?.getFileIndex ?? (() => buildFileIndex(contentDir)),
-    backlinkIndex: options?.backlinkIndex ?? buildBacklinkIndex(contentDir),
+    backlinkIndex: resolvedBacklinkIndex,
     signalChannel: options?.signalChannel,
     projectDir: options?.projectDir,
   });
@@ -266,7 +267,7 @@ describe('file operation API routes', () => {
     writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');
     writeFileSync(join(dir, 'journal.md'), '# Journal\n\nSee [[notes]].\n', 'utf-8');
 
-    const backlinkIndex = buildBacklinkIndex(dir);
+    const backlinkIndex = await buildBacklinkIndex(dir);
     backlinkIndex.updateDocumentFromMarkdown('phantom-doc', '# Phantom\n\nSee [[notes]].\n');
     expect(
       backlinkIndex.getBacklinks('notes').some((entry) => entry.source === 'phantom-doc'),

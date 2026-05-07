@@ -72,6 +72,7 @@ export {
   type ContentFilter,
   type ContentFilterOptions,
   createContentFilter,
+  createContentFilterAsync,
   type RebuildResult as ContentFilterRebuildResult,
 } from './content-filter.ts';
 export {

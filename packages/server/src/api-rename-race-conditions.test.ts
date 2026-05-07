@@ -38,9 +38,9 @@ function makeRes(): { res: ServerResponse; captured: CapturedResponse } {
   return { res, captured };
 }
 
-function buildBacklinkIndex(contentDir: string): BacklinkIndex {
+async function buildBacklinkIndex(contentDir: string): Promise<BacklinkIndex> {
   const index = new BacklinkIndex({ projectDir: contentDir, contentDir });
-  index.rebuildFromDisk();
+  await index.rebuildFromDisk();
   return index;
 }
 
@@ -123,7 +123,7 @@ describe('Finding 1 — folder-rename enumeration races concurrent index updates
       } as unknown as Parameters<typeof createApiExtension>[0]['sessionManager'],
       contentDir: tmpDir,
       getFileIndex: () => liveIndex,
-      backlinkIndex: buildBacklinkIndex(tmpDir),
+      backlinkIndex: await buildBacklinkIndex(tmpDir),
       contentFilter: stubContentFilter,
     });
 
@@ -185,7 +185,7 @@ describe('Finding 2 — admission check uses on-disk source extension', () => {
       } as unknown as Parameters<typeof createApiExtension>[0]['sessionManager'],
       contentDir: tmpDir,
       getFileIndex: () => emptyIndex,
-      backlinkIndex: buildBacklinkIndex(tmpDir),
+      backlinkIndex: await buildBacklinkIndex(tmpDir),
       contentFilter: stubContentFilter,
     });
 

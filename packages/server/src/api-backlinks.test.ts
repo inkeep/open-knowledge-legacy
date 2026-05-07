@@ -109,7 +109,7 @@ describe('graph endpoints', () => {
         ],
       ]);
       const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
-      backlinkIndex.rebuildFromDisk();
+      await backlinkIndex.rebuildFromDisk();
 
       const backlinks = JSON.parse(
         (await callRoute(contentDir, '/api/backlinks?docName=beta', fileIndex, backlinkIndex)).body,
@@ -320,7 +320,7 @@ describe('graph endpoints', () => {
         ],
       ]);
       const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
-      backlinkIndex.rebuildFromDisk();
+      await backlinkIndex.rebuildFromDisk();
 
       const globalResponse = await callRoute(
         contentDir,
@@ -438,7 +438,7 @@ describe('graph endpoints', () => {
         ],
       ]);
       const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
-      backlinkIndex.rebuildFromDisk();
+      await backlinkIndex.rebuildFromDisk();
 
       const forward = JSON.parse(
         (await callRoute(contentDir, '/api/forward-links?docName=public', fileIndex, backlinkIndex))
@@ -491,7 +491,7 @@ describe('graph endpoints', () => {
         ['alpha', { size: 10, modified: new Date(0).toISOString() }],
       ]);
       const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
-      backlinkIndex.rebuildFromDisk();
+      await backlinkIndex.rebuildFromDisk();
 
       const response = await callRoute(
         contentDir,

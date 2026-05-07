@@ -2733,7 +2733,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 503, { ok: false, error: 'Backlink index not configured' });
         return;
       }
-      backlinkIndex.rebuildFromDisk();
+      await backlinkIndex.rebuildFromDisk();
       void backlinkIndex.saveToDisk().catch((err) => {
         console.warn('[backlinks] Failed to persist cache after test-rescan-backlinks:', err);
       });

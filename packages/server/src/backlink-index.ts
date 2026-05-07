@@ -1,5 +1,5 @@
-import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { type Dirent, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
   classifyMarkdownHref,
@@ -109,6 +109,7 @@ interface SerializedBranchGraphState {
     string,
     Array<{ url: string; label: string | null; snippet: string | null }>
   >;
+  mtimes?: Record<string, number>;
 }
 
 interface BacklinkIndexOptions {
@@ -717,6 +718,7 @@ export class BacklinkIndex {
   private readonly contentDir: string;
   private readonly contentFilter?: ContentFilter;
   private readonly states = new Map<string, BranchGraphState>();
+  private readonly mtimesByBranch = new Map<string, Map<string, number>>();
   private activeBranch = 'main';
 
   constructor(options: BacklinkIndexOptions) {
@@ -1103,7 +1105,12 @@ export class BacklinkIndex {
     const filePath = this.cachePath(branch);
     mkdirSync(dirname(filePath), { recursive: true });
     const state = this.getState(branch);
-    await writeFile(filePath, JSON.stringify(serializeState(state), null, 2), 'utf-8');
+    const mtimes = this.mtimesByBranch.get(branch);
+    const data: SerializedBranchGraphState = {
+      ...serializeState(state),
+      ...(mtimes ? { mtimes: Object.fromEntries(mtimes) } : {}),
+    };
+    await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
   }
 
   async loadFromDisk(branch = this.activeBranch): Promise<boolean> {
@@ -1113,6 +1120,11 @@ export class BacklinkIndex {
       const raw = await readFile(filePath, 'utf-8');
       const parsed = JSON.parse(raw) as SerializedBranchGraphState;
       this.states.set(branch, deserializeState(parsed));
+      if (parsed.mtimes) {
+        this.mtimesByBranch.set(branch, new Map(Object.entries(parsed.mtimes)));
+      } else {
+        this.mtimesByBranch.delete(branch);
+      }
       return true;
     } catch (err) {
       console.warn(`[backlinks] Failed to load cache for ${branch}:`, err);
@@ -1122,6 +1134,7 @@ export class BacklinkIndex {
 
   clear(branch = this.activeBranch): void {
     this.states.set(branch, createEmptyState());
+    this.mtimesByBranch.delete(branch);
   }
 
   private rebuildFileList(dir: string, docs: string[]): void {
@@ -1156,12 +1169,32 @@ export class BacklinkIndex {
     return unique.sort((a, b) => a.localeCompare(b));
   }
 
-  rebuildFromDisk(branch = this.activeBranch): void {
+  async rebuildFromDisk(branch = this.activeBranch): Promise<void> {
     const state = createEmptyState();
-    for (const docName of this.listDocsOnDisk()) {
-      const filePath = resolve(this.contentDir, `${docName}${getDocExtension(docName)}`);
-      try {
-        const markdown = readFileSync(filePath, 'utf-8');
+    const mtimes = new Map<string, number>();
+    const allDocs = this.listDocsOnDisk();
+
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < allDocs.length; i += BATCH_SIZE) {
+      const batch = allDocs.slice(i, i + BATCH_SIZE);
+      const settled = await Promise.allSettled(
+        batch.map(async (docName) => {
+          const filePath = resolve(this.contentDir, `${docName}${getDocExtension(docName)}`);
+          const [fileStat, markdown] = await Promise.all([
+            stat(filePath),
+            readFile(filePath, 'utf-8'),
+          ]);
+          return { docName, mtimeMs: fileStat.mtimeMs, markdown };
+        }),
+      );
+
+      for (const result of settled) {
+        if (result.status === 'rejected') {
+          console.warn('[backlinks] Failed to rebuild entry:', result.reason);
+          continue;
+        }
+        const { docName, mtimeMs, markdown } = result.value;
+        mtimes.set(docName, mtimeMs);
         const { body } = stripFrontmatter(markdown);
         const wikiLinks = extractWikiLinksFromMarkdown(body);
         const mdLinks = extractMarkdownLinksFromMarkdown(body, docName);
@@ -1174,7 +1207,6 @@ export class BacklinkIndex {
           ...wikiExternalLinks,
           ...mdExternalLinks.filter((link) => !externalSeen.has(link.url)),
         ];
-
         const targets = new Set<string>();
         const externalTargets = new Map<string, { label: string | null; snippet: string | null }>();
         state.forward.set(docName, targets);
@@ -1194,24 +1226,120 @@ export class BacklinkIndex {
         }
         for (const link of externalLinks) {
           if (!link.url) continue;
-          externalTargets.set(link.url, {
-            label: link.label,
-            snippet: link.snippet,
-          });
+          externalTargets.set(link.url, { label: link.label, snippet: link.snippet });
           let sources = state.externalBackward.get(link.url);
           if (!sources) {
             sources = new Map();
             state.externalBackward.set(link.url, sources);
           }
-          sources.set(docName, {
-            label: link.label,
-            snippet: link.snippet,
-          });
+          sources.set(docName, { label: link.label, snippet: link.snippet });
         }
-      } catch (err) {
-        console.warn(`[backlinks] Failed to rebuild entry for ${docName}:`, err);
       }
     }
+
     this.states.set(branch, state);
+    this.mtimesByBranch.set(branch, mtimes);
+  }
+
+  private walkForPaths(dir: string, results: Array<{ docName: string; filePath: string }>): void {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      console.warn(`[backlinks] Failed to read directory ${dir}:`, err);
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const relDir = relative(this.contentDir, fullPath);
+        if (this.contentFilter && relDir && this.contentFilter.isDirExcluded(relDir)) continue;
+        this.walkForPaths(fullPath, results);
+      } else if (entry.isFile() && isSupportedDocFile(entry.name)) {
+        const relPath = relative(this.contentDir, fullPath);
+        if (this.contentFilter?.isExcluded(relPath)) continue;
+        results.push({ docName: stripDocExtension(relPath), filePath: fullPath });
+      }
+    }
+  }
+
+  async reconcileWithDisk(branch = this.activeBranch): Promise<{
+    added: number;
+    updated: number;
+    deleted: number;
+  }> {
+    if (!existsSync(this.contentDir)) return { added: 0, updated: 0, deleted: 0 };
+
+    const storedMtimes = this.mtimesByBranch.get(branch) ?? new Map<string, number>();
+    const rawDocs: Array<{ docName: string; filePath: string }> = [];
+    this.walkForPaths(this.contentDir, rawDocs);
+
+    const seen = new Set<string>();
+    const docs = rawDocs.filter(({ docName }) => {
+      if (seen.has(docName)) return false;
+      seen.add(docName);
+      return true;
+    });
+
+    const currentDocSet = new Set(docs.map((d) => d.docName));
+    const newMtimes = new Map<string, number>();
+    let added = 0;
+    let updated = 0;
+
+    const toProcess: Array<{ docName: string; filePath: string; mtimeMs: number; isNew: boolean }> =
+      [];
+    const statResults = await Promise.allSettled(
+      docs.map(async ({ docName, filePath }) => ({
+        docName,
+        filePath,
+        mtimeMs: (await stat(filePath)).mtimeMs,
+      })),
+    );
+    for (const result of statResults) {
+      if (result.status === 'rejected') continue; // inaccessible; skip
+      const { docName, filePath, mtimeMs } = result.value;
+      const storedMtime = storedMtimes.get(docName);
+      if (storedMtime !== undefined && storedMtime === mtimeMs) {
+        newMtimes.set(docName, mtimeMs);
+        continue;
+      }
+      toProcess.push({ docName, filePath, mtimeMs, isNew: storedMtime === undefined });
+    }
+
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < toProcess.length; i += BATCH_SIZE) {
+      const batch = toProcess.slice(i, i + BATCH_SIZE);
+      const settled = await Promise.allSettled(
+        batch.map(async ({ docName, filePath, mtimeMs, isNew }) => ({
+          docName,
+          mtimeMs,
+          isNew,
+          markdown: await readFile(filePath, 'utf-8'),
+        })),
+      );
+      for (const result of settled) {
+        if (result.status === 'rejected') {
+          console.warn('[backlinks] Failed to reconcile file:', result.reason);
+          continue;
+        }
+        const { docName, mtimeMs, isNew, markdown } = result.value;
+        this.updateDocumentFromMarkdown(docName, markdown, branch);
+        newMtimes.set(docName, mtimeMs);
+        if (isNew) added++;
+        else updated++;
+      }
+    }
+
+    let deleted = 0;
+    const allKnownDocs = new Set([...storedMtimes.keys(), ...this.getState(branch).forward.keys()]);
+    for (const docName of allKnownDocs) {
+      if (!currentDocSet.has(docName)) {
+        this.deleteDocument(docName, branch);
+        deleted++;
+      }
+    }
+
+    this.mtimesByBranch.set(branch, newMtimes);
+    return { added, updated, deleted };
   }
 }
