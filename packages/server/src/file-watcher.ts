@@ -88,7 +88,7 @@ export function contentHash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
-export function eventEscapesContentDir(rawPath: string, contentDir: string): boolean {
+function eventEscapesContentDir(rawPath: string, contentDir: string): boolean {
   let lst: ReturnType<typeof lstatSync>;
   try {
     lst = lstatSync(rawPath);

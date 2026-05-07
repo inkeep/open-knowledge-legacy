@@ -58,6 +58,7 @@ export interface ContentFilterOptions {
 export interface ContentFilter {
   isExcluded(relativePath: string): boolean;
   isDirExcluded(relativePath: string): boolean;
+  isPathIgnored(relativePath: string): boolean;
   getWatcherIgnoreGlobs(): string[];
   incrementMdDir(dir: string): void;
   decrementMdDir(dir: string): void;
@@ -116,16 +117,21 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
 
   populateDirCount(contentDir, '', isIgnored, dirCount);
 
+  function isRejectedByPathRules(relativePath: string): boolean {
+    const docName = stripDocExtension(relativePath);
+    if (isSystemDoc(docName) || isConfigDoc(docName)) return true;
+
+    for (const segment of relativePath.split('/')) {
+      if (BUILTIN_SKIP_DIRS.has(segment)) return true;
+    }
+
+    if (contentOutsideProject) return false;
+    return isIgnored(relativePath);
+  }
+
   return {
     isExcluded(relativePath: string): boolean {
-      const docName = stripDocExtension(relativePath);
-      if (isSystemDoc(docName) || isConfigDoc(docName)) return true;
-
-      for (const segment of relativePath.split('/')) {
-        if (BUILTIN_SKIP_DIRS.has(segment)) return true;
-      }
-
-      if (!contentOutsideProject && isIgnored(relativePath)) return true;
+      if (isRejectedByPathRules(relativePath)) return true;
 
       if (isSupportedDocFile(relativePath)) return false;
 
@@ -148,6 +154,10 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
         ? `${contentRelPrefix}/${relativePath}`
         : relativePath;
       return ig.ignores(projectRelPath) || ig.ignores(`${projectRelPath}/`);
+    },
+
+    isPathIgnored(relativePath: string): boolean {
+      return isRejectedByPathRules(relativePath);
     },
 
     getWatcherIgnoreGlobs(): string[] {
