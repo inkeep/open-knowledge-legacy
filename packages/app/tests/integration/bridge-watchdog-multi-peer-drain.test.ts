@@ -63,6 +63,8 @@ describe('FR-31 bridge watchdog — multi-peer drain', () => {
         position: 'append',
       });
 
+      await pollUntil(() => clients[0].ytext.toString().includes('WD-MULTI-AGENT'), 8000);
+
       await assertAllConverged(clients, { timeout: 8000 });
 
       const text = clients[0].ytext.toString();
