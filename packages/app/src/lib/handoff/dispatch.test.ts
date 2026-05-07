@@ -17,8 +17,9 @@
  *       the component surfaces; covered there.
  */
 
-import { describe, expect, mock, test } from 'bun:test';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { HandoffPayload, HandoffTarget } from '@inkeep/open-knowledge-core';
+import { __resetCodexWarmedForTests } from './codex-two-shot.ts';
 import { dispatchHandoff } from './dispatch.ts';
 
 const BASE_PAYLOAD = {
@@ -59,15 +60,22 @@ describe('dispatchHandoff — claude-code', () => {
 });
 
 describe('dispatchHandoff — codex', () => {
-  test('dispatches codex://new with prompt and path (no docPath)', async () => {
+  beforeEach(() => __resetCodexWarmedForTests());
+
+  test('first dispatch: two-shot (wake URL → settle → real URL with prompt and path)', async () => {
     const { openExternalDeps, openExternal } = makeOpen(async () => {});
+    const sleep = mock(async () => {});
     const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'codex' };
-    const result = await dispatchHandoff(payload, { openExternalDeps });
+    const result = await dispatchHandoff(payload, { openExternalDeps, codexDeps: { sleep } });
     expect(result).toEqual({ ok: true });
-    const url = (openExternal.mock.calls[0] as readonly string[])[0];
-    expect(url).toMatch(/^codex:\/\/new\?prompt=/);
-    expect(url).toContain('path=');
-    expect(url).not.toContain('file=');
+    expect(openExternal).toHaveBeenCalledTimes(2);
+    const wakeUrl = (openExternal.mock.calls[0] as readonly string[])[0];
+    expect(wakeUrl).toBe('codex://new');
+    const realUrl = (openExternal.mock.calls[1] as readonly string[])[0];
+    expect(realUrl).toMatch(/^codex:\/\/new\?prompt=/);
+    expect(realUrl).toContain('path=');
+    expect(realUrl).not.toContain('file=');
+    expect(sleep).toHaveBeenCalledTimes(1);
   });
 });
 
