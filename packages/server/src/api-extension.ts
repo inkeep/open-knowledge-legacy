@@ -4767,6 +4767,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 400, { ok: false, error: 'path-escape' });
       return;
     }
+
+    try {
+      assertNoSymlinkEscape(destDir, resolvedContentDir);
+    } catch (err) {
+      cleanupTempfile();
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.startsWith('symlink-escape:')) {
+        json(res, 400, { ok: false, error: 'path-escape' });
+        return;
+      }
+      log.error({ err, destDir }, '[upload] failed to validate destination directory');
+      json(res, 500, { ok: false, error: 'storage-error' });
+      return;
+    }
+
     try {
       mkdirSync(destDir, { recursive: true });
     } catch (err) {
@@ -4792,14 +4807,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'path-escape' });
         return;
       }
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') {
-      } else {
-        cleanupTempfile();
-        json(res, 400, { ok: false, error: 'path-escape' });
-        return;
-      }
+    } catch {
+      cleanupTempfile();
+      json(res, 400, { ok: false, error: 'path-escape' });
+      return;
     }
 
     const fileTypeResult = await fileTypeFromFile(tempPath);

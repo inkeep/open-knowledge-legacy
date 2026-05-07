@@ -318,6 +318,19 @@ describe('handleUploadImage', () => {
     expect(body.error).toBe('path-escape');
   });
 
+  test('parent-symlink escape rejected before mkdir creates a directory outside contentDir', async () => {
+    const escapeTarget = join(tmpDir, 'outside-mkdir-target');
+    mkdirSync(escapeTarget, { recursive: true });
+    symlinkSync(escapeTarget, join(contentDir, 'link'));
+
+    const res = await uploadImage(createPngBuffer(), 'test.png', 'link/sub/x.md');
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('path-escape');
+
+    expect(existsSync(join(escapeTarget, 'sub'))).toBe(false);
+  });
+
   test('FR-8: /api/upload (new primary endpoint) accepts the same payload', async () => {
     const formData = new FormData();
     formData.append('parentDocName', 'docs/guide.md');
