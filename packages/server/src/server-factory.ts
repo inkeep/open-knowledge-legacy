@@ -273,6 +273,20 @@ export function createServer(options: ServerOptions): ServerInstance {
             '[content-filter] tag-index rebuild failed after onAfterRebuild',
           );
         }
+        try {
+          const pruned = watcher?.pruneFileIndexNowExcluded() ?? 0;
+          if (pruned > 0) {
+            getLogger('server-factory').info(
+              { pruned },
+              '[content-filter] pruned now-excluded entries from fileIndex',
+            );
+          }
+        } catch (err) {
+          getLogger('server-factory').warn(
+            { err },
+            '[content-filter] fileIndex prune failed after onAfterRebuild',
+          );
+        }
       },
     });
     backlinkIndex = new BacklinkIndex({ projectDir, contentDir, contentFilter });

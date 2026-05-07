@@ -60,6 +60,7 @@ export interface WatcherHandle {
   unsubscribe: () => Promise<void>;
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
   getAliasMap: () => ReadonlyMap<string, string>;
+  pruneFileIndexNowExcluded: () => number;
 }
 
 export const writeTracker = new Map<string, Array<{ hash: string; timestamp: number }>>();
@@ -872,6 +873,18 @@ export async function startWatcher(
     },
     getAliasMap() {
       return aliasMap;
+    },
+    pruneFileIndexNowExcluded() {
+      if (!contentFilter) return 0;
+      let pruned = 0;
+      for (const [docName, entry] of fileIndex) {
+        const relPath = relative(contentDir, entry.canonicalPath);
+        if (contentFilter.isExcluded(relPath)) {
+          fileIndex.delete(docName);
+          pruned++;
+        }
+      }
+      return pruned;
     },
   };
 }
