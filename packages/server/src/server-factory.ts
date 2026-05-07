@@ -284,9 +284,20 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
 
     const defaultShouldUnloadDocument = hocuspocus.shouldUnloadDocument.bind(hocuspocus);
-    hocuspocus.shouldUnloadDocument = (document) =>
-      (shutdownAllowsUnload || forceUnloadSet.has(document)) &&
-      defaultShouldUnloadDocument(document);
+    hocuspocus.shouldUnloadDocument = (document) => {
+      if (
+        (shutdownAllowsUnload || forceUnloadSet.has(document)) &&
+        defaultShouldUnloadDocument(document)
+      ) {
+        return true;
+      }
+      const name = document.name;
+      if (isSystemDoc(name) || isConfigDoc(name)) return false;
+      if (getReconciledBase(name) !== undefined) return false;
+      if (document.getXmlFragment('default').length !== 0) return false;
+      if (document.getText('source').length !== 0) return false;
+      return defaultShouldUnloadDocument(document);
+    };
 
     forceUnloadDocument = async (document: Document): Promise<void> => {
       forceUnloadSet.add(document);
