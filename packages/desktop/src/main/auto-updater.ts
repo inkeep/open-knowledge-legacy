@@ -59,6 +59,7 @@ interface StartAutoUpdaterOpts {
   forceDevBypass?: boolean;
   feedUrl?: string;
   whenRendererReady?: (fn: () => void) => void;
+  prepareForRelaunch?: () => void;
   clock?: Clock;
   now?: () => Date;
   onDispatch?: (kind: DispatchKind) => void;
@@ -69,6 +70,7 @@ export interface StartAutoUpdaterHandle {
   destroy(): void;
   setChannel(channel: UpdateChannel): void;
   confirmDowngrade(): Promise<void>;
+  checkForUpdatesNow(): Promise<unknown>;
 }
 
 interface Logger {
@@ -380,9 +382,27 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     const pending = snapshot.versionPendingInstall;
     if (!persistSafely({ ...snapshot, versionPendingInstall: null }, 'relaunch-now'))
       return undefined;
+    if (opts.prepareForRelaunch) {
+      try {
+        opts.prepareForRelaunch();
+      } catch (err) {
+        logger.warn('prepareForRelaunch threw — proceeding to quitAndInstall anyway', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     logger.info('relaunch-now invoked — calling autoUpdater.quitAndInstall', { pending });
     onDispatch?.('relaunch-now');
     updater.quitAndInstall();
+    return undefined;
+  });
+
+  register('ok:update:check-now', (_event: IpcMainInvokeEvent): undefined => {
+    void updater.checkForUpdates().catch((err: unknown) => {
+      logger.debug('check-now checkForUpdates rejected', {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    });
     return undefined;
   });
 
@@ -477,6 +497,10 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
         throw err;
       }
     },
+    checkForUpdatesNow(): Promise<unknown> {
+      logger.info('check-now invoked from menu');
+      return updater.checkForUpdates();
+    },
     destroy(): void {
       if (intervalHandle) {
         clock.clearInterval(intervalHandle);
@@ -498,13 +522,18 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       detach('download-progress', onDownloadProgress as (...args: unknown[]) => void);
       detach('update-downloaded', onUpdateDownloaded as (...args: unknown[]) => void);
       detach('error', onError as (...args: unknown[]) => void);
-      try {
-        ipcMain.removeHandler('ok:update:relaunch-now');
-      } catch (err) {
-        logger.warn('ipcMain.removeHandler failed during destroy', {
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
+      const removeHandlerSafely = (channel: string): void => {
+        try {
+          ipcMain.removeHandler(channel);
+        } catch (err) {
+          logger.warn('ipcMain.removeHandler failed during destroy', {
+            channel,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      };
+      removeHandlerSafely('ok:update:relaunch-now');
+      removeHandlerSafely('ok:update:check-now');
       logger.info('destroyed');
     },
   };

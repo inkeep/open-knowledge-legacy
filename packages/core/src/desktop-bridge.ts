@@ -264,6 +264,7 @@ export interface OkDesktopBridge {
     relaunchNow(): Promise<void>;
     setChannel(channel: OkUpdateChannel): Promise<void>;
     confirmDowngrade(): Promise<void>;
+    checkNow(): Promise<void>;
   };
 
   state: {
