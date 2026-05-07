@@ -1,6 +1,6 @@
 {
   "name": "@inkeep/open-knowledge-app",
-  "version": "0.4.0-beta.9",
+  "version": "0.4.0-beta.10",
   "private": true,
   "type": "module",
   "scripts": {
