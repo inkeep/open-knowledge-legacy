@@ -981,6 +981,38 @@ function bootPrimaryInstance(): void {
       prepareForRelaunch: () => {
         wm?.killAllUtilities();
       },
+      showCheckNowResult: (result) => {
+        const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+        if (!target) return;
+        if (result.kind === 'not-available') {
+          void dialog.showMessageBox(target, {
+            type: 'info',
+            buttons: ['OK'],
+            defaultId: 0,
+            title: 'Up to Date',
+            message: "You're on the latest version of Open Knowledge.",
+            detail: `Open Knowledge ${result.currentVersion} is the most current version available.`,
+          });
+        } else if (result.kind === 'available') {
+          void dialog.showMessageBox(target, {
+            type: 'info',
+            buttons: ['OK'],
+            defaultId: 0,
+            title: 'Update Available',
+            message: `Open Knowledge ${result.latestVersion} is available.`,
+            detail: `It's downloading in the background. You'll be prompted to relaunch when the install is ready.`,
+          });
+        } else {
+          void dialog.showMessageBox(target, {
+            type: 'warning',
+            buttons: ['OK'],
+            defaultId: 0,
+            title: "Couldn't Check for Updates",
+            message: "Open Knowledge couldn't check for updates right now.",
+            detail: result.message,
+          });
+        }
+      },
     });
     refreshApplicationMenu();
   });

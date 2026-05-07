@@ -158,6 +158,7 @@ function makeRig(
     feedUrl?: string;
     extraWindowCount?: number;
     prepareForRelaunch?: () => void;
+    showCheckNowResult?: (result: import('../../src/main/auto-updater.ts').CheckNowResult) => void;
   },
 ): {
   rig: TestRig;
@@ -170,6 +171,7 @@ function makeRig(
     feedUrl,
     extraWindowCount = 0,
     prepareForRelaunch,
+    showCheckNowResult,
     ...stateOverrides
   } = overrides ?? {};
   const primaryCaptured: CapturedSend[] = [];
@@ -210,6 +212,7 @@ function makeRig(
     forceDevBypass,
     feedUrl,
     prepareForRelaunch,
+    showCheckNowResult,
     clock: rig.clock,
     now: () => rig.now,
     onDispatch: (kind) => {
@@ -663,7 +666,7 @@ describe('event subscription surface (AC2)', () => {
   test('registers listeners for the six AC2 events', () => {
     const { rig } = makeRig();
     expect(rig.updater.listenerCount('checking-for-update')).toBe(1);
-    expect(rig.updater.listenerCount('update-available')).toBe(1);
+    expect(rig.updater.listenerCount('update-available')).toBe(2);
     expect(rig.updater.listenerCount('update-not-available')).toBe(1);
     expect(rig.updater.listenerCount('download-progress')).toBe(1);
     expect(rig.updater.listenerCount('update-downloaded')).toBe(1);
@@ -1091,6 +1094,92 @@ describe('ok:update:check-now IPC handler', () => {
     const { rig, handle } = makeRig();
     handle.destroy();
     expect(rig.ipc.handlers.has('ok:update:check-now')).toBe(false);
+  });
+});
+
+describe('check-now → showCheckNowResult feedback dispatch', () => {
+  test('update-not-available after menu-check fires not-available result', () => {
+    const showCheckNowResult = mock(() => {});
+    const { rig } = makeRig({ appVersion: '0.4.0-beta.13', showCheckNowResult });
+    rig.ipc.invoke('ok:update:check-now');
+    rig.updater.emit('update-not-available', { version: '0.4.0-beta.13' });
+    expect(showCheckNowResult).toHaveBeenCalledTimes(1);
+    expect(showCheckNowResult).toHaveBeenCalledWith({
+      kind: 'not-available',
+      currentVersion: '0.4.0-beta.13',
+    });
+  });
+
+  test('update-available after menu-check fires available result with versions', () => {
+    const showCheckNowResult = mock(() => {});
+    const { rig } = makeRig({
+      appVersion: '0.4.0-beta.13',
+      updateChannel: 'beta',
+      showCheckNowResult,
+    });
+    rig.ipc.invoke('ok:update:check-now');
+    rig.updater.emit('update-available', { version: '0.4.0-beta.14' });
+    expect(showCheckNowResult).toHaveBeenCalledTimes(1);
+    expect(showCheckNowResult).toHaveBeenCalledWith({
+      kind: 'available',
+      currentVersion: '0.4.0-beta.13',
+      latestVersion: '0.4.0-beta.14',
+    });
+  });
+
+  test('error after menu-check fires error result with the message', () => {
+    const showCheckNowResult = mock(() => {});
+    const { rig } = makeRig({ showCheckNowResult });
+    rig.ipc.invoke('ok:update:check-now');
+    rig.updater.emit('error', new Error('network timeout'));
+    expect(showCheckNowResult).toHaveBeenCalledTimes(1);
+    expect(showCheckNowResult).toHaveBeenCalledWith({
+      kind: 'error',
+      message: 'network timeout',
+    });
+  });
+
+  test('downgrade-warning branch of update-available SKIPS dialog (toast handles it)', () => {
+    const showCheckNowResult = mock(() => {});
+    const { rig } = makeRig({
+      appVersion: '0.5.0-beta.0',
+      updateChannel: 'latest',
+      showCheckNowResult,
+    });
+    rig.ipc.invoke('ok:update:check-now');
+    rig.updater.emit('update-available', { version: '0.4.5' });
+    expect(showCheckNowResult).not.toHaveBeenCalled();
+    const warning = rig.captured.filter((c) => c.channel === 'ok:update:downgrade-warning');
+    expect(warning).toHaveLength(1);
+  });
+
+  test('periodic check (NO menu-check) does NOT fire showCheckNowResult', () => {
+    const showCheckNowResult = mock(() => {});
+    const { rig } = makeRig({ showCheckNowResult });
+    rig.updater.emit('update-not-available', { version: '0.4.0-beta.13' });
+    expect(showCheckNowResult).not.toHaveBeenCalled();
+  });
+
+  test('subsequent events after dispatch do NOT re-fire (single-shot per check-now)', () => {
+    const showCheckNowResult = mock(() => {});
+    const { rig } = makeRig({ showCheckNowResult });
+    rig.ipc.invoke('ok:update:check-now');
+    rig.updater.emit('update-not-available', { version: '0.4.0-beta.13' });
+    rig.updater.emit('update-not-available', { version: '0.4.0-beta.13' });
+    rig.updater.emit('error', new Error('next-cycle network error'));
+    expect(showCheckNowResult).toHaveBeenCalledTimes(1);
+  });
+
+  test('checkForUpdates synchronous reject fires error result', async () => {
+    const showCheckNowResult = mock(() => {});
+    const { rig } = makeRig({ showCheckNowResult });
+    rig.updater.checkForUpdates = mock(() => Promise.reject(new Error('feed not reachable')));
+    rig.ipc.invoke('ok:update:check-now');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(showCheckNowResult).toHaveBeenCalledWith({
+      kind: 'error',
+      message: 'feed not reachable',
+    });
   });
 });
 

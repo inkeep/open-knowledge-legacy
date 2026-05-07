@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { HocuspocusProvider } from '@hocuspocus/provider';
+import { SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
 import { test as base } from '@playwright/test';
+import * as Y from 'yjs';
 
 const HELPERS_DIR = dirname(fileURLToPath(import.meta.url));
 const APP_PACKAGE_ROOT = resolve(HELPERS_DIR, '..', '..', '..');
@@ -50,7 +53,7 @@ async function getFreePort(): Promise<number> {
   });
 }
 
-async function waitForServerReady(baseURL: string, timeoutMs = 30_000): Promise<void> {
+async function waitForHttpReady(baseURL: string, timeoutMs = 30_000): Promise<void> {
   const start = Date.now();
   let lastErr: unknown;
   while (Date.now() - start < timeoutMs) {
@@ -66,6 +69,70 @@ async function waitForServerReady(baseURL: string, timeoutMs = 30_000): Promise<
   throw new Error(
     `Worker server at ${baseURL} did not become ready within ${timeoutMs}ms. Last error: ${String(lastErr)}`,
   );
+}
+
+async function checkApiConfig(baseURL: string, timeoutMs = 2_000): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${baseURL}/api/config`, { signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    throw new Error(`/api/config did not respond within ${timeoutMs}ms: ${String(err)}`);
+  }
+  if (res.status !== 200) {
+    throw new Error(`/api/config returned status ${res.status}, expected 200`);
+  }
+  let body: {
+    collabUrl?: unknown;
+    previewUrl?: unknown;
+    port?: unknown;
+  } | null;
+  try {
+    body = (await res.json()) as typeof body;
+  } catch (parseErr) {
+    throw new Error(`/api/config returned 200 but body is not valid JSON: ${String(parseErr)}`);
+  }
+  if (
+    !body ||
+    typeof body.port !== 'number' ||
+    (typeof body.collabUrl !== 'string' && body.collabUrl !== null)
+  ) {
+    throw new Error(`/api/config returned unexpected body shape: ${JSON.stringify(body)}`);
+  }
+}
+
+async function checkCollabSync(port: number, timeoutMs = 10_000): Promise<void> {
+  const doc = new Y.Doc();
+  const provider = new HocuspocusProvider({
+    url: `ws://localhost:${port}/collab`,
+    name: SYSTEM_DOC_NAME,
+    document: doc,
+    connect: false,
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`/collab sync round-trip did not complete within ${timeoutMs}ms`));
+      }, timeoutMs);
+      provider.on('synced', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      provider.connect();
+    });
+  } finally {
+    try {
+      provider.destroy();
+    } catch {}
+    try {
+      doc.destroy();
+    } catch {}
+  }
+}
+
+async function waitForServerReady(baseURL: string, port: number): Promise<void> {
+  await waitForHttpReady(baseURL);
+  await checkApiConfig(baseURL);
+  await checkCollabSync(port);
 }
 
 function seedRequiredFixtureFiles(contentDir: string): void {
@@ -114,7 +181,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       });
 
       try {
-        await waitForServerReady(baseURL);
+        await waitForServerReady(baseURL, port);
       } catch (err) {
         await killGracefully(proc);
         rmSync(contentDir, { recursive: true, force: true });

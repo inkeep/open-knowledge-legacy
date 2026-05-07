@@ -60,11 +60,17 @@ interface StartAutoUpdaterOpts {
   feedUrl?: string;
   whenRendererReady?: (fn: () => void) => void;
   prepareForRelaunch?: () => void;
+  showCheckNowResult?: (result: CheckNowResult) => void;
   clock?: Clock;
   now?: () => Date;
   onDispatch?: (kind: DispatchKind) => void;
   logger?: Logger;
 }
+
+export type CheckNowResult =
+  | { kind: 'available'; currentVersion: string; latestVersion: string }
+  | { kind: 'not-available'; currentVersion: string }
+  | { kind: 'error'; message: string };
 
 export interface StartAutoUpdaterHandle {
   destroy(): void;
@@ -192,6 +198,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     forceDevBypass = false,
     feedUrl,
     whenRendererReady,
+    showCheckNowResult,
     clock = DEFAULT_CLOCK,
     now = () => new Date(),
     onDispatch,
@@ -279,6 +286,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   };
 
   let pendingDowngrade = false;
+  let menuCheckPending = false;
 
   const onUpdateAvailable = (info: { version?: string }): void => {
     logger.info('update-available', { version: info.version });
@@ -309,11 +317,32 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       targetVersion: availableVersion,
     });
     onDispatch?.('downgrade-warning-fired');
+    if (menuCheckPending) {
+      menuCheckPending = false;
+    }
+  };
+
+  const onUpdateAvailableForMenuCheck = (info: { version?: string }): void => {
+    if (!menuCheckPending) return;
+    menuCheckPending = false;
+    if (pendingDowngrade) return;
+    showCheckNowResult?.({
+      kind: 'available',
+      currentVersion: getAppVersion(),
+      latestVersion: typeof info.version === 'string' ? info.version : 'unknown',
+    });
   };
 
   const onUpdateNotAvailable = (info: { version?: string }): void => {
     logger.info('update-not-available', { version: info.version });
     markCheckSucceeded();
+    if (menuCheckPending) {
+      menuCheckPending = false;
+      showCheckNowResult?.({
+        kind: 'not-available',
+        currentVersion: getAppVersion(),
+      });
+    }
   };
 
   const onDownloadProgress = (info: { percent?: number; bytesPerSecond?: number }): void => {
@@ -362,11 +391,19 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       });
       onDispatch?.('error-unclassified');
     }
+    if (menuCheckPending) {
+      menuCheckPending = false;
+      showCheckNowResult?.({
+        kind: 'error',
+        message: err.message || 'Update check failed',
+      });
+    }
     maybeFireStuckHint();
   };
 
   updater.on('checking-for-update', onCheckingForUpdate);
   updater.on('update-available', onUpdateAvailable);
+  updater.on('update-available', onUpdateAvailableForMenuCheck);
   updater.on('update-not-available', onUpdateNotAvailable);
   updater.on('download-progress', onDownloadProgress);
   updater.on('update-downloaded', onUpdateDownloaded);
@@ -398,10 +435,18 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   });
 
   register('ok:update:check-now', (_event: IpcMainInvokeEvent): undefined => {
+    menuCheckPending = true;
     void updater.checkForUpdates().catch((err: unknown) => {
       logger.debug('check-now checkForUpdates rejected', {
         message: err instanceof Error ? err.message : String(err),
       });
+      if (menuCheckPending) {
+        menuCheckPending = false;
+        showCheckNowResult?.({
+          kind: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
     });
     return undefined;
   });
@@ -518,6 +563,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       };
       detach('checking-for-update', onCheckingForUpdate as (...args: unknown[]) => void);
       detach('update-available', onUpdateAvailable as (...args: unknown[]) => void);
+      detach('update-available', onUpdateAvailableForMenuCheck as (...args: unknown[]) => void);
       detach('update-not-available', onUpdateNotAvailable as (...args: unknown[]) => void);
       detach('download-progress', onDownloadProgress as (...args: unknown[]) => void);
       detach('update-downloaded', onUpdateDownloaded as (...args: unknown[]) => void);
