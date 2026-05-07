@@ -2947,6 +2947,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
+    const resolvedContentRoot = contentRoot ?? '.';
+    const docPathResult = safeDocPath(docName, resolvedContentRoot);
+    if ('error' in docPathResult) {
+      json(res, 400, { ok: false, error: docPathResult.error });
+      return;
+    }
+
     const rawLimit = Number(url.searchParams.get('limit') ?? '50');
     const rawOffset = Number(url.searchParams.get('offset') ?? '0');
     const limit = Math.min(200, Number.isFinite(rawLimit) ? rawLimit : 50);
@@ -2957,7 +2964,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const t0 = Date.now();
     try {
-      const resolvedContentRoot = contentRoot ?? '.';
       const result = await getDocumentHistory(
         shadow,
         {

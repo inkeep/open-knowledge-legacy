@@ -20,8 +20,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
   test('F0: shell snaps on click, editor mount is deferred', async ({ page, api }) => {
     const MARK_LINE = Array.from({ length: 20 }, (_, i) => `[[Link ${i}]]`).join(' ');
     const PARAGRAPH = `${MARK_LINE} and some \`inline code\` plus more [[wiki links]] here.`;
-    const SECTION_FILLER =
-      'Extended prose paragraph to grow the doc past the V2 bytes gate. '.repeat(20);
+    const SECTION_FILLER = 'Extended prose paragraph to make the doc mark-heavy. '.repeat(20);
     const BIG_BODY = Array.from(
       { length: 120 },
       (_, i) => `## Section ${i}\n\n${PARAGRAPH}\n\n${SECTION_FILLER}\n`,
@@ -96,8 +95,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
   }) => {
     const MARK_LINE = Array.from({ length: 20 }, (_, i) => `[[Link ${i}]]`).join(' ');
     const PARAGRAPH = `${MARK_LINE} and some \`inline code\` plus more [[wiki links]] here.`;
-    const SECTION_FILLER =
-      'Extended prose paragraph to grow the doc past the V2 bytes gate. '.repeat(20);
+    const SECTION_FILLER = 'Extended prose paragraph to make the doc mark-heavy. '.repeat(20);
     const BIG_BODY = Array.from(
       { length: 120 },
       (_, i) => `## Section ${i}\n\n${PARAGRAPH}\n\n${SECTION_FILLER}\n`,

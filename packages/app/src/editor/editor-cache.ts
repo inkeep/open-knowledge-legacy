@@ -25,7 +25,7 @@ export const MAX_CACHE = readNumericOverride('MAX_CACHE', 10);
 
 export const VIEW_COUNT_CACHE_THRESHOLD = readNumericOverride('VIEW_COUNT_CACHE_THRESHOLD', 50);
 
-export const BYTES_CACHE_THRESHOLD = readNumericOverride('BYTES_CACHE_THRESHOLD', 500_000);
+export const BYTES_CACHE_THRESHOLD = readNumericOverride('BYTES_CACHE_THRESHOLD', 8_000_000);
 
 interface SizeStats {
   viewCount: number;
