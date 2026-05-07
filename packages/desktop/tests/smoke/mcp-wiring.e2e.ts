@@ -20,7 +20,7 @@ const SMOKE_ENABLED = process.env.OK_DESKTOP_E2E_SMOKE === '1';
 const DARWIN = process.platform === 'darwin';
 const BUILD_EXISTS = existsSync(MAIN_ENTRY);
 
-const DESKTOP_PRODUCT_NAME = '@inkeep/open-knowledge-desktop';
+const DESKTOP_PRODUCT_NAME = 'Open Knowledge';
 
 interface LaunchOpts {
   tmpHome: string;
