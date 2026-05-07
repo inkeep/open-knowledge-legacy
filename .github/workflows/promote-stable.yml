@@ -239,6 +239,24 @@ jobs:
           echo "Dispatched publish-stable to release.yml (ref=${STABLE_TAG}, version=${STABLE_VERSION})."
           echo "release.yml will run the npm publish + provenance attestation in its own job."
 
+      - name: Trigger desktop-release.yml to build + upload stable DMG
+        # Same cascade fix as the beta path in release.yml — the
+        # `gh release create` above runs as GITHUB_TOKEN, which would
+        # normally suppress the `release: published` event from firing
+        # desktop-release.yml. Explicit `repository_dispatch` is the
+        # documented exemption to that suppression rule.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STABLE_TAG: ${{ steps.ver.outputs.stable_tag }}
+        run: |
+          set -euo pipefail
+          payload=$(jq -nc \
+            --arg tag "$STABLE_TAG" \
+            --arg ref "$STABLE_TAG" \
+            '{event_type: "desktop-release", client_payload: {release_tag: $tag, ref: $ref}}')
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/dispatches" --input - <<<"$payload"
+          echo "Dispatched desktop-release for ${STABLE_TAG}; desktop-release.yml will build the signed DMG and upload it + latest-mac.yml to the stable Release."
+
       - name: Optional cross-repo dispatch to trigger main-reset on agents-private
         # D19: gated on LEGACY_TO_PRIVATE_DISPATCH_TOKEN being set. If the
         # secret is absent, the step skips silently (v1 is two-button).
