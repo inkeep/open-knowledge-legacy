@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { containsConflictMarkers, reconcile, splitMarkdownBlocks } from './reconciliation';
+import {
+  containsConflictMarkers,
+  MAX_LCS_CELLS,
+  reconcile,
+  splitMarkdownBlocks,
+} from './reconciliation';
 
 describe('splitMarkdownBlocks', () => {
   test('splits on blank lines', () => {
@@ -162,5 +167,65 @@ describe('reconcile', () => {
 
     const result = reconcile({ docName, base, ours, theirs });
     expect(result.kind).toBe('merged');
+  });
+
+  function buildBlocks(prefix: string, count: number): string {
+    const blocks: string[] = [];
+    for (let i = 0; i < count; i++) blocks.push(`${prefix} ${i}.`);
+    return `${blocks.join('\n\n')}\n`;
+  }
+
+  const overCapPerSide = Math.ceil(Math.sqrt(MAX_LCS_CELLS)) + 10;
+
+  test('refused: (base × ours) exceeds the LCS bound', () => {
+    const base = buildBlocks('base', overCapPerSide);
+    const ours = buildBlocks('ours', overCapPerSide);
+    const theirs = '# Title\n\ntheirs unchanged-but-different.\n';
+
+    const result = reconcile({ docName, base, ours, theirs });
+    expect(result.kind).toBe('refused');
+    if (result.kind === 'refused') {
+      expect(result.reason).toBe('too-large');
+    }
+  });
+
+  test('refused: (base × theirs) exceeds the LCS bound', () => {
+    const base = buildBlocks('base', overCapPerSide);
+    const ours = '# Title\n\nours edit.\n';
+    const theirs = buildBlocks('theirs', overCapPerSide);
+
+    const result = reconcile({ docName, base, ours, theirs });
+    expect(result.kind).toBe('refused');
+    if (result.kind === 'refused') {
+      expect(result.reason).toBe('too-large');
+    }
+  });
+
+  test('refused: oversized inputs return promptly without allocating LCS DP', () => {
+    const base = buildBlocks('base', overCapPerSide);
+    const ours = buildBlocks('ours', overCapPerSide);
+    const theirs = buildBlocks('theirs', overCapPerSide);
+
+    const start = performance.now();
+    const result = reconcile({ docName, base, ours, theirs });
+    const elapsed = performance.now() - start;
+
+    expect(result.kind).toBe('refused');
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  test('large but in-bounds inputs still merge', () => {
+    const same = buildBlocks('block', 100);
+    const base = same;
+    const ours = `${same}\nAdded by us.\n`;
+    const theirs = `${same}\nAdded by them.\n`;
+
+    const result = reconcile({ docName, base, ours, theirs });
+    expect(result.kind).toBe('merged');
+    if (result.kind === 'merged') {
+      const out = splitMarkdownBlocks(result.newContent);
+      expect(out).toContain('Added by us.');
+      expect(out).toContain('Added by them.');
+    }
   });
 });
