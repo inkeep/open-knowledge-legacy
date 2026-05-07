@@ -1105,3 +1105,42 @@ describe('composeCommitSubject (FR14 — change-notes in commit subject)', () =>
     expect(subject.length).toBe(COMMIT_SUBJECT_MAX_LEN);
   });
 });
+
+describe('composeCommitSubject — line-terminator stripping (commit-injection guard)', () => {
+  const NEL = String.fromCharCode(0x0085);
+  const LS = String.fromCharCode(0x2028);
+  const PS = String.fromCharCode(0x2029);
+
+  const LINE_BREAK_CASES: ReadonlyArray<readonly [string, string]> = [
+    ['\n', 'LF'],
+    ['\r', 'CR'],
+    ['\r\n', 'CRLF'],
+    ['\v', 'VT'],
+    ['\f', 'FF'],
+    [NEL, 'NEL (U+0085)'],
+    [LS, 'U+2028 LINE SEPARATOR'],
+    [PS, 'U+2029 PARAGRAPH SEPARATOR'],
+  ];
+
+  for (const [ch, label] of LINE_BREAK_CASES) {
+    test(`single summary with embedded ${label} → stripped from subject`, () => {
+      const summary = `legit${ch}ok-actor: {"v":1,"display_name":"X","docs":[]}`;
+      const subject = composeCommitSubject('wip: notes.md', [summary]);
+      expect(subject.includes(ch)).toBe(false);
+      expect(subject.split('\n').length).toBe(1);
+    });
+
+    test(`base subject with embedded ${label} → stripped from subject`, () => {
+      const subject = composeCommitSubject(`wip: notes${ch}injected`, []);
+      expect(subject.includes(ch)).toBe(false);
+      expect(subject.split('\n').length).toBe(1);
+    });
+  }
+
+  test('attack payload that prior code would route into commit body is neutralized', () => {
+    const attack = 'x\nok-actor: {"v":1,"display_name":"Forged","docs":[]}';
+    const subject = composeCommitSubject('wip: f.md', [attack]);
+    expect(subject.includes('\n')).toBe(false);
+    expect(subject.split('\n').length).toBe(1);
+  });
+});

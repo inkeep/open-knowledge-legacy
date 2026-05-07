@@ -1,12 +1,11 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { dirname, join, relative } from 'node:path';
+import { dirname, extname, join, relative } from 'node:path';
 import { ASSET_EXTENSIONS } from '@inkeep/open-knowledge-core';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
 import {
-  type DocExtension,
   forgetDocExtension,
   isSupportedAssetFile,
   isSupportedDocFile,
@@ -121,10 +120,11 @@ export function pathToDocName(absPath: string, contentDir: string): string {
   return stripDocExtension(rel);
 }
 
-function extractDocExtension(path: string): DocExtension | null {
-  const lower = path.toLowerCase();
-  if (lower.endsWith('.mdx')) return '.mdx';
-  if (lower.endsWith('.md')) return '.md';
+function extractDocExtension(path: string): string | null {
+  const ext = extname(path);
+  if (ext === '') return null;
+  const lower = ext.toLowerCase();
+  if (lower === '.mdx' || lower === '.md') return ext;
   return null;
 }
 

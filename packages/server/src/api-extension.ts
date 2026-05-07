@@ -144,7 +144,6 @@ import { getLocalDir } from './config/paths.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
 import type { ContentFilter } from './content-filter.ts';
 import {
-  type DocExtension,
   forgetDocExtension,
   getDocExtension,
   isSupportedDocFile,
@@ -1349,10 +1348,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               tracedRenameSync(rootSourcePath, rootDestinationPath);
             }
 
-            const explicitDestExt: DocExtension | null =
-              kind === 'file' && isSupportedDocFile(toPath)
-                ? (extname(toPath).toLowerCase() as DocExtension)
-                : null;
+            const explicitDestExt: string | null =
+              kind === 'file' && isSupportedDocFile(toPath) ? extname(toPath) : null;
             for (const { from, to } of affectedDocs) {
               const sourceExt = getDocExtension(from);
               forgetDocExtension(from);

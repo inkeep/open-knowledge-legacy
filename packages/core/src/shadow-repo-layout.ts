@@ -1,3 +1,41 @@
+/**
+ * Shadow-repo layout helpers — shared between CLI (read path) and server
+ * (write path).
+ *
+ * The shadow repo lives at `<gitdir>/ok/`, where `<gitdir>` is resolved via
+ * `resolveGitDir(projectRoot)`:
+ *   - Main worktree: `<projectRoot>/.git/ok/` (`.git` is a directory).
+ *   - Linked worktree: `<repo>/.git/worktrees/<name>/ok/` (`.git` is a pointer
+ *     file; the bare repo lives inside Git's per-worktree admin dir, so
+ *     `git worktree remove` cleans it up automatically).
+ *
+ * Main-worktree path is bit-identical to pre-worktree-support behavior, so
+ * existing main-worktree shadows do not migrate. Pre-rename integrated shadows
+ * at `.git/openknowledge/` (legacy path) are silently rename-migrated in-place
+ * once per repo via `initShadowRepo()`. Its on-disk layout is a documented
+ * invariant:
+ *
+ *   refs/wip/<project-branch>/<writer-id>
+ *
+ * where `<writer-id>` is one of the five recognized forms in the writer-ID
+ * taxonomy (dropping the legacy `human-` prefix and the opaque `server` writer):
+ *   - `agent-<connectionId>`     — an MCP agent session wrote the commit
+ *   - `principal-<UUID>`         — a browser-tab principal wrote the commit
+ *   - `file-system`              — classified: disk reconcile (file-watcher)
+ *   - `git-upstream`             — classified: HEAD-move commit import
+ *   - `openknowledge-service`    — classified: service-level fallback (park, etc.)
+ *
+ * Legacy ref names (`server`, `human-<*>`, `upstream`) classify as `'unknown'`
+ * so the allowlist sweep in `initShadowRepo()` can safely delete them on
+ * first run without deleting legitimate new-taxonomy refs.
+ *
+ * Centralizing this layout knowledge prevents CLI/server drift: the CLI
+ * consumes these utilities to parse writer IDs and resolve shadow-dir paths
+ * without re-implementing the regex or path conventions.
+ *
+ * This file uses only `node:fs` (no other server/runtime deps) so it is safe
+ * to include from any workspace package.
+ */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -418,14 +456,23 @@ export function formatImportSubject(oldHead: string | null, newHead: string): st
 
 export const COMMIT_SUBJECT_MAX_LEN = 72;
 
+// biome-ignore lint/complexity/useRegexLiterals: see docblock above for the constraint that forces `new RegExp`.
+const SUBJECT_LINE_BREAK_RE = new RegExp('[\\r\\n\\v\\f\\u0085\\u2028\\u2029]', 'g');
+
+function stripLineBreaks(s: string): string {
+  return s.replace(SUBJECT_LINE_BREAK_RE, ' ');
+}
+
 export function composeCommitSubject(base: string, summaries: readonly string[]): string {
-  if (summaries.length === 0) return base;
-  if (summaries.length >= 2) return `${base} (${summaries.length} edits)`;
-  const [summary] = summaries;
-  if (summary === undefined) return base; // defensive; length-1 branch guards against this
-  const full = `${base} — ${summary}`;
+  const safeBase = stripLineBreaks(base);
+  if (summaries.length === 0) return safeBase;
+  if (summaries.length >= 2) return `${safeBase} (${summaries.length} edits)`;
+  const [rawSummary] = summaries;
+  if (rawSummary === undefined) return safeBase; // defensive; length-1 branch guards against this
+  const summary = stripLineBreaks(rawSummary);
+  const full = `${safeBase} — ${summary}`;
   if (full.length <= COMMIT_SUBJECT_MAX_LEN) return full;
-  const prefix = `${base} — `;
+  const prefix = `${safeBase} — `;
   const budget = COMMIT_SUBJECT_MAX_LEN - prefix.length - 1; // reserve one char for the ellipsis
   if (budget <= 0) return full.slice(0, COMMIT_SUBJECT_MAX_LEN); // base already over budget — defensive slice
   return `${prefix}${summary.slice(0, budget)}…`;

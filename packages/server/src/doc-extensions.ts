@@ -23,32 +23,48 @@ export function stripDocExtension(path: string): string {
   return path;
 }
 
+function canonicalize(ext: string): DocExtension | null {
+  const lower = ext.toLowerCase();
+  if (lower === '.mdx') return '.mdx';
+  if (lower === '.md') return '.md';
+  return null;
+}
+
 function rank(ext: DocExtension): number {
   return SUPPORTED_DOC_EXTENSIONS.indexOf(ext);
 }
 
-const docExtensionByName = new Map<string, DocExtension>();
+const docExtensionByName = new Map<string, string>();
 
 export function registerDocExtension(
   docName: string,
-  ext: DocExtension,
-): { effective: DocExtension; changed: boolean; shadowed: DocExtension | null } {
+  observedExt: string,
+): { effective: string; changed: boolean; shadowed: string | null } {
+  const canonical = canonicalize(observedExt);
+  if (!canonical) {
+    throw new Error(`registerDocExtension: unsupported extension "${observedExt}"`);
+  }
   const existing = docExtensionByName.get(docName);
   if (!existing) {
-    docExtensionByName.set(docName, ext);
-    return { effective: ext, changed: true, shadowed: null };
+    docExtensionByName.set(docName, observedExt);
+    return { effective: observedExt, changed: true, shadowed: null };
   }
-  if (existing === ext) {
+  const existingCanonical = canonicalize(existing);
+  if (!existingCanonical) {
+    docExtensionByName.set(docName, observedExt);
+    return { effective: observedExt, changed: true, shadowed: existing };
+  }
+  if (existingCanonical === canonical) {
     return { effective: existing, changed: false, shadowed: null };
   }
-  if (rank(ext) < rank(existing)) {
-    docExtensionByName.set(docName, ext);
-    return { effective: ext, changed: true, shadowed: existing };
+  if (rank(canonical) < rank(existingCanonical)) {
+    docExtensionByName.set(docName, observedExt);
+    return { effective: observedExt, changed: true, shadowed: existing };
   }
-  return { effective: existing, changed: false, shadowed: ext };
+  return { effective: existing, changed: false, shadowed: observedExt };
 }
 
-export function getDocExtension(docName: string): DocExtension {
+export function getDocExtension(docName: string): string {
   return docExtensionByName.get(docName) ?? DEFAULT_EXTENSION;
 }
 
