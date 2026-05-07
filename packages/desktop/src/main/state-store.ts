@@ -8,7 +8,7 @@ interface RecentProject {
   missing?: boolean;
 }
 
-export interface ProjectSessionState {
+interface ProjectSessionState {
   openTabs: string[];
   activeDocName: string | null;
   updatedAt: string | null;
@@ -50,7 +50,7 @@ export function emptyState(): AppState {
   };
 }
 
-export function emptyProjectSessionState(): ProjectSessionState {
+function emptyProjectSessionState(): ProjectSessionState {
   return {
     openTabs: [],
     activeDocName: null,
@@ -72,7 +72,7 @@ function sanitizeDocTabs(value: unknown): string[] {
   return tabs;
 }
 
-export function parseProjectSessionState(raw: unknown): ProjectSessionState {
+function parseProjectSessionState(raw: unknown): ProjectSessionState {
   if (typeof raw !== 'object' || raw === null) return emptyProjectSessionState();
   const obj = raw as Record<string, unknown>;
   const openTabs = sanitizeDocTabs(obj.openTabs);

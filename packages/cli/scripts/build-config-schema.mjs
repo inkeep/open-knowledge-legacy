@@ -57,10 +57,13 @@ const writeSchema = (path, schema) => {
 
 const projectSchema = pruneByScope(fullSchema, 'project');
 const userSchema = pruneByScope(fullSchema, 'user');
+const projectLocalSchema = pruneByScope(fullSchema, 'project-local');
 
 writeSchema(resolve(versionedDir, 'config.project.schema.json'), projectSchema);
 writeSchema(resolve(versionedDir, 'config.user.schema.json'), userSchema);
+writeSchema(resolve(versionedDir, 'config.project-local.schema.json'), projectLocalSchema);
 
 writeSchema(resolve(distDir, 'config-schema.json'), fullSchema);
 writeSchema(resolve(distDir, 'config.project.schema.json'), projectSchema);
 writeSchema(resolve(distDir, 'config.user.schema.json'), userSchema);
+writeSchema(resolve(distDir, 'config.project-local.schema.json'), projectLocalSchema);

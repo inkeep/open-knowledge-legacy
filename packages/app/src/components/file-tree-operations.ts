@@ -5,7 +5,7 @@ export interface RenamedDocMapping {
   toDocName: string;
 }
 
-export interface RenamePathRewrittenDoc {
+interface RenamePathRewrittenDoc {
   docName: string;
   rewrites: number;
 }

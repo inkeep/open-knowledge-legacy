@@ -7,7 +7,7 @@ describe('ConfigSchema', () => {
     expect(config.content.dir).toBe('.');
     expect(config.appearance.theme).toBeUndefined();
     expect(config.appearance.editorModeDefault).toBeUndefined();
-    expect(config.autoSync.onboardingResolvedAt).toBeNull();
+    expect(config.autoSync.enabled).toBeNull();
   });
 
   test('stale dropped fields pass loose-mode without throwing', () => {
@@ -19,6 +19,28 @@ describe('ConfigSchema', () => {
       mcp: { autoStart: false, tools: { search: { maxResults: 100 } } },
     });
     expect(result.success).toBe(true);
+  });
+
+  test('legacy autoSync.onboardingResolvedAt key parses via looseObject without error', () => {
+    const result = ConfigSchema.safeParse({
+      autoSync: { onboardingResolvedAt: '2026-04-29T00:00:00.000Z' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test('autoSync.enabled accepts boolean true / false / null', () => {
+    for (const enabled of [true, false, null] as const) {
+      const config = ConfigSchema.parse({ autoSync: { enabled } });
+      expect(config.autoSync.enabled).toBe(enabled);
+    }
+  });
+
+  test('autoSync.enabled rejects non-boolean values', () => {
+    const result = ConfigSchema.safeParse({ autoSync: { enabled: 'true' } });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].path).toContain('enabled');
+    }
   });
 
   test('appearance.theme accepts the enum values', () => {

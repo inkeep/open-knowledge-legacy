@@ -1,4 +1,4 @@
-export interface EditorTabSessionState {
+interface EditorTabSessionState {
   openTabs: string[];
   activeDocName: string | null;
   updatedAt: string | null;

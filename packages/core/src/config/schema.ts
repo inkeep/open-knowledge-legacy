@@ -62,17 +62,17 @@ export const ConfigSchema = z.looseObject({
     .default({}),
   autoSync: z
     .looseObject({
-      onboardingResolvedAt: z.iso
-        .datetime()
+      enabled: z
+        .boolean()
         .register(fieldRegistry, {
-          scope: 'project',
+          scope: 'project-local',
           agentSettable: false,
-          defaultScope: 'project',
+          defaultScope: 'project-local',
         })
         .nullable()
         .default(null),
     })
-    .default({ onboardingResolvedAt: null }),
+    .default({ enabled: null }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

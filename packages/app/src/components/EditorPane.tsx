@@ -28,15 +28,16 @@ export function EditorPane() {
   const [autoSyncOnboardingDismissed, setAutoSyncOnboardingDismissed] = useState(false);
 
   const syncStatus = useGitSyncStatus();
-  const { projectConfig } = useConfigContext();
+  const { projectLocalConfig, projectLocalSynced } = useConfigContext();
 
   const { activeDocName } = useDocumentContext();
 
   const showAutoSyncOnboarding =
     !autoSyncOnboardingDismissed &&
     syncStatus?.hasRemote === true &&
-    projectConfig !== null &&
-    projectConfig.autoSync?.enabled === undefined;
+    projectLocalSynced === true &&
+    projectLocalConfig !== null &&
+    projectLocalConfig.autoSync?.enabled === null;
 
   useEffect(() => {
     function onRawMdxNav(e: Event) {

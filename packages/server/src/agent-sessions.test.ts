@@ -144,6 +144,9 @@ describe('getSession — composite key (docName + agentId)', () => {
     await expect(manager.getSession('__config__/project', 'agent-alice')).rejects.toThrow(
       /reserved doc/i,
     );
+    await expect(manager.getSession('__local__/project', 'agent-alice')).rejects.toThrow(
+      /reserved doc/i,
+    );
     await expect(manager.getSession('__user__/config.yml', 'agent-alice')).rejects.toThrow(
       /reserved doc/i,
     );

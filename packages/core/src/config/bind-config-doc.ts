@@ -4,6 +4,7 @@ import type { ConfigValidationError, WriteScope } from './errors.ts';
 import type { Err, Ok, Result } from './result.ts';
 import { type Config, type ConfigPatch, ConfigSchema } from './schema.ts';
 import { addConfigSpanEvent, withConfigSpanSync } from './telemetry.ts';
+import { validatePatchScopes } from './validate-patch-scopes.ts';
 import { applyPatchToDocument, toConfigIssue } from './yaml-patch.ts';
 
 export interface ConfigDocProvider {
@@ -25,6 +26,8 @@ export interface ConfigBinding {
   current(): Config;
   patch(patch: ConfigPatch): ConfigBindingPatchResult;
   subscribe(listener: (config: Config) => void): Unsubscribe;
+  hasSynced(): boolean;
+  subscribeSynced(listener: () => void): Unsubscribe;
   dispose(): void;
 }
 
@@ -75,7 +78,7 @@ function readCurrent(ytext: Y.Text, scope: WriteScope): Config {
 
 export function bindConfigDoc(
   provider: ConfigDocProvider,
-  scope: 'project' | 'user',
+  scope: WriteScope,
   options: BindConfigDocOptions = {},
 ): ConfigBinding {
   return withConfigSpanSync(
@@ -87,7 +90,7 @@ export function bindConfigDoc(
 
 function bindConfigDocInner(
   provider: ConfigDocProvider,
-  scope: 'project' | 'user',
+  scope: WriteScope,
   options: BindConfigDocOptions,
 ): ConfigBinding {
   const { ytextKey = DEFAULT_YTEXT_KEY } = options;
@@ -95,7 +98,9 @@ function bindConfigDocInner(
   const ytext = ydoc.getText(ytextKey);
 
   const listeners = new Set<(config: Config) => void>();
+  const syncedListeners = new Set<() => void>();
   let disposed = false;
+  let synced = false;
 
   function fireListeners(): void {
     if (disposed) return;
@@ -109,8 +114,24 @@ function bindConfigDocInner(
     }
   }
 
+  function onSynced(): void {
+    if (disposed) return;
+    fireListeners();
+    if (synced) return;
+    synced = true;
+    const toFire = [...syncedListeners];
+    syncedListeners.clear();
+    for (const listener of toFire) {
+      try {
+        listener();
+      } catch (e) {
+        console.warn(`[bindConfigDoc:${scope}] synced listener threw:`, e);
+      }
+    }
+  }
+
   ytext.observe(fireListeners);
-  provider.on('synced', fireListeners);
+  provider.on('synced', onSynced);
 
   function patchInner(patch: ConfigPatch): ConfigBindingPatchResult {
     if (disposed) {
@@ -118,6 +139,11 @@ function bindConfigDocInner(
         code: 'WRITE_ERROR',
         detail: `ConfigBinding (${scope}) has been disposed`,
       });
+    }
+
+    const scopeViolation = validatePatchScopes(patch, scope);
+    if (scopeViolation !== null) {
+      return err(scopeViolation);
     }
 
     const currentContent = ytext.toString();
@@ -206,12 +232,39 @@ function bindConfigDocInner(
       };
     },
 
+    hasSynced(): boolean {
+      return synced;
+    },
+
+    subscribeSynced(listener: () => void): Unsubscribe {
+      if (disposed) return () => {};
+      if (synced) {
+        let cancelled = false;
+        queueMicrotask(() => {
+          if (cancelled || disposed) return;
+          try {
+            listener();
+          } catch (e) {
+            console.warn(`[bindConfigDoc:${scope}] synced listener threw:`, e);
+          }
+        });
+        return () => {
+          cancelled = true;
+        };
+      }
+      syncedListeners.add(listener);
+      return () => {
+        syncedListeners.delete(listener);
+      };
+    },
+
     dispose(): void {
       if (disposed) return;
       disposed = true;
       ytext.unobserve(fireListeners);
-      provider.off('synced', fireListeners);
+      provider.off('synced', onSynced);
       listeners.clear();
+      syncedListeners.clear();
     },
   };
 }

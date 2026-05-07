@@ -3,11 +3,13 @@ import { dirname } from 'node:path';
 import {
   addConfigSpanEvent,
   CONFIG_DOC_NAME_PROJECT,
+  CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
   type ConfigIssue,
   ConfigSchema,
   type ConfigValidationError,
   isKnownConfigError,
+  type WriteScope,
   withConfigSpan,
   withConfigSpanSync,
 } from '@inkeep/open-knowledge-core';
@@ -21,8 +23,9 @@ import {
 import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './fs-traced.ts';
 import { getLogger } from './logger.ts';
 
-function configScopeAttr(documentName: string): 'user' | 'project' | undefined {
+function configScopeAttr(documentName: string): WriteScope | undefined {
   if (documentName === CONFIG_DOC_NAME_PROJECT) return 'project';
+  if (documentName === CONFIG_DOC_NAME_PROJECT_LOCAL) return 'project-local';
   if (documentName === CONFIG_DOC_NAME_USER) return 'user';
   return undefined;
 }
@@ -48,6 +51,9 @@ export interface ConfigPersistenceCtx {
 export function configDocAbsPath(documentName: string, ctx: ConfigPersistenceCtx): string {
   if (documentName === CONFIG_DOC_NAME_PROJECT) {
     return resolveConfigPath('project', ctx.projectDir, ctx.homedirOverride);
+  }
+  if (documentName === CONFIG_DOC_NAME_PROJECT_LOCAL) {
+    return resolveConfigPath('project-local', ctx.projectDir, ctx.homedirOverride);
   }
   if (documentName === CONFIG_DOC_NAME_USER) {
     return resolveConfigPath('user', ctx.projectDir, ctx.homedirOverride);

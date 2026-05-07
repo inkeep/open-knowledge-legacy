@@ -115,7 +115,7 @@ describe('config-edit OTel spans', () => {
       const mock = createMockProvider(ydoc);
       const binding = bindConfigDoc(mock, 'project');
       const result = binding.patch({
-        appearance: { theme: 'dark' },
+        content: { dir: './notes' },
       } as ConfigPatch);
       expect(result.ok).toBe(true);
 
@@ -137,7 +137,7 @@ describe('config-edit OTel spans', () => {
       const mock = createMockProvider(ydoc);
       const binding = bindConfigDoc(mock, 'project');
       const result = binding.patch({
-        appearance: { theme: 42 as unknown as 'dark' },
+        content: { dir: 42 as unknown as string },
       } as ConfigPatch);
       expect(result.ok).toBe(false);
 
@@ -152,7 +152,7 @@ describe('config-edit OTel spans', () => {
       expect(ev).toBeDefined();
       const path = ev?.attributes?.['issue.path'];
       expect(typeof path).toBe('string');
-      expect((path as string).includes('theme')).toBe(true);
+      expect((path as string).includes('dir')).toBe(true);
     });
   });
 
@@ -161,7 +161,7 @@ describe('config-edit OTel spans', () => {
       const result = await writeConfigPatch({
         cwd: testDir,
         scope: 'project',
-        patch: { appearance: { theme: 'dark' } } as ConfigPatch,
+        patch: { content: { dir: './notes' } } as ConfigPatch,
       });
       expect(result.ok).toBe(true);
 
@@ -180,7 +180,7 @@ describe('config-edit OTel spans', () => {
       const result = await writeConfigPatch({
         cwd: testDir,
         scope: 'project',
-        patch: { appearance: { theme: 99 as unknown as 'dark' } } as ConfigPatch,
+        patch: { content: { dir: 99 as unknown as string } } as ConfigPatch,
       });
       expect(result.ok).toBe(false);
       const patchSpan = requireSpan('config.patch');

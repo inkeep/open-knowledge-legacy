@@ -7,7 +7,7 @@ describe('ConfigSchema', () => {
     expect(config.content.dir).toBe('.');
     expect(config.appearance.theme).toBeUndefined();
     expect(config.appearance.editorModeDefault).toBeUndefined();
-    expect(config.autoSync.onboardingResolvedAt).toBeNull();
+    expect(config.autoSync.enabled).toBeNull();
   });
 
   test('stale dropped fields pass loose-mode without throwing', () => {

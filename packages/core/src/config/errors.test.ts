@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
   ConfigValidationErrorSchema,
+  FieldScopeSchema,
   humanFormat,
   isKnownConfigError,
   KnownConfigValidationErrorSchema,
+  WriteScopeSchema,
 } from './errors.ts';
 
 describe('ConfigValidationErrorSchema', () => {
@@ -165,5 +167,77 @@ describe('humanFormat', () => {
   test('forward-compat tail uses message or generic with code', () => {
     expect(humanFormat({ code: 'FUTURE', message: 'hi' })).toBe('hi');
     expect(humanFormat({ code: 'FUTURE' })).toContain('FUTURE');
+  });
+});
+
+describe('FieldScopeSchema / WriteScopeSchema — project-local', () => {
+  test('FieldScopeSchema accepts project-local', () => {
+    expect(FieldScopeSchema.parse('project-local')).toBe('project-local');
+    expect(FieldScopeSchema.parse('user')).toBe('user');
+    expect(FieldScopeSchema.parse('project')).toBe('project');
+    expect(FieldScopeSchema.parse('either')).toBe('either');
+  });
+
+  test('FieldScopeSchema rejects unknown scope values', () => {
+    expect(FieldScopeSchema.safeParse('global').success).toBe(false);
+  });
+
+  test('WriteScopeSchema accepts project-local', () => {
+    expect(WriteScopeSchema.parse('project-local')).toBe('project-local');
+    expect(WriteScopeSchema.parse('user')).toBe('user');
+    expect(WriteScopeSchema.parse('project')).toBe('project');
+  });
+
+  test('WriteScopeSchema rejects "either" (FieldScope-only)', () => {
+    expect(WriteScopeSchema.safeParse('either').success).toBe(false);
+  });
+
+  test('SCOPE_VIOLATION accepts project-local in expectedScope and actualScope', () => {
+    const expectedLocal = ConfigValidationErrorSchema.parse({
+      code: 'SCOPE_VIOLATION',
+      path: ['autoSync', 'enabled'],
+      expectedScope: 'project-local',
+      actualScope: 'project',
+    });
+    expect(expectedLocal.code).toBe('SCOPE_VIOLATION');
+
+    const actualLocal = ConfigValidationErrorSchema.parse({
+      code: 'SCOPE_VIOLATION',
+      path: ['appearance', 'theme'],
+      expectedScope: 'user',
+      actualScope: 'project-local',
+    });
+    expect(actualLocal.code).toBe('SCOPE_VIOLATION');
+  });
+
+  test('MIXED_SCOPE accepts project-local entries', () => {
+    const parsed = ConfigValidationErrorSchema.parse({
+      code: 'MIXED_SCOPE',
+      paths: [
+        { path: ['autoSync', 'enabled'], scope: 'project-local' },
+        { path: ['content', 'dir'], scope: 'project' },
+      ],
+    });
+    expect(parsed.code).toBe('MIXED_SCOPE');
+  });
+
+  test('humanFormat renders SCOPE_VIOLATION with project-local in both positions', () => {
+    expect(
+      humanFormat({
+        code: 'SCOPE_VIOLATION',
+        path: ['autoSync', 'enabled'],
+        expectedScope: 'project-local',
+        actualScope: 'project',
+      }),
+    ).toContain('project-local');
+
+    expect(
+      humanFormat({
+        code: 'SCOPE_VIOLATION',
+        path: ['appearance', 'theme'],
+        expectedScope: 'user',
+        actualScope: 'project-local',
+      }),
+    ).toContain('project-local');
   });
 });

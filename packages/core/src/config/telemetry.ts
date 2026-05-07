@@ -3,7 +3,7 @@ import { SpanStatusCode, trace } from '@opentelemetry/api';
 
 const TRACER_NAME = 'open-knowledge-config';
 
-export type ConfigScopeAttr = 'project' | 'user';
+export type ConfigScopeAttr = 'project' | 'user' | 'project-local';
 export type ConfigValidationLayer = 'L1' | 'L2' | 'L3';
 export type ConfigOutcome = 'success' | 'rejected' | 'reverted';
 export type ConfigTransport = 'ytext' | 'fs';

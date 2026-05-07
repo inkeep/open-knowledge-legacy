@@ -1,30 +1,42 @@
+import { humanFormat } from '@inkeep/open-knowledge-core';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { postSyncEnabled } from '@/lib/sync-api';
+import { useConfigContext } from '@/lib/config-provider';
+
+type SyncEnabledWriter = (enabled: boolean) => { ok: true } | { ok: false; error: string };
+
+export function useSyncEnabledWriter(): SyncEnabledWriter | null {
+  const { projectLocalBinding } = useConfigContext();
+  if (projectLocalBinding === null) return null;
+  return (enabled: boolean) => {
+    const result = projectLocalBinding.patch({ autoSync: { enabled } });
+    return result.ok ? { ok: true } : { ok: false, error: humanFormat(result.error) };
+  };
+}
 
 interface UseEnableSyncWithConfirmResult {
-  toggling: boolean;
   confirmOpen: boolean;
   setConfirmOpen: (open: boolean) => void;
   onToggleRequest: (next: boolean) => void;
-  onConfirm: () => Promise<void>;
+  onConfirm: () => void;
 }
 
-export function useEnableSyncWithConfirm(): UseEnableSyncWithConfirmResult {
-  const [toggling, setToggling] = useState(false);
+export function useEnableSyncWithConfirm(
+  writer: SyncEnabledWriter | null,
+): UseEnableSyncWithConfirmResult {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  async function applyEnabled(next: boolean): Promise<boolean> {
-    setToggling(true);
-    try {
-      await postSyncEnabled(next);
-    } catch (e) {
-      console.error('[sync] toggle failed', e);
-      toast.error(`Failed to ${next ? 'enable' : 'disable'} sync — try again`);
-      setToggling(false);
+  function applyEnabled(next: boolean): boolean {
+    if (writer === null) {
+      toast.error('Sync settings not yet loaded — try again in a moment');
       return false;
     }
-    setToggling(false);
+    const result = writer(next);
+    if (!result.ok) {
+      console.error('[sync] toggle failed:', result.error);
+      toast.error(`Failed to ${next ? 'enable' : 'disable'} sync — ${result.error}`);
+      return false;
+    }
     return true;
   }
 
@@ -33,13 +45,13 @@ export function useEnableSyncWithConfirm(): UseEnableSyncWithConfirmResult {
       setConfirmOpen(true);
       return;
     }
-    void applyEnabled(false);
+    applyEnabled(false);
   }
 
-  async function onConfirm() {
-    const ok = await applyEnabled(true);
+  function onConfirm() {
+    const ok = applyEnabled(true);
     if (ok) setConfirmOpen(false);
   }
 
-  return { toggling, confirmOpen, setConfirmOpen, onToggleRequest, onConfirm };
+  return { confirmOpen, setConfirmOpen, onToggleRequest, onConfirm };
 }
