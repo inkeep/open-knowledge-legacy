@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
@@ -400,6 +400,31 @@ describe('initial sync and test isolation', () => {
     } finally {
       await client2.cleanup();
     }
+  });
+
+  test('test-reset truncates accumulated .okignore patterns by default', async () => {
+    const okignorePath = join(server.contentDir, '.okignore');
+    writeFileSync(okignorePath, '/leftover-from-earlier-test.md\nstale-pattern/\n', 'utf-8');
+
+    await testReset(server.port);
+    await wait(300);
+
+    const after = readFileSync(okignorePath, 'utf-8');
+    expect(after).toBe('');
+  });
+
+  test('test-reset preserves .okignore when reset-okignore=false is passed', async () => {
+    const okignorePath = join(server.contentDir, '.okignore');
+    const seeded = '/keep-me-on-reset.md\n';
+    writeFileSync(okignorePath, seeded, 'utf-8');
+
+    const res = await fetch(`http://localhost:${server.port}/api/test-reset?reset-okignore=false`, {
+      method: 'POST',
+    });
+    expect(res.ok).toBe(true);
+    await wait(300);
+
+    expect(readFileSync(okignorePath, 'utf-8')).toBe(seeded);
   });
 });
 

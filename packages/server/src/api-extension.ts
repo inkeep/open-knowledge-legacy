@@ -36,6 +36,7 @@ import {
   AGENT_ICON_COLORS,
   ASSET_EXTENSIONS,
   applyFastDiff,
+  CONFIG_DOC_NAME_OKIGNORE,
   colorFromSeed,
   createCodeFenceTracker,
   createWorkspaceSearchCorpus,
@@ -82,6 +83,7 @@ import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.
 import { isAllowedApiOrigin } from './api-origin.ts';
 import { collectReferencedAssets, toContentRelativePath } from './asset-references.ts';
 import { assetContentTypeForPath } from './asset-serve-middleware.ts';
+import { CONFIG_VALIDATION_REVERT_ORIGIN } from './config-edit-origin.ts';
 import { enrichDirectory } from './content/enrichment.ts';
 import { applyNestedFolderRulesUpsert } from './content/folder-rule-write.ts';
 import { resolveNestedFrontmatterWithSources } from './content/nested-folder-rules.ts';
@@ -2710,6 +2712,31 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
         signalChannel?.('backlinks');
         signalChannel?.('graph');
+      }
+
+      const resetOkignoreParam = url.searchParams.get('reset-okignore');
+      const resetOkignore = resetOkignoreParam !== 'false';
+      if (resetOkignore) {
+        try {
+          const okignorePath = resolve(contentDir, '.okignore');
+          const okignoreDoc = hocuspocus.documents.get(CONFIG_DOC_NAME_OKIGNORE);
+          if (okignoreDoc) {
+            const ytext = okignoreDoc.getText('source');
+            if (ytext.length > 0) {
+              okignoreDoc.transact(() => {
+                ytext.delete(0, ytext.length);
+              }, CONFIG_VALIDATION_REVERT_ORIGIN);
+            }
+          }
+          if (existsSync(okignorePath)) {
+            writeFileSync(okignorePath, '', 'utf-8');
+          }
+          if (contentFilter) {
+            await contentFilter.rebuildIgnorePatterns();
+          }
+        } catch (err) {
+          console.warn('[test-reset] okignore reset partial failure:', err);
+        }
       }
       signalChannel?.('files');
       json(res, 200, { ok: true });
