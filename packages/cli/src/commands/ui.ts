@@ -8,7 +8,12 @@ import {
 } from '@inkeep/open-knowledge-core';
 import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import { type ProxyServerHandle, proxyRequest, startProxyServer } from './ui-proxy.ts';
+import {
+  type ProxyServerHandle,
+  proxyRequest,
+  rejectIfNotLoopbackApi,
+  startProxyServer,
+} from './ui-proxy.ts';
 
 export const DEFAULT_UI_SAFETY_NET_MS = 12 * 60 * 60 * 1000;
 
@@ -94,6 +99,10 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
 
     if (url === '/' || url === '') {
       req.url = '/index.html';
+    }
+
+    if (url?.startsWith('/api/')) {
+      if (rejectIfNotLoopbackApi(req, res)) return;
     }
 
     if (url === '/api/config' && (req.method === 'GET' || req.method === 'HEAD')) {
