@@ -315,7 +315,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
 };
 
 export function resolveEditorTargets(ids: EditorId[]): EditorMcpTarget[] {
-  const unknown = ids.filter((id) => !(id in EDITOR_TARGETS));
+  const unknown = ids.filter((id) => !Object.hasOwn(EDITOR_TARGETS, id));
   if (unknown.length > 0) {
     throw new Error(
       `Unknown editor(s): ${unknown.join(', ')}. Valid options: ${ALL_EDITOR_IDS.join(', ')}`,

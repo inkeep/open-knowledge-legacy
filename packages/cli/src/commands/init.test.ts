@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { loadConfig } from '../config/loader.ts';
@@ -1241,6 +1249,78 @@ describe('runInit', () => {
       expect(nextStepsLine).toBeDefined();
       const matches = nextStepsLine?.match(/Claude Code/g);
       expect(matches).toHaveLength(1);
+    });
+
+    const allocOutsideTestDir = (suffix: string): string =>
+      resolve(
+        tmpdir(),
+        `init-symlink-escape-${suffix}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+
+    it('refuses project-scope write when target file is a symlink', async () => {
+      const decoyTarget = allocOutsideTestDir('decoy');
+      writeFileSync(decoyTarget, 'untouched\n', 'utf-8');
+      try {
+        symlinkSync(decoyTarget, join(testDir, '.mcp.json'));
+
+        const result = await runInitForTest({ editors: ['claude'], scope: 'project' });
+
+        const projResult = result.editors.find((r) => r.configScope === 'project');
+        expect(projResult?.action).toBe('failed');
+        expect(projResult?.error).toMatch(/symbolic link/);
+        expect(readFileSync(decoyTarget, 'utf-8')).toBe('untouched\n');
+        expect(lstatSync(join(testDir, '.mcp.json')).isSymbolicLink()).toBe(true);
+      } finally {
+        rmSync(decoyTarget, { force: true });
+      }
+    });
+
+    it('refuses project-scope write when an ancestor directory escapes cwd via symlink', async () => {
+      const escapeTarget = allocOutsideTestDir('cursor-escape');
+      mkdirSync(escapeTarget, { recursive: true });
+      try {
+        symlinkSync(escapeTarget, join(testDir, '.cursor'));
+
+        const result = await runInitForTest({ editors: ['cursor'], scope: 'project' });
+
+        const projResult = result.editors.find((r) => r.editorId === 'cursor');
+        expect(projResult?.action).toBe('failed');
+        expect(projResult?.error).toMatch(/outside the project directory/);
+        expect(existsSync(join(escapeTarget, 'mcp.json'))).toBe(false);
+      } finally {
+        rmSync(escapeTarget, { recursive: true, force: true });
+      }
+    });
+
+    it('refuses project-scope skill write when ancestor escapes cwd via symlink', async () => {
+      const escapeTarget = allocOutsideTestDir('skill-escape');
+      mkdirSync(escapeTarget, { recursive: true });
+      try {
+        mkdirSync(join(testDir, '.claude'), { recursive: true });
+        symlinkSync(escapeTarget, join(testDir, '.claude', 'skills'));
+        writeFileSync(join(escapeTarget, 'sentinel.txt'), 'untouched\n', 'utf-8');
+
+        const result = await runInitForTest({ editors: ['claude'], scope: 'project' });
+
+        const skill = result.projectSkills.find((s) => s.editorId === 'claude');
+        expect(skill?.action).toBe('failed');
+        expect(skill?.error).toMatch(/outside the project directory/);
+        expect(readFileSync(join(escapeTarget, 'sentinel.txt'), 'utf-8')).toBe('untouched\n');
+      } finally {
+        rmSync(escapeTarget, { recursive: true, force: true });
+      }
+    });
+
+    it('allows project-scope write through a symlink that stays within cwd', async () => {
+      const inProject = join(testDir, '.cursor-shared');
+      mkdirSync(inProject, { recursive: true });
+      symlinkSync(inProject, join(testDir, '.cursor'));
+
+      const result = await runInitForTest({ editors: ['cursor'], scope: 'project' });
+
+      const projResult = result.editors.find((r) => r.editorId === 'cursor');
+      expect(projResult?.action).toBe('written');
+      expect(existsSync(join(inProject, 'mcp.json'))).toBe(true);
     });
   });
 });

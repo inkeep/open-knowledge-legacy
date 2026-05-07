@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   buildManagedServerEntry,
   EDITOR_TARGETS,
+  type EditorId,
   resolveAppSupportPath,
   resolveClaudeCodeConfigPath,
   resolveClaudeDesktopConfigPath,
   resolveCodexConfigPath,
   resolveCursorConfigPath,
+  resolveEditorTargets,
   resolveVsCodeConfigPath,
   resolveWindsurfConfigPath,
 } from './editors.ts';
@@ -282,5 +284,20 @@ describe('EDITOR_TARGETS.buildEntry with cliPath', () => {
     const target = EDITOR_TARGETS.claude;
     const existing = { command: '/opt/homebrew/bin/ok', args: ['mcp'] };
     expect(target.isCompatible(existing, '', { cliPath: '/usr/local/bin/ok' })).toBe(false);
+  });
+});
+
+describe('resolveEditorTargets', () => {
+  it('rejects prototype-chain editor IDs (toString, __proto__, hasOwnProperty)', () => {
+    for (const evil of ['toString', '__proto__', 'hasOwnProperty', 'constructor']) {
+      expect(() => resolveEditorTargets([evil as EditorId])).toThrow(/Unknown editor/);
+    }
+  });
+
+  it('returns the matching targets for valid IDs', () => {
+    const targets = resolveEditorTargets(['claude', 'cursor']);
+    expect(targets).toHaveLength(2);
+    expect(targets[0].id).toBe('claude');
+    expect(targets[1].id).toBe('cursor');
   });
 });
