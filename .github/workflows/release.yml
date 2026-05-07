@@ -282,7 +282,7 @@ jobs:
       # registry — the four private:true fixed-group packages are
       # skipped, so this only acts on the CLI.
       - name: Alias @dev dist-tag (fresh OIDC exchange)
-        if: ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.detect.outputs.kind == 'beta') && env.DO_DEV_ALIAS == 'true'
+        if: (github.event_name == 'push' && steps.detect.outputs.kind == 'beta') && env.DO_DEV_ALIAS == 'true'
         run: |
           set -euo pipefail
 
@@ -299,6 +299,12 @@ jobs:
             echo "::error::Failed to mint GitHub Actions OIDC token for npm audience"
             exit 1
           fi
+
+          # Mask the OIDC JWT — short-lived (~5min) and audience-scoped
+          # to npm, but exchangeable for an npm session token during its
+          # validity window. Defense-in-depth against accidental leak via
+          # `set -x`, future verbose curl flags, or a verbose error body.
+          echo "::add-mask::${OIDC_TOKEN}"
 
           # Exchange the OIDC JWT with npm's trusted-publishing
           # endpoint for a session token usable on subsequent npm

@@ -390,6 +390,28 @@ describe('startWatcher file index', () => {
     }
   });
 
+  test('initial scan preserves uppercase .MD/.MDX extension casing', async () => {
+    writeFileSync(resolve(contentDir, 'Upper.MD'), '# Upper\n');
+    writeFileSync(resolve(contentDir, 'Mixed.MdX'), '# Mixed\n');
+
+    const handle = await startWatcher(contentDir, async () => {});
+    try {
+      const { getDocExtension } = await import('./doc-extensions.ts');
+      const { safeContentPath } = await import('./persistence.ts');
+
+      expect(getDocExtension('Upper')).toBe('.MD');
+      expect(getDocExtension('Mixed')).toBe('.MdX');
+
+      const upperPath = safeContentPath('Upper', contentDir);
+      expect(upperPath.endsWith('/Upper.MD')).toBe(true);
+
+      const mixedPath = safeContentPath('Mixed', contentDir);
+      expect(mixedPath.endsWith('/Mixed.MdX')).toBe(true);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
   test('file index excludes files filtered by ContentFilter', async () => {
     writeFileSync(resolve(tmpDir, '.gitignore'), 'dist/\n');
     mkdirSync(resolve(contentDir, 'dist'), { recursive: true });

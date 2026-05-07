@@ -1804,8 +1804,19 @@ button:active:not(:disabled) {
  */
 .footnote-ref {
   font-size: 0.75em;
-  vertical-align: super;
-  line-height: 0;
+  /* `position: relative; top` instead of `vertical-align: super` keeps
+   * the inline box on baseline (so the parent's line-height isn't
+   * forced to grow), while rendering visually as a superscript. The
+   * previous `vertical-align: super` + `line-height: 0` pair raised
+   * the inline box ~0.5em and then collapsed its line-box
+   * contribution, so the bracket glyph's top extended above the
+   * parent line's ascender — visible clipping in headings (tighter
+   * intrinsic ascender) and on the first line of a block. The
+   * relative-position technique is the standard cross-browser fix
+   * (used by MDN's reset, Wikipedia's mobile skin, etc.). */
+  vertical-align: baseline;
+  position: relative;
+  top: -0.4em;
   margin: 0 0.05em;
 }
 .footnote-ref-link {
