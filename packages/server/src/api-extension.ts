@@ -5611,34 +5611,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     void engine.trigger(op);
   }
 
-  async function handleSyncSetEnabled(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    const engine = getSyncEngine?.();
-    if (!engine) {
-      json(res, 503, { ok: false, error: 'Sync engine not active' });
-      return;
-    }
-    let enabled: boolean;
-    try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
-      if (typeof parsed.enabled !== 'boolean') {
-        json(res, 400, { ok: false, error: 'enabled must be a boolean' });
-        return;
-      }
-      enabled = parsed.enabled;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
-    await engine.setEnabled(enabled);
-    json(res, 200, { ok: true, status: engine.getStatus() });
-  }
-
   async function handleSyncConflicts(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'GET') {
@@ -5921,7 +5893,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/workspace': handleWorkspace,
     '/api/sync/status': handleSyncStatus,
     '/api/sync/trigger': handleSyncTrigger,
-    '/api/sync/set-enabled': handleSyncSetEnabled,
     '/api/sync/conflicts': handleSyncConflicts,
     '/api/sync/conflict-content': handleSyncConflictContent,
     '/api/sync/resolve-conflict': handleSyncResolveConflict,
@@ -5958,7 +5929,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/save-version',
     '/api/rollback',
     '/api/sync/trigger',
-    '/api/sync/set-enabled',
     '/api/sync/resolve-conflict',
     '/api/sync/abort-merge',
     '/api/test-reset',

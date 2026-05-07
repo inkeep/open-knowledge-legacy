@@ -37,7 +37,7 @@ interface ProjectOpenRequest {
   target: 'new-window';
 }
 
-export interface ProjectSessionState {
+interface ProjectSessionState {
   openTabs: string[];
   activeDocName: string | null;
   updatedAt: string | null;

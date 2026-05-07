@@ -84,6 +84,7 @@ export {
   fieldRegistry,
   getFieldMeta,
 } from './config/field-registry.ts';
+export { mergeLayered } from './config/merge-layered.ts';
 export type { Err, Ok, Result } from './config/result.ts';
 export {
   type Config,
@@ -118,6 +119,7 @@ export {
 export {
   CC1_CONTRACT_VERSION,
   CONFIG_DOC_NAME_PROJECT,
+  CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
   CONFIG_DOC_NAMES,
   type ConfigDocName,

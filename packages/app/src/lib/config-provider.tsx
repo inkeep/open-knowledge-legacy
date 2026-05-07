@@ -2,11 +2,12 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   bindConfigDoc,
   CONFIG_DOC_NAME_PROJECT,
+  CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
   type Config,
   type ConfigBinding,
-  ConfigSchema,
-  getLeafFieldMeta,
+  mergeLayered,
+  type WriteScope,
 } from '@inkeep/open-knowledge-core';
 import { useTheme } from 'next-themes';
 import { createContext, type ReactNode, use, useEffect, useState } from 'react';
@@ -16,8 +17,11 @@ import { useDocumentContext } from '@/editor/DocumentContext';
 interface ConfigContextValue {
   userBinding: ConfigBinding | null;
   projectBinding: ConfigBinding | null;
+  projectLocalBinding: ConfigBinding | null;
   userConfig: Config | null;
   projectConfig: Config | null;
+  projectLocalConfig: Config | null;
+  projectLocalSynced: boolean;
   merged: Config | null;
 }
 
@@ -29,7 +33,7 @@ interface ScopedBinding {
   cleanup: () => void;
 }
 
-function makeBinding(collabUrl: string, docName: string, scope: 'user' | 'project'): ScopedBinding {
+function makeBinding(collabUrl: string, docName: string, scope: WriteScope): ScopedBinding {
   const ydoc = new Y.Doc();
   const provider = new HocuspocusProvider({ url: collabUrl, name: docName, document: ydoc });
   const binding = bindConfigDoc(provider, scope);
@@ -50,13 +54,28 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     binding: ConfigBinding;
     config: Config;
   } | null>(null);
+  const [projectLocalState, setProjectLocalState] = useState<{
+    binding: ConfigBinding;
+    config: Config;
+    synced: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (collabUrl === null) return;
     const userScoped = makeBinding(collabUrl, CONFIG_DOC_NAME_USER, 'user');
     const projectScoped = makeBinding(collabUrl, CONFIG_DOC_NAME_PROJECT, 'project');
+    const projectLocalScoped = makeBinding(
+      collabUrl,
+      CONFIG_DOC_NAME_PROJECT_LOCAL,
+      'project-local',
+    );
     setUserState({ binding: userScoped.binding, config: userScoped.config });
     setProjectState({ binding: projectScoped.binding, config: projectScoped.config });
+    setProjectLocalState({
+      binding: projectLocalScoped.binding,
+      config: projectLocalScoped.config,
+      synced: projectLocalScoped.binding.hasSynced(),
+    });
     const unsubUser = userScoped.binding.subscribe((next) => {
       setUserState((prev) =>
         prev?.binding === userScoped.binding ? { ...prev, config: next } : prev,
@@ -67,18 +86,34 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         prev?.binding === projectScoped.binding ? { ...prev, config: next } : prev,
       );
     });
+    const unsubProjectLocal = projectLocalScoped.binding.subscribe((next) => {
+      setProjectLocalState((prev) =>
+        prev?.binding === projectLocalScoped.binding ? { ...prev, config: next } : prev,
+      );
+    });
+    const unsubProjectLocalSynced = projectLocalScoped.binding.subscribeSynced(() => {
+      setProjectLocalState((prev) =>
+        prev?.binding === projectLocalScoped.binding ? { ...prev, synced: true } : prev,
+      );
+    });
     return () => {
       unsubUser();
       unsubProject();
+      unsubProjectLocal();
+      unsubProjectLocalSynced();
       userScoped.cleanup();
       projectScoped.cleanup();
+      projectLocalScoped.cleanup();
       setUserState((prev) => (prev?.binding === userScoped.binding ? null : prev));
       setProjectState((prev) => (prev?.binding === projectScoped.binding ? null : prev));
+      setProjectLocalState((prev) => (prev?.binding === projectLocalScoped.binding ? null : prev));
     };
   }, [collabUrl]);
 
   const merged: Config | null =
-    userState && projectState ? mergeLayered(userState.config, projectState.config) : null;
+    userState && projectState
+      ? mergeLayered(userState.config, projectState.config, projectLocalState?.config)
+      : null;
 
   const { setTheme } = useTheme();
   const themeValue = merged?.appearance?.theme;
@@ -91,8 +126,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const value: ConfigContextValue = {
     userBinding: userState?.binding ?? null,
     projectBinding: projectState?.binding ?? null,
+    projectLocalBinding: projectLocalState?.binding ?? null,
     userConfig: userState?.config ?? null,
     projectConfig: projectState?.config ?? null,
+    projectLocalConfig: projectLocalState?.config ?? null,
+    projectLocalSynced: projectLocalState?.synced ?? false,
     merged,
   };
 
@@ -105,26 +143,4 @@ export function useConfigContext(): ConfigContextValue {
     throw new Error('useConfigContext must be used within <ConfigProvider />');
   }
   return ctx;
-}
-
-function mergeLayered(user: Config, project: Config): Config {
-  return mergeDeep(user, project, []) as Config;
-}
-
-function mergeDeep(user: unknown, project: unknown, path: (string | number)[]): unknown {
-  if (path.length > 0) {
-    const meta = getLeafFieldMeta(ConfigSchema, path);
-    if (meta?.scope === 'user') return user;
-    if (meta?.scope === 'project') return project ?? user;
-  }
-  if (project === undefined) return user;
-  if (project === null) return null;
-  if (Array.isArray(project)) return project;
-  if (typeof project !== 'object') return project;
-  if (typeof user !== 'object' || user === null || Array.isArray(user)) return project;
-  const out: Record<string, unknown> = { ...(user as Record<string, unknown>) };
-  for (const [key, value] of Object.entries(project as Record<string, unknown>)) {
-    out[key] = mergeDeep((user as Record<string, unknown>)[key], value, [...path, key]);
-  }
-  return out;
 }

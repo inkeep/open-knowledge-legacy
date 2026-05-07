@@ -351,7 +351,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
 
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
-    expect(shutdownLogs[0].payload.documentCount).toBe(3);
+    expect(shutdownLogs[0].payload.documentCount).toBe(4);
   });
 
   test('destroy() flushes multiple documents before resolving (multi-doc drain)', async () => {
@@ -400,7 +400,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
 
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
-    expect(shutdownLogs[0].payload.documentCount).toBe(6);
+    expect(shutdownLogs[0].payload.documentCount).toBe(7);
   });
 });
 
@@ -491,7 +491,7 @@ describe('createServer() — config-doc admission (US-005)', () => {
     rmSync(testProjectDir, { recursive: true, force: true });
   });
 
-  test('boot admits both config docs alongside __system__', async () => {
+  test('boot admits all three config docs alongside __system__', async () => {
     const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
     const srv = createServer({
       contentDir,
@@ -503,6 +503,7 @@ describe('createServer() — config-doc admission (US-005)', () => {
 
     expect(srv.hocuspocus.documents.has('__system__')).toBe(true);
     expect(srv.hocuspocus.documents.has('__config__/project')).toBe(true);
+    expect(srv.hocuspocus.documents.has('__local__/project')).toBe(true);
     expect(srv.hocuspocus.documents.has('__user__/config.yml')).toBe(true);
     expect(srv.degraded.filter((s) => s.startsWith('config-doc:'))).toEqual([]);
 
@@ -696,6 +697,75 @@ describe('createServer() — config file watcher (US-007)', () => {
         (o as { context: { origin?: unknown } }).context.origin === 'config-file-watcher',
     );
     expect(filewatcherOrigins).toEqual([]);
+
+    await srv.destroy();
+  });
+});
+
+describe('createServer() — project-local file watcher → engine.setEnabled', () => {
+  let testProjectDir: string;
+  let testHomedir: string;
+
+  beforeEach(() => {
+    testProjectDir = mkdtempSync(resolve(tmpdir(), 'ok-pl-engine-test-'));
+    testHomedir = mkdtempSync(resolve(tmpdir(), 'ok-pl-engine-home-'));
+  });
+
+  afterEach(() => {
+    rmSync(testProjectDir, { recursive: true, force: true });
+    rmSync(testHomedir, { recursive: true, force: true });
+  });
+
+  test('external write of autoSync.enabled: true to project-local flips engine state', async () => {
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+      configHomedirOverride: testHomedir,
+    });
+    await srv.ready;
+
+    expect(srv.syncEngine?.getStatus().syncEnabled).toBe(false);
+
+    const localDir = join(testProjectDir, '.ok', LOCAL_DIR);
+    mkdirSync(localDir, { recursive: true });
+    const configPath = join(localDir, 'config.yml');
+    writeFileSync(configPath, 'autoSync:\n  enabled: true\n', 'utf-8');
+
+    const flipped = await waitFor(() => srv.syncEngine?.getStatus().syncEnabled === true);
+    expect(flipped).toBe(true);
+
+    await srv.destroy();
+  });
+
+  test('toggling autoSync.enabled: false on disk disables the engine within 4s', async () => {
+    mkdirSync(join(testProjectDir, '.ok', LOCAL_DIR), { recursive: true });
+    writeFileSync(
+      join(testProjectDir, '.ok', LOCAL_DIR, 'config.yml'),
+      'autoSync:\n  enabled: true\n',
+      'utf-8',
+    );
+
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+      configHomedirOverride: testHomedir,
+    });
+    await srv.ready;
+
+    expect(srv.syncEngine?.getStatus().syncEnabled).toBe(true);
+
+    writeFileSync(
+      join(testProjectDir, '.ok', LOCAL_DIR, 'config.yml'),
+      'autoSync:\n  enabled: false\n',
+      'utf-8',
+    );
+
+    const disabled = await waitFor(() => srv.syncEngine?.getStatus().syncEnabled === false);
+    expect(disabled).toBe(true);
 
     await srv.destroy();
   });
@@ -1436,5 +1506,131 @@ describe('createServer() — config-doc admission guard', () => {
     } finally {
       await server.destroy();
     }
+  });
+});
+
+describe('createServer() — readProjectAutoSyncEnabled precedence', () => {
+  let testProjectDir: string;
+  let testHomedir: string;
+
+  beforeEach(() => {
+    testProjectDir = mkdtempSync(resolve(tmpdir(), 'ok-autosync-read-test-'));
+    testHomedir = mkdtempSync(resolve(tmpdir(), 'ok-autosync-read-home-'));
+  });
+
+  afterEach(() => {
+    rmSync(testProjectDir, { recursive: true, force: true });
+    rmSync(testHomedir, { recursive: true, force: true });
+  });
+
+  function seedProjectLocalConfig(content: string): void {
+    mkdirSync(join(testProjectDir, '.ok', LOCAL_DIR), { recursive: true });
+    writeFileSync(join(testProjectDir, '.ok', LOCAL_DIR, 'config.yml'), content, 'utf-8');
+  }
+
+  function seedProjectConfig(content: string): void {
+    mkdirSync(join(testProjectDir, '.ok'), { recursive: true });
+    writeFileSync(join(testProjectDir, '.ok', 'config.yml'), content, 'utf-8');
+  }
+
+  test('project-local autoSync.enabled: true → engine boots enabled', async () => {
+    seedProjectLocalConfig('autoSync:\n  enabled: true\n');
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+      configHomedirOverride: testHomedir,
+    });
+    await srv.ready;
+    expect(srv.syncEngine?.getStatus().syncEnabled).toBe(true);
+    await srv.destroy();
+  });
+
+  test('project-local absent + project autoSync.enabled: true → engine boots enabled (legacy fallback)', async () => {
+    seedProjectConfig('autoSync:\n  enabled: true\n');
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+      configHomedirOverride: testHomedir,
+    });
+    await srv.ready;
+    expect(srv.syncEngine?.getStatus().syncEnabled).toBe(true);
+    await srv.destroy();
+  });
+
+  test('both absent → engine boots disabled (default)', async () => {
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+      configHomedirOverride: testHomedir,
+    });
+    await srv.ready;
+    expect(srv.syncEngine?.getStatus().syncEnabled).toBe(false);
+    await srv.destroy();
+  });
+
+  test('project-local autoSync.enabled: false short-circuits — does NOT fall through to project: true', async () => {
+    seedProjectLocalConfig('autoSync:\n  enabled: false\n');
+    seedProjectConfig('autoSync:\n  enabled: true\n');
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+      configHomedirOverride: testHomedir,
+    });
+    await srv.ready;
+    expect(srv.syncEngine?.getStatus().syncEnabled).toBe(false);
+    await srv.destroy();
+  });
+
+  test('project-local autoSync.enabled: null falls through to project: true', async () => {
+    seedProjectLocalConfig('autoSync:\n  enabled: null\n');
+    seedProjectConfig('autoSync:\n  enabled: true\n');
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+      configHomedirOverride: testHomedir,
+    });
+    await srv.ready;
+    expect(srv.syncEngine?.getStatus().syncEnabled).toBe(true);
+    await srv.destroy();
+  });
+
+  test('invalid project-local YAML falls through to project (degraded path)', async () => {
+    seedProjectLocalConfig('autoSync:\n  enabled: : not-yaml [[[\n');
+    seedProjectConfig('autoSync:\n  enabled: true\n');
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+      configHomedirOverride: testHomedir,
+    });
+    await srv.ready;
+    expect(srv.syncEngine?.getStatus().syncEnabled).toBe(true);
+    await srv.destroy();
+  });
+});
+
+describe('createServer() — onAutoDisable scope pinning', () => {
+  test('onAutoDisable callback writes via scope: project-local', () => {
+    const dir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
+    const src = readFileSync(resolve(dir, 'server-factory.ts'), 'utf-8');
+    const onAutoDisableMatch = src.match(
+      /onAutoDisable:\s*async\s*\([^)]*\)\s*=>\s*\{[\s\S]*?\n\s{8}\},/,
+    );
+    expect(onAutoDisableMatch).not.toBeNull();
+    const body = onAutoDisableMatch?.[0] ?? '';
+    expect(body).toContain("scope: 'project-local'");
+    expect(body).toContain('autoSync: { enabled: false }');
+    expect(body).not.toMatch(/scope:\s*'project'(?!-local)/);
   });
 });

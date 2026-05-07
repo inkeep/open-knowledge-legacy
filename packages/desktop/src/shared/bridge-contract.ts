@@ -49,7 +49,7 @@ interface RecentProjectEntry {
   missing?: boolean;
 }
 
-export interface ProjectSessionState {
+interface ProjectSessionState {
   openTabs: string[];
   activeDocName: string | null;
   updatedAt: string | null;

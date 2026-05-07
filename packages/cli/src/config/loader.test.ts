@@ -54,7 +54,7 @@ describe('loadConfig', () => {
     expect(config.appearance.theme).toBeUndefined();
     expect(config.appearance.editorModeDefault).toBeUndefined();
 
-    expect(config.autoSync.onboardingResolvedAt).toBeNull();
+    expect(config.autoSync.enabled).toBeNull();
   });
 
   test('empty YAML file → all defaults resolve', () => {
@@ -62,7 +62,7 @@ describe('loadConfig', () => {
     const { config } = loadConfig(testDir);
 
     expect(config.content.dir).toBe('.');
-    expect(config.autoSync.onboardingResolvedAt).toBeNull();
+    expect(config.autoSync.enabled).toBeNull();
   });
 
   test('comments-only YAML (scaffolded config) → all defaults resolve', () => {

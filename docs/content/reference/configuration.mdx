@@ -3,12 +3,13 @@ title: Configuration
 description: The .ok/config.yml schema, environment variables, and CLI flags.
 ---
 
-Open Knowledge reads YAML config from two places:
+Open Knowledge reads YAML config from three places:
 
-- **Project** — `./.ok/config.yml` (this project)
+- **Project** — `./.ok/config.yml` (this project, committed to git)
 - **User** — `~/.ok/config.yml` (every project on your machine)
+- **Project-local** — `./.ok/local/config.yml` (this project on this machine; gitignored). Holds per-machine-per-project preferences such as `autoSync.enabled`. Maintained by the editor (auto-sync onboarding modal, sync popover, Settings pane Sync section); you don't normally hand-edit it.
 
-Both files are optional; defaults cover everything.
+All files are optional; defaults cover everything.
 
 You can edit config two ways:
 
@@ -25,6 +26,7 @@ Edits made anywhere reflect everywhere; an open Settings pane refreshes live.
 | `preview.baseUrl` | URL | (unset) | Override for `previewUrl` returned by MCP tools. Project-scope only. |
 | `appearance.theme` | `"light" \| "dark" \| "system"` | (unset) | Editor theme. |
 | `appearance.editorModeDefault` | `"wysiwyg" \| "source"` | (unset) | Initial editor mode for new docs. |
+| `autoSync.enabled` | `boolean \| null` | `null` | Per-machine git auto-sync toggle. Lives in project-local config. `null` means "unanswered" — the editor's onboarding modal triggers on first remote-detected open. |
 
 ## Folder-level frontmatter
 
@@ -32,7 +34,7 @@ Default frontmatter for a folder lives in that folder's `.ok/frontmatter.yml`, n
 
 ## Precedence
 
-CLI flags > environment variables > project config > user config > defaults. Leaf values at higher levels override the same leaf below; arrays replace, they don't concatenate.
+CLI flags > environment variables > project-local config > project config > user config > defaults. Leaf values at higher levels override the same leaf below; arrays replace, they don't concatenate.
 
 ## Environment variables
 

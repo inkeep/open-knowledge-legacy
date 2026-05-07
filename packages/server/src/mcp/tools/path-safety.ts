@@ -1,17 +1,17 @@
 import { isAbsolute, relative, resolve } from 'node:path';
 
-export interface ContainmentOk {
+interface ContainmentOk {
   ok: true;
   abs: string;
   rel: string;
 }
 
-export interface ContainmentErr {
+interface ContainmentErr {
   ok: false;
   reason: string;
 }
 
-export type ContainmentResult = ContainmentOk | ContainmentErr;
+type ContainmentResult = ContainmentOk | ContainmentErr;
 
 export function resolveWithinRoot(root: string, candidate: string): ContainmentResult {
   if (typeof root !== 'string' || !isAbsolute(root)) {

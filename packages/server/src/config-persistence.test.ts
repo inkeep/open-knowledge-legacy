@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   CONFIG_DOC_NAME_PROJECT,
+  CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
   type ConfigValidationError,
   isKnownConfigError,
@@ -72,6 +73,13 @@ function writeWorkspaceConfig(projectDir: string, content: string): string {
   return path;
 }
 
+function writeProjectLocalConfig(projectDir: string, content: string): string {
+  const path = join(projectDir, '.ok', 'local', 'config.yml');
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content, 'utf-8');
+  return path;
+}
+
 let fx: Fixture;
 
 beforeEach(() => {
@@ -92,6 +100,12 @@ describe('configDocAbsPath', () => {
   test('user doc resolves under homedirOverride/.ok/config.yml', () => {
     expect(configDocAbsPath(CONFIG_DOC_NAME_USER, fx.ctx)).toBe(
       join(fx.homedir, '.ok', 'config.yml'),
+    );
+  });
+
+  test('project-local doc resolves under projectDir/.ok/local/config.yml', () => {
+    expect(configDocAbsPath(CONFIG_DOC_NAME_PROJECT_LOCAL, fx.ctx)).toBe(
+      join(fx.projectDir, '.ok', 'local', 'config.yml'),
     );
   });
 
@@ -160,6 +174,17 @@ describe('loadConfigDoc — cold start', () => {
     loadConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, fx.ctx);
 
     expect(doc.getText('source').length).toBe(firstLength);
+  });
+
+  test('project-local doc seeds Y.Text from <projectDir>/.ok/local/config.yml', () => {
+    const yaml = 'autoSync:\n  enabled: true\n';
+    writeProjectLocalConfig(fx.projectDir, yaml);
+    const doc = new Y.Doc();
+
+    loadConfigDoc(doc, CONFIG_DOC_NAME_PROJECT_LOCAL, fx.ctx);
+
+    expect(doc.getText('source').toString()).toBe(yaml);
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT_LOCAL)).toBe(yaml);
   });
 });
 
@@ -581,6 +606,18 @@ describe('applyExternalConfigChange', () => {
     expect(outcome).toBe('applied');
     expect(doc.getText('source').toString()).toBe(yaml);
     expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_USER)).toBe(yaml);
+  });
+
+  test('project-local: external content propagates to Y.Text + LKG', () => {
+    const doc = new Y.Doc();
+    expect(fx.ctx.lkgCache.has(CONFIG_DOC_NAME_PROJECT_LOCAL)).toBe(false);
+
+    const yaml = 'autoSync:\n  enabled: true\n';
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_PROJECT_LOCAL, yaml, fx.ctx);
+
+    expect(outcome).toBe('applied');
+    expect(doc.getText('source').toString()).toBe(yaml);
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT_LOCAL)).toBe(yaml);
   });
 
   test('Y.Text mutation under CONFIG_FILE_WATCHER_ORIGIN does NOT trigger storeConfigDoc', async () => {

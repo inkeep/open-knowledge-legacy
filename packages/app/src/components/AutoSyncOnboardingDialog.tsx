@@ -1,5 +1,3 @@
-import { Loader2 } from 'lucide-react';
-import { useState } from 'react';
 import { toast } from 'sonner';
 import {
   AutoSyncEnableDialogIntro,
@@ -13,7 +11,7 @@ import {
   DialogHeader,
   Dialog as DialogRoot,
 } from '@/components/ui/dialog';
-import { postSyncEnabled } from '@/lib/sync-api';
+import { useSyncEnabledWriter } from '@/hooks/use-enable-sync-with-confirm';
 
 interface AutoSyncOnboardingDialogProps {
   open: boolean;
@@ -21,33 +19,18 @@ interface AutoSyncOnboardingDialogProps {
 }
 
 export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardingDialogProps) {
-  const [busy, setBusy] = useState<'enable' | 'dismiss' | null>(null);
+  const writer = useSyncEnabledWriter();
 
-  async function handleEnable() {
-    setBusy('enable');
-    try {
-      await postSyncEnabled(true);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Could not enable sync: ${message}`);
-      setBusy(null);
+  function persistChoice(enabled: boolean): void {
+    if (writer === null) {
+      toast.error('Sync settings not yet loaded — try again in a moment');
       return;
     }
-    setBusy(null);
-    onResolved();
-  }
-
-  async function handleDismiss() {
-    setBusy('dismiss');
-    try {
-      await postSyncEnabled(false);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Could not save sync preference: ${message}`);
-      setBusy(null);
+    const result = writer(enabled);
+    if (!result.ok) {
+      toast.error(`Could not ${enabled ? 'enable sync' : 'save sync preference'}: ${result.error}`);
       return;
     }
-    setBusy(null);
     onResolved();
   }
 
@@ -66,27 +49,13 @@ export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardin
           <Button
             variant="ghost"
             className="uppercase font-mono"
-            onClick={handleDismiss}
-            disabled={busy !== null}
+            onClick={() => persistChoice(false)}
+            disabled={writer === null}
           >
-            {busy === 'dismiss' ? (
-              <>
-                <Loader2 aria-hidden="true" className="size-4 animate-spin" />
-                Saving…
-              </>
-            ) : (
-              'Keep disabled'
-            )}
+            Keep disabled
           </Button>
-          <Button onClick={handleEnable} disabled={busy !== null}>
-            {busy === 'enable' ? (
-              <>
-                <Loader2 aria-hidden="true" className="size-4 animate-spin" />
-                Enabling…
-              </>
-            ) : (
-              'Enable auto-sync'
-            )}
+          <Button onClick={() => persistChoice(true)} disabled={writer === null}>
+            Enable auto-sync
           </Button>
         </DialogFooter>
       </DialogContent>

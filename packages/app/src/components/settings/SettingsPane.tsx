@@ -64,7 +64,10 @@ import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { useEnableSyncWithConfirm } from '@/hooks/use-enable-sync-with-confirm';
+import {
+  useEnableSyncWithConfirm,
+  useSyncEnabledWriter,
+} from '@/hooks/use-enable-sync-with-confirm';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
 import type { SettingsScope } from '@/lib/use-settings-route';
@@ -350,13 +353,14 @@ function SettingsForm({ scope, commitField, flashedPath }: SettingsFormProps) {
 
 function SyncSection() {
   const status = useGitSyncStatus();
-  const { toggling, confirmOpen, setConfirmOpen, onToggleRequest, onConfirm } =
-    useEnableSyncWithConfirm();
+  const writer = useSyncEnabledWriter();
+  const { confirmOpen, setConfirmOpen, onToggleRequest, onConfirm } =
+    useEnableSyncWithConfirm(writer);
 
   if (status && !status.hasRemote && status.state === 'dormant') return null;
 
   const enabled = status?.syncEnabled ?? false;
-  const disabledControl = status === null || toggling;
+  const disabledControl = status === null;
 
   return (
     <section aria-labelledby="settings-sync-title" className="space-y-3">
@@ -394,8 +398,7 @@ function SyncSection() {
       <EnableSyncConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        isSubmitting={toggling}
-        onConfirm={() => void onConfirm()}
+        onConfirm={onConfirm}
       />
     </section>
   );

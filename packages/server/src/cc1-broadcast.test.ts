@@ -11,6 +11,7 @@ import {
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
   CONFIG_DOC_NAME_PROJECT,
+  CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
   CONFIG_DOC_NAMES,
   SYSTEM_DOC_NAME,
@@ -32,6 +33,7 @@ describe('isSystemDoc', () => {
 
   test('returns false for config doc names', () => {
     expect(isSystemDoc(CONFIG_DOC_NAME_PROJECT)).toBe(false);
+    expect(isSystemDoc(CONFIG_DOC_NAME_PROJECT_LOCAL)).toBe(false);
     expect(isSystemDoc(CONFIG_DOC_NAME_USER)).toBe(false);
   });
 
@@ -55,6 +57,11 @@ describe('isConfigDoc', () => {
     expect(isConfigDoc(CONFIG_DOC_NAME_USER)).toBe(true);
   });
 
+  test('returns true for the well-known project-local config doc', () => {
+    expect(isConfigDoc('__local__/project')).toBe(true);
+    expect(isConfigDoc(CONFIG_DOC_NAME_PROJECT_LOCAL)).toBe(true);
+  });
+
   test('returns false for system doc and regular content names', () => {
     expect(isConfigDoc(SYSTEM_DOC_NAME)).toBe(false);
     expect(isConfigDoc('notes/intro')).toBe(false);
@@ -68,10 +75,17 @@ describe('isConfigDoc', () => {
     expect(isConfigDoc('__user__/config.yml.md')).toBe(false);
     expect(isConfigDoc('__user__/auth.yml')).toBe(false);
     expect(isConfigDoc('a__config__/project')).toBe(false);
+    expect(isConfigDoc('__local__/project.yml')).toBe(false);
+    expect(isConfigDoc('__local__/')).toBe(false);
+    expect(isConfigDoc('a__local__/project')).toBe(false);
   });
 
-  test('CONFIG_DOC_NAMES contains exactly the two well-known names', () => {
-    expect([...CONFIG_DOC_NAMES].sort()).toEqual(['__config__/project', '__user__/config.yml']);
+  test('CONFIG_DOC_NAMES contains exactly the three well-known names', () => {
+    expect([...CONFIG_DOC_NAMES].sort()).toEqual([
+      '__config__/project',
+      '__local__/project',
+      '__user__/config.yml',
+    ]);
   });
 });
 

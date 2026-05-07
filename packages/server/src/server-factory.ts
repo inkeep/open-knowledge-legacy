@@ -6,9 +6,11 @@ import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import {
   type BasenameIndex,
   CONFIG_DOC_NAME_PROJECT,
+  CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
   CONFIG_DOC_NAMES,
   createBasenameIndex,
+  humanFormat,
   type Principal,
   prependFrontmatter,
   stripFrontmatter,
@@ -168,12 +170,27 @@ export function createServer(options: ServerOptions): ServerInstance {
   const log = getLogger('server');
 
   function readProjectAutoSyncEnabled(): boolean {
-    const result = readConfigSafely({
+    const local = readConfigSafely({
+      absPath: resolveConfigPath('project-local', projectDir),
+      sideline: false,
+      warn: (message) => log.warn({ message }, '[config] could not read project-local config'),
+    });
+    const localEnabled = local.value.autoSync?.enabled;
+    if (localEnabled !== null && localEnabled !== undefined) {
+      return localEnabled === true;
+    }
+    if (!local.valid) {
+      log.warn(
+        {},
+        '[config] project-local autoSync.enabled unavailable (config invalid) — falling back to project config',
+      );
+    }
+    const project = readConfigSafely({
       absPath: resolveConfigPath('project', projectDir),
       sideline: false,
       warn: (message) => log.warn({ message }, '[config] could not read project config'),
     });
-    return result.value.autoSync?.enabled === true;
+    return project.value.autoSync?.enabled === true;
   }
 
   initTelemetry();
@@ -1288,6 +1305,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
     const configPathByDoc = new Map<string, string>([
       [CONFIG_DOC_NAME_PROJECT, resolveConfigPath('project', projectDir)],
+      [CONFIG_DOC_NAME_PROJECT_LOCAL, resolveConfigPath('project-local', projectDir)],
       [CONFIG_DOC_NAME_USER, resolveConfigPath('user', projectDir, configHomedirOverride)],
     ]);
     for (const configDocName of CONFIG_DOC_NAMES) {
@@ -1315,7 +1333,10 @@ export function createServer(options: ServerOptions): ServerInstance {
             { docName: configDocName, outcome },
             '[config-file-watcher] applyExternalConfigChange outcome',
           );
-          if (configDocName === CONFIG_DOC_NAME_PROJECT) {
+          if (
+            configDocName === CONFIG_DOC_NAME_PROJECT ||
+            configDocName === CONFIG_DOC_NAME_PROJECT_LOCAL
+          ) {
             const enabled = readProjectAutoSyncEnabled();
             void syncEngine?.setEnabled(enabled).catch((err) => {
               log.warn({ err, enabled }, '[sync] failed to apply autoSync.enabled from config');
@@ -1683,16 +1704,21 @@ export function createServer(options: ServerOptions): ServerInstance {
           log.info({ state }, `[sync] state → ${state}`);
         },
         onAutoDisable: async (reason) => {
-          log.warn({ reason }, '[sync] auto-disabled — persisting to project config');
+          log.warn({ reason }, '[sync] auto-disabled — persisting to project-local config');
           const result = await writeConfigPatch({
             cwd: projectDir,
-            scope: 'project',
+            scope: 'project-local',
             patch: { autoSync: { enabled: false } },
           });
           if (!result.ok) {
-            log.warn(
-              { result, reason },
-              '[sync] failed to persist auto-disable to project config — restart will re-enable',
+            log.error(
+              {
+                result,
+                reason,
+                humanError: humanFormat(result.error),
+                configPath: resolveConfigPath('project-local', projectDir),
+              },
+              '[sync] failed to persist auto-disable — next restart WILL re-enable sync and re-trigger the same failure. Check permissions on the config path.',
             );
           }
         },

@@ -117,6 +117,71 @@ mcp:
   });
 });
 
+describe('writeConfigPatch — project-local scope', () => {
+  function projectLocalConfigPath(): string {
+    return join(testDir, '.ok', 'local', 'config.yml');
+  }
+
+  test('writes a fresh project-local config when none exists; lazily creates .ok/local/', async () => {
+    expect(existsSync(join(testDir, '.ok'))).toBe(false);
+
+    const result = await writeConfigPatch({
+      cwd: testDir,
+      scope: 'project-local',
+      patch: { autoSync: { enabled: true } },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected success');
+    expect(result.created).toBe(true);
+    expect(result.path).toBe(projectLocalConfigPath());
+    expect(result.appliedPaths).toContain('autoSync.enabled');
+
+    expect(existsSync(projectLocalConfigPath())).toBe(true);
+    const onDisk = readFileSync(projectLocalConfigPath(), 'utf-8');
+    expect(onDisk).toMatch(
+      /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@latest\/dist\/schemas\/v\d+\/config\.project-local\.schema\.json/,
+    );
+    expect(onDisk).toContain('autoSync:');
+    expect(onDisk).toContain('enabled: true');
+  });
+
+  test('round-trips an autoSync.enabled write — file parseable as YAML, structure intact', async () => {
+    const result = await writeConfigPatch({
+      cwd: testDir,
+      scope: 'project-local',
+      patch: { autoSync: { enabled: false } },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected success');
+
+    const onDisk = readFileSync(projectLocalConfigPath(), 'utf-8');
+    expect(onDisk).toContain('autoSync:');
+    expect(onDisk).toContain('enabled: false');
+
+    const second = await writeConfigPatch({
+      cwd: testDir,
+      scope: 'project-local',
+      patch: { autoSync: { enabled: true } },
+    });
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error('expected success');
+    expect(second.created).toBe(false);
+    const after = readFileSync(projectLocalConfigPath(), 'utf-8');
+    expect(after).toContain('enabled: true');
+    expect(after).not.toContain('enabled: false');
+  });
+
+  test('does NOT touch the project file at <cwd>/.ok/config.yml', async () => {
+    await writeConfigPatch({
+      cwd: testDir,
+      scope: 'project-local',
+      patch: { autoSync: { enabled: true } },
+    });
+    expect(existsSync(join(testDir, '.ok', 'config.yml'))).toBe(false);
+  });
+});
+
 describe('writeConfigPatch — user scope', () => {
   test('lazy first-write of ~/.ok/config.yml creates parent dir', async () => {
     const home = mkdtempSync(join(tmpdir(), 'ok-write-config-patch-home-'));
@@ -153,7 +218,8 @@ describe('writeConfigPatch — validation failures', () => {
     mkdirSync(join(testDir, '.ok'), { recursive: true });
     const result = await writeConfigPatch({
       cwd: testDir,
-      scope: 'project',
+      scope: 'user',
+      homedirOverride: testDir,
       // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed for the test
       patch: { appearance: { theme: 42 as any } },
     });
@@ -172,7 +238,8 @@ describe('writeConfigPatch — validation failures', () => {
     mkdirSync(join(testDir, '.ok'), { recursive: true });
     const result = await writeConfigPatch({
       cwd: testDir,
-      scope: 'project',
+      scope: 'user',
+      homedirOverride: testDir,
       // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed for the test
       patch: { appearance: { editorModeDefault: 'vim' as any } },
     });
@@ -255,5 +322,86 @@ describe('resolveConfigPath', () => {
     expect(resolveConfigPath('user', '/abs/proj', '/home/alice')).toBe(
       '/home/alice/.ok/config.yml',
     );
+  });
+
+  test('project-local scope resolves to <cwd>/.ok/local/config.yml', () => {
+    expect(resolveConfigPath('project-local', '/abs/proj')).toBe('/abs/proj/.ok/local/config.yml');
+  });
+
+  test('project-local scope resolves a relative cwd against process.cwd()', () => {
+    const out = resolveConfigPath('project-local', 'relative/proj');
+    expect(out.endsWith('/relative/proj/.ok/local/config.yml')).toBe(true);
+  });
+
+  test('project-local scope ignores homedirOverride (project-scoped path)', () => {
+    expect(resolveConfigPath('project-local', '/abs/proj', '/home/alice')).toBe(
+      '/abs/proj/.ok/local/config.yml',
+    );
+  });
+});
+
+describe('writeConfigPatch — scope-violation gate', () => {
+  test('project writer rejects a project-local field with SCOPE_VIOLATION; no fs write', async () => {
+    const result = await writeConfigPatch({
+      cwd: testDir,
+      scope: 'project',
+      patch: { autoSync: { enabled: true } },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected SCOPE_VIOLATION');
+    expect(isKnownConfigError(result.error)).toBe(true);
+    if (!isKnownConfigError(result.error)) throw new Error('expected known error');
+    expect(result.error.code).toBe('SCOPE_VIOLATION');
+    if (result.error.code !== 'SCOPE_VIOLATION') throw new Error('wrong code');
+    expect(result.error.path).toEqual(['autoSync', 'enabled']);
+    expect(result.error.expectedScope).toBe('project-local');
+    expect(result.error.actualScope).toBe('project');
+    expect(existsSync(projectConfigPath())).toBe(false);
+  });
+
+  test('user writer rejects a project-local field with SCOPE_VIOLATION; no fs write', async () => {
+    const result = await writeConfigPatch({
+      cwd: testDir,
+      scope: 'user',
+      homedirOverride: testDir,
+      patch: { autoSync: { enabled: false } },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected SCOPE_VIOLATION');
+    if (!isKnownConfigError(result.error)) throw new Error('expected known error');
+    expect(result.error.code).toBe('SCOPE_VIOLATION');
+    if (result.error.code !== 'SCOPE_VIOLATION') throw new Error('wrong code');
+    expect(result.error.expectedScope).toBe('project-local');
+    expect(result.error.actualScope).toBe('user');
+    expect(existsSync(userConfigPath(testDir))).toBe(false);
+  });
+
+  test('project-local writer rejects a project field with SCOPE_VIOLATION', async () => {
+    const result = await writeConfigPatch({
+      cwd: testDir,
+      scope: 'project-local',
+      patch: { content: { dir: 'docs' } },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected SCOPE_VIOLATION');
+    if (!isKnownConfigError(result.error)) throw new Error('expected known error');
+    expect(result.error.code).toBe('SCOPE_VIOLATION');
+    if (result.error.code !== 'SCOPE_VIOLATION') throw new Error('wrong code');
+    expect(result.error.expectedScope).toBe('project');
+    expect(result.error.actualScope).toBe('project-local');
+  });
+
+  test('project-local writer rejects a user field (appearance.theme) with SCOPE_VIOLATION', async () => {
+    const result = await writeConfigPatch({
+      cwd: testDir,
+      scope: 'project-local',
+      patch: { appearance: { theme: 'dark' } },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected SCOPE_VIOLATION');
+    if (!isKnownConfigError(result.error)) throw new Error('expected known error');
+    expect(result.error.code).toBe('SCOPE_VIOLATION');
+    if (result.error.code !== 'SCOPE_VIOLATION') throw new Error('wrong code');
+    expect(result.error.expectedScope).toBe('user');
   });
 });

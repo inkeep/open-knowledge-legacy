@@ -3,29 +3,35 @@ import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { isMap, isSeq, type ParsedNode, parseDocument } from 'yaml';
-import { OK_DIR } from '../constants/ok-dir.ts';
+import { LOCAL_DIR, OK_DIR } from '../constants/ok-dir.ts';
 import { atomicWriteFile } from '../util/atomic-yaml-write.ts';
-import type { ConfigValidationError } from './errors.ts';
+import type { ConfigValidationError, WriteScope } from './errors.ts';
 import type { Err, Ok, Result } from './result.ts';
 import { type Config, type ConfigPatch, ConfigSchema } from './schema.ts';
 import { CONFIG_SCHEMA_MAJOR_PATH } from './schema-version.ts';
 import { addConfigSpanEvent, withConfigSpan, withConfigSpanSync } from './telemetry.ts';
+import { validatePatchScopes } from './validate-patch-scopes.ts';
 import { applyPatchToDocument, toConfigIssue } from './yaml-patch.ts';
 
 const CONFIG_FILENAME = 'config.yml';
 
-function schemaUrl(scope: 'project' | 'user'): string {
-  const filename = scope === 'user' ? 'config.user.schema.json' : 'config.project.schema.json';
+function schemaUrl(scope: WriteScope): string {
+  const filename =
+    scope === 'user'
+      ? 'config.user.schema.json'
+      : scope === 'project-local'
+        ? 'config.project-local.schema.json'
+        : 'config.project.schema.json';
   return `https://unpkg.com/@inkeep/open-knowledge@latest/dist/schemas/${CONFIG_SCHEMA_MAJOR_PATH}/${filename}`;
 }
 
-function defaultFirstWriteHeader(scope: 'project' | 'user'): string {
+function defaultFirstWriteHeader(scope: WriteScope): string {
   return `# yaml-language-server: $schema=${schemaUrl(scope)}\n`;
 }
 
 export interface WriteConfigPatchOptions {
   cwd: string;
-  scope: 'project' | 'user';
+  scope: WriteScope;
   patch: ConfigPatch;
   homedirOverride?: string;
   firstWriteHeader?: string | null;
@@ -41,7 +47,7 @@ export interface WriteConfigPatchSuccess {
 export type WriteConfigPatchResult = Result<WriteConfigPatchSuccess, ConfigValidationError>;
 
 export function resolveConfigPath(
-  scope: 'project' | 'user',
+  scope: WriteScope,
   cwd: string,
   homedirOverride?: string,
 ): string {
@@ -50,6 +56,9 @@ export function resolveConfigPath(
     return resolve(home, OK_DIR, CONFIG_FILENAME);
   }
   const absCwd = isAbsolute(cwd) ? cwd : resolve(cwd);
+  if (scope === 'project-local') {
+    return resolve(absCwd, OK_DIR, LOCAL_DIR, CONFIG_FILENAME);
+  }
   return resolve(absCwd, OK_DIR, CONFIG_FILENAME);
 }
 
@@ -81,6 +90,11 @@ async function writeConfigPatchInner(
 ): Promise<WriteConfigPatchResult> {
   const { cwd, scope, patch, homedirOverride, firstWriteHeader } = opts;
   const absPath = resolveConfigPath(scope, cwd, homedirOverride);
+
+  const scopeViolation = validatePatchScopes(patch, scope);
+  if (scopeViolation !== null) {
+    return err(scopeViolation);
+  }
 
   let existingContent = '';
   let fileExists = false;

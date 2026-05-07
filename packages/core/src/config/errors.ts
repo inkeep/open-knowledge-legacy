@@ -19,10 +19,10 @@ export const ConfigIssueSchema = z.object({
 
 export type ConfigIssue = z.infer<typeof ConfigIssueSchema>;
 
-export const FieldScopeSchema = z.enum(['user', 'project', 'either']);
+export const FieldScopeSchema = z.enum(['user', 'project', 'project-local', 'either']);
 export type FieldScope = z.infer<typeof FieldScopeSchema>;
 
-export const WriteScopeSchema = z.enum(['user', 'project']);
+export const WriteScopeSchema = z.enum(['user', 'project', 'project-local']);
 export type WriteScope = z.infer<typeof WriteScopeSchema>;
 
 export const KnownConfigValidationErrorSchema = z.discriminatedUnion('code', [

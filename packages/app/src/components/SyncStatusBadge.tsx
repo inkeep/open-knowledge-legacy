@@ -1,5 +1,8 @@
 import { AlertTriangle, Cloud, CloudOff, LogIn, RefreshCw, UserCog } from 'lucide-react';
-import { useEnableSyncWithConfirm } from '@/hooks/use-enable-sync-with-confirm';
+import {
+  useEnableSyncWithConfirm,
+  useSyncEnabledWriter,
+} from '@/hooks/use-enable-sync-with-confirm';
 import type { GitSyncStatus } from '@/hooks/use-git-sync-status';
 import { useGitSyncStatusDetailed } from '@/hooks/use-git-sync-status';
 import { EnableSyncConfirmDialog } from './EnableSyncConfirmDialog';
@@ -149,8 +152,9 @@ function PopoverBody({
   onSetIdentity,
 }: PopoverBodyProps) {
   const enabled = status.syncEnabled;
-  const { toggling, confirmOpen, setConfirmOpen, onToggleRequest, onConfirm } =
-    useEnableSyncWithConfirm();
+  const writer = useSyncEnabledWriter();
+  const { confirmOpen, setConfirmOpen, onToggleRequest, onConfirm } =
+    useEnableSyncWithConfirm(writer);
 
   return (
     <div className="flex flex-col gap-2">
@@ -161,7 +165,6 @@ function PopoverBody({
         </div>
         <Switch
           checked={enabled}
-          disabled={toggling}
           onCheckedChange={onToggleRequest}
           aria-label={enabled ? 'Disable sync' : 'Enable sync'}
         />
@@ -169,8 +172,7 @@ function PopoverBody({
       <EnableSyncConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        isSubmitting={toggling}
-        onConfirm={() => void onConfirm()}
+        onConfirm={onConfirm}
       />
 
       {status.error && <p className="text-xs text-destructive">{status.error}</p>}

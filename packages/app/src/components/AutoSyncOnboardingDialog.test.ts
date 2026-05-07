@@ -4,7 +4,6 @@ import { join } from 'node:path';
 
 const HERE = new URL('.', import.meta.url).pathname;
 const SRC = readFileSync(join(HERE, 'AutoSyncOnboardingDialog.tsx'), 'utf8');
-const SYNC_API_SRC = readFileSync(join(HERE, '..', 'lib', 'sync-api.ts'), 'utf8');
 
 describe('AutoSyncOnboardingDialog module', () => {
   test('exports AutoSyncOnboardingDialog component', async () => {
@@ -14,18 +13,15 @@ describe('AutoSyncOnboardingDialog module', () => {
 });
 
 describe('AutoSyncOnboardingDialog source-level guards', () => {
-  test('both choices persist through the sync enabled API', () => {
-    expect(SRC).toContain("from '@/lib/sync-api'");
-    expect(SYNC_API_SRC).toContain('/api/sync/set-enabled');
-    expect(SRC).toContain('postSyncEnabled(true)');
-    expect(SRC).toContain('postSyncEnabled(false)');
+  test('writes route through the project-local ConfigBinding (not HTTP)', () => {
+    expect(SRC).toContain("from '@/hooks/use-enable-sync-with-confirm'");
+    expect(SRC).toContain('useSyncEnabledWriter');
+    expect(SRC).toContain('persistChoice(true)');
+    expect(SRC).toContain('persistChoice(false)');
+    expect(SRC).toContain('writer(enabled)');
+    expect(SRC).not.toContain('postSyncEnabled');
+    expect(SRC).not.toContain('/api/sync/set-enabled');
     expect(SRC).not.toContain('onboardingResolvedAt');
-  });
-
-  test('primary action POSTs /api/sync/set-enabled with enabled:true', () => {
-    expect(SYNC_API_SRC).toContain('/api/sync/set-enabled');
-    expect(SYNC_API_SRC).toContain("method: 'POST'");
-    expect(SRC).toContain('postSyncEnabled(true)');
   });
 
   test('renders both primary and secondary buttons with stable copy', () => {
@@ -36,5 +32,9 @@ describe('AutoSyncOnboardingDialog source-level guards', () => {
   test('non-dismissible: ignores Radix outside-click / Esc until a button is clicked', () => {
     expect(SRC).toContain('onOpenChange={() => {}}');
     expect(SRC).toContain('showCloseButton={false}');
+  });
+
+  test('disables buttons during the cold-start window when the binding is null', () => {
+    expect(SRC).toMatch(/disabled=\{writer === null\}/);
   });
 });

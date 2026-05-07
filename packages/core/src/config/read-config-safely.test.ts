@@ -26,7 +26,7 @@ describe('readConfigSafely', () => {
     if (result.valid) {
       expect(result.source).toBeUndefined();
       expect(result.value.content.dir).toBe('.');
-      expect(result.value.autoSync.onboardingResolvedAt).toBeNull();
+      expect(result.value.autoSync.enabled).toBeNull();
     }
   });
 

@@ -115,9 +115,9 @@ describe('bindConfigDoc — patch()', () => {
   });
 
   test('rejects schema-invalid scalar; Y.Text untouched', () => {
-    doc.getText('source').insert(0, 'content:\n  dir: docs\n');
+    doc.getText('source').insert(0, 'appearance:\n  theme: dark\n');
     const before = doc.getText('source').toString();
-    const binding = bindConfigDoc(provider, 'project');
+    const binding = bindConfigDoc(provider, 'user');
 
     const result = binding.patch({ appearance: { theme: 'midnight' as 'dark' } });
     expect(result.ok).toBe(false);
@@ -263,6 +263,126 @@ describe('bindConfigDoc — subscribe()', () => {
   });
 });
 
+describe('bindConfigDoc — hasSynced() / subscribeSynced()', () => {
+  test('hasSynced returns false until first synced event, true thereafter', () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    expect(binding.hasSynced()).toBe(false);
+
+    provider.emitSynced();
+    expect(binding.hasSynced()).toBe(true);
+
+    provider.emitSynced();
+    expect(binding.hasSynced()).toBe(true);
+
+    binding.dispose();
+  });
+
+  test('subscribeSynced fires once on first synced event when subscribed before sync', () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    let calls = 0;
+    binding.subscribeSynced(() => {
+      calls += 1;
+    });
+
+    expect(calls).toBe(0);
+    provider.emitSynced();
+    expect(calls).toBe(1);
+
+    provider.emitSynced();
+    provider.emitSynced();
+    expect(calls).toBe(1);
+
+    binding.dispose();
+  });
+
+  test('subscribeSynced after first sync fires asynchronously on next microtask', async () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    provider.emitSynced();
+    expect(binding.hasSynced()).toBe(true);
+
+    let calls = 0;
+    binding.subscribeSynced(() => {
+      calls += 1;
+    });
+    expect(calls).toBe(0);
+    await Promise.resolve();
+    expect(calls).toBe(1);
+
+    binding.dispose();
+  });
+
+  test('subscribeSynced returned unsubscribe cancels a pending pre-sync listener', () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    let calls = 0;
+    const unsub = binding.subscribeSynced(() => {
+      calls += 1;
+    });
+    unsub();
+
+    provider.emitSynced();
+    expect(calls).toBe(0);
+    binding.dispose();
+  });
+
+  test('subscribeSynced returned unsubscribe cancels a queued post-sync listener', async () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    provider.emitSynced();
+
+    let calls = 0;
+    const unsub = binding.subscribeSynced(() => {
+      calls += 1;
+    });
+    unsub();
+
+    await Promise.resolve();
+    expect(calls).toBe(0);
+    binding.dispose();
+  });
+
+  test('subscribeSynced on already-synced binding, disposed before microtask fires, does not fire', async () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    provider.emitSynced();
+
+    let calls = 0;
+    binding.subscribeSynced(() => {
+      calls += 1;
+    });
+    binding.dispose();
+
+    await Promise.resolve();
+    expect(calls).toBe(0);
+  });
+
+  test('subscribeSynced after dispose returns a no-op unsubscribe and never fires', async () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    binding.dispose();
+
+    let calls = 0;
+    const unsub = binding.subscribeSynced(() => {
+      calls += 1;
+    });
+    unsub();
+
+    await Promise.resolve();
+    expect(calls).toBe(0);
+  });
+
+  test('synced listener exception does not break sibling listeners', () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    const order: number[] = [];
+    binding.subscribeSynced(() => {
+      throw new Error('boom');
+    });
+    binding.subscribeSynced(() => {
+      order.push(2);
+    });
+
+    provider.emitSynced();
+    expect(order).toEqual([2]);
+    binding.dispose();
+  });
+});
+
 describe('bindConfigDoc — dispose()', () => {
   test('clears Y.Text observer + provider listener + listeners set', () => {
     const binding = bindConfigDoc(provider, 'project');
@@ -284,6 +404,98 @@ describe('bindConfigDoc — dispose()', () => {
     const binding = bindConfigDoc(provider, 'project');
     binding.dispose();
     expect(() => binding.dispose()).not.toThrow();
+  });
+});
+
+describe('bindConfigDoc — project-local scope', () => {
+  test('patch + current round-trip: writes and reads back through Y.Text', () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    const result = binding.patch({ autoSync: { enabled: true } });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.appliedPaths).toEqual(['autoSync.enabled']);
+
+    const after = binding.current();
+    expect(after.autoSync?.enabled).toBe(true);
+
+    const ytext = doc.getText('source').toString();
+    expect(ytext).toContain('autoSync:');
+    expect(ytext).toContain('enabled: true');
+    binding.dispose();
+  });
+
+  test('subscribe fires on patch under project-local scope', () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    const received: Array<unknown> = [];
+    binding.subscribe((c) => {
+      received.push(c.autoSync?.enabled);
+    });
+
+    binding.patch({ autoSync: { enabled: false } });
+    expect(received).toEqual([false]);
+
+    binding.patch({ autoSync: { enabled: true } });
+    expect(received).toEqual([false, true]);
+    binding.dispose();
+  });
+});
+
+describe('bindConfigDoc — scope-violation gate', () => {
+  test('user binding rejects a project-local field with SCOPE_VIOLATION; Y.Text untouched', () => {
+    const before = doc.getText('source').toString();
+    const binding = bindConfigDoc(provider, 'user');
+
+    const result = binding.patch({ autoSync: { enabled: true } });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected SCOPE_VIOLATION');
+    expect(isKnownConfigError(result.error)).toBe(true);
+    if (!isKnownConfigError(result.error)) throw new Error('expected known error');
+    expect(result.error.code).toBe('SCOPE_VIOLATION');
+    if (result.error.code !== 'SCOPE_VIOLATION') throw new Error('wrong code');
+    expect(result.error.path).toEqual(['autoSync', 'enabled']);
+    expect(result.error.expectedScope).toBe('project-local');
+    expect(result.error.actualScope).toBe('user');
+
+    expect(doc.getText('source').toString()).toBe(before);
+    binding.dispose();
+  });
+
+  test('project binding rejects a project-local field with SCOPE_VIOLATION', () => {
+    const binding = bindConfigDoc(provider, 'project');
+    const result = binding.patch({ autoSync: { enabled: false } });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected SCOPE_VIOLATION');
+    if (!isKnownConfigError(result.error)) throw new Error('expected known error');
+    expect(result.error.code).toBe('SCOPE_VIOLATION');
+    if (result.error.code !== 'SCOPE_VIOLATION') throw new Error('wrong code');
+    expect(result.error.expectedScope).toBe('project-local');
+    expect(result.error.actualScope).toBe('project');
+    binding.dispose();
+  });
+
+  test('project-local binding rejects a user field (appearance.theme) with SCOPE_VIOLATION', () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    const result = binding.patch({ appearance: { theme: 'dark' } });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected SCOPE_VIOLATION');
+    if (!isKnownConfigError(result.error)) throw new Error('expected known error');
+    expect(result.error.code).toBe('SCOPE_VIOLATION');
+    if (result.error.code !== 'SCOPE_VIOLATION') throw new Error('wrong code');
+    expect(result.error.expectedScope).toBe('user');
+    binding.dispose();
+  });
+
+  test('project-local binding rejects a project field (content.dir) with SCOPE_VIOLATION', () => {
+    const binding = bindConfigDoc(provider, 'project-local');
+    const result = binding.patch({ content: { dir: 'docs' } });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected SCOPE_VIOLATION');
+    if (!isKnownConfigError(result.error)) throw new Error('expected known error');
+    expect(result.error.code).toBe('SCOPE_VIOLATION');
+    if (result.error.code !== 'SCOPE_VIOLATION') throw new Error('wrong code');
+    expect(result.error.expectedScope).toBe('project');
+    binding.dispose();
   });
 });
 
