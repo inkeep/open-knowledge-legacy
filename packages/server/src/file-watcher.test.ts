@@ -676,6 +676,79 @@ describe('startWatcher symlink handling', () => {
     }
   });
 
+  test('drops runtime events for symlinks whose target escapes contentDir', async () => {
+    const outsideDir = resolve(tmpDir, 'outside');
+    mkdirSync(outsideDir, { recursive: true });
+    const outsideFile = resolve(outsideDir, 'secret.md');
+    writeFileSync(outsideFile, '# external secrets\n');
+
+    const escapePath = resolve(contentDir, 'escape.md');
+    symlinkSync(outsideFile, escapePath);
+
+    const collected: DiskEvent[] = [];
+    await handleRawEvents(
+      [{ type: 'create', path: escapePath }],
+      contentDir,
+      undefined,
+      new Map(),
+      async (e) => {
+        collected.push(e);
+      },
+    );
+
+    expect(collected).toHaveLength(0);
+  });
+
+  test('drops runtime events for asset symlinks whose target escapes contentDir', async () => {
+    const outsideDir = resolve(tmpDir, 'outside');
+    mkdirSync(outsideDir, { recursive: true });
+    const outsideAsset = resolve(outsideDir, 'leak.png');
+    writeFileSync(outsideAsset, 'fake-png');
+
+    const escapePath = resolve(contentDir, 'leak.png');
+    symlinkSync(outsideAsset, escapePath);
+
+    const collected: DiskEvent[] = [];
+    await handleRawEvents(
+      [{ type: 'create', path: escapePath }],
+      contentDir,
+      undefined,
+      new Map(),
+      async (e) => {
+        collected.push(e);
+      },
+    );
+
+    expect(collected).toHaveLength(0);
+  });
+
+  test('preserves runtime events for symlinks pointing inside contentDir', async () => {
+    const targetPath = resolve(contentDir, 'real-target.md');
+    const aliasPath = resolve(contentDir, 'alias.md');
+    writeFileSync(targetPath, '# real\n');
+    symlinkSync(targetPath, aliasPath);
+
+    const aliasMap = new Map<string, string>();
+    const collected: DiskEvent[] = [];
+    await handleRawEvents(
+      [{ type: 'create', path: aliasPath }],
+      contentDir,
+      undefined,
+      new Map(),
+      async (e) => {
+        collected.push(e);
+      },
+      aliasMap,
+    );
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0].kind).toBe('create');
+    if (collected[0].kind === 'create') {
+      expect(collected[0].docName).toBe('real-target');
+    }
+    expect(aliasMap.get('alias')).toBe('real-target');
+  });
+
   test('skips symlink-to-excluded-dir (node_modules inside contentDir) during startup walk', async () => {
     const realNm = resolve(contentDir, 'node_modules');
     mkdirSync(realNm, { recursive: true });

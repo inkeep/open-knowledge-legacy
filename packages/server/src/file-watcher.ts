@@ -88,6 +88,34 @@ export function contentHash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
+export function eventEscapesContentDir(rawPath: string, contentDir: string): boolean {
+  let lst: ReturnType<typeof lstatSync>;
+  try {
+    lst = lstatSync(rawPath);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return false; // deleted between event and check
+    console.warn(
+      `[file-watcher] lstat failed for escape check on ${rawPath} (${code}), dropping event`,
+    );
+    return true; // fail closed on unexpected errors
+  }
+  if (!lst.isSymbolicLink()) return false;
+  let canonical: string;
+  try {
+    canonical = realpathSync(rawPath);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT' && code !== 'ELOOP') {
+      console.warn(
+        `[file-watcher] realpath failed for escape check on ${rawPath} (${code}), dropping event`,
+      );
+    }
+    return true;
+  }
+  return !isWithinContentDir(canonical, contentDir);
+}
+
 export function pathToDocName(absPath: string, contentDir: string): string {
   const rel = relative(contentDir, absPath);
   return stripDocExtension(rel);
@@ -545,8 +573,14 @@ export async function handleRawEvents(
   onDiskEvent: (event: DiskEvent) => Promise<void>,
   aliasMap?: Map<string, string>,
 ): Promise<void> {
-  const mdEvents = rawEvents.filter((e) => isSupportedDocFile(e.path));
-  const assetEvents = rawEvents.filter((e) => isSupportedAssetFile(e.path, ASSET_EXTENSIONS));
+  const safeEvents = rawEvents.filter((e) => {
+    if (!eventEscapesContentDir(e.path, contentDir)) return true;
+    console.warn(`[file-watcher] Symlink escape: ${e.path}, dropping ${e.type} event`);
+    return false;
+  });
+
+  const mdEvents = safeEvents.filter((e) => isSupportedDocFile(e.path));
+  const assetEvents = safeEvents.filter((e) => isSupportedAssetFile(e.path, ASSET_EXTENSIONS));
   if (mdEvents.length === 0 && assetEvents.length === 0) return;
 
   const diskEvents =
@@ -726,6 +760,7 @@ async function startChokidarWatcher(
 
   const watcher = watch(contentDir, {
     ignoreInitial: true,
+    followSymlinks: false,
     ignored: contentFilter
       ? (filePath: string, stats?: import('node:fs').Stats) => {
           const rel = relative(contentDir, filePath);
