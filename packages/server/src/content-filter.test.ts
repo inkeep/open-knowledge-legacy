@@ -495,6 +495,96 @@ describe('ContentFilter', () => {
     });
   });
 
+  describe('isPathIgnored', () => {
+    test('admits asset in directory without sibling .md (D11 not applied)', () => {
+      mkdirSync(join(projectDir, 'assets'));
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isExcluded('assets/logo.png')).toBe(true);
+      expect(filter.isPathIgnored('assets/logo.png')).toBe(false);
+    });
+
+    test('rejects the reserved system doc name', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isPathIgnored('__system__.md')).toBe(true);
+    });
+
+    test('rejects reserved config doc names', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isPathIgnored('__config__/project.md')).toBe(true);
+      expect(filter.isPathIgnored('__user__/config.yml.md')).toBe(true);
+      expect(filter.isPathIgnored('__local__/project.md')).toBe(true);
+    });
+
+    test('rejects paths inside BUILTIN_SKIP_DIRS', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isPathIgnored('node_modules/pkg/img.png')).toBe(true);
+      expect(filter.isPathIgnored('dist/output.png')).toBe(true);
+      expect(filter.isPathIgnored('.git/objects/pack/foo.png')).toBe(true);
+      expect(filter.isPathIgnored('.ok/templates/img.png')).toBe(true);
+      expect(filter.isPathIgnored('a/b/node_modules/c/img.png')).toBe(true);
+    });
+
+    test('rejects paths matched by .gitignore patterns', () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'tmp/\n*.bak.png\n');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isPathIgnored('tmp/foo.png')).toBe(true);
+      expect(filter.isPathIgnored('docs/photo.bak.png')).toBe(true);
+      expect(filter.isPathIgnored('docs/photo.png')).toBe(false);
+    });
+
+    test('rejects paths matched by .okignore patterns', () => {
+      writeFileSync(join(projectDir, '.okignore'), 'private/\n');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isPathIgnored('private/diagram.png')).toBe(true);
+      expect(filter.isPathIgnored('public/diagram.png')).toBe(false);
+    });
+
+    test('admits everything except BUILTIN_SKIP_DIRS when contentDir is outside projectDir', async () => {
+      const contentDir = await mkdtemp(join(tmpdir(), 'content-filter-outside-'));
+      try {
+        writeFileSync(join(projectDir, '.gitignore'), 'tmp/\n');
+
+        const filter = createContentFilter({ projectDir, contentDir });
+
+        expect(filter.isPathIgnored('tmp/foo.png')).toBe(false);
+        expect(filter.isPathIgnored('node_modules/foo.png')).toBe(true);
+      } finally {
+        await rm(contentDir, { recursive: true, force: true });
+      }
+    });
+
+    test('matches isExcluded for path-level rejections (no sibling-asset case)', () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'private/\n');
+      mkdirSync(join(projectDir, 'docs'));
+      writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      const cases = [
+        '__system__.md',
+        '__config__/project.md',
+        'node_modules/pkg/img.png',
+        'private/diagram.png',
+      ];
+      for (const p of cases) {
+        expect(filter.isExcluded(p), p).toBe(true);
+        expect(filter.isPathIgnored(p), p).toBe(true);
+      }
+
+      expect(filter.isExcluded('docs/screenshot.png')).toBe(false);
+      expect(filter.isPathIgnored('docs/screenshot.png')).toBe(false);
+    });
+  });
+
   describe('FR15 default-shape regression', () => {
     test('default project (gitignore + no .okignore + no content.* keys) indexes the same .md/.mdx set as before the rename', () => {
       writeFileSync(join(projectDir, '.gitignore'), 'node_modules/\n');
