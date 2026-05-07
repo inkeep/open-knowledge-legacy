@@ -21,7 +21,10 @@ import { resolveSelfSpawn } from './self-spawn.ts';
 
 const DEFAULT_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
 
-export function resolveHost(opts: { host?: string }, env: { HOST?: string | undefined }): string {
+export function resolveHost(
+  opts: { host?: string },
+  env: { HOST?: string | undefined; [key: string]: string | undefined },
+): string {
   return opts.host ?? env.HOST ?? DEFAULT_SERVER_HOST;
 }
 
