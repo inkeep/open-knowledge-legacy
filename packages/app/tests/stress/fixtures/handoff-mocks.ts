@@ -76,7 +76,36 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         body: JSON.stringify(cfg.install),
       });
     });
+    await page.route('**/api/install-skill', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          status: 'skip-current',
+          skillVersion: '0.0.0-test-fixture',
+          recordedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      });
+    });
   }
+
+  await page.route('**/api/skill/install-state', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        currentVersion: '0.0.0-test-fixture',
+        targets: {
+          'claude-cowork': {
+            version: '0.0.0-test-fixture',
+            recordedAt: '2026-01-01T00:00:00.000Z',
+          },
+          'cli-hosts': null,
+        },
+      }),
+    });
+  });
 
   await page.addInitScript((args) => {
     const { host, install, spawnCursor, workerBaseURL, workerContentDir } =

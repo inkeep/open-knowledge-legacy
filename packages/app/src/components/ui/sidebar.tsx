@@ -89,6 +89,7 @@ function SidebarProvider({
   const isMobile = useIsMobile();
   const [width, setWidth] = React.useState(() => getInitialSidebarWidth(defaultWidth));
   const [openMobile, setOpenMobile] = React.useState(false);
+  const openMobileRef = React.useRef(openMobile);
   const [isDraggingRail, setIsDraggingRail] = React.useState(false);
   const [showPushPulse, setShowPushPulse] = React.useState(false);
 
@@ -107,14 +108,21 @@ function SidebarProvider({
   };
 
   function toggleSidebar() {
-    return isMobile ? setOpenMobile((openMobile) => !openMobile) : setOpen((open) => !open);
+    return window.innerWidth < SIDEBAR_PUSH_BREAKPOINT
+      ? setOpenMobile((openMobile) => !openMobile)
+      : setOpen((open) => !open);
   }
 
   function notifySidebarFileSelected() {
-    if (window.innerWidth >= SIDEBAR_PUSH_BREAKPOINT || !openMobile) return;
+    if (window.innerWidth >= SIDEBAR_PUSH_BREAKPOINT) return;
+    if (!openMobileRef.current) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     setShowPushPulse(true);
   }
+
+  React.useLayoutEffect(() => {
+    openMobileRef.current = openMobile;
+  });
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
