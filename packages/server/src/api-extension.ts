@@ -1863,6 +1863,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                   return null;
                 }
               },
+              isExcluded: contentFilter ? (rel) => contentFilter.isExcluded(rel) : undefined,
             }),
           };
         }
@@ -3480,6 +3481,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const relativePath = toContentRelativePath(resolvedContentDir, canonicalPath);
       if (relativePath !== assetPath.split('\\').join('/')) {
         json(res, 400, { ok: false, error: 'Invalid asset path' });
+        return;
+      }
+      if (contentFilter?.isExcluded(relativePath)) {
+        json(res, 404, { ok: false, error: 'Asset not found' });
         return;
       }
       const headers: Record<string, string> = {
