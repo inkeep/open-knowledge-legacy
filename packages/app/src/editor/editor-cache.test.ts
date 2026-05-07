@@ -1031,8 +1031,8 @@ describe('size-gate constants', () => {
   test('VIEW_COUNT_CACHE_THRESHOLD = 50', () => {
     expect(VIEW_COUNT_CACHE_THRESHOLD).toBe(50);
   });
-  test('BYTES_CACHE_THRESHOLD = 500_000 (matches LARGE_DOC_CHAR_THRESHOLD)', () => {
-    expect(BYTES_CACHE_THRESHOLD).toBe(500_000);
+  test('BYTES_CACHE_THRESHOLD = 8_000_000 (admits PROJECT-class docs post-CV:auto)', () => {
+    expect(BYTES_CACHE_THRESHOLD).toBe(8_000_000);
   });
 });
 
@@ -1047,17 +1047,20 @@ describe('shouldCacheEditor — pure gate', () => {
     expect(shouldCacheEditor({ viewCount: 49, bytes: 1 })).toBe(true);
   });
   test('exactly at bytes threshold: cache admitted (> gate, not >=)', () => {
-    expect(shouldCacheEditor({ viewCount: 0, bytes: 500_000 })).toBe(true);
+    expect(shouldCacheEditor({ viewCount: 0, bytes: 8_000_000 })).toBe(true);
   });
   test('one above bytes threshold: cache refused', () => {
-    expect(shouldCacheEditor({ viewCount: 0, bytes: 500_001 })).toBe(false);
+    expect(shouldCacheEditor({ viewCount: 0, bytes: 8_000_001 })).toBe(false);
   });
   test('both gates active: refuse on any violation', () => {
+    expect(shouldCacheEditor({ viewCount: 100, bytes: 9_000_000 })).toBe(false);
+  });
+  test('viewCount alone fails (bytes pass): refuse', () => {
     expect(shouldCacheEditor({ viewCount: 100, bytes: 1_000_000 })).toBe(false);
   });
   test('viewCount=0 sentinel does not activate the viewCount branch', () => {
     expect(shouldCacheEditor({ viewCount: 0, bytes: 100 })).toBe(true);
-    expect(shouldCacheEditor({ viewCount: 0, bytes: 600_000 })).toBe(false);
+    expect(shouldCacheEditor({ viewCount: 0, bytes: 9_000_000 })).toBe(false);
   });
 });
 

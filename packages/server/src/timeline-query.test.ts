@@ -266,6 +266,20 @@ describe('getDocumentHistory', () => {
     expect(result.entries.every((e) => e.type !== 'park')).toBe(true);
   });
 
+  test('returns empty result for docNames containing path traversal segments', async () => {
+    const { contentDir, shadow } = await setup();
+
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Real\n');
+    await commitWip(shadow, human, 'content/docs', 'WIP: real edit');
+
+    for (const docName of ['../intro', '../../etc/passwd', 'foo/../../bar', 'foo\0bar']) {
+      const result = await getDocumentHistory(shadow, { docName }, 'content/docs');
+      expect(result.entries).toHaveLength(0);
+      expect(result.total).toBe(0);
+      expect(result.hasMore).toBe(false);
+    }
+  });
+
   test('deduplicates entries that appear in multiple ref walks', async () => {
     const { contentDir, shadow } = await setup();
 

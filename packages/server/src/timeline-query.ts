@@ -85,6 +85,10 @@ export async function getDocumentHistory(
     return EMPTY;
   }
 
+  if (query.docName && (query.docName.includes('..') || query.docName.includes('\0'))) {
+    return EMPTY;
+  }
+
   const branch = query.branch ?? 'main';
   const limit = Math.max(1, query.limit ?? 50);
   const offset = Math.max(0, query.offset ?? 0);
