@@ -68,3 +68,84 @@ describe('openBrowser', () => {
     consoleSpy.mockRestore();
   });
 });
+
+_bunDescribe('openBrowser URL validation', () => {
+  let execFileSpy: ReturnType<typeof spyOn>;
+  const originalPlatform = process.platform;
+
+  beforeEach(() => {
+    execFileSpy = spyOn(cp, 'execFile').mockImplementation((() => {}) as never);
+  });
+
+  afterEach(() => {
+    execFileSpy.mockRestore();
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+  });
+
+  const malicious = [
+    'http://localhost&calc:3000',
+    'http://localhost%20&%20calc:3000',
+    'http://localhost"&calc:3000',
+    "http://localhost'&calc:3000",
+    'http://localhost|calc:3000',
+    'http://localhost^calc:3000',
+    'http://localhost(calc):3000',
+    'http://localhost;calc:3000',
+    'http://localhost$calc:3000',
+    'http://localhost\\calc:3000',
+    'http://localhost`calc`:3000',
+    'http://localhost:3000\nmore',
+    'http://localhost:3000 more',
+  ];
+
+  for (const url of malicious) {
+    it(`rejects ${JSON.stringify(url)} without spawning a launcher`, () => {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      const consoleSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+      openBrowser(url);
+
+      expect(execFileSpy).not.toHaveBeenCalled();
+      expect(consoleSpy).toHaveBeenCalledTimes(1);
+      const [warned] = consoleSpy.mock.calls[0] as [string];
+      expect(warned).toContain('Could not auto-open browser');
+      expect(warned).toContain('manually');
+      consoleSpy.mockRestore();
+    });
+  }
+
+  it('rejects non-http(s) schemes', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const consoleSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+    openBrowser('javascript:alert(1)');
+    openBrowser('file:///etc/passwd');
+    openBrowser('vbscript:msgbox(1)');
+    openBrowser('data:text/html,<script>alert(1)</script>');
+
+    expect(execFileSpy).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledTimes(4);
+    for (const call of consoleSpy.mock.calls) {
+      expect(call[0] as string).toContain('unsupported scheme');
+    }
+    consoleSpy.mockRestore();
+  });
+
+  it('rejects malformed URLs', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const consoleSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+    openBrowser('not a url');
+
+    expect(execFileSpy).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    expect(consoleSpy.mock.calls[0][0] as string).toContain('invalid URL');
+    consoleSpy.mockRestore();
+  });
+
+  it('accepts a normal https URL', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    openBrowser('https://example.com:8443/path');
+    expect(execFileSpy).toHaveBeenCalledTimes(1);
+  });
+});
