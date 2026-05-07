@@ -1,9 +1,27 @@
 import { existsSync } from 'node:fs';
 import type { EntryType, TimelineEntry } from '@inkeep/open-knowledge-core';
-import { parseCheckpoint, readContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import {
+  parseCheckpoint,
+  parseOkActors,
+  readContributors,
+} from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { getDocExtension } from './doc-extensions.ts';
+import {
+  type AncestorShaSetCache,
+  batchCheckExistence,
+  buildAncestorShaSet,
+  buildSeeds,
+  createAncestorShaSetCache,
+  createSeedsCache,
+  expandPredecessors,
+  getOrLoadRenameLogIndex,
+  logSeededReachable,
+  type RenameLogIndex,
+  type SeedsCache,
+} from './rename-log.ts';
 import type { ShadowHandle } from './shadow-repo.ts';
 import { shadowGit } from './shadow-repo.ts';
+import { getMeter, withSpan } from './telemetry.ts';
 
 interface HistoryQuery {
   docName: string;
@@ -32,7 +50,9 @@ function classifyType(subject: string): EntryType {
   return 'wip';
 }
 
-function parseGitLogOutput(raw: string): TimelineEntry[] {
+type ParsedEntry = TimelineEntry & { rawBody: string };
+
+function parseGitLogOutput(raw: string): ParsedEntry[] {
   if (!raw.trim()) return [];
   return raw
     .split('\x1e')
@@ -52,9 +72,10 @@ function parseGitLogOutput(raw: string): TimelineEntry[] {
         message,
         contributors: readContributors(rawBody),
         checkpoint: type === 'checkpoint' ? parseCheckpoint(rawBody) : null,
+        rawBody,
       };
     })
-    .filter((e): e is TimelineEntry => e !== null && e.sha.length === 40);
+    .filter((e): e is ParsedEntry => e !== null && e.sha.length === 40);
 }
 
 function toArray(val: string | string[] | undefined): string[] {
@@ -67,6 +88,26 @@ function toArray(val: string | string[] | undefined): string[] {
         .filter(Boolean);
 }
 
+let _chainDepthHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
+function chainDepthHist(): ReturnType<ReturnType<typeof getMeter>['createHistogram']> {
+  if (!_chainDepthHist) {
+    _chainDepthHist = getMeter().createHistogram('rename.predecessor_chain_depth_histogram', {
+      description: 'Predecessor chain depth observed per timeline query',
+    });
+  }
+  return _chainDepthHist;
+}
+
+let _transientSkipCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null = null;
+function transientSkipCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
+  if (!_transientSkipCounter) {
+    _transientSkipCounter = getMeter().createCounter('rename.transient_skip_total', {
+      description: 'Count of empty-commitSha entries encountered (lazy-population transient skip)',
+    });
+  }
+  return _transientSkipCounter;
+}
+
 function matchesAuthor(entry: TimelineEntry, authors: string[]): boolean {
   if (authors.length === 0) return true;
   return authors.some(
@@ -76,10 +117,91 @@ function matchesAuthor(entry: TimelineEntry, authors: string[]): boolean {
   );
 }
 
+function filterEntriesByOkActorDocs(
+  entries: ParsedEntry[],
+  chain: Array<{ path: string; renameCommit: string | null }>,
+  predecessorAncestors: Array<Set<string> | null>,
+): ParsedEntry[] {
+  if (entries.length === 0) return entries;
+  if (chain.length === 0) return entries;
+
+  return entries.filter((entry) => {
+    const actors = parseOkActors(entry.rawBody);
+    if (actors.length === 0) return true;
+
+    const touchedNames = new Set<string>();
+    for (const actor of actors) {
+      for (const d of actor.docs) touchedNames.add(d);
+      if (actor.previous_paths) {
+        for (const p of actor.previous_paths) {
+          touchedNames.add(p.from);
+          touchedNames.add(p.to);
+        }
+      }
+    }
+    if (touchedNames.size === 0) return true;
+
+    for (let chainIdx = 0; chainIdx < chain.length; chainIdx++) {
+      const step = chain[chainIdx];
+      const ancestors = predecessorAncestors[chainIdx];
+      if (ancestors !== null && !ancestors.has(entry.sha)) continue;
+      if (touchedNames.has(step.path)) return true;
+    }
+    return false;
+  });
+}
+
+async function filterEntriesByChain<E extends { sha: string }>(
+  shadow: ShadowHandle,
+  entries: E[],
+  chain: Array<{ path: string; renameCommit: string | null }>,
+  branch: string,
+  pathFor: (name: string) => string,
+  cache: AncestorShaSetCache,
+  seedsCache: SeedsCache,
+): Promise<E[]> {
+  if (entries.length === 0) return entries;
+  if (chain.length === 0) return entries;
+
+  const predecessorAncestors: Array<Set<string> | null> = await Promise.all(
+    chain.map(async (step) => {
+      if (step.renameCommit === null) return null;
+      const seeds = await buildSeeds(shadow, step.renameCommit, branch, seedsCache);
+      if (seeds.length === 0) return new Set<string>();
+      return buildAncestorShaSet(shadow, seeds, branch, cache);
+    }),
+  );
+
+  type Probe = { entryIdx: number; sha: string; path: string };
+  const probes: Probe[] = [];
+  for (let entryIdx = 0; entryIdx < entries.length; entryIdx++) {
+    const entry = entries[entryIdx];
+    for (let chainIdx = 0; chainIdx < chain.length; chainIdx++) {
+      const step = chain[chainIdx];
+      const ancestors = predecessorAncestors[chainIdx];
+      if (ancestors !== null && !ancestors.has(entry.sha)) continue;
+      probes.push({ entryIdx, sha: entry.sha, path: pathFor(step.path) });
+    }
+  }
+
+  if (probes.length === 0) return [];
+  const results = await batchCheckExistence(
+    shadow,
+    probes.map((p) => ({ sha: p.sha, path: p.path })),
+  );
+
+  const keep = new Set<number>();
+  for (let i = 0; i < probes.length; i++) {
+    if (results[i]) keep.add(probes[i].entryIdx);
+  }
+  return entries.filter((_, i) => keep.has(i));
+}
+
 export async function getDocumentHistory(
   shadow: ShadowHandle,
   query: HistoryQuery,
   contentRoot = '.',
+  options?: { renameLogIndex?: RenameLogIndex },
 ): Promise<HistoryResult> {
   if (!existsSync(shadow.workTree) || !existsSync(shadow.gitDir)) {
     return EMPTY;
@@ -98,13 +220,26 @@ export async function getDocumentHistory(
   const excludeAuthorFilter = toArray(query.excludeAuthor);
 
   const normalizedRoot = contentRoot === '.' ? '' : contentRoot.replace(/^\.\//, '');
-  const docPath = query.docName
-    ? normalizedRoot
-      ? `${normalizedRoot}/${query.docName}${getDocExtension(query.docName)}`
-      : `${query.docName}${getDocExtension(query.docName)}`
-    : undefined;
+  const pathFor = (name: string): string =>
+    normalizedRoot
+      ? `${normalizedRoot}/${name}${getDocExtension(name)}`
+      : `${name}${getDocExtension(name)}`;
+  const docPath = query.docName ? pathFor(query.docName) : undefined;
 
   try {
+    const renameLogIndex = options?.renameLogIndex ?? getOrLoadRenameLogIndex(shadow.gitDir);
+    const { chain, skipped } = await withSpan('rename.expandPredecessors', undefined, async () =>
+      query.docName
+        ? expandPredecessors(query.docName, branch, renameLogIndex)
+        : { chain: [], skipped: 0 },
+    );
+    const hasRenameHistory = chain.length > 1;
+    if (query.docName) chainDepthHist().record(chain.length);
+    if (skipped > 0) transientSkipCounter().add(skipped);
+
+    const seedsCache = createSeedsCache();
+    const ancestorSetCache = createAncestorShaSetCache();
+
     const sg = shadowGit(shadow);
 
     if (typeFilter.length === 1 && typeFilter[0] === 'checkpoint') {
@@ -151,17 +286,16 @@ export async function getDocumentHistory(
       let allEntries = parseGitLogOutput(raw).map((e) => ({ ...e, type: 'checkpoint' as const }));
 
       if (docPath) {
-        const relevant = await Promise.all(
-          allEntries.map(async (e) => {
-            try {
-              await sg.raw('cat-file', '-e', `${e.sha}:${docPath}`);
-              return true;
-            } catch {
-              return false;
-            }
-          }),
+        const cache = createAncestorShaSetCache();
+        allEntries = await filterEntriesByChain(
+          shadow,
+          allEntries,
+          chain,
+          branch,
+          pathFor,
+          cache,
+          seedsCache,
         );
-        allEntries = allEntries.filter((_, i) => relevant[i]);
       }
 
       if (branch !== 'main' && branchCpShas.length > 0 && mainCpShas.length > 0) {
@@ -186,7 +320,8 @@ export async function getDocumentHistory(
 
       const total = filtered.length;
       const page = filtered.slice(offset, offset + limit);
-      return { entries: page, total, hasMore: offset + limit < total };
+      const stripped: TimelineEntry[] = page.map(({ rawBody: _rawBody, ...rest }) => rest);
+      return { entries: stripped, total, hasMore: offset + limit < total };
     }
 
     const checkpointShas: string[] = [];
@@ -238,7 +373,7 @@ export async function getDocumentHistory(
     }
 
     const allCpShas = [...checkpointShas, ...mainCheckpointShas];
-    let checkpointEntries: TimelineEntry[] = [];
+    let checkpointEntries: ParsedEntry[] = [];
     if (allCpShas.length > 0) {
       const cpRaw = await sg.raw(
         'log',
@@ -253,17 +388,15 @@ export async function getDocumentHistory(
       }));
 
       if (docPath) {
-        const relevant = await Promise.all(
-          allCpEntries.map(async (e) => {
-            try {
-              await sg.raw('cat-file', '-e', `${e.sha}:${docPath}`);
-              return true;
-            } catch {
-              return false;
-            }
-          }),
+        allCpEntries = await filterEntriesByChain(
+          shadow,
+          allCpEntries,
+          chain,
+          branch,
+          pathFor,
+          ancestorSetCache,
+          seedsCache,
         );
-        allCpEntries = allCpEntries.filter((_, i) => relevant[i]);
       }
 
       if (isFeatureBranch && checkpointShas.length > 0 && mainCheckpointShas.length > 0) {
@@ -288,9 +421,9 @@ export async function getDocumentHistory(
     const allStartRefs = [...startRefs];
     for (const sha of allCpShas) allStartRefs.push(sha);
 
-    let wipEntries: TimelineEntry[] = [];
+    let wipEntries: ParsedEntry[] = [];
     if (allStartRefs.length > 0) {
-      const raw = await sg.raw(
+      const currentRaw = await sg.raw(
         'log',
         '--full-history',
         '--author-date-order',
@@ -298,13 +431,37 @@ export async function getDocumentHistory(
         ...allStartRefs,
         ...(docPath ? ['--', docPath] : []),
       );
-      wipEntries = parseGitLogOutput(raw);
+      wipEntries = parseGitLogOutput(currentRaw);
+
+      if (hasRenameHistory) {
+        for (let i = 0; i < chain.length - 1; i++) {
+          const step = chain[i];
+          if (step.renameCommit === null) continue;
+          try {
+            const seeds = await buildSeeds(shadow, step.renameCommit, branch, seedsCache);
+            if (seeds.length === 0) continue;
+            const predecessorPath = pathFor(step.path);
+            const predRaw = await logSeededReachable(
+              shadow,
+              ['--full-history', '--author-date-order', `--format=${GIT_LOG_FORMAT}`],
+              seeds,
+              predecessorPath,
+            );
+            wipEntries = [...wipEntries, ...parseGitLogOutput(predRaw)];
+          } catch (e) {
+            console.warn(
+              `[timeline] predecessor walk failed for step ${i} (${step.path}); skipping:`,
+              e,
+            );
+          }
+        }
+      }
     }
 
     const allEntries = [...checkpointEntries, ...wipEntries];
 
     const seen = new Set<string>();
-    const unique: TimelineEntry[] = [];
+    const unique: ParsedEntry[] = [];
     for (const e of allEntries) {
       if (!seen.has(e.sha)) {
         seen.add(e.sha);
@@ -312,9 +469,22 @@ export async function getDocumentHistory(
       }
     }
 
-    unique.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    let postFiltered = unique;
+    if (hasRenameHistory && unique.length > 0) {
+      const filterAncestors: Array<Set<string> | null> = await Promise.all(
+        chain.map(async (step) => {
+          if (step.renameCommit === null) return null;
+          const seeds = await buildSeeds(shadow, step.renameCommit, branch, seedsCache);
+          if (seeds.length === 0) return new Set<string>();
+          return buildAncestorShaSet(shadow, seeds, branch, ancestorSetCache);
+        }),
+      );
+      postFiltered = filterEntriesByOkActorDocs(unique, chain, filterAncestors);
+    }
 
-    let filtered = unique;
+    postFiltered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    let filtered: ParsedEntry[] = postFiltered;
 
     filtered = filtered.filter((e) => e.type !== 'park');
 
@@ -332,7 +502,8 @@ export async function getDocumentHistory(
 
     const total = filtered.length;
     const page = filtered.slice(offset, offset + limit);
-    return { entries: page, total, hasMore: offset + limit < total };
+    const stripped: TimelineEntry[] = page.map(({ rawBody: _rawBody, ...rest }) => rest);
+    return { entries: stripped, total, hasMore: offset + limit < total };
   } catch (e) {
     console.warn('[timeline] getDocumentHistory failed, returning empty result:', e);
     return EMPTY;

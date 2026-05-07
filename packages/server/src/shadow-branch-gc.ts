@@ -1,5 +1,6 @@
 import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
+import { gcRenameLog, getOrLoadRenameLogIndex } from './rename-log.ts';
 import type { CheckpointRetentionPolicy, ShadowHandle } from './shadow-repo.ts';
 import { DEFAULT_CHECKPOINT_RETENTION, gcCheckpointRefs, shadowGit } from './shadow-repo.ts';
 
@@ -191,6 +192,12 @@ export async function gcShadowBranches(
     } catch (err) {
       console.warn(`[shadow-gc] checkpoint GC failed for branch ${branch}:`, err);
     }
+  }
+
+  try {
+    await gcRenameLog(shadow, getOrLoadRenameLogIndex(shadow.gitDir));
+  } catch (err) {
+    console.warn('[shadow-gc] rename-log GC failed:', err);
   }
 
   for (const branch of projectBranches) {

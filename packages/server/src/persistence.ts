@@ -48,6 +48,7 @@ import {
   incrementPersistenceSkipNonQuiescent,
 } from './metrics.ts';
 import { classifyDuplication } from './persistence-tripwire.ts';
+import { backfillRenameLogCommitSha, getOrLoadRenameLogIndex } from './rename-log.ts';
 import { OBSERVER_SYNC_ORIGIN } from './server-observers.ts';
 import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
 import {
@@ -204,6 +205,7 @@ export interface PersistenceHandle {
   extension: Extension;
   flushDeferredStores: (mode?: 'within-branch' | 'discard-stale') => Promise<void>;
   flushPendingGitCommit: () => Promise<void>;
+  flushContributors: () => Promise<void>;
   waitForPendingCommits: () => Promise<void>;
   readonly configPersistenceCtx: ConfigPersistenceCtx;
 }
@@ -298,6 +300,16 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             { sha: sha.slice(0, 8), writer: SERVICE_WRITER.id },
             `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${SERVICE_WRITER.id}`,
           );
+          try {
+            backfillRenameLogCommitSha(
+              shadow.gitDir,
+              SERVICE_WRITER.id,
+              sha,
+              getOrLoadRenameLogIndex(shadow.gitDir),
+            );
+          } catch (err) {
+            log.warn({ err }, '[rename-log] service-writer backfill failed');
+          }
         } catch (e) {
           consecutiveGitFailures++;
           incrementGitAutoSaveFailure();
@@ -339,6 +351,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         const docs = [...entry.docs];
         const a = entry.actor;
         const summaries = [...entry.summaries];
+        const previousPaths = [...entry.previousPaths];
         const actorEntry: OkActorEntry = {
           v: 1,
           writer_id: writerId,
@@ -352,6 +365,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           color_seed: entry.colorSeed,
           docs,
           ...(summaries.length > 0 ? { summaries } : {}),
+          ...(previousPaths.length > 0 ? { previous_paths: previousPaths } : {}),
         };
         const baseSubject = entry.subjectOverride ?? formatWipSubject(docs);
         const subject = composeCommitSubject(baseSubject, summaries);
@@ -363,6 +377,16 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             { sha: sha.slice(0, 8), writer: writerId, tree: treeSha.slice(0, 8) },
             `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${writerId}`,
           );
+          try {
+            backfillRenameLogCommitSha(
+              shadow.gitDir,
+              writerId,
+              sha,
+              getOrLoadRenameLogIndex(shadow.gitDir),
+            );
+          } catch (err) {
+            log.warn({ err }, '[rename-log] backfill failed; will retry next commit');
+          }
           if (writerId.startsWith('agent-')) {
             onAgentCommit?.();
           }
@@ -993,10 +1017,27 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     if (commitInFlight) await commitInFlight;
   }
 
+  async function flushContributors(): Promise<void> {
+    if (commitInFlight) {
+      await commitInFlight;
+      return;
+    }
+    if (contributorCount() === 0) return;
+    commitInFlight = commitToWipRef().finally(() => {
+      commitInFlight = null;
+      if (pendingAfterCommit) {
+        pendingAfterCommit = false;
+        scheduleGitCommit();
+      }
+    });
+    await commitInFlight;
+  }
+
   return {
     extension,
     flushDeferredStores,
     flushPendingGitCommit,
+    flushContributors,
     waitForPendingCommits,
     configPersistenceCtx,
   };

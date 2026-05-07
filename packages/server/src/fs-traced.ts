@@ -1,5 +1,6 @@
 import type { RmOptions, WriteFileOptions } from 'node:fs';
 import {
+  appendFileSync,
   linkSync,
   mkdirSync,
   renameSync,
@@ -96,6 +97,20 @@ export function tracedWriteFileSync(
     { attributes: buildAttrs('writeFileSync', path, { 'fs.bytes': byteLength(data) }) },
     () => {
       writeFileSync(path, data, options);
+    },
+  );
+}
+
+export function tracedAppendFileSync(
+  path: string,
+  data: string | Uint8Array,
+  options?: Parameters<typeof appendFileSync>[2],
+): void {
+  withSpanSync(
+    'fs.appendFileSync',
+    { attributes: buildAttrs('appendFileSync', path, { 'fs.bytes': byteLength(data) }) },
+    () => {
+      appendFileSync(path, data, options);
     },
   );
 }

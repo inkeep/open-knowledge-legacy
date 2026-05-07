@@ -170,6 +170,17 @@ const OK_GITIGNORE_CONTENT = `# .ok/local/ holds per-machine runtime state. Anyt
 # machine-local and never committed. New runtime files (caches, locks,
 # manifests, telemetry, error logs) are auto-ignored — no edit needed here.
 ${LOCAL_DIR}/
+
+# Per-machine runtime state at the .ok/ root. Contains PII (principal email,
+# UUID), hostnames, and absolute filesystem paths — never commit. The only
+# file at .ok/ root that SHOULD be committed is \`config.yml\` (project
+# configuration), which is explicitly NOT in this ignore list.
+principal.json
+state.json
+server.lock
+ui.lock
+sync-state.json
+last-spawn-error.log
 `;
 
 export const OK_OKIGNORE_TEMPLATE = `# .okignore — paths to exclude from the Open Knowledge document index.

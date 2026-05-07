@@ -81,6 +81,12 @@ import {
 } from './persistence.ts';
 import { loadPrincipal } from './principal.ts';
 import { reconcile } from './reconciliation.ts';
+import {
+  gcRenameLog,
+  loadRenameLogIndex,
+  setRenameLogIndex,
+  sweepLazyPopOrphans,
+} from './rename-log.ts';
 import { acquireServerLock, releaseServerLock } from './server-lock.ts';
 import { createServerObserverExtension } from './server-observer-extension.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
@@ -471,6 +477,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       enableTestRoutes,
       shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
+      flushContributors: () => persistence.flushContributors(),
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
       getDiskAckSVs: () => cc1Broadcaster?.getLatestDiskAckSVsAsBase64() ?? {},
       contentRoot,
@@ -1189,6 +1196,40 @@ export function createServer(options: ServerOptions): ServerInstance {
       } catch (e) {
         log.error({ err: e }, '[server] history repo init failed');
         degraded.push('shadow-repo');
+      }
+    }
+
+    if (shadowRef.current) {
+      let renameLogIndex: ReturnType<typeof loadRenameLogIndex> | null = null;
+      try {
+        renameLogIndex = loadRenameLogIndex(shadowRef.current.gitDir);
+        sweepLazyPopOrphans(shadowRef.current.gitDir, renameLogIndex);
+        setRenameLogIndex(shadowRef.current.gitDir, renameLogIndex);
+        log.info(
+          { entries: renameLogIndex.byTo.size },
+          `[server] rename log loaded (${renameLogIndex.byTo.size} entries)`,
+        );
+      } catch (e) {
+        log.warn(
+          { err: e },
+          '[rename-log] boot-time load/sweep failed; rename history unavailable',
+        );
+      }
+      if (renameLogIndex) {
+        const BOOT_GC_TIMEOUT_MS = 10_000;
+        try {
+          await Promise.race([
+            gcRenameLog(shadowRef.current, renameLogIndex, { rebuild: true }),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () => reject(new Error(`boot-time GC exceeded ${BOOT_GC_TIMEOUT_MS}ms`)),
+                BOOT_GC_TIMEOUT_MS,
+              ),
+            ),
+          ]);
+        } catch (e) {
+          log.warn({ err: e }, '[rename-log] boot-time GC/rebuild failed; index loaded without GC');
+        }
       }
     }
 

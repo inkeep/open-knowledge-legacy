@@ -118,7 +118,7 @@ describe('initContent', () => {
     expect(configYml).toContain('articles');
   });
 
-  it('appends `local/` to a stale legacy .gitignore (upgrade path)', () => {
+  it('appends missing scaffold entries to a stale legacy .gitignore (upgrade path)', () => {
     const okDir = join(testDir, OK_DIR);
     mkdirSync(okDir, { recursive: true });
     const stale = `cache/\nserver.lock\nui.lock\nsync-state.json\n`;
@@ -127,7 +127,9 @@ describe('initContent', () => {
     const result = initContent(testDir);
 
     const after = readFileSync(join(okDir, '.gitignore'), 'utf-8');
-    expect(after).toBe(`cache/\nserver.lock\nui.lock\nsync-state.json\nlocal/\n`);
+    expect(after).toBe(
+      `cache/\nserver.lock\nui.lock\nsync-state.json\nlocal/\nprincipal.json\nstate.json\nlast-spawn-error.log\n`,
+    );
     expect(result.updated).toContain('.gitignore');
     expect(result.created).not.toContain('.gitignore');
   });

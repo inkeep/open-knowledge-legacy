@@ -14,6 +14,7 @@ export interface ContributorEntry {
   subjectOverride?: string;
   actor?: ActorMetadata;
   summaries: string[];
+  previousPaths: Array<{ from: string; to: string }>;
 }
 
 let pendingContributors = new Map<string, ContributorEntry>();
@@ -26,6 +27,7 @@ export function recordContributor(
   subjectOverride?: string,
   actor?: ActorMetadata,
   summary?: string,
+  previousPaths?: Array<{ from: string; to: string }>,
 ): void {
   let entry = pendingContributors.get(writerId);
   if (!entry) {
@@ -37,6 +39,7 @@ export function recordContributor(
       subjectOverride,
       actor,
       summaries: [],
+      previousPaths: [],
     };
     pendingContributors.set(writerId, entry);
   }
@@ -55,6 +58,9 @@ export function recordContributor(
   }
   if (typeof summary === 'string' && summary.length > 0) {
     entry.summaries.push(summary);
+  }
+  if (previousPaths && previousPaths.length > 0) {
+    for (const pair of previousPaths) entry.previousPaths.push(pair);
   }
 }
 
@@ -75,12 +81,16 @@ export function restoreContributors(snapshot: Map<string, ContributorEntry>): vo
         docs: new Set(),
         actor: entry.actor,
         summaries: [],
+        previousPaths: [],
       };
       pendingContributors.set(writerId, live);
     }
     for (const doc of entry.docs) live.docs.add(doc);
     if (entry.summaries.length > 0) {
       live.summaries = [...entry.summaries, ...live.summaries];
+    }
+    if (entry.previousPaths.length > 0) {
+      live.previousPaths = [...entry.previousPaths, ...live.previousPaths];
     }
   }
 }
@@ -123,12 +133,16 @@ export function restoreContributorEntry(writerId: string, entry: ContributorEntr
       docs: new Set(),
       actor: entry.actor,
       summaries: [],
+      previousPaths: [],
     };
     pendingContributors.set(writerId, live);
   }
   for (const doc of entry.docs) live.docs.add(doc);
   if (entry.summaries.length > 0) {
     live.summaries = [...entry.summaries, ...live.summaries];
+  }
+  if (entry.previousPaths.length > 0) {
+    live.previousPaths = [...entry.previousPaths, ...live.previousPaths];
   }
 }
 

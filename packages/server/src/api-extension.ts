@@ -7,7 +7,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
   createReadStream,
@@ -196,6 +196,14 @@ import {
   setReconciledBase,
 } from './persistence.ts';
 import {
+  appendRenameLogEntry,
+  createAncestorShaSetCache,
+  gcRenameLog,
+  getOrLoadRenameLogIndex,
+  type RenameLogEntry,
+  resolveDocPathAtCommit,
+} from './rename-log.ts';
+import {
   applySeed,
   planSeed,
   type ScaffoldPlan,
@@ -216,7 +224,7 @@ import {
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
 import type { TagIndex } from './tag-index.ts';
-import { getMeter, getTracer, withSpan } from './telemetry.ts';
+import { getMeter, getTracer, withSpan, withSpanSync } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 let _httpDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
@@ -732,6 +740,7 @@ export interface ApiExtensionOptions {
   enableTestRoutes?: boolean;
   shadowRef?: ShadowRef;
   flushGitCommit?: () => Promise<void>;
+  flushContributors?: () => Promise<void>;
   getCurrentBranch?: () => string | null;
   getDiskAckSVs?: () => Record<string, string>;
   contentRoot?: string;
@@ -829,6 +838,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     enableTestRoutes = false,
     shadowRef,
     flushGitCommit,
+    flushContributors,
     getCurrentBranch,
     getDiskAckSVs,
     contentRoot,
@@ -1209,6 +1219,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     fromPath: string,
     toPath: string,
     kind: ContentEntryKind,
+    options?: {
+      actor?: {
+        writerId: string;
+        displayName: string;
+        colorSeed?: string;
+        actorMetadata?: {
+          principalId?: string;
+          agentType?: string;
+          clientName?: string;
+          clientVersion?: string;
+          label?: string;
+        };
+      };
+    },
   ): Promise<{ renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] }> {
     return runSerialized(async () =>
       withSpan(
@@ -1351,6 +1375,69 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               tracedRenameSync(rootSourcePath, rootDestinationPath);
             }
 
+            if (
+              process.env.NODE_ENV === 'test' &&
+              process.env.OK_TEST_RENAME_FAULT === 'pre-append'
+            ) {
+              throw new Error('OK_TEST_RENAME_FAULT=pre-append');
+            }
+
+            if (shadowRef?.current) {
+              const shadow = shadowRef.current;
+              withSpanSync('rename.appendLog', { attributes: { 'rename.kind': kind } }, (span) => {
+                const groupId = randomUUID();
+                const at = new Date().toISOString();
+                const branch = getCurrentBranch?.() ?? 'main';
+                const renameLogIndex = getOrLoadRenameLogIndex(shadow.gitDir);
+                const actorWriter = options?.actor
+                  ? {
+                      writerId: options.actor.writerId,
+                      displayName: options.actor.displayName,
+                    }
+                  : { writerId: SERVICE_WRITER.id, displayName: SERVICE_WRITER.name };
+                let entriesAppended = 0;
+                for (const { from, to } of affectedDocs) {
+                  const logEntry: RenameLogEntry = {
+                    v: 1,
+                    from,
+                    to,
+                    at,
+                    commitSha: '',
+                    branch,
+                    groupId,
+                    kind,
+                    actor: actorWriter,
+                  };
+                  appendRenameLogEntry(shadow.gitDir, logEntry, renameLogIndex, shadow);
+                  entriesAppended += 1;
+                  if (options?.actor) {
+                    recordContributor(
+                      to,
+                      options.actor.writerId,
+                      options.actor.displayName,
+                      options.actor.colorSeed,
+                      formatRenameSubject(from, to),
+                      options.actor.actorMetadata,
+                      undefined,
+                      [{ from, to }],
+                    );
+                  } else {
+                    recordContributor(
+                      to,
+                      SERVICE_WRITER.id,
+                      SERVICE_WRITER.name,
+                      SERVICE_WRITER.id,
+                      formatRenameSubject(from, to),
+                      undefined,
+                      undefined,
+                      [{ from, to }],
+                    );
+                  }
+                }
+                span.setAttribute('rename.entries_appended', entriesAppended);
+              });
+            }
+
             const explicitDestExt: string | null =
               kind === 'file' && isSupportedDocFile(toPath) ? extname(toPath) : null;
             for (const { from, to } of affectedDocs) {
@@ -1395,6 +1482,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               if (renamedSource.rewrites > 0) {
                 rewrittenDocs.push({ docName: toDocName, rewrites: renamedSource.rewrites });
               }
+            }
+
+            if (
+              process.env.NODE_ENV === 'test' &&
+              process.env.OK_TEST_RENAME_FAULT === 'pre-journal-clear'
+            ) {
+              throw new Error('OK_TEST_RENAME_FAULT=pre-journal-clear');
             }
           });
 
@@ -2861,6 +2955,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       console.log(`[history] checkpoint ${result.checkpointRef}`);
 
+      try {
+        await gcRenameLog(shadow, getOrLoadRenameLogIndex(shadow.gitDir));
+      } catch (err) {
+        console.warn('[rename-log] post-saveVersion GC failed:', err);
+      }
+
       const contributorSnapshot = swapContributors();
 
       let versionTag: string | undefined;
@@ -3042,8 +3142,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 400, { ok: false, error: pathResult.error });
       return;
     }
-    const docPath = pathResult.path;
     const sg = shadowGit(shadow);
+    const branch = getCurrentBranch?.() ?? 'main';
 
     if (!/^[0-9a-f]{40}$/i.test(sha)) {
       json(res, 400, { ok: false, error: 'Invalid commit SHA' });
@@ -3051,14 +3151,26 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     try {
-      try {
-        await sg.raw('cat-file', '-e', `${sha}:${docPath}`);
-      } catch {
+      const renameLogIndex = getOrLoadRenameLogIndex(shadow.gitDir);
+      const ancestorCache = createAncestorShaSetCache();
+      const historicalPath = await resolveDocPathAtCommit(
+        shadow,
+        docName,
+        sha,
+        branch,
+        renameLogIndex,
+        (name) => {
+          const p = safeDocPath(name, resolvedContentRoot);
+          return 'error' in p ? `${name}.md` : p.path;
+        },
+        ancestorCache,
+      );
+      if (historicalPath === null) {
         json(res, 404, { ok: false, error: 'Document did not exist at this version' });
         return;
       }
 
-      const content = await sg.raw('show', `${sha}:${docPath}`);
+      const content = await sg.raw('show', `${sha}:${historicalPath}`);
 
       const logLine = (await sg.raw('log', '-1', '--format=%aI%x00%an', sha)).trim();
       const [timestamp = '', author = ''] = logLine.split('\x00');
@@ -3099,13 +3211,33 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 400, { ok: false, error: pathResult.error });
       return;
     }
-    const docPath = pathResult.path;
     const sg = shadowGit(shadow);
+    const branch = getCurrentBranch?.() ?? 'main';
+
+    const renameLogIndex = getOrLoadRenameLogIndex(shadow.gitDir);
+    const ancestorCache = createAncestorShaSetCache();
+    const pathFor = (name: string): string => {
+      const p = safeDocPath(name, resolvedContentRoot);
+      return 'error' in p ? `${name}.md` : p.path;
+    };
 
     try {
       let toContent: string;
+      const toHistoricalPath = await resolveDocPathAtCommit(
+        shadow,
+        docName,
+        to,
+        branch,
+        renameLogIndex,
+        pathFor,
+        ancestorCache,
+      );
+      if (toHistoricalPath === null) {
+        json(res, 404, { ok: false, error: 'Document did not exist at the target version' });
+        return;
+      }
       try {
-        toContent = await sg.raw('show', `${to}:${docPath}`);
+        toContent = await sg.raw('show', `${to}:${toHistoricalPath}`);
       } catch {
         json(res, 404, { ok: false, error: 'Document did not exist at the target version' });
         return;
@@ -3113,8 +3245,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let fromContent: string;
       if (from && /^[0-9a-f]{40}$/i.test(from)) {
+        const fromHistoricalPath = await resolveDocPathAtCommit(
+          shadow,
+          docName,
+          from,
+          branch,
+          renameLogIndex,
+          pathFor,
+          ancestorCache,
+        );
+        if (fromHistoricalPath === null) {
+          json(res, 404, { ok: false, error: 'Document did not exist at the source version' });
+          return;
+        }
         try {
-          fromContent = await sg.raw('show', `${from}:${docPath}`);
+          fromContent = await sg.raw('show', `${from}:${fromHistoricalPath}`);
         } catch {
           json(res, 404, { ok: false, error: 'Document did not exist at the source version' });
           return;
@@ -3216,19 +3361,34 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 400, { ok: false, error: pathResult.error });
       return;
     }
-    const docPath = pathResult.path;
     const sg = shadowGit(shadow);
 
     const t0 = Date.now();
     try {
-      try {
-        await sg.raw('cat-file', '-e', `${commitSha}:${docPath}`);
-      } catch {
-        json(res, 404, { ok: false, error: 'Document did not exist at this version' });
+      const renameLogIndex = getOrLoadRenameLogIndex(shadow.gitDir);
+      const ancestorCache = createAncestorShaSetCache();
+      const branch = getCurrentBranch?.() ?? 'main';
+      const historicalPath = await resolveDocPathAtCommit(
+        shadow,
+        docName,
+        commitSha,
+        branch,
+        renameLogIndex,
+        (name) => {
+          const p = safeDocPath(name, resolvedContentRoot);
+          return 'error' in p ? `${name}.md` : p.path;
+        },
+        ancestorCache,
+      );
+      if (historicalPath === null) {
+        json(res, 404, {
+          ok: false,
+          error: `Commit ${commitSha.slice(0, 7)} does not contain document ${docName} at any known historical path.`,
+        });
         return;
       }
 
-      const markdown = await sg.raw('show', `${commitSha}:${docPath}`);
+      const markdown = await sg.raw('show', `${commitSha}:${historicalPath}`);
       const timestamp = new Date().toISOString();
 
       await safetyCheckpoint(shadow, resolvedContentRoot, {
@@ -3965,7 +4125,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let result: { renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] };
       try {
-        result = await _performManagedRenameForDocs(fromPath, toPath, kind);
+        const renameActor =
+          actor.kind === 'agent' || actor.kind === 'principal'
+            ? {
+                writerId: actor.writerId,
+                displayName: actor.displayName,
+                colorSeed: actor.colorSeed,
+                actorMetadata: actor.actor,
+              }
+            : undefined;
+        result = await _performManagedRenameForDocs(fromPath, toPath, kind, {
+          ...(renameActor ? { actor: renameActor } : {}),
+        });
       } catch (err) {
         if (err instanceof ManagedRenameCollisionError) {
           json(res, 409, {
@@ -3995,7 +4166,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             agentProvidedSummary || !fields.response
               ? fields.response
               : stripDefaultPathTruncation(fields.response);
-          for (const { fromDocName, toDocName } of result.renamed) {
+          for (let i = 0; i < result.renamed.length; i++) {
+            const { fromDocName, toDocName } = result.renamed[i];
             recordContributor(
               toDocName,
               actor.writerId,
@@ -4003,7 +4175,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               actor.colorSeed,
               formatRenameSubject(fromDocName, toDocName),
               actor.actor,
-              fields.stored,
+              i === 0 ? fields.stored : undefined,
             );
           }
           incrementAgentWriteCalls();
@@ -4016,7 +4188,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         case 'principal': {
           const fields = summaryResponseFields(actor.summary);
           summaryResponse = fields.response;
-          for (const { fromDocName, toDocName } of result.renamed) {
+          for (let i = 0; i < result.renamed.length; i++) {
+            const { fromDocName, toDocName } = result.renamed[i];
             recordContributor(
               toDocName,
               actor.writerId,
@@ -4024,7 +4197,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               actor.colorSeed,
               formatRenameSubject(fromDocName, toDocName),
               actor.actor,
-              fields.stored,
+              i === 0 ? fields.stored : undefined,
             );
           }
           countNormalizedSummary(actor.summary, false);
@@ -4047,6 +4220,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
       renameAttributionCounter().add(1, { kind: `rename-${kind}`, attribution_kind: actor.kind });
+
+      if (flushContributors) {
+        try {
+          await flushContributors();
+        } catch (err) {
+          console.warn('[rename-log] WARN: post-rename drain failed:', err);
+        }
+      }
 
       json(res, 200, {
         ok: true,

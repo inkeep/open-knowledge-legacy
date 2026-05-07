@@ -310,14 +310,16 @@ export interface OkActorEntry {
   color_seed: string;
   docs: string[];
   summaries?: string[];
+  previous_paths?: Array<{ from: string; to: string }>;
 }
 
 const OK_ACTOR_PREFIX = 'ok-actor: ';
 
 export function formatOkActor(entry: OkActorEntry): string {
-  const { summaries, ...rest } = entry;
-  const payload: Record<string, unknown> =
-    summaries && summaries.length > 0 ? { ...rest, summaries } : rest;
+  const { summaries, previous_paths, ...rest } = entry;
+  const payload: Record<string, unknown> = { ...rest };
+  if (summaries && summaries.length > 0) payload.summaries = summaries;
+  if (previous_paths && previous_paths.length > 0) payload.previous_paths = previous_paths;
   return `${OK_ACTOR_PREFIX}${JSON.stringify(payload)}`;
 }
 
@@ -352,6 +354,7 @@ function parseOkActorObject(obj: Record<string, unknown>): OkActorEntry | null {
         ? (obj.summaries as string[])
         : undefined // D27 divergence: drop field on malformed, keep entry
       : undefined;
+  const previous_paths = parsePreviousPaths(obj);
   return {
     v: 1,
     writer_id,
@@ -365,7 +368,23 @@ function parseOkActorObject(obj: Record<string, unknown>): OkActorEntry | null {
     color_seed: typeof obj.color_seed === 'string' ? obj.color_seed : 'unknown',
     docs: (obj.docs as unknown[]).filter((d): d is string => typeof d === 'string'),
     ...(summaries && summaries.length > 0 ? { summaries } : {}),
+    ...(previous_paths && previous_paths.length > 0 ? { previous_paths } : {}),
   };
+}
+
+function parsePreviousPaths(
+  obj: Record<string, unknown>,
+): Array<{ from: string; to: string }> | undefined {
+  if (!('previous_paths' in obj)) return undefined;
+  if (!Array.isArray(obj.previous_paths)) return undefined;
+  const out: Array<{ from: string; to: string }> = [];
+  for (const raw of obj.previous_paths as unknown[]) {
+    if (raw === null || typeof raw !== 'object') continue;
+    const candidate = raw as Record<string, unknown>;
+    if (typeof candidate.from !== 'string' || typeof candidate.to !== 'string') continue;
+    out.push({ from: candidate.from, to: candidate.to });
+  }
+  return out;
 }
 
 export function parseOkActor(body: string): OkActorEntry | null {
