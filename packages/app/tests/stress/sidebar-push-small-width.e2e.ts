@@ -230,6 +230,9 @@ test.describe('sidebar push-mode (small width)', () => {
     await expect.poll(() => getInsetTranslateX(page), { timeout: 1500 }).toBe(0);
 
     await page.setViewportSize(DESKTOP_VIEWPORT);
+    await page
+      .locator('[data-slot="sidebar"]:not([data-mobile])')
+      .waitFor({ state: 'attached', timeout: 5_000 });
     await expect.poll(() => isSidebarOpen(page, 'desktop')).toBe(true);
     expect(await getInsetTranslateX(page)).toBe(0);
   });
