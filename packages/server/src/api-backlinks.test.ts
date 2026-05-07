@@ -413,6 +413,72 @@ describe('graph endpoints', () => {
     }
   });
 
+  test('forward-links / hubs / link-graph fall back to docName for excluded targets', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-graph-api-excluded-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      writeFileSync(join(contentDir, 'public.md'), '# Public\n\nLinks to [[secret]].\n', 'utf-8');
+      writeFileSync(
+        join(contentDir, 'secret.md'),
+        '---\ncluster: confidential\ncategory: leak\ntags: [private]\n---\n# Top Secret Heading\n\nBody.\n',
+        'utf-8',
+      );
+
+      const fileIndex = new Map<string, FileIndexEntry>([
+        [
+          'public',
+          {
+            size: 10,
+            modified: new Date(0).toISOString(),
+            canonicalPath: '',
+            inode: 0,
+            aliases: [],
+          },
+        ],
+      ]);
+      const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
+      backlinkIndex.rebuildFromDisk();
+
+      const forward = JSON.parse(
+        (await callRoute(contentDir, '/api/forward-links?docName=public', fileIndex, backlinkIndex))
+          .body,
+      ) as {
+        forwardLinks: Array<{ kind: 'doc'; docName: string; title: string }>;
+      };
+      expect(forward.forwardLinks).toHaveLength(1);
+      expect(forward.forwardLinks[0].docName).toBe('secret');
+      expect(forward.forwardLinks[0].title).toBe('secret');
+
+      const hubs = JSON.parse(
+        (await callRoute(contentDir, '/api/hubs', fileIndex, backlinkIndex)).body,
+      ) as { hubs: Array<{ docName: string; title: string; count: number }> };
+      expect(hubs.hubs).toContainEqual({ docName: 'secret', title: 'secret', count: 1 });
+
+      const linkGraph = JSON.parse(
+        (await callRoute(contentDir, '/api/link-graph', fileIndex, backlinkIndex)).body,
+      ) as {
+        nodes: Array<{
+          id: string;
+          kind: string;
+          docName?: string;
+          label?: string;
+          cluster?: string | null;
+          category?: string | null;
+          tags?: string[] | null;
+        }>;
+      };
+      const secretNode = linkGraph.nodes.find((n) => n.id === 'secret');
+      expect(secretNode).toBeDefined();
+      expect(secretNode?.label).toBe('secret');
+      expect(secretNode?.cluster).toBeNull();
+      expect(secretNode?.category).toBeNull();
+      expect(secretNode?.tags).toBeNull();
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   test('reject invalid orphan mode query values', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-graph-api-invalid-mode-'));
     const contentDir = join(projectDir, 'content');
