@@ -11,6 +11,7 @@ interface WebContentsLike {
 
 interface AttachAssetSafetyNetDeps {
   readonly openAsset: (relPath: string) => Promise<AssetOpenResult>;
+  readonly openExternal: (url: string) => Promise<void>;
   readonly editorOrigin: string;
   readonly log?: (event: {
     level: 'warn' | 'info';
@@ -59,33 +60,57 @@ export function attachAssetSafetyNet(
 
   webContents.setWindowOpenHandler((details) => {
     const relPath = matchAssetUrl(details.url, deps.editorOrigin);
-    if (relPath === null) {
+    if (relPath !== null) {
+      void deps.openAsset(relPath).then((result) => {
+        if (!result.ok) {
+          log({
+            level: 'warn',
+            message: 'openAsset refused from setWindowOpenHandler',
+            data: { relPath, reason: result.reason },
+          });
+        }
+      });
       return { action: 'deny' };
     }
-    void deps.openAsset(relPath).then((result) => {
-      if (!result.ok) {
-        log({
-          level: 'warn',
-          message: 'openAsset refused from setWindowOpenHandler',
-          data: { relPath, reason: result.reason },
-        });
-      }
+    void deps.openExternal(details.url).catch((err: unknown) => {
+      log({
+        level: 'warn',
+        message: 'openExternal refused from setWindowOpenHandler',
+        data: { url: details.url, err: (err as Error).message },
+      });
     });
     return { action: 'deny' };
   });
 
   webContents.on('will-navigate', (event, url) => {
     const relPath = matchAssetUrl(url, deps.editorOrigin);
-    if (relPath === null) return; // let the default navigation proceed
+    if (relPath !== null) {
+      event.preventDefault();
+      void deps.openAsset(relPath).then((result) => {
+        if (!result.ok) {
+          log({
+            level: 'warn',
+            message: 'openAsset refused from will-navigate',
+            data: { relPath, reason: result.reason },
+          });
+        }
+      });
+      return;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return;
+    }
+    if (parsed.origin === deps.editorOrigin) return;
     event.preventDefault();
-    void deps.openAsset(relPath).then((result) => {
-      if (!result.ok) {
-        log({
-          level: 'warn',
-          message: 'openAsset refused from will-navigate',
-          data: { relPath, reason: result.reason },
-        });
-      }
+    void deps.openExternal(url).catch((err: unknown) => {
+      log({
+        level: 'warn',
+        message: 'openExternal refused from will-navigate',
+        data: { url, err: (err as Error).message },
+      });
     });
   });
 }
