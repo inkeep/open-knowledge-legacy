@@ -1,11 +1,13 @@
 import type { Hocuspocus } from '@hocuspocus/server';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
   CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CHANNEL_SERVER_INFO,
   CC1_CONTRACT_VERSION,
   CC1BranchSwitchedPayloadSchema,
+  CC1ConfigIgnoreNestedErrorPayloadSchema,
   CC1ConfigValidationRejectedPayloadSchema,
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
@@ -225,6 +227,37 @@ export class CC1Broadcaster {
       setCC1LastSeq(CC1_CHANNEL_CONFIG_VALIDATION_REJECTED, seq);
     } catch (err) {
       this.log.error({ err, docName }, '[cc1] emitConfigValidationRejected failed');
+    }
+  }
+
+  emitConfigIgnoreNestedError(path: string, error: string): void {
+    try {
+      const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
+      if (!doc) {
+        if (!this.warnedMissing) {
+          this.log.warn(
+            {},
+            `[cc1] __system__ document not found at emitConfigIgnoreNestedError — dropped`,
+          );
+          this.warnedMissing = true;
+        }
+        incrementCC1BroadcastDrop();
+        return;
+      }
+      const seq = (this.seqs.get(CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR) ?? 0) + 1;
+      this.seqs.set(CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR, seq);
+      const payload = CC1ConfigIgnoreNestedErrorPayloadSchema.parse({
+        v: CC1_CONTRACT_VERSION,
+        ch: CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
+        seq,
+        path,
+        error,
+      });
+      doc.broadcastStateless(JSON.stringify(payload));
+      incrementCC1Broadcast();
+      setCC1LastSeq(CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR, seq);
+    } catch (err) {
+      this.log.error({ err, path }, '[cc1] emitConfigIgnoreNestedError failed');
     }
   }
 

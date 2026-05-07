@@ -1,0 +1,88 @@
+---
+title: Ignore patterns
+description: Hide files and folders from the editor, search, and your AI tools.
+---
+
+Open Knowledge indexes the markdown in your project so it can power the file tree, search, and the tools your AI agents call. When you don't want a file in that picture — drafts, scratch notes, vendor-pasted material — hide it with an ignore pattern. Hidden items don't appear in the file tree, don't show up in search, and don't reach AI tools through MCP. Nothing on disk is deleted.
+
+## Hide a file from the file tree
+
+Right-click any file in the sidebar and pick **Hide this file**. The file disappears from the tree immediately.
+
+Right-click a folder and pick **Hide files in this folder** to hide every file inside it.
+
+The hidden item is now ignored everywhere — search, agent context, and the document list returned by MCP tools. To bring it back, remove the matching row from Settings.
+
+## Manage patterns from Settings
+
+Open Settings (`Cmd/Ctrl-,` or App menu → Settings…) and stay on the **This project** tab. The **Ignore patterns** section lists every pattern in your project, one per row.
+
+You can:
+
+- **Add a pattern** — type a folder name (`drafts/`) or a file shape (`*.draft.md`) and press Enter.
+- **Edit a row** — click into it and type. Changes save when you blur or press Enter.
+- **Reorder rows** — drag the handle on the left.
+- **Remove a row** — click the × on the right.
+
+There is no Save button — every edit auto-saves to `.okignore` on disk.
+
+### Pattern preview
+
+Each row shows a **matches N visible files** preview as you type, debounced so the count settles after a brief pause. The count reflects what's currently visible — files already hidden by another row, or excluded by `.gitignore`, don't count toward it. A pattern that reports `matches 0` is usually a typo, but can also mean the file is already hidden by another rule.
+
+### Heuristic warnings
+
+A small amber warning icon appears next to a row when the pattern has a syntax oddity — a stray `[`, a trailing backslash, leading whitespace, a lone `!`, or a CRLF inside the line. These warnings are non-blocking nudges, not errors. The pattern still saves; the icon is a hint that you may have meant something different.
+
+If the validator on the server rejects a pattern (the only hard rule today is whitespace-only lines), the row flashes red and a banner reports the error with the line number. Your earlier valid patterns are kept; the rejected edit reverts.
+
+## Edits take effect immediately
+
+Adding, editing, or removing a pattern updates the running editor in under a second. The file tree refreshes, search re-indexes, and the next MCP tool call sees the new scope. No restart, no manual refresh.
+
+External edits work the same way: open `.okignore` in another editor, save, and the running editor picks up the change.
+
+## Advanced patterns
+
+`.okignore` uses [gitignore syntax](https://git-scm.com/docs/gitignore) parsed by the [`ignore`](https://www.npmjs.com/package/ignore) npm library — a JavaScript implementation of the gitignore pattern spec. The list editor handles common cases — folder-prefixed paths, glob patterns, plain filenames. For full syntax (negation with `!`, anchoring with `/`, the `**` recursive glob), click **Show advanced** under the list to edit `.okignore` as raw text.
+
+```text title=".okignore"
+# Exclude a directory
+drafts/
+
+# Exclude any file matching a pattern
+*.draft.md
+
+# Re-include a file .gitignore excluded
+!keep.md
+```
+
+Comments and blank lines round-trip exactly when you edit through the list — only the rows you change are rewritten. The advanced editor edits the file body verbatim.
+
+## Where the patterns live
+
+Patterns are stored in a `.okignore` file at your project root, alongside `.gitignore`. It's checked into version control and shared with anyone who clones the repo. Hand-edit it directly in any editor; Open Knowledge picks up changes the same way it picks up Settings edits.
+
+`ok init` creates a starter `.okignore` with a commented header so the file is there from day one.
+
+## Nested files
+
+Drop additional `.okignore` files at any folder depth. Each file scopes to its directory, the same way nested `.gitignore` files do. Nested files are honored at runtime but aren't currently editable from Settings — open them in your IDE.
+
+If Open Knowledge can't reload your ignore files (rare — usually a filesystem error), it surfaces a toast with the path that triggered the reload. The workspace keeps using the previous patterns until the next change.
+
+## Working with `.gitignore`
+
+`.gitignore` exclusions are honored automatically — no need to re-list them in `.okignore`. To re-include a file that `.gitignore` excluded, add a negation pattern:
+
+```text title=".okignore"
+!secret.md
+```
+
+`.gitignore` itself is git's contract; Open Knowledge never edits it. If you want a file out of git but visible in Open Knowledge, that's where the negation goes.
+
+The negation is an Open Knowledge behavior — `git` itself only reads `.gitignore`, so an `!` line in `.okignore` does not change what git tracks.
+
+## See also
+
+- [Configuration reference](/reference/configuration) — the project config schema and `content.dir`.

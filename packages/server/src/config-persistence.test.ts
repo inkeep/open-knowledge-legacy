@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
+  CONFIG_DOC_NAME_OKIGNORE,
   CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
@@ -23,6 +24,7 @@ import {
   CONFIG_VALIDATION_REVERT_ORIGIN,
 } from './config-edit-origin.ts';
 import {
+  __resetOkignoreTelemetryForTests,
   applyExternalConfigChange,
   type ConfigPersistenceCtx,
   configDocAbsPath,
@@ -106,6 +108,21 @@ describe('configDocAbsPath', () => {
   test('project-local doc resolves under projectDir/.ok/local/config.yml', () => {
     expect(configDocAbsPath(CONFIG_DOC_NAME_PROJECT_LOCAL, fx.ctx)).toBe(
       join(fx.projectDir, '.ok', 'local', 'config.yml'),
+    );
+  });
+
+  test('okignore doc resolves under projectDir/.okignore when contentDir is unset', () => {
+    expect(configDocAbsPath(CONFIG_DOC_NAME_OKIGNORE, fx.ctx)).toBe(
+      join(fx.projectDir, '.okignore'),
+    );
+  });
+
+  test('okignore doc resolves under contentDir/.okignore when contentDir is set', () => {
+    const contentDir = join(fx.projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    const ctxWithContent: ConfigPersistenceCtx = { ...fx.ctx, contentDir };
+    expect(configDocAbsPath(CONFIG_DOC_NAME_OKIGNORE, ctxWithContent)).toBe(
+      join(contentDir, '.okignore'),
     );
   });
 
@@ -636,5 +653,336 @@ describe('applyExternalConfigChange', () => {
     expect(outcome).toBe('no-op');
     const path = configDocAbsPath(CONFIG_DOC_NAME_PROJECT, fx.ctx);
     expect(existsSync(path)).toBe(false);
+  });
+});
+
+describe('okignore — loadConfigDoc cold start', () => {
+  test('missing disk file → empty Y.Text + LKG = empty string (not schema-defaults)', () => {
+    const doc = new Y.Doc();
+
+    loadConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, fx.ctx);
+
+    expect(doc.getText('source').toString()).toBe('');
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_OKIGNORE)).toBe('');
+  });
+
+  test('valid disk content seeds Y.Text + LKG with raw bytes', () => {
+    writeFileSync(
+      join(fx.projectDir, '.okignore'),
+      '# user comment\n\ndrafts/\n*.draft.md\n',
+      'utf-8',
+    );
+    const doc = new Y.Doc();
+
+    loadConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, fx.ctx);
+
+    const seeded = '# user comment\n\ndrafts/\n*.draft.md\n';
+    expect(doc.getText('source').toString()).toBe(seeded);
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_OKIGNORE)).toBe(seeded);
+  });
+
+  test('invalid disk content (whitespace-only line) seeds raw bytes but LKG falls back to empty string', () => {
+    const broken = 'drafts/\n   \n*.draft.md\n';
+    writeFileSync(join(fx.projectDir, '.okignore'), broken, 'utf-8');
+    const doc = new Y.Doc();
+
+    loadConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, fx.ctx);
+
+    expect(doc.getText('source').toString()).toBe(broken);
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_OKIGNORE)).toBe('');
+  });
+
+  test('contentDir override resolves to <contentDir>/.okignore (not projectDir)', () => {
+    const contentDir = join(fx.projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(join(contentDir, '.okignore'), 'drafts/\n', 'utf-8');
+    const doc = new Y.Doc();
+    const ctx: ConfigPersistenceCtx = { ...fx.ctx, contentDir };
+
+    loadConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, ctx);
+
+    expect(doc.getText('source').toString()).toBe('drafts/\n');
+    expect(ctx.lkgCache.get(CONFIG_DOC_NAME_OKIGNORE)).toBe('drafts/\n');
+  });
+});
+
+describe('okignore — storeConfigDoc validator', () => {
+  test('valid pattern body is persisted to <projectDir>/.okignore via atomic write', async () => {
+    const doc = new Y.Doc();
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, '');
+    doc.getText('source').insert(0, 'drafts/\n*.draft.md\n');
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, undefined, fx.ctx);
+
+    expect(outcome).toBe('persisted');
+    const path = configDocAbsPath(CONFIG_DOC_NAME_OKIGNORE, fx.ctx);
+    expect(readFileSync(path, 'utf-8')).toBe('drafts/\n*.draft.md\n');
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_OKIGNORE)).toBe('drafts/\n*.draft.md\n');
+    expect(fx.rejections).toHaveLength(0);
+
+    const entries = readdirSafe(fx.projectDir);
+    expect(entries.filter((e) => e.includes('.tmp.'))).toHaveLength(0);
+    expect(entries).toContain('.okignore');
+  });
+
+  test('comments + blank lines round-trip byte-identically', async () => {
+    const body = '# header comment\n\ndrafts/\n\n# another\n*.tmp\n';
+    const doc = new Y.Doc();
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, '');
+    doc.getText('source').insert(0, body);
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, undefined, fx.ctx);
+
+    expect(outcome).toBe('persisted');
+    expect(readFileSync(join(fx.projectDir, '.okignore'), 'utf-8')).toBe(body);
+  });
+
+  test('whitespace-only line is rejected with OKIGNORE_INVALID + 1-indexed lineNumber', async () => {
+    const doc = new Y.Doc();
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, 'drafts/\n');
+    doc.getText('source').insert(0, 'drafts/\n   \n*.tmp\n');
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, undefined, fx.ctx);
+
+    expect(outcome).toBe('reverted');
+    expect(doc.getText('source').toString()).toBe('drafts/\n');
+    expect(fx.rejections).toHaveLength(1);
+    const r = fx.rejections[0];
+    expect(r).toBeDefined();
+    if (!r || !isKnownConfigError(r.error)) throw new Error('expected known error');
+    expect(r.docName).toBe(CONFIG_DOC_NAME_OKIGNORE);
+    expect(r.error.code).toBe('OKIGNORE_INVALID');
+    if (r.error.code === 'OKIGNORE_INVALID') {
+      expect(r.error.lineNumber).toBe(2);
+    }
+    expect(existsSync(join(fx.projectDir, '.okignore'))).toBe(false);
+  });
+
+  test('truly empty line ("" between newlines) is accepted (round-tripped blank metadata)', async () => {
+    const doc = new Y.Doc();
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, '');
+    doc.getText('source').insert(0, 'a\n\nb\n\nc\n');
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, undefined, fx.ctx);
+
+    expect(outcome).toBe('persisted');
+    expect(readFileSync(join(fx.projectDir, '.okignore'), 'utf-8')).toBe('a\n\nb\n\nc\n');
+  });
+
+  test('rejection with no prior LKG falls back to empty string (matches Settings empty-state)', async () => {
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, '   \n');
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, undefined, fx.ctx);
+
+    expect(outcome).toBe('reverted');
+    expect(doc.getText('source').toString()).toBe('');
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_OKIGNORE)).toBe('');
+    expect(fx.rejections).toHaveLength(1);
+  });
+
+  test('back-to-back: invalid mutation reverts; subsequent valid mutation persists', async () => {
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, 'drafts/\n');
+    const doc = new Y.Doc();
+
+    doc.getText('source').insert(0, 'drafts/\n   \n');
+    const r1 = await storeConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, undefined, fx.ctx);
+    expect(r1).toBe('reverted');
+    expect(doc.getText('source').toString()).toBe('drafts/\n');
+
+    doc.transact(() => {
+      const t = doc.getText('source');
+      t.delete(0, t.length);
+      t.insert(0, 'drafts/\n*.tmp\n');
+    });
+    const r2 = await storeConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, undefined, fx.ctx);
+    expect(r2).toBe('persisted');
+    expect(readFileSync(join(fx.projectDir, '.okignore'), 'utf-8')).toBe('drafts/\n*.tmp\n');
+  });
+
+  test('content equals LKG → no-op (no spurious rewrite)', async () => {
+    const body = 'drafts/\n*.tmp\n';
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, body);
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, body);
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, undefined, fx.ctx);
+
+    expect(outcome).toBe('no-op');
+    expect(existsSync(join(fx.projectDir, '.okignore'))).toBe(false);
+  });
+
+  test('revert transaction uses CONFIG_VALIDATION_REVERT_ORIGIN', async () => {
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, 'drafts/\n');
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, '   \n');
+
+    const observedOrigins: unknown[] = [];
+    doc.on('afterTransaction', (tx) => {
+      observedOrigins.push(tx.origin);
+    });
+
+    await storeConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, undefined, fx.ctx);
+
+    expect(observedOrigins.some((o) => o === CONFIG_VALIDATION_REVERT_ORIGIN)).toBe(true);
+  });
+
+  test('persists to <contentDir>/.okignore when contentDir differs from projectDir', async () => {
+    const contentDir = join(fx.projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    const ctx: ConfigPersistenceCtx = { ...fx.ctx, contentDir };
+    const doc = new Y.Doc();
+    ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, '');
+    doc.getText('source').insert(0, 'drafts/\n');
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, undefined, ctx);
+
+    expect(outcome).toBe('persisted');
+    expect(readFileSync(join(contentDir, '.okignore'), 'utf-8')).toBe('drafts/\n');
+    expect(existsSync(join(fx.projectDir, '.okignore'))).toBe(false);
+  });
+});
+
+describe('okignore — applyExternalConfigChange', () => {
+  test('valid external content updates Y.Text under CONFIG_FILE_WATCHER_ORIGIN', () => {
+    const doc = new Y.Doc();
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, '');
+
+    let observedOrigin: unknown = null;
+    doc.on('afterTransaction', (tx) => {
+      observedOrigin = tx.origin;
+    });
+
+    const newContent = 'drafts/\n*.tmp\n';
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_OKIGNORE, newContent, fx.ctx);
+
+    expect(outcome).toBe('applied');
+    expect(doc.getText('source').toString()).toBe(newContent);
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_OKIGNORE)).toBe(newContent);
+    expect(observedOrigin).toBe(CONFIG_FILE_WATCHER_ORIGIN);
+    expect(fx.rejections).toHaveLength(0);
+  });
+
+  test('invalid external content (whitespace-only line) → rejected; Y.Text NOT mutated', () => {
+    const doc = new Y.Doc();
+    const valid = 'drafts/\n';
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, valid);
+    doc.getText('source').insert(0, valid);
+
+    const broken = 'drafts/\n   \n';
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_OKIGNORE, broken, fx.ctx);
+
+    expect(outcome).toBe('rejected');
+    expect(doc.getText('source').toString()).toBe(valid);
+    expect(fx.rejections).toHaveLength(1);
+    const error = fx.rejections[0]?.error;
+    expect(error).toBeDefined();
+    if (error && isKnownConfigError(error) && error.code === 'OKIGNORE_INVALID') {
+      expect(error.lineNumber).toBe(2);
+    } else {
+      throw new Error('expected OKIGNORE_INVALID error');
+    }
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_OKIGNORE)).toBe(valid);
+  });
+
+  test('content equal to LKG short-circuits: no rejection, no Y.Text mutation', () => {
+    const doc = new Y.Doc();
+    const body = 'drafts/\n';
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, body);
+    doc.getText('source').insert(0, body);
+
+    let mutationCount = 0;
+    doc.on('afterTransaction', (tx) => {
+      if (tx.origin === CONFIG_FILE_WATCHER_ORIGIN) mutationCount++;
+    });
+
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_OKIGNORE, body, fx.ctx);
+
+    expect(outcome).toBe('no-op');
+    expect(mutationCount).toBe(0);
+    expect(fx.rejections).toHaveLength(0);
+  });
+});
+
+describe('okignore — rejection counter telemetry', () => {
+  let metricExporter: import('@opentelemetry/sdk-metrics').InMemoryMetricExporter;
+  let meterProvider: import('@opentelemetry/sdk-metrics').MeterProvider;
+  let metricReader: import('@opentelemetry/sdk-metrics').PeriodicExportingMetricReader;
+
+  beforeEach(async () => {
+    const sdk = await import('@opentelemetry/sdk-metrics');
+    const api = await import('@opentelemetry/api');
+    metricExporter = new sdk.InMemoryMetricExporter(sdk.AggregationTemporality.CUMULATIVE);
+    metricReader = new sdk.PeriodicExportingMetricReader({
+      exporter: metricExporter,
+      exportIntervalMillis: 60_000,
+    });
+    meterProvider = new sdk.MeterProvider({ readers: [metricReader] });
+    api.metrics.setGlobalMeterProvider(meterProvider);
+    __resetOkignoreTelemetryForTests();
+  });
+
+  afterEach(async () => {
+    const api = await import('@opentelemetry/api');
+    await meterProvider.shutdown();
+    api.metrics.disable();
+    __resetOkignoreTelemetryForTests();
+  });
+
+  async function readPoints(
+    name: string,
+  ): Promise<Array<{ attributes: Record<string, unknown>; value: number }>> {
+    await metricReader.forceFlush();
+    const out: Array<{ attributes: Record<string, unknown>; value: number }> = [];
+    for (const rm of metricExporter.getMetrics()) {
+      for (const sm of rm.scopeMetrics) {
+        for (const metric of sm.metrics) {
+          if (metric.descriptor.name !== name) continue;
+          for (const dp of metric.dataPoints) {
+            out.push({ attributes: dp.attributes, value: dp.value as number });
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  test('rejection from storeConfigDoc increments ok.config.ignore.rejection_total with bounded error.code label', async () => {
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, '');
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, '   \n');
+
+    await storeConfigDoc(doc, CONFIG_DOC_NAME_OKIGNORE, undefined, fx.ctx);
+
+    const points = await readPoints('ok.config.ignore.rejection_total');
+    const total = points.reduce((acc, p) => acc + p.value, 0);
+    expect(total).toBe(1);
+    for (const p of points) {
+      expect(Object.keys(p.attributes).sort()).toEqual(['error.code']);
+      expect(p.attributes['error.code']).toBe('OKIGNORE_INVALID');
+    }
+  });
+
+  test('rejection from applyExternalConfigChange also increments the counter', async () => {
+    const doc = new Y.Doc();
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_OKIGNORE, 'drafts/\n');
+
+    applyExternalConfigChange(doc, CONFIG_DOC_NAME_OKIGNORE, '   \n', fx.ctx);
+
+    const points = await readPoints('ok.config.ignore.rejection_total');
+    const total = points.reduce((acc, p) => acc + p.value, 0);
+    expect(total).toBe(1);
+  });
+
+  test('YAML config rejection does NOT increment the okignore counter', async () => {
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'mcp:\n  autoStart: true\n');
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, 'broken: [yaml\n');
+
+    await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
+
+    const points = await readPoints('ok.config.ignore.rejection_total');
+    const total = points.reduce((acc, p) => acc + p.value, 0);
+    expect(total).toBe(0);
   });
 });

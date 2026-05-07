@@ -1,4 +1,9 @@
-import type { HandoffOutcome, HandoffTarget, InstallState } from '@inkeep/open-knowledge-core';
+import type {
+  HandoffOutcome,
+  HandoffTarget,
+  InstallState,
+  OkignoreBinding,
+} from '@inkeep/open-knowledge-core';
 import {
   type ContextMenuItem,
   type ContextMenuOpenContext,
@@ -11,6 +16,7 @@ import {
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import {
   Copy,
+  EyeOff,
   FolderOpen,
   FolderPlus,
   FoldVertical,
@@ -54,6 +60,7 @@ import {
   treePathSignature,
   treePathToAppPath,
 } from '@/components/file-tree-adapter';
+import { buildOkignorePatternFromTarget } from '@/components/file-tree-okignore';
 import {
   applyDeleteToDocuments,
   applyRenameToDocuments,
@@ -72,6 +79,11 @@ import {
   isAssetEntry,
   isDocumentEntry,
 } from '@/components/file-tree-utils';
+import {
+  appendPattern,
+  parseOkignoreDoc,
+  serializeOkignoreDoc,
+} from '@/components/settings/okignore-doc';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import {
@@ -85,6 +97,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { useConfigContext } from '@/lib/config-provider';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { createRefreshScheduler } from '@/lib/refresh-scheduler';
@@ -260,6 +273,7 @@ interface FileTreeMenuProps {
     ) => Promise<HandoffOutcome>;
   };
   model: PierreFileTreeModel;
+  okignoreBinding: OkignoreBinding | null;
   onStartCreating: (kind: 'file' | 'folder', parentDir: string) => void;
   onDelete: (target: FileTreeTarget) => void;
   onExpandSubtree: (treePath: string) => void;
@@ -295,6 +309,7 @@ function FileTreeMenu({
   workspace,
   handoff,
   model,
+  okignoreBinding,
   onStartCreating,
   onDelete,
   onExpandSubtree,
@@ -303,6 +318,8 @@ function FileTreeMenu({
 }: FileTreeMenuProps) {
   const target = treeItemToTarget(item);
   const isFolder = item.kind === 'directory';
+  const canHide = !isAsset && okignoreBinding !== null;
+  const hideLabel = isFolder ? 'Hide files in this folder' : 'Hide this file';
   const handoffInput = !isFolder
     ? buildHandoffInput({
         docName: treeFilePathToDocName(item.path),
@@ -434,6 +451,24 @@ function FileTreeMenu({
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
+              data-testid="file-tree-menu-hide"
+              disabled={!canHide}
+              onSelect={() => {
+                if (!okignoreBinding) return;
+                close();
+                const pattern = buildOkignorePatternFromTarget(target);
+                const current = okignoreBinding.current();
+                const next = serializeOkignoreDoc(
+                  appendPattern(parseOkignoreDoc(current), pattern),
+                );
+                okignoreBinding.patch(next);
+              }}
+            >
+              <EyeOff aria-hidden="true" />
+              {hideLabel}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
               variant="destructive"
               disabled={anyActionBusy}
               onSelect={() => {
@@ -523,6 +558,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     isElectronHost: typeof window !== 'undefined' && window.okDesktop != null,
     dispatch: dispatchHandoff,
   };
+  const { okignoreBinding } = useConfigContext();
 
   const isAvailable = () => busyPathRef.current === null;
 
@@ -1137,6 +1173,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
             workspace={workspace}
             handoff={handoff}
             model={model}
+            okignoreBinding={okignoreBinding}
             onStartCreating={startCreating}
             onDelete={setDeleteTarget}
             onExpandSubtree={expandSubtree}

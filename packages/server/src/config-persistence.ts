@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import {
   addConfigSpanEvent,
+  CONFIG_DOC_NAME_OKIGNORE,
   CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
@@ -14,6 +15,7 @@ import {
   withConfigSpanSync,
 } from '@inkeep/open-knowledge-core';
 import { resolveConfigPath } from '@inkeep/open-knowledge-core/server';
+import type { Counter } from '@opentelemetry/api';
 import { parseDocument, stringify } from 'yaml';
 import type * as Y from 'yjs';
 import {
@@ -22,12 +24,28 @@ import {
 } from './config-edit-origin.ts';
 import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './fs-traced.ts';
 import { getLogger } from './logger.ts';
+import { getMeter } from './telemetry.ts';
 
 function configScopeAttr(documentName: string): WriteScope | undefined {
   if (documentName === CONFIG_DOC_NAME_PROJECT) return 'project';
   if (documentName === CONFIG_DOC_NAME_PROJECT_LOCAL) return 'project-local';
   if (documentName === CONFIG_DOC_NAME_USER) return 'user';
+  if (documentName === CONFIG_DOC_NAME_OKIGNORE) return 'project';
   return undefined;
+}
+
+let _okignoreRejectionCounter: Counter | null = null;
+function okignoreRejectionCounter(): Counter {
+  if (!_okignoreRejectionCounter) {
+    _okignoreRejectionCounter = getMeter().createCounter('ok.config.ignore.rejection_total', {
+      description: 'Count of okignore L3 rejections by error code.',
+    });
+  }
+  return _okignoreRejectionCounter;
+}
+
+export function __resetOkignoreTelemetryForTests(): void {
+  _okignoreRejectionCounter = null;
 }
 
 function emitSchemaInvalidIssueEvents(error: ConfigValidationError): void {
@@ -43,6 +61,7 @@ function emitSchemaInvalidIssueEvents(error: ConfigValidationError): void {
 
 export interface ConfigPersistenceCtx {
   projectDir: string;
+  contentDir?: string;
   lkgCache: Map<string, string>;
   homedirOverride?: string;
   onConfigRejected?: (docName: string, error: ConfigValidationError) => void;
@@ -57,6 +76,9 @@ export function configDocAbsPath(documentName: string, ctx: ConfigPersistenceCtx
   }
   if (documentName === CONFIG_DOC_NAME_USER) {
     return resolveConfigPath('user', ctx.projectDir, ctx.homedirOverride);
+  }
+  if (documentName === CONFIG_DOC_NAME_OKIGNORE) {
+    return resolve(ctx.contentDir ?? ctx.projectDir, '.okignore');
   }
   throw new Error(`configDocAbsPath: not a config doc name: ${documentName}`);
 }
@@ -75,6 +97,38 @@ interface ValidConfig {
 interface InvalidConfig {
   readonly ok: false;
   readonly error: ConfigValidationError;
+}
+
+function validateOkignore(content: string): ValidConfig | InvalidConfig {
+  if (content.length === 0) return { ok: true };
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (line.length === 0) continue;
+    if (/^\s+$/.test(line)) {
+      return {
+        ok: false,
+        error: {
+          code: 'OKIGNORE_INVALID',
+          detail: 'Whitespace-only pattern is not allowed.',
+          lineNumber: i + 1,
+        },
+      };
+    }
+  }
+  return { ok: true };
+}
+
+function validateConfigContent(documentName: string, content: string): ValidConfig | InvalidConfig {
+  if (documentName === CONFIG_DOC_NAME_OKIGNORE) {
+    return validateOkignore(content);
+  }
+  return validateConfigYaml(content);
+}
+
+function defaultLkgFor(documentName: string): string {
+  if (documentName === CONFIG_DOC_NAME_OKIGNORE) return '';
+  return serializedDefaults();
 }
 
 function validateConfigYaml(content: string): ValidConfig | InvalidConfig {
@@ -128,11 +182,11 @@ export function loadConfigDoc(
     }
   }
 
-  const validation = validateConfigYaml(raw);
+  const validation = validateConfigContent(documentName, raw);
   if (!validation.ok && raw.length > 0) {
     getLogger('config-persistence').warn(
       { docName: documentName, path: filePath },
-      `[config-persistence] loadConfigDoc seeding invalid YAML for ${documentName} into Y.Text — first mutation will revert to LKG`,
+      `[config-persistence] loadConfigDoc seeding invalid content for ${documentName} into Y.Text — first mutation will revert to LKG`,
     );
   }
 
@@ -143,7 +197,7 @@ export function loadConfigDoc(
   if (validation.ok && raw.length > 0) {
     ctx.lkgCache.set(documentName, raw);
   } else {
-    ctx.lkgCache.set(documentName, serializedDefaults());
+    ctx.lkgCache.set(documentName, defaultLkgFor(documentName));
   }
 }
 
@@ -207,7 +261,7 @@ async function storeConfigDocInner(
     'config.validate',
     { 'config.scope': scope, 'config.validation.layer': 'L3' },
     (validateSpan) => {
-      const r = validateConfigYaml(content);
+      const r = validateConfigContent(documentName, content);
       validateSpan.setAttribute('config.outcome', r.ok ? 'success' : 'rejected');
       if (!r.ok) emitSchemaInvalidIssueEvents(r.error);
       return r;
@@ -218,13 +272,16 @@ async function storeConfigDocInner(
       'config.revert',
       { 'config.scope': scope, 'config.outcome': 'reverted' },
       async () => {
-        const fallbackLkg = lkg ?? serializedDefaults();
+        const fallbackLkg = lkg ?? defaultLkgFor(documentName);
         document.transact(() => {
           if (ytext.length > 0) ytext.delete(0, ytext.length);
           ytext.insert(0, fallbackLkg);
         }, CONFIG_VALIDATION_REVERT_ORIGIN);
         if (lkg === undefined) {
           ctx.lkgCache.set(documentName, fallbackLkg);
+        }
+        if (documentName === CONFIG_DOC_NAME_OKIGNORE && isKnownConfigError(validation.error)) {
+          okignoreRejectionCounter().add(1, { 'error.code': validation.error.code });
         }
         ctx.onConfigRejected?.(documentName, validation.error);
       },
@@ -269,13 +326,16 @@ export function applyExternalConfigChange(
     'config.validate',
     { 'config.scope': scope, 'config.validation.layer': 'L3' },
     (validateSpan) => {
-      const r = validateConfigYaml(content);
+      const r = validateConfigContent(documentName, content);
       validateSpan.setAttribute('config.outcome', r.ok ? 'success' : 'rejected');
       if (!r.ok) emitSchemaInvalidIssueEvents(r.error);
       return r;
     },
   );
   if (!validation.ok) {
+    if (documentName === CONFIG_DOC_NAME_OKIGNORE && isKnownConfigError(validation.error)) {
+      okignoreRejectionCounter().add(1, { 'error.code': validation.error.code });
+    }
     ctx.onConfigRejected?.(documentName, validation.error);
     return 'rejected';
   }

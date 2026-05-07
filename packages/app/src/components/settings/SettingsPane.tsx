@@ -69,9 +69,11 @@ import {
   useSyncEnabledWriter,
 } from '@/hooks/use-enable-sync-with-confirm';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
+import { useConfigContext } from '@/lib/config-provider';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
 import type { SettingsScope } from '@/lib/use-settings-route';
 import { ChannelSection } from './ChannelSection';
+import { OkignoreSection } from './OkignoreSection';
 import {
   getEnumOptions,
   getFieldDefault,
@@ -323,6 +325,7 @@ interface SettingsFormProps {
 }
 
 function SettingsForm({ scope, commitField, flashedPath }: SettingsFormProps) {
+  const { okignoreBinding, okignoreSynced } = useConfigContext();
   return (
     <div className="mx-auto max-w-3xl space-y-8 p-6">
       {SECTIONS.map((section) => {
@@ -345,6 +348,9 @@ function SettingsForm({ scope, commitField, flashedPath }: SettingsFormProps) {
         );
       })}
       {scope === 'project' ? <SyncSection /> : null}
+      {scope === 'project' ? (
+        <OkignoreSection binding={okignoreBinding} synced={okignoreSynced} />
+      ) : null}
       {scope === 'user' ? <ChannelSection /> : null}
       <IntegrationsSection />
     </div>

@@ -64,6 +64,11 @@ export const KnownConfigValidationErrorSchema = z.discriminatedUnion('code', [
     detail: z.string(),
   }),
   z.object({
+    code: z.literal('OKIGNORE_INVALID'),
+    detail: z.string(),
+    lineNumber: z.number().int().min(1).optional(),
+  }),
+  z.object({
     code: z.literal('UNKNOWN'),
     message: z.string().optional(),
   }),
@@ -163,6 +168,10 @@ export function humanFormat(error: ConfigValidationError): string {
     }
     case 'WRITE_ERROR':
       return `Failed to write config file: ${error.detail}`;
+    case 'OKIGNORE_INVALID':
+      return error.lineNumber !== undefined
+        ? `.okignore line ${error.lineNumber}: ${error.detail}`
+        : `.okignore: ${error.detail}`;
     case 'UNKNOWN':
       return error.message ?? 'Unknown error.';
   }

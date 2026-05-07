@@ -62,6 +62,17 @@ export {
   type Unsubscribe,
 } from './config/bind-config-doc.ts';
 export {
+  type BindOkignoreDocOptions,
+  bindOkignoreDoc,
+  type OkignoreBinding,
+  type OkignoreBindingPatchResult,
+  type OkignoreBindingPatchSuccess,
+  type OkignoreBindingRejection,
+  type OkignoreBindingStatus,
+  type OkignoreDocProvider,
+  type OkignoreUnsubscribe,
+} from './config/bind-okignore-doc.ts';
+export {
   type ConfigIssue,
   ConfigIssueSchema,
   type ConfigIssueSource,
@@ -118,6 +129,7 @@ export {
 } from './constants/activity.ts';
 export {
   CC1_CONTRACT_VERSION,
+  CONFIG_DOC_NAME_OKIGNORE,
   CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
@@ -293,12 +305,15 @@ export {
 } from './schemas/api.ts';
 export {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
   CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CHANNEL_SERVER_INFO,
   type CC1BranchSwitchedPayload,
   CC1BranchSwitchedPayloadSchema,
   type CC1Channel,
+  type CC1ConfigIgnoreNestedErrorPayload,
+  CC1ConfigIgnoreNestedErrorPayloadSchema,
   type CC1ConfigValidationRejectedPayload,
   CC1ConfigValidationRejectedPayloadSchema,
   type CC1DerivedViewPayload,

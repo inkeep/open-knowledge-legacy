@@ -227,6 +227,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const configLkgCache = new Map<string, string>();
   const configPersistenceCtx: ConfigPersistenceCtx = {
     projectDir,
+    contentDir,
     lkgCache: configLkgCache,
     homedirOverride: options?.configHomedirOverride,
     onConfigRejected: options?.onConfigRejected,
@@ -695,7 +696,15 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
                   );
                 }
                 if (canonical && isWithinContentDir(canonical, contentDir)) {
-                  diskContent = readFileSync(canonical, 'utf-8');
+                  try {
+                    diskContent = readFileSync(canonical, 'utf-8');
+                  } catch (readErr) {
+                    log.warn(
+                      { err: readErr, documentName, canonical },
+                      `[persistence] Tripwire reset readFileSync failed for ${documentName}; using currentBase`,
+                    );
+                    diskContent = currentBase;
+                  }
                 } else {
                   if (canonical) {
                     console.warn(

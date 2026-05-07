@@ -75,10 +75,50 @@ describe('ConfigValidationErrorSchema', () => {
       'NOT_AGENT_SETTABLE',
       'MIXED_SCOPE',
       'WRITE_ERROR',
+      'OKIGNORE_INVALID',
       'UNKNOWN',
     ] as const) {
       expect(isKnownConfigError({ code, detail: 'x' } as never)).toBe(true);
     }
+  });
+
+  test('parses OKIGNORE_INVALID variant with detail and optional lineNumber', () => {
+    const withLine = ConfigValidationErrorSchema.parse({
+      code: 'OKIGNORE_INVALID',
+      detail: 'empty pattern not allowed',
+      lineNumber: 4,
+    });
+    expect(withLine.code).toBe('OKIGNORE_INVALID');
+    if (withLine.code === 'OKIGNORE_INVALID') {
+      expect(withLine.detail).toBe('empty pattern not allowed');
+      expect(withLine.lineNumber).toBe(4);
+    }
+
+    const withoutLine = ConfigValidationErrorSchema.parse({
+      code: 'OKIGNORE_INVALID',
+      detail: 'body rejected',
+    });
+    expect(withoutLine.code).toBe('OKIGNORE_INVALID');
+    if (withoutLine.code === 'OKIGNORE_INVALID') {
+      expect(withoutLine.lineNumber).toBeUndefined();
+    }
+  });
+
+  test('OKIGNORE_INVALID rejects non-positive lineNumber', () => {
+    expect(
+      KnownConfigValidationErrorSchema.safeParse({
+        code: 'OKIGNORE_INVALID',
+        detail: 'x',
+        lineNumber: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      KnownConfigValidationErrorSchema.safeParse({
+        code: 'OKIGNORE_INVALID',
+        detail: 'x',
+        lineNumber: -3,
+      }).success,
+    ).toBe(false);
   });
 
   test('KnownConfigValidationErrorSchema rejects unknown code', () => {
@@ -162,6 +202,22 @@ describe('humanFormat', () => {
   test('UNKNOWN with message renders message; without message renders generic', () => {
     expect(humanFormat({ code: 'UNKNOWN', message: 'boom' })).toBe('boom');
     expect(humanFormat({ code: 'UNKNOWN' })).toBe('Unknown error.');
+  });
+
+  test('OKIGNORE_INVALID renders with line number when present', () => {
+    const out = humanFormat({
+      code: 'OKIGNORE_INVALID',
+      detail: 'whitespace-only line',
+      lineNumber: 7,
+    });
+    expect(out).toContain('line 7');
+    expect(out).toContain('whitespace-only line');
+  });
+
+  test('OKIGNORE_INVALID renders without line number when absent', () => {
+    const out = humanFormat({ code: 'OKIGNORE_INVALID', detail: 'body rejected' });
+    expect(out).toContain('body rejected');
+    expect(out).not.toContain('line ');
   });
 
   test('forward-compat tail uses message or generic with code', () => {

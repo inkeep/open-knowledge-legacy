@@ -1,9 +1,19 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { context, metrics, trace } from '@opentelemetry/api';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  type ReadableSpan,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
+import ignore from 'ignore';
 import { createContentFilter } from './content-filter.ts';
+import { installTestLoggers, loggerFactory } from './logger.ts';
 
 describe('ContentFilter', () => {
   let projectDir: string;
@@ -582,6 +592,293 @@ describe('ContentFilter', () => {
 
       expect(filter.isExcluded('docs/screenshot.png')).toBe(false);
       expect(filter.isPathIgnored('docs/screenshot.png')).toBe(false);
+    });
+  });
+
+  describe('rebuildIgnorePatterns', () => {
+    test('reflects new patterns after .okignore is created on disk', async () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+      expect(filter.isExcluded('drafts/foo.md')).toBe(false);
+
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n');
+      const result = await filter.rebuildIgnorePatterns();
+
+      expect(result.ok).toBe(true);
+      expect(filter.isExcluded('drafts/foo.md')).toBe(true);
+      expect(filter.isExcluded('docs/guide.md')).toBe(false);
+    });
+
+    test('removes patterns when .okignore is deleted on disk', async () => {
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n');
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+      expect(filter.isExcluded('drafts/foo.md')).toBe(true);
+
+      rmSync(join(projectDir, '.okignore'));
+      await filter.rebuildIgnorePatterns();
+
+      expect(filter.isExcluded('drafts/foo.md')).toBe(false);
+    });
+
+    test('refreshes watcher globs when patterns change', async () => {
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n');
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+      expect(filter.getWatcherIgnoreGlobs()).toContain('drafts/');
+
+      writeFileSync(join(projectDir, '.okignore'), 'archive/\n');
+      await filter.rebuildIgnorePatterns();
+
+      const globs = filter.getWatcherIgnoreGlobs();
+      expect(globs).toContain('archive/');
+      expect(globs).not.toContain('drafts/');
+    });
+
+    test('refreshes sibling-asset dirCount against new exclusions', async () => {
+      mkdirSync(join(projectDir, 'docs'));
+      writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+      expect(filter.isExcluded('docs/screenshot.png')).toBe(false);
+
+      writeFileSync(join(projectDir, '.okignore'), 'docs/\n');
+      await filter.rebuildIgnorePatterns();
+
+      expect(filter.isExcluded('docs/guide.md')).toBe(true);
+      expect(filter.isExcluded('docs/screenshot.png')).toBe(true);
+    });
+
+    test('returns RebuildResult with success branch and bounded attrs', async () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'node_modules/\n');
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\nscratch/\n');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+      const result = await filter.rebuildIgnorePatterns();
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unreachable');
+      expect(result.patternCount).toBe(3);
+      expect(result.nestedFileCount).toBe(0);
+      expect(typeof result.bytes).toBe('number');
+      expect(result.bytes).toBeGreaterThan(0);
+      expect(typeof result.durationMs).toBe('number');
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    test('counts nested ignore files correctly', async () => {
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n');
+      mkdirSync(join(projectDir, 'subdir'));
+      writeFileSync(join(projectDir, 'subdir', '.okignore'), 'private.md\n');
+      mkdirSync(join(projectDir, 'subdir', 'deep'), { recursive: true });
+      writeFileSync(join(projectDir, 'subdir', 'deep', '.gitignore'), 'tmp/\n');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+      const result = await filter.rebuildIgnorePatterns();
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('unreachable');
+      expect(result.nestedFileCount).toBe(2);
+    });
+
+    test('fires onAfterRebuild on success', async () => {
+      let calls = 0;
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        onAfterRebuild: () => {
+          calls++;
+        },
+      });
+
+      expect(calls).toBe(0);
+
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n');
+      const result = await filter.rebuildIgnorePatterns();
+
+      expect(result.ok).toBe(true);
+      expect(calls).toBe(1);
+    });
+
+    test('does not fire onAfterRebuild on error (state rolls back)', async () => {
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n');
+      let calls = 0;
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        onAfterRebuild: () => {
+          calls++;
+        },
+      });
+
+      const sampleProto = Object.getPrototypeOf(ignore());
+      const addSpy = spyOn(sampleProto, 'add').mockImplementationOnce(() => {
+        throw new Error('forced ignore.add failure');
+      });
+
+      try {
+        const result = await filter.rebuildIgnorePatterns();
+        expect(result.ok).toBe(false);
+        if (result.ok) throw new Error('unreachable');
+        expect(result.error.message).toContain('forced ignore.add failure');
+        expect(calls).toBe(0);
+        expect(filter.isExcluded('drafts/foo.md')).toBe(true);
+        expect(filter.isExcluded('docs/guide.md')).toBe(false);
+      } finally {
+        addSpy.mockRestore();
+      }
+    });
+
+    test('rolls back state on error (ig + watcherGlobs + dirCount)', async () => {
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n');
+      mkdirSync(join(projectDir, 'docs'));
+      writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+      expect(filter.isExcluded('drafts/x.md')).toBe(true);
+      expect(filter.isExcluded('docs/screenshot.png')).toBe(false);
+      expect(filter.getWatcherIgnoreGlobs()).toContain('drafts/');
+
+      const sampleProto = Object.getPrototypeOf(ignore());
+      const addSpy = spyOn(sampleProto, 'add').mockImplementationOnce(() => {
+        throw new Error('boom');
+      });
+
+      writeFileSync(join(projectDir, '.okignore'), 'archive/\n');
+
+      try {
+        const result = await filter.rebuildIgnorePatterns();
+        expect(result.ok).toBe(false);
+
+        expect(filter.isExcluded('drafts/x.md')).toBe(true);
+        expect(filter.isExcluded('archive/x.md')).toBe(false);
+        expect(filter.getWatcherIgnoreGlobs()).toContain('drafts/');
+        expect(filter.getWatcherIgnoreGlobs()).not.toContain('archive/');
+        expect(filter.isExcluded('docs/screenshot.png')).toBe(false);
+      } finally {
+        addSpy.mockRestore();
+      }
+    });
+
+    test('callback throws are logged but do not roll back the rebuild', async () => {
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        onAfterRebuild: () => {
+          throw new Error('callback explosion');
+        },
+      });
+
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n');
+      const result = await filter.rebuildIgnorePatterns();
+
+      expect(result.ok).toBe(true);
+      expect(filter.isExcluded('drafts/foo.md')).toBe(true);
+    });
+  });
+
+  describe('rebuildIgnorePatterns telemetry', () => {
+    let exporter: InMemorySpanExporter;
+    let provider: BasicTracerProvider;
+
+    beforeEach(() => {
+      exporter = new InMemorySpanExporter();
+      provider = new BasicTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      trace.setGlobalTracerProvider(provider);
+      context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+      installTestLoggers();
+    });
+
+    afterEach(async () => {
+      await provider.shutdown();
+      trace.disable();
+      metrics.disable();
+      context.disable();
+      loggerFactory.reset();
+    });
+
+    test('emits one config.ignore.rebuild span per call with bounded attrs', async () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'node_modules/\n');
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\nscratch/\n');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+      const result = await filter.rebuildIgnorePatterns();
+      expect(result.ok).toBe(true);
+
+      const spans = exporter
+        .getFinishedSpans()
+        .filter((s: ReadableSpan) => s.name === 'config.ignore.rebuild');
+      expect(spans.length).toBe(1);
+      const span = spans[0];
+      if (!span) throw new Error('no span');
+
+      const attrs = span.attributes;
+      expect(attrs['ok.ignore.pattern_count']).toBe(3);
+      expect(attrs['ok.ignore.nested_file_count']).toBe(0);
+      expect(typeof attrs['ok.ignore.bytes']).toBe('number');
+
+      const allowedAttrKeys = new Set([
+        'ok.ignore.pattern_count',
+        'ok.ignore.nested_file_count',
+        'ok.ignore.bytes',
+      ]);
+      for (const key of Object.keys(attrs)) {
+        expect(allowedAttrKeys.has(key)).toBe(true);
+      }
+    });
+
+    test('failed rebuild still emits the span, with ERROR status', async () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      const sampleProto = Object.getPrototypeOf(ignore());
+      const addSpy = spyOn(sampleProto, 'add').mockImplementationOnce(() => {
+        throw new Error('boom');
+      });
+
+      try {
+        const result = await filter.rebuildIgnorePatterns();
+        expect(result.ok).toBe(false);
+      } finally {
+        addSpy.mockRestore();
+      }
+
+      const spans = exporter
+        .getFinishedSpans()
+        .filter((s: ReadableSpan) => s.name === 'config.ignore.rebuild');
+      expect(spans.length).toBe(1);
+      const span = spans[0];
+      if (!span) throw new Error('no span');
+      expect(span.status).toBeDefined();
+    });
+  });
+
+  describe('rebuildIgnorePatterns performance gate (NFR Performance)', () => {
+    test('rebuild on N=1000-doc workspace completes well under 500ms', async () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'node_modules/\n');
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n');
+      for (let d = 0; d < 50; d++) {
+        const dir = join(projectDir, `folder-${d}`);
+        mkdirSync(dir);
+        for (let f = 0; f < 20; f++) {
+          writeFileSync(join(dir, `doc-${f}.md`), '# x');
+        }
+        if (d % 10 === 0) {
+          writeFileSync(join(dir, '.okignore'), 'tmp/\n');
+        }
+      }
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      await filter.rebuildIgnorePatterns();
+
+      const samples: number[] = [];
+      const runs = 5;
+      for (let i = 0; i < runs; i++) {
+        const result = await filter.rebuildIgnorePatterns();
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error('unreachable');
+        samples.push(result.durationMs);
+      }
+      const max = Math.max(...samples);
+      expect(max).toBeLessThan(500);
     });
   });
 
