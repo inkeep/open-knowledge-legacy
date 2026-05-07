@@ -1,7 +1,7 @@
 import { extname } from 'node:path';
 
 export const SUPPORTED_DOC_EXTENSIONS = ['.mdx', '.md'] as const;
-export type DocExtension = (typeof SUPPORTED_DOC_EXTENSIONS)[number];
+type DocExtension = (typeof SUPPORTED_DOC_EXTENSIONS)[number];
 
 const DEFAULT_EXTENSION: DocExtension = '.md';
 
