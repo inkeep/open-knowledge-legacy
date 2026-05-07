@@ -5,8 +5,13 @@ const SMALL_VIEWPORT = { width: 1024, height: 800 } as const;
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 } as const;
 const SIDEBAR_WIDTH_PX = 288; // 18rem at 16px root font
 
+const trigger = (page: Page) => page.locator('[data-sidebar="trigger"]');
+const inset = (page: Page) => page.locator('[data-slot="sidebar-inset"]');
+const mobileExpanded = (page: Page) =>
+  page.locator('[data-slot="sidebar"][data-mobile="true"][data-state="expanded"]');
+
 async function getInsetTranslateX(page: Page): Promise<number> {
-  const styles = await page.locator('[data-slot="sidebar-inset"]').evaluate((el) => {
+  const styles = await inset(page).evaluate((el) => {
     const cs = window.getComputedStyle(el);
     return { translate: cs.translate, transform: cs.transform };
   });
@@ -22,17 +27,11 @@ async function getInsetTranslateX(page: Page): Promise<number> {
   return 0;
 }
 
-async function isSidebarOpen(
-  page: Page,
-  branch: 'mobile' | 'desktop' | 'either',
-): Promise<boolean> {
-  const baseSelector = '[data-slot="sidebar"]';
+async function isSidebarOpen(page: Page, branch: 'mobile' | 'desktop'): Promise<boolean> {
   const selector =
     branch === 'mobile'
-      ? `${baseSelector}[data-mobile="true"]`
-      : branch === 'desktop'
-        ? `${baseSelector}:not([data-mobile])`
-        : baseSelector;
+      ? '[data-slot="sidebar"][data-mobile="true"]'
+      : '[data-slot="sidebar"]:not([data-mobile])';
   const locator = page.locator(selector);
   if ((await locator.count()) === 0) {
     throw new Error(
@@ -50,14 +49,14 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.setViewportSize(SMALL_VIEWPORT);
     await page.goto('/#/a');
 
-    await page.locator('[data-sidebar="trigger"]').click();
+    await trigger(page).click();
     await expect.poll(() => isSidebarOpen(page, 'mobile')).toBe(true);
 
     expect(await page.locator('[data-slot="sheet-overlay"]').count()).toBe(0);
 
-    const backdropFilter = await page
-      .locator('[data-slot="sidebar-inset"]')
-      .evaluate((el) => window.getComputedStyle(el).backdropFilter);
+    const backdropFilter = await inset(page).evaluate(
+      (el) => window.getComputedStyle(el).backdropFilter,
+    );
     expect(backdropFilter === 'none' || backdropFilter === '').toBeTruthy();
   });
 
@@ -71,7 +70,7 @@ test.describe('sidebar push-mode (small width)', () => {
 
     expect(await getInsetTranslateX(page)).toBe(0);
 
-    await page.locator('[data-sidebar="trigger"]').click();
+    await trigger(page).click();
     await expect
       .poll(() => getInsetTranslateX(page), { timeout: 1500 })
       .toBeGreaterThan(SIDEBAR_WIDTH_PX - 1);
@@ -82,7 +81,7 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.setViewportSize(SMALL_VIEWPORT);
     await page.goto('/#/c');
 
-    await page.locator('[data-sidebar="trigger"]').click();
+    await trigger(page).click();
     await expect.poll(() => isSidebarOpen(page, 'mobile')).toBe(true);
 
     await page.keyboard.press('Escape');
@@ -95,7 +94,7 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.setViewportSize(SMALL_VIEWPORT);
     await page.goto('/#/d');
 
-    await page.locator('[data-sidebar="trigger"]').click();
+    await trigger(page).click();
     await expect.poll(() => isSidebarOpen(page, 'mobile')).toBe(true);
 
     await page.evaluate(() => {
@@ -126,7 +125,7 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.goto('/#/e');
 
     expect(await isSidebarOpen(page, 'mobile')).toBe(false);
-    await page.locator('[data-sidebar="trigger"]').click();
+    await trigger(page).click();
     await expect.poll(() => isSidebarOpen(page, 'mobile')).toBe(true);
   });
 
@@ -138,7 +137,7 @@ test.describe('sidebar push-mode (small width)', () => {
     await expect.poll(() => isSidebarOpen(page, 'desktop')).toBe(true);
     expect(await getInsetTranslateX(page)).toBe(0);
 
-    await page.locator('[data-sidebar="trigger"]').click();
+    await trigger(page).click();
     await expect.poll(() => isSidebarOpen(page, 'desktop')).toBe(false);
     expect(await getInsetTranslateX(page)).toBe(0);
   });
@@ -179,7 +178,7 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.setViewportSize(SMALL_VIEWPORT);
     await page.goto('/#/i');
 
-    await page.locator('[data-sidebar="trigger"]').click();
+    await trigger(page).click();
     await expect.poll(() => isSidebarOpen(page, 'mobile')).toBe(true);
 
     await page.getByRole('button', { name: 'Tree view options' }).click();
@@ -202,7 +201,7 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.goto('/#/j');
 
     await expect.poll(() => isSidebarOpen(page, 'desktop')).toBe(true);
-    await page.locator('[data-sidebar="trigger"]').click();
+    await trigger(page).click();
     await expect.poll(() => isSidebarOpen(page, 'desktop')).toBe(false);
 
     await page.setViewportSize(SMALL_VIEWPORT);
@@ -243,12 +242,11 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.setViewportSize(SMALL_VIEWPORT);
     await page.goto('/#/k');
 
-    const trigger = page.locator('[data-sidebar="trigger"]');
-    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    await trigger.click();
-    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    await trigger.click();
-    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(trigger(page)).toHaveAttribute('aria-expanded', 'false');
+    await trigger(page).click();
+    await expect(trigger(page)).toHaveAttribute('aria-expanded', 'true');
+    await trigger(page).click();
+    await expect(trigger(page)).toHaveAttribute('aria-expanded', 'false');
   });
 
   test('picking a file in FileTree pulses the inset, then clears via animationend', async ({
@@ -262,18 +260,15 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.setViewportSize(SMALL_VIEWPORT);
     await page.goto('/#/l1');
 
-    await page.locator('[data-sidebar="trigger"]').click();
-    await page
-      .locator('[data-slot="sidebar"][data-mobile="true"][data-state="expanded"]')
-      .waitFor({ state: 'attached', timeout: 5_000 });
+    await trigger(page).click();
+    await mobileExpanded(page).waitFor({ state: 'attached', timeout: 5_000 });
 
-    const inset = page.locator('[data-slot="sidebar-inset"]');
-    await expect(inset).not.toHaveAttribute('data-push-pulse', '');
+    await expect(inset(page)).not.toHaveAttribute('data-push-pulse', '');
 
     await page.getByRole('treeitem', { name: 'l2.md', exact: true }).click();
 
-    await expect(inset).toHaveAttribute('data-push-pulse', '', { timeout: 3000 });
-    await expect(inset).not.toHaveAttribute('data-push-pulse', '', { timeout: 2000 });
+    await expect(inset(page)).toHaveAttribute('data-push-pulse', '', { timeout: 3000 });
+    await expect(inset(page)).not.toHaveAttribute('data-push-pulse', '', { timeout: 2000 });
   });
 
   test('prefers-reduced-motion suppresses the pulse-hint entirely', async ({ page, api }) => {
@@ -285,10 +280,8 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.setViewportSize(SMALL_VIEWPORT);
     await page.goto('/#/m1');
 
-    await page.locator('[data-sidebar="trigger"]').click();
-    await page
-      .locator('[data-slot="sidebar"][data-mobile="true"][data-state="expanded"]')
-      .waitFor({ state: 'attached', timeout: 5_000 });
+    await trigger(page).click();
+    await mobileExpanded(page).waitFor({ state: 'attached', timeout: 5_000 });
 
     await page.getByRole('treeitem', { name: 'm2.md', exact: true }).click();
 
@@ -308,7 +301,7 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.setViewportSize(SMALL_VIEWPORT);
     await page.goto('/#/n');
 
-    await page.locator('[data-sidebar="trigger"]').click();
+    await trigger(page).click();
     await expect.poll(() => isSidebarOpen(page, 'mobile')).toBe(true);
 
     await page.getByRole('radio', { name: 'Markdown source' }).click();
