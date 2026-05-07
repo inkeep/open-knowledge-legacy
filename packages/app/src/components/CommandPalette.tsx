@@ -4,12 +4,20 @@ import {
   FileText,
   FolderOpen,
   FolderPlus,
+  Hash,
   LayoutGrid,
   Network,
   Settings,
   Sparkles,
 } from 'lucide-react';
-import { type Dispatch, type SetStateAction, useDeferredValue, useEffect, useState } from 'react';
+import {
+  type Dispatch,
+  type SetStateAction,
+  useDeferredValue,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import {
   filterOmnibarRecents,
   loadOmnibarRecents,
@@ -27,6 +35,14 @@ import {
   type WorkspaceEntry,
   type WorkspaceSearchEntry,
 } from '@/components/command-palette-search';
+import {
+  fetchDocsForTag,
+  fetchTagsList,
+  filterTagList,
+  parseTagPaletteQuery,
+  TAG_QUERY_PREFIX,
+  type TagDocEntry,
+} from '@/components/command-palette-tag-search';
 import { requestDocPanelTab } from '@/components/doc-panel-events';
 import { defaultInitialDir } from '@/components/file-tree-utils';
 import { NewItemDialog } from '@/components/NewItemDialog';
@@ -41,6 +57,7 @@ import {
   CommandShortcut,
 } from '@/components/ui/command';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import type { TagSummaryEntry } from '@/editor/extensions/tag-suggestion';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
 import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '@/lib/desktop-labels';
 import { hashFromDocName } from '@/lib/doc-hash';
@@ -48,7 +65,7 @@ import { runWithToast as runWithToastBase } from '@/lib/error-state';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import { SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 import { useWorkspace } from '@/lib/use-workspace';
-import { isMacOs } from '@/lib/utils.ts';
+import { cn, isMacOs } from '@/lib/utils.ts';
 import { buildHandoffInput, useHandoffDispatch } from './handoff/useHandoffDispatch';
 import { useInstalledAgents } from './handoff/useInstalledAgents';
 
@@ -148,6 +165,16 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
   const [projectRecents, setProjectRecents] = useState<RecentProjectEntry[]>([]);
   const [recentNavigation, setRecentNavigation] = useState<OmnibarRecentEntry[]>([]);
   const [createDialogKind, setCreateDialogKind] = useState<'file' | 'folder' | null>(null);
+  const [tagsList, setTagsList] = useState<TagSummaryEntry[]>([]);
+  const [tagsListStatus, setTagsListStatus] = useState<'idle' | 'loading' | 'success' | 'error'>(
+    'idle',
+  );
+  const [tagDocs, setTagDocs] = useState<TagDocEntry[]>([]);
+  const [tagDocsStatus, setTagDocsStatus] = useState<'idle' | 'loading' | 'success' | 'error'>(
+    'idle',
+  );
+  const tagsListFetchedRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const { activeDocName, activeTarget } = useDocumentContext();
   const { pages, pageTitles, pageMeta, folderPaths } = usePageList();
   const workspace = useWorkspace();
@@ -196,10 +223,69 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
       return;
     }
     setQuery('');
+    setTagsList([]);
+    setTagsListStatus('idle');
+    tagsListFetchedRef.current = false;
+    setTagDocs([]);
+    setTagDocsStatus('idle');
   }, [open, bridge, refreshInstallStates]);
 
+  const knownTagNames = new Set(tagsList.map((t) => t.name));
+  const paletteMode = parseTagPaletteQuery(deferredQuery, knownTagNames);
+  const isTagMode = paletteMode.kind !== 'normal';
+
   useEffect(() => {
-    if (!open || !trimmedDeferredQuery) {
+    if (!open || !isTagMode) return;
+    if (tagsListFetchedRef.current) return;
+    tagsListFetchedRef.current = true;
+    setTagsListStatus('loading');
+    let cancelled = false;
+    void fetchTagsList()
+      .then((tags) => {
+        if (cancelled) return;
+        setTagsList(tags);
+        setTagsListStatus('success');
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        console.error('[command-palette-tag] fetch tags failed', err);
+        setTagsList([]);
+        setTagsListStatus('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isTagMode]);
+
+  const tagDocsTarget = paletteMode.kind === 'tag-docs' ? paletteMode.tagName : null;
+  useEffect(() => {
+    if (!open || tagDocsTarget === null) {
+      setTagDocs([]);
+      setTagDocsStatus('idle');
+      return;
+    }
+    setTagDocsStatus('loading');
+    setTagDocs([]);
+    let cancelled = false;
+    void fetchDocsForTag(tagDocsTarget)
+      .then((docs) => {
+        if (cancelled) return;
+        setTagDocs(docs);
+        setTagDocsStatus('success');
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        console.error('[command-palette-tag] fetch tag docs failed', err);
+        setTagDocs([]);
+        setTagDocsStatus('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, tagDocsTarget]);
+
+  useEffect(() => {
+    if (!open || !trimmedDeferredQuery || isTagMode) {
       setSearchResults([]);
       setSearchStatus('idle');
       return;
@@ -233,7 +319,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [open, trimmedDeferredQuery]);
+  }, [open, trimmedDeferredQuery, isTagMode]);
 
   const runAction = (fn: () => Promise<void> | void, fallback = 'Command failed.') => {
     onOpenChange(false);
@@ -259,31 +345,38 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
     navigateToDocHash(entry.path);
   }
 
-  const showRecentNavigation = trimmedDeferredQuery === '' && visibleRecents.length > 0;
+  const showRecentNavigation =
+    !isTagMode && trimmedDeferredQuery === '' && visibleRecents.length > 0;
   const visibleSearchResults =
     searchResults.length > 0 || searchStatus === 'success' ? searchResults : fallbackSearchResults;
-  const showNavigation = visibleSearchResults.length > 0;
+  const showNavigation = !isTagMode && visibleSearchResults.length > 0;
   const showSearchLoading =
-    trimmedDeferredQuery !== '' && searchStatus === 'loading' && !showNavigation;
-  const showCreateFile = matchesCommandQuery('New file', deferredQuery, ['create file']);
-  const showCreateFolder = matchesCommandQuery('New folder', deferredQuery, ['create folder']);
-  const showGraphCommand = matchesCommandQuery('Open graph', deferredQuery, [
-    'graph panel network',
-  ]);
+    !isTagMode && trimmedDeferredQuery !== '' && searchStatus === 'loading' && !showNavigation;
+  const showCreateFile =
+    !isTagMode && matchesCommandQuery('New file', deferredQuery, ['create file']);
+  const showCreateFolder =
+    !isTagMode && matchesCommandQuery('New folder', deferredQuery, ['create folder']);
+  const showGraphCommand =
+    !isTagMode && matchesCommandQuery('Open graph', deferredQuery, ['graph panel network']);
   const showProjectOpenFolder =
-    bridge !== null && matchesCommandQuery('Open folder on disk', deferredQuery, ['project']);
+    !isTagMode &&
+    bridge !== null &&
+    matchesCommandQuery('Open folder on disk', deferredQuery, ['project']);
   const showProjectSwitch =
+    !isTagMode &&
     bridge !== null &&
     matchesCommandQuery(SWITCH_PROJECT_LABEL_WITH_ELLIPSIS, deferredQuery, [
       'switch project navigator projects',
     ]);
-  const showSettings = matchesCommandQuery('Settings', deferredQuery, ['preferences config']);
-  const showInstallClaudeDesktop = matchesCommandQuery(
-    'Install for Claude Chat & Cowork (Desktop App)',
-    deferredQuery,
-    ['claude desktop install cowork'],
-  );
+  const showSettings =
+    !isTagMode && matchesCommandQuery('Settings', deferredQuery, ['preferences config']);
+  const showInstallClaudeDesktop =
+    !isTagMode &&
+    matchesCommandQuery('Install for Claude Chat & Cowork (Desktop App)', deferredQuery, [
+      'claude desktop install cowork',
+    ]);
   const showProjectRecents =
+    !isTagMode &&
     bridge !== null &&
     switchableProjects.length > 0 &&
     (trimmedDeferredQuery === '' ||
@@ -291,14 +384,23 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
         matchesCommandQuery(`${row.name} ${row.path}`, deferredQuery, ['recent project']),
       ));
   const showAgentGroup =
-    trimmedDeferredQuery === '' ||
-    KNOWN_TARGETS.some((target) =>
-      matchesCommandQuery(`Open in ${target.displayName}`, deferredQuery, [
-        target.id,
-        'agent handoff',
-      ]),
-    );
+    !isTagMode &&
+    (trimmedDeferredQuery === '' ||
+      KNOWN_TARGETS.some((target) =>
+        matchesCommandQuery(`Open in ${target.displayName}`, deferredQuery, [
+          target.id,
+          'agent handoff',
+        ]),
+      ));
+  const tagListItems =
+    paletteMode.kind === 'tag-list' ? filterTagList(tagsList, paletteMode.query) : [];
+  const showTagListEmpty =
+    paletteMode.kind === 'tag-list' && tagsListStatus !== 'loading' && tagListItems.length === 0;
+  const showTagDocsEmpty =
+    paletteMode.kind === 'tag-docs' && tagDocsStatus === 'success' && tagDocs.length === 0;
+
   const hasAnyResults =
+    isTagMode ||
     showRecentNavigation ||
     showNavigation ||
     showSearchLoading ||
@@ -311,6 +413,10 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
     showInstallClaudeDesktop ||
     showProjectRecents ||
     showAgentGroup;
+
+  function navigateToTagDocs(tagName: string) {
+    setQuery(`${TAG_QUERY_PREFIX}${tagName}`);
+  }
 
   return (
     <>
@@ -326,16 +432,117 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
         }}
       >
         <CommandInput
+          ref={inputRef}
           value={query}
           onValueChange={setQuery}
           placeholder="Search files, folders, or commands…"
         />
+        {/* Filter-pills row — Slack-style. Always visible so the
+            available filters are discoverable without typing a magic
+            prefix. Active pills highlight when their filter is in
+            effect; clicking a highlighted pill exits the filter. */}
+        <div className="flex flex-wrap gap-1.5 border-b px-3 py-2">
+          <button
+            type="button"
+            onClick={() => {
+              setQuery(isTagMode ? '' : TAG_QUERY_PREFIX);
+              inputRef.current?.focus();
+            }}
+            data-testid="command-palette-filter-tag"
+            data-active={isTagMode}
+            aria-pressed={isTagMode}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+              isTagMode
+                ? 'border-primary/30 bg-primary/10 text-primary'
+                : 'border-border bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+            )}
+          >
+            <Hash className="size-3.5" />
+            <span>By tag</span>
+          </button>
+        </div>
         <CommandList className="subtle-scrollbar">
           {showSearchLoading && !showNavigation ? <CommandEmpty>Searching…</CommandEmpty> : null}
           {!hasAnyResults ? (
             <CommandEmpty>
               {searchStatus === 'error' ? 'Search failed.' : 'No matching commands.'}
             </CommandEmpty>
+          ) : null}
+
+          {paletteMode.kind === 'tag-list' ? (
+            <CommandGroup
+              heading={paletteMode.query ? `Tags matching "${paletteMode.query}"` : 'All tags'}
+            >
+              {tagsListStatus === 'loading' ? <CommandEmpty>Loading tags…</CommandEmpty> : null}
+              {tagsListStatus === 'error' ? (
+                <CommandEmpty>Failed to load tags. Press Escape and re-open to retry.</CommandEmpty>
+              ) : null}
+              {showTagListEmpty ? (
+                <CommandEmpty>
+                  {paletteMode.query
+                    ? `No tags match "${paletteMode.query}".`
+                    : 'No tags yet — author `#tagname` in any doc to populate the index.'}
+                </CommandEmpty>
+              ) : null}
+              {tagListItems.map((tag) => (
+                <CommandItem
+                  key={`tag:${tag.name}`}
+                  value={`tag ${tag.name}`}
+                  onSelect={() => navigateToTagDocs(tag.name)}
+                  data-testid={`command-palette-tag-${tag.name}`}
+                >
+                  <Hash />
+                  <span className="min-w-0 flex-1 truncate font-medium">{tag.name}</span>
+                  <span className="ml-auto shrink-0 text-[11px] text-muted-foreground tabular-nums">
+                    {tag.count} {tag.count === 1 ? 'doc' : 'docs'}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ) : null}
+
+          {paletteMode.kind === 'tag-docs' ? (
+            <CommandGroup heading={`Docs tagged #${paletteMode.tagName}`}>
+              {tagDocsStatus === 'loading' ? <CommandEmpty>Loading docs…</CommandEmpty> : null}
+              {tagDocsStatus === 'error' ? (
+                <CommandEmpty>Failed to load docs. Press Escape and re-open to retry.</CommandEmpty>
+              ) : null}
+              {showTagDocsEmpty ? (
+                <CommandEmpty>{`No docs registered under #${paletteMode.tagName}.`}</CommandEmpty>
+              ) : null}
+              {tagDocs.map((doc) => {
+                const title = doc.title || doc.docName.split('/').pop() || doc.docName;
+                return (
+                  <CommandItem
+                    key={`tag-doc:${doc.docName}`}
+                    value={`tag-doc ${doc.docName}`}
+                    onSelect={() => {
+                      onOpenChange(false);
+                      navigateToDocHash(doc.docName);
+                    }}
+                    data-testid={`command-palette-tag-doc-${doc.docName}`}
+                    className="items-start"
+                  >
+                    <FileText className="mt-0.5" />
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                      <span className="truncate font-medium">{title}</span>
+                      <span className="truncate text-muted-foreground text-xs">{doc.docName}</span>
+                      {doc.matchingTags.length > 0 &&
+                      doc.matchingTags.some((t) => t !== paletteMode.tagName) ? (
+                        <span className="truncate text-muted-foreground text-[11px]">
+                          via{' '}
+                          {doc.matchingTags
+                            .filter((t) => t !== paletteMode.tagName)
+                            .map((t) => `#${t}`)
+                            .join(', ')}
+                        </span>
+                      ) : null}
+                    </div>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
           ) : null}
 
           {showRecentNavigation ? (

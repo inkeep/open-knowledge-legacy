@@ -1,7 +1,8 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   checkLocalOpSecurity,
@@ -9,6 +10,7 @@ import {
   hasValidLocalOpOrigin,
   isAllowedGitUrl,
   isLoopbackRequest,
+  isPathWithinHome,
   isSafeLocalPath,
 } from './local-op-security.ts';
 
@@ -135,6 +137,62 @@ describe('isSafeLocalPath', () => {
   });
   test('rejects path that escapes via ..', () => {
     expect(isSafeLocalPath(`${home}/../etc`)).toBe(false);
+  });
+});
+
+describe('isPathWithinHome — symlink containment', () => {
+  let fakeHome: string;
+  let outsideDir: string;
+
+  beforeAll(() => {
+    const root = realpathSync(tmpdir());
+    fakeHome = mkdtempSync(join(root, 'ok-local-op-home-'));
+    outsideDir = mkdtempSync(join(root, 'ok-local-op-outside-'));
+  });
+
+  afterAll(() => {
+    rmSync(fakeHome, { recursive: true, force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  test('rejects symlink under home pointing outside home', () => {
+    const link = join(fakeHome, 'decoy-etc');
+    symlinkSync(outsideDir, link);
+    expect(isPathWithinHome(link, fakeHome)).toBe(false);
+  });
+
+  test('rejects path under a symlinked ancestor that escapes home', () => {
+    const link = join(fakeHome, 'decoy-parent');
+    symlinkSync(outsideDir, link);
+    expect(isPathWithinHome(join(link, 'new-clone-target'), fakeHome)).toBe(false);
+  });
+
+  test('allows symlink under home pointing to another path under home', () => {
+    const inner = join(fakeHome, 'real-inside');
+    mkdirSync(inner);
+    const link = join(fakeHome, 'alias-inside');
+    symlinkSync(inner, link);
+    expect(isPathWithinHome(link, fakeHome)).toBe(true);
+  });
+
+  test('allows non-existent path under home (clone target)', () => {
+    expect(isPathWithinHome(join(fakeHome, 'never-existed', 'sub', 'leaf'), fakeHome)).toBe(true);
+  });
+
+  test('rejects broken symlink under home', () => {
+    const link = join(fakeHome, 'broken-link');
+    symlinkSync(join(outsideDir, 'gone'), link);
+    rmSync(outsideDir, { recursive: true, force: true });
+    expect(isPathWithinHome(link, fakeHome)).toBe(false);
+    mkdirSync(outsideDir, { recursive: true });
+  });
+
+  test('rejects ../ traversal even when outside home', () => {
+    expect(isPathWithinHome(`${fakeHome}/../etc`, fakeHome)).toBe(false);
+  });
+
+  test('allows the home dir itself', () => {
+    expect(isPathWithinHome(fakeHome, fakeHome)).toBe(true);
   });
 });
 

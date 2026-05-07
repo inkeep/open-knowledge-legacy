@@ -93,6 +93,15 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      # `bun changeset publish` invokes `npm publish` per package, which in
+      # turn fires the cli's `prepublishOnly` (-> `bun run build`). The cli's
+      # own build chain includes `cp -r ../app/dist dist/public` which
+      # silently fails when the app hasn't been built first. Run a top-level
+      # `bun run build` (turbo orchestrates the dep order: app -> cli) so
+      # every package's dist/ exists before the publish step runs.
+      - name: Build packages
+        run: bun run build
+
       # --- BETA PATH (push trigger) ---
 
       # Detect the channel by reading desktop's package.json#version (the
