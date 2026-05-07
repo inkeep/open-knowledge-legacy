@@ -526,6 +526,67 @@ describe('startWatcher file index', () => {
       await handle.unsubscribe();
     }
   });
+
+  test('pruneFileIndexNowExcluded removes entries that became excluded after rebuild', async () => {
+    writeFileSync(resolve(contentDir, 'keep.md'), '# Keep\n');
+    writeFileSync(resolve(contentDir, 'hide-me.md'), '# Hide me\n');
+    writeFileSync(resolve(tmpDir, '.okignore'), '');
+
+    const filter = createContentFilter({
+      projectDir: tmpDir,
+      contentDir,
+    });
+
+    const handle = await startWatcher(contentDir, async () => {}, filter);
+    try {
+      expect(handle.getFileIndex().has('keep')).toBe(true);
+      expect(handle.getFileIndex().has('hide-me')).toBe(true);
+
+      writeFileSync(resolve(tmpDir, '.okignore'), 'hide-me.md\n');
+      await filter.rebuildIgnorePatterns();
+
+      const pruned = handle.pruneFileIndexNowExcluded();
+      expect(pruned).toBe(1);
+      expect(handle.getFileIndex().has('keep')).toBe(true);
+      expect(handle.getFileIndex().has('hide-me')).toBe(false);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
+  test('pruneFileIndexNowExcluded is a no-op when nothing is now-excluded', async () => {
+    writeFileSync(resolve(contentDir, 'keep.md'), '# Keep\n');
+    writeFileSync(resolve(tmpDir, '.okignore'), '');
+
+    const filter = createContentFilter({
+      projectDir: tmpDir,
+      contentDir,
+    });
+
+    const handle = await startWatcher(contentDir, async () => {}, filter);
+    try {
+      expect(handle.getFileIndex().has('keep')).toBe(true);
+
+      writeFileSync(resolve(tmpDir, '.okignore'), 'something-else.md\n');
+      await filter.rebuildIgnorePatterns();
+
+      expect(handle.pruneFileIndexNowExcluded()).toBe(0);
+      expect(handle.getFileIndex().has('keep')).toBe(true);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
+  test('pruneFileIndexNowExcluded returns 0 when no ContentFilter is set', async () => {
+    writeFileSync(resolve(contentDir, 'keep.md'), '# Keep\n');
+
+    const handle = await startWatcher(contentDir, async () => {});
+    try {
+      expect(handle.pruneFileIndexNowExcluded()).toBe(0);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
 });
 
 describe('file-watcher ContentFilter refcount hooks', () => {
