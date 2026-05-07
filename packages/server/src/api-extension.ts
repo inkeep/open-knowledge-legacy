@@ -72,6 +72,7 @@ import { listAgentActivity, synthesizeStackItemDiffText } from './agent-activity
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
 import { type AgentPresenceBroadcaster, BROADCASTER_EVICTION_MS } from './agent-presence.ts';
 import {
+  AgentSessionCapacityError,
   type AgentSessionManager,
   applyAgentMarkdownWrite,
   applyAgentUndo,
@@ -1581,6 +1582,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ...(summaryResponse ? { summary: summaryResponse } : {}),
       });
     } catch (e) {
+      if (e instanceof AgentSessionCapacityError) {
+        log.warn({ err: e, docName, agentId }, '[agent-write] session capacity exhausted');
+        json(res, 503, { ok: false, error: 'too-many-agent-sessions' });
+        return;
+      }
       log.error({ err: e }, '[agent-write] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
@@ -1726,6 +1732,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ...(summaryResponse ? { summary: summaryResponse } : {}),
       });
     } catch (e) {
+      if (e instanceof AgentSessionCapacityError) {
+        log.warn(
+          { err: e, docName: resolvedDocName, agentId },
+          '[agent-write-md] session capacity exhausted',
+        );
+        json(res, 503, { ok: false, error: 'too-many-agent-sessions' });
+        return;
+      }
       log.error({ err: e }, '[agent-write-md] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
@@ -2447,6 +2461,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ...(summaryResponse ? { summary: summaryResponse } : {}),
       });
     } catch (e) {
+      if (e instanceof AgentSessionCapacityError) {
+        log.warn({ err: e, docName, agentId }, '[agent-patch] session capacity exhausted');
+        json(res, 503, { ok: false, error: 'too-many-agent-sessions' });
+        return;
+      }
       log.error({ err: e }, '[agent-patch] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }

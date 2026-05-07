@@ -218,13 +218,26 @@ function createUndoOrigin(sessionId: string, agentType?: string): PairedWriteOri
   return origin;
 }
 
+export const MAX_AGENT_SESSIONS = 256;
+
+export class AgentSessionCapacityError extends Error {
+  readonly limit: number;
+  constructor(limit: number) {
+    super(`Maximum agent session count reached (${limit})`);
+    this.name = 'AgentSessionCapacityError';
+    this.limit = limit;
+  }
+}
+
 export class AgentSessionManager {
   private sessions = new Map<string, SessionRecord>();
   private pendingSessions = new Map<string, Promise<SessionRecord>>();
   private hocuspocus: Hocuspocus;
+  private readonly maxSessions: number;
 
-  constructor(hocuspocus: Hocuspocus) {
+  constructor(hocuspocus: Hocuspocus, options: { maxSessions?: number } = {}) {
     this.hocuspocus = hocuspocus;
+    this.maxSessions = options.maxSessions ?? MAX_AGENT_SESSIONS;
   }
 
   private sessionKey(docName: string, agentId: string): string {
@@ -257,6 +270,10 @@ export class AgentSessionManager {
 
     const inflight = this.pendingSessions.get(key);
     if (inflight) return inflight;
+
+    if (this.sessions.size + this.pendingSessions.size >= this.maxSessions) {
+      throw new AgentSessionCapacityError(this.maxSessions);
+    }
 
     const promise = this._createSession(docName, agentId, identity);
     this.pendingSessions.set(key, promise);

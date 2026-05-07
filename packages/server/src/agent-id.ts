@@ -2,8 +2,11 @@ import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
 
 export const AGENT_ID_RE = /^[a-zA-Z0-9_-]+$/;
 
+export const AGENT_ID_MAX_LEN = 64;
+
 export function validateAgentId(rawAgentId: string | undefined | null): string | null {
   if (typeof rawAgentId !== 'string' || rawAgentId.length === 0) return null;
+  if (rawAgentId.length > AGENT_ID_MAX_LEN) return null;
   if (!AGENT_ID_RE.test(rawAgentId)) return null;
   return rawAgentId;
 }
@@ -41,10 +44,8 @@ interface AgentBodyFields {
 }
 
 export function parseAgentBodyFields(body: Record<string, unknown>): AgentBodyFields {
-  const rawAgentId =
-    typeof body.agentId === 'string' && body.agentId.length > 0 && AGENT_ID_RE.test(body.agentId)
-      ? body.agentId
-      : undefined;
+  const validated = validateAgentId(typeof body.agentId === 'string' ? body.agentId : null);
+  const rawAgentId = validated ?? undefined;
 
   const writerId = rawAgentId !== undefined ? toBroadcasterKey(rawAgentId) : undefined;
 
