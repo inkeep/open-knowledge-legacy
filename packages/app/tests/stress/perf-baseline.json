@@ -5,7 +5,7 @@
     "p50Ms": 17,
     "capturedAt": "2026-04-17",
     "capturedFrom": "local seed (3 consecutive runs, port 22437) — replace with median-of-5 CI runs post-merge per perf-baseline-update.md",
-    "notes": "FR-21 chunked-insertion frame-time p50 during a 1MB Source paste. Local consistently lands at 16.7ms (60fps tick); CI runners are typically 1.5-2x slower. The baseline-relative assertion is `p50 < max(2 * p50Ms, 32)` — 32ms is the absolute floor (one double-budget at 60fps); 2x p50Ms is the regression ceiling. Real regressions trip the ceiling without runner-speed variance tripping the floor. Key naming: `qa022` (lowercase, no dash) vs the `QA-022` ID used in SPEC.md / test names / documentation — shell-quoting friendliness, see perf-baseline-update.md §Schema."
+    "notes": "FR-21 chunked-insertion frame-time p50 during a 1MB Source paste. Local consistently lands at 16.7ms (60fps tick); CI runners are typically 1.5-2x slower (33-67ms p50 observed across 6 sampled runs 2026-05-07). The baseline-relative assertion is `p50 < max(2 * p50Ms, 80)` — 80ms is the absolute floor calibrated against CI runner variance distribution (the prior 32ms floor sat below CI's noise floor); 2x p50Ms is the regression ceiling. At the current local-seed p50Ms=17, the 80ms floor dominates the assertion; rebaselining against median-of-5 CI samples (expected ≈40ms) shifts the dominant term to 2 × baseline. Key naming: `qa022` (lowercase, no dash) vs the `QA-022` ID used in SPEC.md / test names / documentation — shell-quoting friendliness, see perf-baseline-update.md §Schema."
   },
   "v2g1WarmSwitch": {
     "p50Ms": null,
