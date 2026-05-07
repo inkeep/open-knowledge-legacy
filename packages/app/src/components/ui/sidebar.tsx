@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useIsMobile } from '@/hooks/use-mobile';
+import { SIDEBAR_PUSH_BREAKPOINT, useIsMobile } from '@/hooks/use-mobile';
 import { useSidebarResize } from '@/hooks/use-sidebar-resize';
 import { cn } from '@/lib/utils';
 
@@ -111,7 +111,7 @@ function SidebarProvider({
   }
 
   function notifySidebarFileSelected() {
-    if (!isMobile || !openMobile) return;
+    if (window.innerWidth >= SIDEBAR_PUSH_BREAKPOINT || !openMobile) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     setShowPushPulse(true);
   }
