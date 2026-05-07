@@ -80,20 +80,37 @@ mac:
   # (`build/icon.png`) because Electron's runtime nativeImage API can't
   # consume `.icon` bundles yet — tracked in electron/electron#48476.
   icon: build/okglass.icon
-  # Universal target. scripts/prepare-universal.mjs force-installs both
-  # darwin keyring prebuilds (@napi-rs/keyring-darwin-{arm64,x64}) before
-  # electron-builder runs so @electron/universal.makeUniversalApp's lipo
-  # merge has matching native binaries in both slices.
+  # Apple-Silicon-only target (TEMPORARY). The previous Universal config
+  # (`arch: [universal]`) tripped @electron/universal's lipo merger on
+  # @napi-rs/keyring's per-arch native binary — the arm64 prebuild
+  # (`keyring.darwin-arm64.node`) ends up at the same path in both slices,
+  # which the merger treats as "duplicate but not covered by x64ArchFiles"
+  # and rejects:
+  #
+  #   ⨯ Detected file "...@napi-rs/keyring-darwin-arm64/keyring.darwin-arm64.node"
+  #     that's the same in both x64 and arm64 builds and not covered by the
+  #     x64ArchFiles rule: "undefined"
+  #
+  # Failed run: 25479422451 on inkeep/open-knowledge-legacy.
+  #
+  # Restore Universal once the arch-filter rule is in place — the proper
+  # fix is either (a) an `x64ArchFiles` glob that names the keyring module
+  # path so Universal's merger picks one slice deterministically, or (b)
+  # invoking @electron/universal with the `singleArchFiles` option for the
+  # native module. Both require validation against the keyring spec's
+  # Pass 0 expectations. For now we ship arm64-only DMG/ZIP so the beta
+  # cadence has a working artifact and electron-updater on the beta
+  # channel can flow.
   target:
     - target: dmg
-      arch: [universal]
+      arch: [arm64]
     # `.zip` is required by the electron-updater / Squirrel.Mac swap path.
     # MacUpdater.ts:~89 calls `findFile(files, "zip", ["pkg", "dmg"])` — it
     # downloads the ZIP variant (not the DMG) and pipes it to Squirrel.Mac
     # for the in-place swap. Without this target, auto-update would surface
     # ERR_UPDATER_ZIP_FILE_NOT_FOUND at every check.
     - target: zip
-      arch: [universal]
+      arch: [arm64]
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
