@@ -248,11 +248,16 @@ jobs:
           # The legacy commit at the beta SHA has package.json#version =
           # X.Y.Z-beta.N. We need to publish as X.Y.Z without a separate
           # commit (a real bump on legacy would conflict with the Copybara
-          # mirror direction from agents-private). `npm version` with
-          # --no-git-tag-version mutates package.json locally only; the
-          # change lives for the workflow run and is restored at the end.
+          # mirror direction from agents-private). Mutate package.json
+          # locally via jq — `npm version` walks workspace deps in newer
+          # npm and rejects bun's `workspace:*` protocol with
+          # EUNSUPPORTEDPROTOCOL. jq edits the version field directly
+          # without touching the dep graph; the change lives for the
+          # workflow run and is discarded with the runner.
           for pkg in cli core server app desktop; do
-            (cd "packages/${pkg}" && npm version "${STABLE_VERSION}" --no-git-tag-version --allow-same-version)
+            f="packages/${pkg}/package.json"
+            jq --arg v "$STABLE_VERSION" '.version=$v' "$f" > "${f}.tmp"
+            mv "${f}.tmp" "$f"
           done
           echo "All fixed-group package.json files now at ${STABLE_VERSION} (in-memory only)."
 
