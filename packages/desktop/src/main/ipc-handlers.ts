@@ -1,5 +1,13 @@
 import { execFile } from 'node:child_process';
 import { join, posix as pathPosix, win32 as pathWin32 } from 'node:path';
+import {
+  createOsProbe,
+  type ExecFileLike,
+  INSTALLED_AGENTS_SCHEMES,
+  type InstalledAgentScheme,
+  resolveCursorBinaryDefault,
+  resolveCursorSpawnInvocation,
+} from '@inkeep/open-knowledge-server';
 import type { HandoffStatsLine, SpawnOutcome } from '../shared/ipc-channels.ts';
 
 const DEFAULT_PROBE_TIMEOUT_MS = 2000;
@@ -14,8 +22,18 @@ interface AppInfo {
 interface DetectProtocolDeps {
   platform: NodeJS.Platform;
   getApplicationInfoForProtocol: (url: string) => Promise<AppInfo>;
+  runMacOsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
   runXdgMime?: (scheme: string, timeoutMs: number) => Promise<{ stdout: string; code: number }>;
   timeoutMs?: number;
+}
+
+const macOsProbeReal: (scheme: InstalledAgentScheme) => Promise<boolean> = createOsProbe(
+  'darwin',
+  execFile as ExecFileLike,
+);
+
+function isInstalledAgentScheme(scheme: string): scheme is InstalledAgentScheme {
+  return (INSTALLED_AGENTS_SCHEMES as readonly string[]).includes(scheme);
 }
 
 function xdgMimeReal(scheme: string, timeoutMs: number): Promise<{ stdout: string; code: number }> {
@@ -53,11 +71,17 @@ export async function detectProtocol(
           setTimeout(() => reject(new Error('timeout')), timeoutMs),
         ),
       ]);
-      if (!info.name || !info.path) return { installed: false };
-      return { installed: true, displayName: info.name };
-    } catch {
-      return { installed: false };
+      if (info.name && info.path) {
+        return { installed: true, displayName: info.name };
+      }
+    } catch {}
+    if (deps.platform === 'darwin' && isInstalledAgentScheme(scheme)) {
+      const probe = deps.runMacOsProbe ?? macOsProbeReal;
+      try {
+        if (await probe(scheme)) return { installed: true };
+      } catch {}
     }
+    return { installed: false };
   }
 
   const runner = deps.runXdgMime ?? xdgMimeReal;
@@ -79,18 +103,6 @@ interface SpawnCursorDeps {
   projectPath?: string;
   resolveTimeoutMs?: number;
   spawnTimeoutMs?: number;
-}
-
-function resolveSpawnInvocation(
-  resolvedPath: string,
-  userPath: string,
-  platform: NodeJS.Platform,
-): { exec: string; args: ReadonlyArray<string> } {
-  if (platform === 'darwin' && /\.app\/?$/.test(resolvedPath)) {
-    const bundle = resolvedPath.replace(/\/$/, '');
-    return { exec: '/usr/bin/open', args: ['-a', bundle, userPath] };
-  }
-  return { exec: resolvedPath, args: [userPath] };
 }
 
 export function validateSpawnPath(path: string, platform: NodeJS.Platform): boolean {
@@ -132,20 +144,6 @@ export function isPathWithinProject(
   }
 }
 
-function whichCursorReal(timeoutMs: number): Promise<string | null> {
-  return new Promise((resolve) => {
-    const cmd = process.platform === 'win32' ? 'where' : 'which';
-    execFile(cmd, ['cursor'], { timeout: timeoutMs, encoding: 'utf-8' }, (err, stdout) => {
-      if (err) {
-        resolve(null);
-        return;
-      }
-      const first = stdout.split(/\r?\n/)[0]?.trim();
-      resolve(first && first.length > 0 ? first : null);
-    });
-  });
-}
-
 export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<SpawnOutcome> {
   if (!validateSpawnPath(path, deps.platform)) {
     return { ok: false, reason: 'invalid-path' };
@@ -164,7 +162,7 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
   } catch {}
 
   if (!binaryPath) {
-    const fallback = deps.resolveCursorBinary ?? whichCursorReal;
+    const fallback = deps.resolveCursorBinary ?? resolveCursorBinaryDefault;
     try {
       binaryPath = await fallback(deps.resolveTimeoutMs ?? WHICH_TIMEOUT_MS);
     } catch {
@@ -176,7 +174,7 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
     return { ok: false, reason: 'not-installed' };
   }
 
-  const { exec, args } = resolveSpawnInvocation(binaryPath, path, deps.platform);
+  const { exec, args } = resolveCursorSpawnInvocation(binaryPath, path, deps.platform);
   return deps.spawn(exec, args, deps.spawnTimeoutMs ?? SPAWN_TIMEOUT_MS);
 }
 

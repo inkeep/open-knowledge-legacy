@@ -108,6 +108,7 @@ import {
 import { readServerLock } from './server-lock.ts';
 import { buildAndOpenSkill } from './skill-install.ts';
 import { readSkillInstallStateSnapshot } from './skill-state.ts';
+import { handleSpawnCursor } from './spawn-cursor-api.ts';
 import { readUiLock } from './ui-lock.ts';
 import {
   HashingPassThrough,
@@ -5910,6 +5911,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
   }
 
+  async function handleSpawnCursorRoute(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    return handleSpawnCursor(req, res, {
+      contentDir,
+      platform: process.platform,
+    });
+  }
+
   async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -5985,6 +5994,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
     '/api/installed-agents': handleInstalledAgentsRoute,
+    '/api/spawn-cursor': handleSpawnCursorRoute,
     '/api/install-skill': handleInstallSkill,
     '/api/skill/install-state': handleSkillInstallState,
     '/api/seed/plan': handleSeedPlan,

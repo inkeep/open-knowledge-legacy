@@ -108,6 +108,12 @@ export {
   type WatcherHandle,
   writeTracker,
 } from './file-watcher.ts';
+export {
+  createOsProbe,
+  type ExecFileLike,
+  INSTALLED_AGENTS_SCHEMES,
+  type InstalledAgentScheme,
+} from './handoff-api.ts';
 export { readBranchFromHead } from './head-watcher.ts';
 export {
   type AttachIdleShutdownOptions,
@@ -314,6 +320,15 @@ export {
   type SkillStateTarget,
   writeTargetVersion,
 } from './skill-state.ts';
+export {
+  CURSOR_BUNDLE_PATHS_BY_PLATFORM,
+  type HandleSpawnCursorDeps,
+  handleSpawnCursor,
+  isPathWithinDir,
+  resolveCursorBinaryDefault,
+  resolveCursorSpawnInvocation,
+  type SpawnCursorOutcome,
+} from './spawn-cursor-api.ts';
 export {
   assertCompatibleStateManifest,
   detectProjectShape,

@@ -76,6 +76,7 @@ const EXEMPT_HANDLERS = new Set([
   'handleAgentBurstDiff',
   'handleInstallSkill',
   'handleSkillInstallState',
+  'handleSpawnCursorRoute',
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {

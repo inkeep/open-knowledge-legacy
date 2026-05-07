@@ -17,9 +17,8 @@
  *       the component surfaces; covered there.
  */
 
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import type { HandoffPayload, HandoffTarget } from '@inkeep/open-knowledge-core';
-import { __resetCodexWarmedForTests } from './codex-two-shot.ts';
 import { dispatchHandoff } from './dispatch.ts';
 
 const BASE_PAYLOAD = {
@@ -60,9 +59,7 @@ describe('dispatchHandoff — claude-code', () => {
 });
 
 describe('dispatchHandoff — codex', () => {
-  beforeEach(() => __resetCodexWarmedForTests());
-
-  test('first dispatch: two-shot (wake URL → settle → real URL with prompt and path)', async () => {
+  test('every dispatch is two-shot (wake URL → settle → real URL with prompt and path)', async () => {
     const { openExternalDeps, openExternal } = makeOpen(async () => {});
     const sleep = mock(async () => {});
     const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'codex' };
@@ -95,10 +92,16 @@ describe('dispatchHandoff — cursor', () => {
     expect(url).toMatch(/^cursor:\/\/anysphere\.cursor-deeplink\/prompt\?/);
   });
 
-  test('web host fallback: no spawnCursor dep and no window.okDesktop → unsupported', async () => {
+  test('web host fallback: no spawnCursor dep + no okDesktop → POSTs to /api/spawn-cursor', async () => {
+    const fetchMock = (async () =>
+      new Response('', { status: 404 })) as unknown as typeof globalThis.fetch;
     const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'cursor' };
-    const result = await dispatchHandoff(payload);
-    expect(result).toEqual({ ok: false, reason: 'web-host-cursor-unsupported' });
+    const result = await dispatchHandoff(payload, {
+      cursorDeps: { fetch: fetchMock, sleep: async () => {} },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('not-installed');
   });
 
   test('forwards top-level openExternalDeps to cursor step 2 when cursorDeps lacks its own', async () => {

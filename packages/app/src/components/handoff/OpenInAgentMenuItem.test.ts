@@ -27,14 +27,24 @@ describe('OpenInAgentMenuItem module surface', () => {
 });
 
 describe('computeRowHint — short inline status hint on the trigger row', () => {
-  test('Cursor on web-host → "Desktop only" (E4 DIRECTED takes precedence)', async () => {
+  test('Cursor on web-host with probe=true → null (no hint, treated like any other installed target)', async () => {
     const { computeRowHint } = await import('./OpenInAgentMenuItem');
     const hint = computeRowHint({
       target: targetById('cursor'),
       installState: { installed: true, lastChecked: 1 },
       isElectronHost: false,
     });
-    expect(hint).toBe('Desktop only');
+    expect(hint).toBeNull();
+  });
+
+  test('Cursor on web-host with probe=false → "Not installed" (same as any other target)', async () => {
+    const { computeRowHint } = await import('./OpenInAgentMenuItem');
+    const hint = computeRowHint({
+      target: targetById('cursor'),
+      installState: { installed: false, lastChecked: 1 },
+      isElectronHost: false,
+    });
+    expect(hint).toBe('Not installed');
   });
 
   test('pre-probe (installed:null) → "Detecting…"', async () => {
@@ -68,32 +78,30 @@ describe('computeRowHint — short inline status hint on the trigger row', () =>
   });
 });
 
-describe('computeRowState — branch 1: web-host Cursor (E4 DIRECTED)', () => {
-  test('Cursor on web-host is always disabled even when probe says installed', async () => {
+describe('computeRowState — Cursor parity with other targets (no host short-circuit)', () => {
+  test('Cursor on web-host with probe=true is enabled (no override)', async () => {
     const { computeRowState } = await import('./OpenInAgentMenuItem');
-    const target = targetById('cursor');
     const state = computeRowState({
-      target,
+      target: targetById('cursor'),
       installState: { installed: true, lastChecked: 1 },
       isElectronHost: false,
     });
-    expect(state.enabled).toBe(false);
-    expect(state.tooltip).not.toBeNull();
-    expect(state.tooltip?.message).toBe('Cursor handoff requires the desktop build.');
+    expect(state.enabled).toBe(true);
+    expect(state.tooltip).toBeNull();
   });
 
-  test('Cursor on web-host disabled-tooltip uses the OK desktop install URL', async () => {
-    const { computeRowState, OK_DESKTOP_INSTALL_URL } = await import('./OpenInAgentMenuItem');
+  test('Cursor on web-host with probe=false uses the vendor install URL like every other target', async () => {
+    const { computeRowState } = await import('./OpenInAgentMenuItem');
     const state = computeRowState({
       target: targetById('cursor'),
       installState: { installed: false },
       isElectronHost: false,
     });
-    expect(state.tooltip?.installAction.label).toBe('Install the Open Knowledge desktop app →');
-    expect(state.tooltip?.installAction.url).toBe(OK_DESKTOP_INSTALL_URL);
+    expect(state.tooltip?.installAction.label).toBe('Install Cursor →');
+    expect(state.tooltip?.installAction.url).toBe('https://cursor.com/');
   });
 
-  test('Cursor on web-host disabled-tooltip has NO web-fallback affordance', async () => {
+  test('Cursor disabled-tooltip has NO web-fallback affordance (only Claude rows have one)', async () => {
     const { computeRowState } = await import('./OpenInAgentMenuItem');
     const state = computeRowState({
       target: targetById('cursor'),
@@ -103,7 +111,7 @@ describe('computeRowState — branch 1: web-host Cursor (E4 DIRECTED)', () => {
     expect(state.tooltip?.webFallback).toBeUndefined();
   });
 
-  test('Cursor on Electron-host with installed:true is enabled (override does not apply)', async () => {
+  test('Cursor on Electron-host with installed:true is enabled', async () => {
     const { computeRowState } = await import('./OpenInAgentMenuItem');
     const state = computeRowState({
       target: targetById('cursor'),
@@ -115,14 +123,16 @@ describe('computeRowState — branch 1: web-host Cursor (E4 DIRECTED)', () => {
   });
 });
 
-describe('computeRowState — branch 2: pre-probe (AC8)', () => {
+describe('computeRowState — branch 1: pre-probe (AC8)', () => {
   test.each([
     ['claude-cowork' as const, true],
     ['claude-code' as const, true],
     ['codex' as const, true],
     ['cursor' as const, true],
     ['claude-cowork' as const, false],
+    ['claude-code' as const, false],
     ['codex' as const, false],
+    ['cursor' as const, false],
   ])('row %s on isElectronHost=%s with installed:null is disabled with no tooltip', async (id, isElectronHost) => {
     const { computeRowState } = await import('./OpenInAgentMenuItem');
     const state = computeRowState({
@@ -131,11 +141,7 @@ describe('computeRowState — branch 2: pre-probe (AC8)', () => {
       isElectronHost,
     });
     expect(state.enabled).toBe(false);
-    if (id === 'cursor' && !isElectronHost) {
-      expect(state.tooltip).not.toBeNull();
-    } else {
-      expect(state.tooltip).toBeNull();
-    }
+    expect(state.tooltip).toBeNull();
   });
 });
 
