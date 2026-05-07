@@ -495,6 +495,93 @@ describe('to-markdown: link URL preservation', () => {
   });
 });
 
+describe('to-markdown: sourceLiteral hidden-content injection guard', () => {
+  test('mismatched sourceRaw is dropped — serialized output matches visible text', () => {
+    const json = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'text',
+              text: 'Hello',
+              marks: [
+                {
+                  type: 'sourceLiteral',
+                  attrs: { sourceRaw: 'Hello<script>alert(1)</script>' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const out = mdManager.serialize(json);
+    expect(out).not.toContain('<script>');
+    expect(out).not.toContain('alert(1)');
+    expect(out.trim()).toBe('Hello');
+  });
+
+  test('newline injection in sourceRaw is dropped', () => {
+    const json = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'text',
+              text: 'safe',
+              marks: [
+                {
+                  type: 'sourceLiteral',
+                  attrs: { sourceRaw: 'safe\n\n# Hidden heading' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const out = mdManager.serialize(json);
+    expect(out).not.toContain('# Hidden');
+    expect(out).not.toContain('Hidden heading');
+    expect(out.trim()).toBe('safe');
+  });
+
+  test('javascript-URL link payload is dropped', () => {
+    const json = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'text',
+              text: 'click here',
+              marks: [
+                {
+                  type: 'sourceLiteral',
+                  attrs: { sourceRaw: '[click here](javascript:alert(1))' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const out = mdManager.serialize(json);
+    expect(out).not.toContain('javascript:');
+    expect(out).not.toContain('alert(1)');
+  });
+
+  test('legitimate sourceRaw still round-trips byte-equal', () => {
+    expect(roundTrip('[](https://example.com)\n')).toBe('[](https://example.com)\n');
+    expect(roundTrip('text \\\\\\\n')).toBe('text \\\\\\\n');
+  });
+});
+
 describe('to-markdown: formatLinkUrl unit', () => {
   test('empty URL → empty', () => {
     expect(formatLinkUrl('')).toBe('');

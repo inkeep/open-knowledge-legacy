@@ -62,6 +62,7 @@ import type {
   MdxTextExpression,
 } from 'mdast-util-mdx';
 import type { Processor } from 'unified';
+import { isValidSourceLiteralRaw } from '../extensions/source-literal-mark.ts';
 import { createRegistry } from '../registry/index.ts';
 import type { PropDef } from '../registry/types.ts';
 import type {
@@ -1385,14 +1386,20 @@ function buildPmToMdastHandlers(schema: Schema): {
       const raw = typeof mark.attrs.sourceRaw === 'string' ? mark.attrs.sourceRaw : '';
       if (children.length === 1 && children[0]?.type === 'text') {
         const textChild = children[0] as Text;
-        textChild.data = textChild.data ?? {};
-        textChild.data.sourceRaw = raw || textChild.value;
+        const candidate = raw || textChild.value;
+        if (isValidSourceLiteralRaw(candidate, textChild.value)) {
+          textChild.data = textChild.data ?? {};
+          textChild.data.sourceRaw = candidate;
+        }
         return textChild;
       }
+      const visibleText = children
+        .filter((c): c is Text => c.type === 'text')
+        .map((c) => c.value ?? '')
+        .join('');
       return {
         type: 'text' as const,
-        value: raw,
-        data: { sourceRaw: raw },
+        value: visibleText || raw,
       } as Text;
     };
   }

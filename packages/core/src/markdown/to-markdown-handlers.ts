@@ -14,6 +14,7 @@
 import type { Nodes, Parents } from 'mdast';
 import type { MdxJsxAttribute, MdxJsxExpressionAttribute, MdxJsxFlowElement } from 'mdast-util-mdx';
 import type { Info, State } from 'mdast-util-to-markdown';
+import { isValidSourceLiteralRaw } from '../extensions/source-literal-mark.ts';
 
 declare module 'mdast-util-to-markdown' {
   interface ConstructNameMap {
@@ -39,7 +40,9 @@ type MdastToMarkdownHandlers = {
 export const toMarkdownHandlers = {
   text(node, _parent, state, info) {
     if (typeof node.data?.sourceRaw === 'string') {
-      return node.data.sourceRaw;
+      if (isValidSourceLiteralRaw(node.data.sourceRaw, node.value ?? '')) {
+        return node.data.sourceRaw;
+      }
     }
 
     if (node.data?.escapedChars?.length) {
