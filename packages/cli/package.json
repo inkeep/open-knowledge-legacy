@@ -1,8 +1,12 @@
 {
   "name": "@inkeep/open-knowledge",
-  "version": "0.4.0-beta.5",
+  "version": "0.4.0-beta.6",
   "private": false,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inkeep/open-knowledge-legacy.git"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.mts",
@@ -10,8 +14,8 @@
     }
   },
   "bin": {
-    "open-knowledge": "./dist/cli.mjs",
-    "ok": "./dist/cli.mjs"
+    "open-knowledge": "dist/cli.mjs",
+    "ok": "dist/cli.mjs"
   },
   "files": [
     "dist",
