@@ -2,20 +2,16 @@
  * Unit tests for the Codex two-shot dispatch helper.
  *
  * Covered surfaces:
- *   (a) First call: wake URL → sleep(CODEX_SETTLE_MS) → real URL.
- *   (b) Second call in same session: skips wake, single-shot.
- *   (c) Wake-URL openExternal failure short-circuits before sleep / real URL.
- *   (d) `__resetCodexWarmedForTests` resets the module-scoped warm flag.
+ *   (a) Every dispatch fires wake → sleep(CODEX_SETTLE_MS) → real URL.
+ *   (b) Wake-URL openExternal failure short-circuits before sleep / real URL.
+ *   (c) Multiple sequential dispatches each repeat the full two-shot — there
+ *       is no session-warm shortcut. (Earlier impl had one and broke when
+ *       Codex was quit mid-session; see file-level comment.)
  */
 
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import type { HandoffPayload } from '@inkeep/open-knowledge-core';
-import {
-  __resetCodexWarmedForTests,
-  CODEX_SETTLE_MS,
-  CODEX_WAKE_URL,
-  dispatchCodex,
-} from './codex-two-shot.ts';
+import { CODEX_SETTLE_MS, CODEX_WAKE_URL, dispatchCodex } from './codex-two-shot.ts';
 
 const PAYLOAD: HandoffPayload = {
   target: 'codex',
@@ -30,9 +26,7 @@ function makeOpen(impl: (url: string) => Promise<void> = async () => {}) {
 }
 
 describe('dispatchCodex', () => {
-  beforeEach(() => __resetCodexWarmedForTests());
-
-  test('first call: fires wake URL, awaits settle, then real URL', async () => {
+  test('fires wake URL, awaits settle, then real URL', async () => {
     const { openExternalDeps, openExternal } = makeOpen();
     const sleep = mock(async () => {});
     const result = await dispatchCodex(PAYLOAD, { openExternalDeps, sleep });
@@ -44,17 +38,22 @@ describe('dispatchCodex', () => {
     expect(sleep).toHaveBeenCalledWith(CODEX_SETTLE_MS);
   });
 
-  test('second call in same session: single-shot (no wake, no sleep)', async () => {
+  test('every call repeats the full two-shot (no session-warm shortcut)', async () => {
     const { openExternalDeps, openExternal } = makeOpen();
     const sleep = mock(async () => {});
+
     await dispatchCodex(PAYLOAD, { openExternalDeps, sleep });
     expect(openExternal).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);
 
     await dispatchCodex(PAYLOAD, { openExternalDeps, sleep });
-    expect(openExternal).toHaveBeenCalledTimes(3);
-    expect(sleep).toHaveBeenCalledTimes(1);
-    expect((openExternal.mock.calls[2] as readonly string[])[0]).toMatch(/^codex:\/\/new\?prompt=/);
+    expect(openExternal).toHaveBeenCalledTimes(4);
+    expect(sleep).toHaveBeenCalledTimes(2);
+
+    expect((openExternal.mock.calls[0] as readonly string[])[0]).toBe(CODEX_WAKE_URL);
+    expect((openExternal.mock.calls[1] as readonly string[])[0]).toMatch(/^codex:\/\/new\?prompt=/);
+    expect((openExternal.mock.calls[2] as readonly string[])[0]).toBe(CODEX_WAKE_URL);
+    expect((openExternal.mock.calls[3] as readonly string[])[0]).toMatch(/^codex:\/\/new\?prompt=/);
   });
 
   test('wake-URL failure short-circuits — no sleep, no real-URL call', async () => {
@@ -72,15 +71,5 @@ describe('dispatchCodex', () => {
     expect(result.detail).toContain('boom');
     expect(sleep).not.toHaveBeenCalled();
     expect(openExternal).toHaveBeenCalledTimes(1);
-  });
-
-  test('__resetCodexWarmedForTests rewinds the warm flag', async () => {
-    const { openExternalDeps, openExternal } = makeOpen();
-    const sleep = mock(async () => {});
-    await dispatchCodex(PAYLOAD, { openExternalDeps, sleep });
-    __resetCodexWarmedForTests();
-    await dispatchCodex(PAYLOAD, { openExternalDeps, sleep });
-    expect(openExternal).toHaveBeenCalledTimes(4);
-    expect(sleep).toHaveBeenCalledTimes(2);
   });
 });

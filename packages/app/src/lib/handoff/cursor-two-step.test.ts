@@ -2,11 +2,13 @@
  * Unit tests for Cursor's two-step dispatcher.
  *
  * Covered surfaces:
- *   (a) Web-host short-circuit (E4 DIRECTED): no spawn, no URL fired — returns
- *       `web-host-cursor-unsupported` cleanly as defense-in-depth.
- *   (b) Electron happy path: spawnCursor called with projectDir; settle delay
- *       scaled by isCursorRunning probe (warm=1000ms, cold=1500ms); then
- *       openExternal fires the cursor:// prompt URL exactly once.
+ *   (a) Electron happy path: caller-provided `spawnCursor` (matches the
+ *       Electron IPC shape) is called with projectDir; settle delay scaled
+ *       by isCursorRunning probe (warm=1000ms, cold=1500ms); then openExternal
+ *       fires the cursor:// prompt URL exactly once.
+ *   (b) Web-host fetch fallback: when no `spawnCursor` dep and no
+ *       `window.okDesktop`, dispatch falls through to `POST /api/spawn-cursor`.
+ *       Outcome shape parity with Electron — wire format `{ ok } | { ok:false; reason }`.
  *   (c) Electron failure paths: spawn returns each `{ok:false, reason}` variant
  *       → mapped to the right HandoffOutcome failure reason with descriptive
  *       detail.
@@ -25,10 +27,73 @@ const PAYLOAD: HandoffPayload = {
   prompt: 'Open Knowledge doc: specs/foo/SPEC.md.',
 };
 
-describe('dispatchCursor — web host short-circuit', () => {
-  test('returns web-host-cursor-unsupported without calling spawnCursor or openExternal', async () => {
-    const result = await dispatchCursor(PAYLOAD);
-    expect(result).toEqual({ ok: false, reason: 'web-host-cursor-unsupported' });
+describe('dispatchCursor — web host fetch fallback', () => {
+  test('with no spawnCursor dep + no okDesktop, POSTs projectDir to /api/spawn-cursor', async () => {
+    const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    const fetchMock = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ input, init });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as unknown as typeof globalThis.fetch;
+    const openExternal = mock(async () => {});
+    const result = await dispatchCursor(PAYLOAD, {
+      fetch: fetchMock,
+      sleep: async () => {},
+      openExternalDeps: { okDesktop: { shell: { openExternal } } },
+    });
+    expect(result).toEqual({ ok: true });
+    expect(calls.length).toBe(1);
+    expect(calls[0]?.input).toBe('/api/spawn-cursor');
+    expect(calls[0]?.init?.method).toBe('POST');
+    const headers = (calls[0]?.init?.headers ?? {}) as Record<string, string>;
+    expect(headers['Content-Type']).toBe('application/json');
+    expect(JSON.parse(calls[0]?.init?.body as string)).toEqual({ path: PAYLOAD.projectDir });
+    expect(openExternal).toHaveBeenCalledTimes(1);
+  });
+
+  test('fetch 404 (older server / non-loopback) → not-installed (matches Electron contract)', async () => {
+    const fetchMock = (async () =>
+      new Response('', { status: 404 })) as unknown as typeof globalThis.fetch;
+    const result = await dispatchCursor(PAYLOAD, { fetch: fetchMock, sleep: async () => {} });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('not-installed');
+  });
+
+  test('fetch network error → dispatch-error (treated as transient spawn failure)', async () => {
+    const fetchMock = (async () => {
+      throw new Error('econnrefused');
+    }) as unknown as typeof globalThis.fetch;
+    const result = await dispatchCursor(PAYLOAD, { fetch: fetchMock, sleep: async () => {} });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('dispatch-error');
+  });
+
+  test('fetch returns {ok:false, reason:not-installed} body → not-installed', async () => {
+    const fetchMock = (async () =>
+      new Response(JSON.stringify({ ok: false, reason: 'not-installed' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as unknown as typeof globalThis.fetch;
+    const result = await dispatchCursor(PAYLOAD, { fetch: fetchMock, sleep: async () => {} });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('not-installed');
+  });
+
+  test('fetch returns malformed body → spawn-error → dispatch-error', async () => {
+    const fetchMock = (async () =>
+      new Response('not-json', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as unknown as typeof globalThis.fetch;
+    const result = await dispatchCursor(PAYLOAD, { fetch: fetchMock, sleep: async () => {} });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('dispatch-error');
   });
 });
 

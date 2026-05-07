@@ -72,7 +72,7 @@ describe('schemeStatesToTargetStates', () => {
     expect(out['claude-cowork'].lastChecked).toBeUndefined();
   });
 
-  test('web-host Cursor is installed:false regardless of probe result (E4 DIRECTED)', () => {
+  test('web-host Cursor reflects the probe result (no force-disabled override)', () => {
     const states: SchemeStates = {
       'cursor:': { installed: true, displayName: 'Cursor' },
     };
@@ -80,8 +80,8 @@ describe('schemeStatesToTargetStates', () => {
       isElectronHost: false,
       now: () => FIXED_NOW,
     });
-    expect(out.cursor.installed).toBe(false);
-    expect(out.cursor.displayName).toBeUndefined();
+    expect(out.cursor.installed).toBe(true);
+    expect(out.cursor.displayName).toBe('Cursor');
   });
 
   test('electron-host Cursor reflects the probe result', () => {
@@ -106,12 +106,12 @@ describe('initialTargetStates', () => {
     expect(out.cursor.installed).toBe(null);
   });
 
-  test('web-host: Cursor is pre-disabled (installed:false); others remain loading', () => {
+  test('web-host: every target is loading (Cursor no longer pre-disabled)', () => {
     const out = initialTargetStates({ isElectronHost: false, now: () => 0 });
     expect(out['claude-cowork'].installed).toBe(null);
     expect(out['claude-code'].installed).toBe(null);
     expect(out.codex.installed).toBe(null);
-    expect(out.cursor.installed).toBe(false);
+    expect(out.cursor.installed).toBe(null);
   });
 });
 
@@ -421,7 +421,7 @@ describe('createProbeCoordinator — throttle, dedup, subscribe, cancel', () => 
     handle.cancel();
   });
 
-  test('web-host coordinator: Cursor target is installed:false even when probe returns true', async () => {
+  test('web-host coordinator: Cursor target reflects probe result (no force-override)', async () => {
     const received: Array<Record<string, unknown>> = [];
     const handle = createProbeCoordinator({
       probe: async () => HEALTHY_ALL_INSTALLED,
@@ -431,7 +431,7 @@ describe('createProbeCoordinator — throttle, dedup, subscribe, cancel', () => 
     handle.subscribe((s) => received.push(s));
     await handle.probe();
     const last = received[received.length - 1];
-    expect(last?.cursor).toMatchObject({ installed: false });
+    expect(last?.cursor).toMatchObject({ installed: true });
     expect(last?.['claude-cowork']).toMatchObject({ installed: true });
     expect(last?.codex).toMatchObject({ installed: true });
     handle.cancel();

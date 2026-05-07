@@ -21,11 +21,6 @@ export function schemeStatesToTargetStates(
   const now = opts.now?.() ?? Date.now();
   const out = {} as Record<HandoffTarget, InstallState>;
   for (const target of KNOWN_TARGETS) {
-    const forceWebCursorDisabled = !opts.isElectronHost && target.id === 'cursor';
-    if (forceWebCursorDisabled) {
-      out[target.id] = { installed: false, lastChecked: now };
-      continue;
-    }
     const scheme = target.schemes[0];
     const probed = scheme !== undefined ? schemeStates[scheme] : undefined;
     if (!probed) {

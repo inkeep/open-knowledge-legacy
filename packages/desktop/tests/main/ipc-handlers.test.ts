@@ -42,35 +42,105 @@ describe('detectProtocol', () => {
     expect(result).toEqual({ installed: true, displayName: 'Codex' });
   });
 
-  test('returns installed:false when Electron rejects (no handler registered)', async () => {
+  test('returns installed:false when Electron rejects AND macOS osascript fallback returns false', async () => {
     const result = await detectProtocol(
       {
         platform: 'darwin',
         getApplicationInfoForProtocol: async () => {
           throw new Error('no handler');
         },
+        runMacOsProbe: async () => false,
       },
       'codex',
     );
     expect(result).toEqual({ installed: false });
   });
 
-  test('returns installed:false on Windows when handler returns empty', async () => {
+  test('macOS fallback: LS returns empty info, osascript returns true → installed:true (cursor case)', async () => {
+    let probedScheme: string | null = null;
+    const result = await detectProtocol(
+      {
+        platform: 'darwin',
+        getApplicationInfoForProtocol: async () => ({ name: '', path: '' }),
+        runMacOsProbe: async (s) => {
+          probedScheme = s;
+          return true;
+        },
+      },
+      'cursor',
+    );
+    expect(probedScheme).toBe('cursor');
+    expect(result).toEqual({ installed: true });
+  });
+
+  test('macOS fallback: LS rejects, osascript returns true → installed:true', async () => {
+    const result = await detectProtocol(
+      {
+        platform: 'darwin',
+        getApplicationInfoForProtocol: async () => {
+          throw new Error('no handler');
+        },
+        runMacOsProbe: async () => true,
+      },
+      'cursor',
+    );
+    expect(result).toEqual({ installed: true });
+  });
+
+  test('macOS fallback: LS empty, osascript also fails → installed:false', async () => {
+    const result = await detectProtocol(
+      {
+        platform: 'darwin',
+        getApplicationInfoForProtocol: async () => ({ name: '', path: '' }),
+        runMacOsProbe: async () => {
+          throw new Error('osascript timeout');
+        },
+      },
+      'cursor',
+    );
+    expect(result).toEqual({ installed: false });
+  });
+
+  test('macOS fallback: skipped for schemes not in INSTALLED_AGENTS_SCHEMES', async () => {
+    let probeCalled = false;
+    const result = await detectProtocol(
+      {
+        platform: 'darwin',
+        getApplicationInfoForProtocol: async () => ({ name: '', path: '' }),
+        runMacOsProbe: async () => {
+          probeCalled = true;
+          return true;
+        },
+      },
+      'foo',
+    );
+    expect(probeCalled).toBe(false);
+    expect(result).toEqual({ installed: false });
+  });
+
+  test('returns installed:false on Windows when handler returns empty (no osascript fallback on win32)', async () => {
+    let probeCalled = false;
     const result = await detectProtocol(
       {
         platform: 'win32',
         getApplicationInfoForProtocol: async () => ({ name: '', path: '' }),
+        runMacOsProbe: async () => {
+          probeCalled = true;
+          return true;
+        },
       },
       'codex',
     );
+    expect(probeCalled).toBe(false);
     expect(result).toEqual({ installed: false });
   });
 
-  test('returns installed:false on timeout', async () => {
+  test('returns installed:false on timeout (with osascript fallback also returning false)', async () => {
     const result = await detectProtocol(
       {
         platform: 'darwin',
         getApplicationInfoForProtocol: () => new Promise(() => {}),
+        runMacOsProbe: async () => false,
         timeoutMs: 20,
       },
       'claude',

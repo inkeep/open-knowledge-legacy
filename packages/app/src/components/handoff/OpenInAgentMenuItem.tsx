@@ -76,8 +76,7 @@ export function computeRowHint(args: {
   installState: InstallState;
   isElectronHost: boolean;
 }): string | null {
-  const { target, installState, isElectronHost } = args;
-  if (target.id === 'cursor' && !isElectronHost) return 'Desktop only';
+  const { installState } = args;
   if (installState.installed === null) return 'Detecting…';
   if (installState.installed === false) return 'Not installed';
   return null;
@@ -88,20 +87,7 @@ export function computeRowState(args: {
   installState: InstallState;
   isElectronHost: boolean;
 }): RowState {
-  const { target, installState, isElectronHost } = args;
-
-  if (target.id === 'cursor' && !isElectronHost) {
-    return {
-      enabled: false,
-      tooltip: {
-        message: 'Cursor handoff requires the desktop build.',
-        installAction: {
-          label: 'Install the Open Knowledge desktop app →',
-          url: OK_DESKTOP_INSTALL_URL,
-        },
-      },
-    };
-  }
+  const { target, installState } = args;
 
   if (installState.installed === null) {
     return { enabled: false, tooltip: null };
