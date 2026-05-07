@@ -21,6 +21,8 @@ export type ReconcileOutcome =
   | { kind: 'refused'; reason: string }
   | { kind: 'noop' };
 
+export const MAX_LCS_CELLS = 4_000_000;
+
 export const CONFLICT_MARKER_RE = /^(<{7} |={7}$|>{7} |\|{7} )/m;
 
 export function containsConflictMarkers(content: string): boolean {
@@ -76,6 +78,13 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
   const baseBlocks = splitMarkdownBlocks(base);
   const ourBlocks = splitMarkdownBlocks(ours);
   const theirBlocks = splitMarkdownBlocks(theirs);
+
+  if (
+    (baseBlocks.length + 1) * (ourBlocks.length + 1) > MAX_LCS_CELLS ||
+    (baseBlocks.length + 1) * (theirBlocks.length + 1) > MAX_LCS_CELLS
+  ) {
+    return { kind: 'refused', reason: 'too-large' };
+  }
 
   return mergeBlocks(baseBlocks, ourBlocks, theirBlocks);
 }
@@ -223,14 +232,19 @@ function computeEditOps(baseBlocks: string[], editedBlocks: string[]): Map<numbe
 function longestCommonSubsequence(a: string[], b: string[]): [number, number][] {
   const m = a.length;
   const n = b.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  const stride = n + 1;
+  const dp = new Uint32Array((m + 1) * stride);
 
   for (let i = 1; i <= m; i++) {
+    const rowBase = i * stride;
+    const prevRowBase = (i - 1) * stride;
     for (let j = 1; j <= n; j++) {
       if (a[i - 1] === b[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
+        dp[rowBase + j] = dp[prevRowBase + (j - 1)] + 1;
       } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+        const top = dp[prevRowBase + j];
+        const left = dp[rowBase + (j - 1)];
+        dp[rowBase + j] = top > left ? top : left;
       }
     }
   }
@@ -243,7 +257,7 @@ function longestCommonSubsequence(a: string[], b: string[]): [number, number][] 
       pairs.push([i - 1, j - 1]);
       i--;
       j--;
-    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+    } else if (dp[(i - 1) * stride + j] >= dp[i * stride + (j - 1)]) {
       i--;
     } else {
       j--;
