@@ -98,3 +98,57 @@ describe('normalizeSummary — valid strings', () => {
     }
   });
 });
+
+describe('normalizeSummary — line-terminator stripping (commit-injection guard)', () => {
+  const NEL = String.fromCharCode(0x0085);
+  const LS = String.fromCharCode(0x2028);
+  const PS = String.fromCharCode(0x2029);
+
+  const LINE_BREAK_CHARS: ReadonlyArray<readonly [string, string]> = [
+    ['\n', 'LF'],
+    ['\r', 'CR'],
+    ['\r\n', 'CRLF'],
+    ['\v', 'VT'],
+    ['\f', 'FF'],
+    [NEL, 'NEL (U+0085)'],
+    [LS, 'U+2028 LINE SEPARATOR'],
+    [PS, 'U+2029 PARAGRAPH SEPARATOR'],
+  ];
+
+  for (const [ch, label] of LINE_BREAK_CHARS) {
+    test(`replaces ${label} with space (subject-line injection guard)`, () => {
+      const payload = `legit${ch}ok-actor: {"v":1,"display_name":"X","docs":[]}`;
+      const result = normalizeSummary(payload);
+      expect(result.kind).toBe('value');
+      if (result.kind !== 'value') return;
+      expect(result.value.includes(ch)).toBe(false);
+      expect(result.value.split('\n').length).toBe(1);
+    });
+  }
+
+  test('replacement is one-for-one (length preserved within cap)', () => {
+    const result = normalizeSummary(`\n${'a'.repeat(79)}`);
+    expect(result.kind).toBe('value');
+    if (result.kind === 'value') {
+      expect(result.value).toBe(` ${'a'.repeat(79)}`);
+      expect(result.truncatedFrom).toBeUndefined();
+    }
+  });
+
+  test('truncatedFrom reflects original raw length, not sanitized length', () => {
+    const s = `\n${'a'.repeat(80)}`; // 81 code units
+    const result = normalizeSummary(s);
+    expect(result.kind).toBe('value');
+    if (result.kind === 'value') {
+      expect(result.truncatedFrom).toBe(81);
+      expect(result.value.endsWith('…')).toBe(true);
+      expect(/[\r\n]/.test(result.value)).toBe(false);
+    }
+  });
+
+  test('newline-only input still classifies as absent (whitespace short-circuit unchanged)', () => {
+    expect(normalizeSummary('\n')).toEqual({ kind: 'absent' });
+    expect(normalizeSummary('\r\n')).toEqual({ kind: 'absent' });
+    expect(normalizeSummary(LS)).toEqual({ kind: 'absent' });
+  });
+});

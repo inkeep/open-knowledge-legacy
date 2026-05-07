@@ -108,4 +108,43 @@ describe('registerDocExtension / getDocExtension', () => {
     forgetDocExtension('foo');
     expect(getDocExtension('foo')).toBe('.md'); // back to default
   });
+
+  test('preserves uppercase .MD casing observed on disk', () => {
+    const result = registerDocExtension('foo', '.MD');
+    expect(result).toEqual({ effective: '.MD', changed: true, shadowed: null });
+    expect(getDocExtension('foo')).toBe('.MD');
+  });
+
+  test('preserves uppercase .MDX casing observed on disk', () => {
+    const result = registerDocExtension('foo', '.MDX');
+    expect(result).toEqual({ effective: '.MDX', changed: true, shadowed: null });
+    expect(getDocExtension('foo')).toBe('.MDX');
+  });
+
+  test('precedence applies case-insensitively: .MDX wins over .MD', () => {
+    registerDocExtension('foo', '.MD');
+    const second = registerDocExtension('foo', '.MDX');
+    expect(second).toEqual({ effective: '.MDX', changed: true, shadowed: '.MD' });
+    expect(getDocExtension('foo')).toBe('.MDX');
+  });
+
+  test('precedence applies case-insensitively: .MDX wins over later .md', () => {
+    registerDocExtension('foo', '.MDX');
+    const second = registerDocExtension('foo', '.md');
+    expect(second).toEqual({ effective: '.MDX', changed: false, shadowed: '.md' });
+    expect(getDocExtension('foo')).toBe('.MDX');
+  });
+
+  test('same canonical extension is a no-op regardless of case', () => {
+    registerDocExtension('foo', '.MD');
+    const second = registerDocExtension('foo', '.md');
+    expect(second).toEqual({ effective: '.MD', changed: false, shadowed: null });
+    expect(getDocExtension('foo')).toBe('.MD');
+  });
+
+  test('rejects unsupported extensions', () => {
+    expect(() => registerDocExtension('foo', '.txt')).toThrow();
+    expect(() => registerDocExtension('foo', '.markdown')).toThrow();
+    expect(() => registerDocExtension('foo', '')).toThrow();
+  });
 });
