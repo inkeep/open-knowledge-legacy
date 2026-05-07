@@ -18,6 +18,7 @@ export default {
     'docs/content/**/*.mdx': ['files'],
     'packages/app/src/components/McpConsentDialogBody.tsx': ['duplicates'],
     'packages/core/src/extensions/list.ts': ['duplicates'],
+    'packages/desktop/src/main/auto-updater.ts': ['types'],
   },
   workspaces: {
     'packages/app': {

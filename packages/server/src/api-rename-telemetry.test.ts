@@ -65,9 +65,9 @@ function makeRes(): { res: ServerResponse; captured: CapturedResponse } {
   return { res, captured };
 }
 
-function buildBacklinkIndex(contentDir: string): BacklinkIndex {
+async function buildBacklinkIndex(contentDir: string): Promise<BacklinkIndex> {
   const index = new BacklinkIndex({ projectDir: contentDir, contentDir });
-  index.rebuildFromDisk();
+  await index.rebuildFromDisk();
   return index;
 }
 
@@ -129,7 +129,7 @@ async function callApi(
     } as unknown as Parameters<typeof createApiExtension>[0]['sessionManager'],
     contentDir,
     getFileIndex: () => buildFileIndex(contentDir),
-    backlinkIndex: buildBacklinkIndex(contentDir),
+    backlinkIndex: await buildBacklinkIndex(contentDir),
     ...(opts.getPrincipal ? { getPrincipal: opts.getPrincipal } : {}),
   });
   const req = makeReq(url, body);

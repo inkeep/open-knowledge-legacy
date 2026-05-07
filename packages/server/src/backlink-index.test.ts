@@ -243,7 +243,7 @@ describe('BacklinkIndex', () => {
     }
   });
 
-  test('getDeadLinks returns missing targets ordered by source count then target', () => {
+  test('getDeadLinks returns missing targets ordered by source count then target', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-dead-links-'));
     const contentDir = join(projectDir, 'content');
     mkdirSync(contentDir, { recursive: true });
@@ -258,7 +258,7 @@ describe('BacklinkIndex', () => {
       writeFileSync(join(contentDir, 'existing.md'), '# Existing\n\nBody.\n', 'utf-8');
 
       const index = new BacklinkIndex({ projectDir, contentDir });
-      index.rebuildFromDisk();
+      await index.rebuildFromDisk();
 
       const deadLinks = index.getDeadLinks(['alpha', 'beta', 'gamma', 'existing']);
       expect(deadLinks.map((entry) => entry.target)).toEqual([
@@ -277,7 +277,7 @@ describe('BacklinkIndex', () => {
     }
   });
 
-  test('getDeadLinks returns an empty array when every target exists', () => {
+  test('getDeadLinks returns an empty array when every target exists', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-dead-links-empty-'));
     const contentDir = join(projectDir, 'content');
     mkdirSync(contentDir, { recursive: true });
@@ -286,7 +286,7 @@ describe('BacklinkIndex', () => {
       writeFileSync(join(contentDir, 'beta.md'), '# Beta\n\nReady.\n', 'utf-8');
 
       const index = new BacklinkIndex({ projectDir, contentDir });
-      index.rebuildFromDisk();
+      await index.rebuildFromDisk();
 
       expect(index.getDeadLinks(['alpha', 'beta'])).toEqual([]);
     } finally {
@@ -308,7 +308,7 @@ describe('BacklinkIndex', () => {
       );
 
       const index = new BacklinkIndex({ projectDir, contentDir });
-      index.rebuildFromDisk();
+      await index.rebuildFromDisk();
 
       expect(index.getBacklinks('beta')).toEqual([
         {
@@ -345,7 +345,7 @@ describe('BacklinkIndex', () => {
     }
   });
 
-  test('rebuildFromDisk uses raw markdown scanning instead of the full parser', () => {
+  test('rebuildFromDisk uses raw markdown scanning instead of the full parser', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-rebuild-'));
     const contentDir = join(projectDir, 'content');
     mkdirSync(contentDir, { recursive: true });
@@ -359,7 +359,7 @@ describe('BacklinkIndex', () => {
       writeFileSync(join(contentDir, 'beta.md'), '# Beta\n', 'utf-8');
 
       const index = new BacklinkIndex({ projectDir, contentDir });
-      index.rebuildFromDisk();
+      await index.rebuildFromDisk();
 
       expect(index.getBacklinks('beta')).toEqual([
         {
@@ -634,13 +634,13 @@ describe('BacklinkIndex with markdown links', () => {
     }
   });
 
-  test('rebuildFromDisk indexes markdown links', () => {
+  test('rebuildFromDisk indexes markdown links', async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'backlinks-rebuild-'));
     try {
       writeFileSync(join(tmpDir, 'source.md'), 'Links to [target](./target.md).\n', 'utf-8');
       writeFileSync(join(tmpDir, 'target.md'), '# Target\n', 'utf-8');
       const index = new BacklinkIndex({ projectDir: tmpDir, contentDir: tmpDir });
-      index.rebuildFromDisk();
+      await index.rebuildFromDisk();
       expect(index.getBacklinks('target').map((b) => b.source)).toContain('source');
       expect(index.getForwardLinks('source')).toContain('target');
     } finally {
@@ -704,6 +704,112 @@ describe('BacklinkIndex with markdown links', () => {
       });
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('reconcileWithDisk', () => {
+  test('unchanged files are not re-parsed; mtime snapshot is preserved', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-reconcile-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      writeFileSync(join(contentDir, 'alpha.md'), 'Links to [[beta]].');
+      writeFileSync(join(contentDir, 'beta.md'), 'No links here.');
+
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      await index.rebuildFromDisk();
+      await index.saveToDisk();
+
+      const reloaded = new BacklinkIndex({ projectDir, contentDir });
+      expect(await reloaded.loadFromDisk()).toBe(true);
+      const diff = await reloaded.reconcileWithDisk();
+      expect(diff).toEqual({ added: 0, updated: 0, deleted: 0 });
+
+      expect(reloaded.getBacklinks('beta')).toEqual([
+        { source: 'alpha', anchor: null, snippet: 'Links to beta.' },
+      ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('changed file is re-parsed on reconcile', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-reconcile-changed-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      writeFileSync(join(contentDir, 'alpha.md'), 'Links to [[beta]].');
+      writeFileSync(join(contentDir, 'beta.md'), 'No links here.');
+
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      await index.rebuildFromDisk();
+      await index.saveToDisk();
+
+      await new Promise((r) => setTimeout(r, 2));
+      writeFileSync(join(contentDir, 'alpha.md'), 'Links to [[gamma]].');
+
+      const reloaded = new BacklinkIndex({ projectDir, contentDir });
+      expect(await reloaded.loadFromDisk()).toBe(true);
+      const diff = await reloaded.reconcileWithDisk();
+      expect(diff.updated).toBe(1);
+      expect(diff.added).toBe(0);
+
+      expect(reloaded.getBacklinks('gamma')).toEqual([
+        { source: 'alpha', anchor: null, snippet: 'Links to gamma.' },
+      ]);
+      expect(reloaded.getBacklinks('beta')).toEqual([]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('new file is added and deleted file is removed on reconcile', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-reconcile-newdel-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      writeFileSync(join(contentDir, 'alpha.md'), 'Links to [[beta]].');
+      writeFileSync(join(contentDir, 'beta.md'), 'No links here.');
+
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      await index.rebuildFromDisk();
+      await index.saveToDisk();
+
+      writeFileSync(join(contentDir, 'gamma.md'), 'Links to [[alpha]].');
+      rmSync(join(contentDir, 'beta.md'));
+
+      const reloaded = new BacklinkIndex({ projectDir, contentDir });
+      expect(await reloaded.loadFromDisk()).toBe(true);
+      const diff = await reloaded.reconcileWithDisk();
+      expect(diff.added).toBe(1);
+      expect(diff.deleted).toBe(1);
+
+      expect(reloaded.getBacklinks('alpha')).toEqual([
+        { source: 'gamma', anchor: null, snippet: 'Links to alpha.' },
+      ]);
+      expect(reloaded.getForwardLinks('beta')).toEqual([]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('cold start (no cache) falls back to full rebuild', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-coldstart-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      writeFileSync(join(contentDir, 'alpha.md'), 'Links to [[beta]].');
+
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      const cacheLoaded = await index.loadFromDisk();
+      expect(cacheLoaded).toBe(false);
+      await index.rebuildFromDisk();
+      expect(index.getBacklinks('beta')).toEqual([
+        { source: 'alpha', anchor: null, snippet: 'Links to beta.' },
+      ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
     }
   });
 });

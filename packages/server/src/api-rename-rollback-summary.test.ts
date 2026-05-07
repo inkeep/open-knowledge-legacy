@@ -70,9 +70,9 @@ function buildFileIndex(contentDir: string): ReadonlyMap<string, FileIndexEntry>
   return index;
 }
 
-function buildBacklinkIndex(contentDir: string): BacklinkIndex {
+async function buildBacklinkIndex(contentDir: string): Promise<BacklinkIndex> {
   const index = new BacklinkIndex({ projectDir: contentDir, contentDir });
-  index.rebuildFromDisk();
+  await index.rebuildFromDisk();
   return index;
 }
 
@@ -114,7 +114,7 @@ async function callApi(
     } as unknown as Parameters<typeof createApiExtension>[0]['sessionManager'],
     contentDir,
     getFileIndex: () => buildFileIndex(contentDir),
-    backlinkIndex: backlinkIndex ?? buildBacklinkIndex(contentDir),
+    backlinkIndex: backlinkIndex ?? (await buildBacklinkIndex(contentDir)),
     ...(flushGitCommit ? { flushGitCommit } : {}),
     ...(getPrincipal ? { getPrincipal } : {}),
     ...(contentFilter ? { contentFilter } : {}),

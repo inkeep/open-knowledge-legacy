@@ -242,19 +242,29 @@ export function createServer(options: ServerOptions): ServerInstance {
   function signalChannel(channel: 'files' | 'backlinks' | 'graph' | 'tags'): void {
     cc1Broadcaster?.signal(channel);
   }
+
+  const BACKLINK_SAVE_DEBOUNCE_MS = 2000;
+  let backlinkSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  function scheduleSaveToDisk(): void {
+    if (backlinkSaveTimer !== null) clearTimeout(backlinkSaveTimer);
+    backlinkSaveTimer = setTimeout(() => {
+      backlinkSaveTimer = null;
+      void backlinkIndex.saveToDisk().catch((err) => {
+        console.warn('[backlinks] Failed to persist debounced cache:', err);
+      });
+    }, BACKLINK_SAVE_DEBOUNCE_MS);
+  }
   try {
     contentFilter = createContentFilter({
       projectDir,
       contentDir,
       onAfterRebuild: () => {
-        try {
-          backlinkIndex.rebuildFromDisk(getActiveBranch());
-        } catch (err) {
+        void backlinkIndex.rebuildFromDisk(getActiveBranch()).catch((err) => {
           getLogger('server-factory').warn(
             { err },
             '[content-filter] backlink-index rebuild failed after onAfterRebuild',
           );
-        }
+        });
         try {
           tagIndex.init();
         } catch (err) {
@@ -568,9 +578,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         case 'create': {
           log.info({ docName: event.docName }, `[reconcile] create: ${event.docName}`);
           backlinkIndex.updateDocumentFromMarkdown(event.docName, event.content);
-          void backlinkIndex.saveToDisk().catch((err) => {
-            console.warn(`[backlinks] Failed to persist create for ${event.docName}:`, err);
-          });
+          scheduleSaveToDisk();
           tagIndex.updateDocumentFromMarkdown(event.docName, event.content);
           signalChannel('files');
           signalChannel('backlinks');
@@ -584,9 +592,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           const document = hocuspocus.documents.get(docName);
           if (!document) {
             backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
-            void backlinkIndex.saveToDisk().catch((err) => {
-              console.warn(`[backlinks] Failed to persist closed-doc update for ${docName}:`, err);
-            });
+            scheduleSaveToDisk();
             tagIndex.updateDocumentFromMarkdown(docName, theirs);
             signalChannel('backlinks');
             signalChannel('graph');
@@ -610,9 +616,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           switch (result.kind) {
             case 'noop':
               backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
-              void backlinkIndex.saveToDisk().catch((err) => {
-                console.warn(`[backlinks] Failed to persist noop update for ${docName}:`, err);
-              });
+              scheduleSaveToDisk();
               tagIndex.updateDocumentFromMarkdown(docName, theirs);
               signalChannel('backlinks');
               signalChannel('graph');
@@ -625,9 +629,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
                 backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
-                void backlinkIndex.saveToDisk().catch((err) => {
-                  console.warn(`[backlinks] Failed to persist clean update for ${docName}:`, err);
-                });
+                scheduleSaveToDisk();
                 tagIndex.updateDocumentFromMarkdown(docName, theirs);
                 signalChannel('backlinks');
                 signalChannel('graph');
@@ -647,9 +649,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
                 backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
-                void backlinkIndex.saveToDisk().catch((err) => {
-                  console.warn(`[backlinks] Failed to persist merged update for ${docName}:`, err);
-                });
+                scheduleSaveToDisk();
                 tagIndex.updateDocumentFromMarkdown(docName, theirs);
                 signalChannel('backlinks');
                 signalChannel('graph');
@@ -670,12 +670,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 incrementReconcile();
                 incrementConflict();
                 backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
-                void backlinkIndex.saveToDisk().catch((err) => {
-                  console.warn(
-                    `[backlinks] Failed to persist conflict update for ${docName}:`,
-                    err,
-                  );
-                });
+                scheduleSaveToDisk();
                 tagIndex.updateDocumentFromMarkdown(docName, theirs);
                 signalChannel('backlinks');
                 signalChannel('graph');
@@ -706,9 +701,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           const document = hocuspocus.documents.get(docName);
           if (!document) {
             backlinkIndex.deleteDocument(docName);
-            void backlinkIndex.saveToDisk().catch((err) => {
-              console.warn(`[backlinks] Failed to persist closed-doc delete for ${docName}:`, err);
-            });
+            scheduleSaveToDisk();
             tagIndex.deleteDocument(docName);
             signalChannel('files');
             signalChannel('backlinks');
@@ -751,9 +744,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           deleteReconciledBase(docName);
           backlinkIndex.deleteDocument(docName);
-          void backlinkIndex.saveToDisk().catch((err) => {
-            console.warn(`[backlinks] Failed to persist delete for ${docName}:`, err);
-          });
+          scheduleSaveToDisk();
           tagIndex.deleteDocument(docName);
           log.info({ docName, isDirty }, `[reconcile] delete: ${docName} (dirty=${isDirty})`);
 
@@ -773,12 +764,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           deleteReconciledBase(oldDocName);
           setReconciledBase(newDocName, content);
           backlinkIndex.renameDocument(oldDocName, newDocName, content);
-          void backlinkIndex.saveToDisk().catch((err) => {
-            console.warn(
-              `[backlinks] Failed to persist rename for ${oldDocName} -> ${newDocName}:`,
-              err,
-            );
-          });
+          scheduleSaveToDisk();
           tagIndex.renameDocument(oldDocName, newDocName, content);
 
           if (document) {
@@ -967,6 +953,11 @@ export function createServer(options: ServerOptions): ServerInstance {
       const t0 = Date.now();
       const phaseErrors: Array<{ phase: string; error: string }> = [];
       shutdownAllowsUnload = true;
+
+      if (backlinkSaveTimer !== null) {
+        clearTimeout(backlinkSaveTimer);
+        backlinkSaveTimer = null;
+      }
 
       let initTimeoutId: ReturnType<typeof setTimeout> | undefined;
       const initSettled = await Promise.race([
@@ -1465,11 +1456,29 @@ export function createServer(options: ServerOptions): ServerInstance {
     backlinkIndex.switchBranch(startupBranch);
 
     try {
+      {
+        const branch = getActiveBranch();
+        try {
+          const cacheLoaded = await backlinkIndex.loadFromDisk(branch);
+          if (cacheLoaded) {
+            const diff = await backlinkIndex.reconcileWithDisk(branch);
+            if (diff.added > 0 || diff.updated > 0 || diff.deleted > 0) {
+              log.info(diff, '[backlinks] startup reconcile: offline changes applied');
+            }
+          } else {
+            await backlinkIndex.rebuildFromDisk(branch);
+          }
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(`[backlinks] Failed to persist startup cache for ${branch}:`, err);
+          });
+        } catch (err) {
+          log.error(
+            { err, branch },
+            '[backlinks] startup init failed; index will populate incrementally via watcher',
+          );
+        }
+      }
       watcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
-      backlinkIndex.rebuildFromDisk(getActiveBranch());
-      void backlinkIndex.saveToDisk().catch((err) => {
-        console.warn(`[backlinks] Failed to persist startup cache for ${getActiveBranch()}:`, err);
-      });
       tagIndex.init();
       let seedSkipCount = 0;
       try {
@@ -1574,6 +1583,10 @@ export function createServer(options: ServerOptions): ServerInstance {
             eventBuffer.splice(0, eventBuffer.length);
 
             switchReconciledBaseScope(newBranch);
+            if (backlinkSaveTimer !== null) {
+              clearTimeout(backlinkSaveTimer);
+              backlinkSaveTimer = null;
+            }
             backlinkIndex.switchBranch(newBranch);
 
             contentFilter.rebuildDirCount();
@@ -1664,10 +1677,25 @@ export function createServer(options: ServerOptions): ServerInstance {
               { branch: newBranch, docCount: hocuspocus.documents.size },
               `[branch-switch] loaded branch ${newBranch} (${hocuspocus.documents.size} docs)`,
             );
-            backlinkIndex.rebuildFromDisk(newBranch);
-            void backlinkIndex.saveToDisk(newBranch).catch((err) => {
-              console.warn(`[backlinks] Failed to persist branch cache for ${newBranch}:`, err);
-            });
+            try {
+              const branchCacheLoaded = await backlinkIndex.loadFromDisk(newBranch);
+              if (branchCacheLoaded) {
+                const diff = await backlinkIndex.reconcileWithDisk(newBranch);
+                if (diff.added > 0 || diff.updated > 0 || diff.deleted > 0) {
+                  log.info(diff, `[backlinks] branch-switch reconcile for ${newBranch}`);
+                }
+              } else {
+                await backlinkIndex.rebuildFromDisk(newBranch);
+              }
+              void backlinkIndex.saveToDisk(newBranch).catch((err) => {
+                console.warn(`[backlinks] Failed to persist branch cache for ${newBranch}:`, err);
+              });
+            } catch (err) {
+              log.error(
+                { err, branch: newBranch },
+                '[backlinks] branch-switch rebuild failed; backlinks may be stale',
+              );
+            }
             tagIndex.init();
 
             if (shadowRef.current && info.batchKind === 'cross-branch') {
