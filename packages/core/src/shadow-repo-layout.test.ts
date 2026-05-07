@@ -895,6 +895,162 @@ describe('OkActorEntry summaries field (consolidated from ok-contributors:)', ()
   });
 });
 
+describe('OkActorEntry previous_paths field (timeline rename-history mitigation)', () => {
+  const baseEntry: OkActorEntry = {
+    v: 1,
+    writer_id: 'agent-a',
+    principal: null,
+    agent_session: 'a',
+    agent_type: null,
+    client_name: null,
+    client_version: null,
+    label: null,
+    display_name: 'Claude',
+    color_seed: 'claude',
+    docs: ['essays/auth.md'],
+  };
+
+  test('formatOkActor elides previous_paths when absent (legacy byte-identity)', () => {
+    expect(formatOkActor(baseEntry)).not.toContain('previous_paths');
+  });
+
+  test('formatOkActor elides previous_paths when explicitly empty array', () => {
+    const entry: OkActorEntry = { ...baseEntry, previous_paths: [] };
+    expect(formatOkActor(entry)).not.toContain('previous_paths');
+  });
+
+  test('formatOkActor includes previous_paths when populated', () => {
+    const entry: OkActorEntry = {
+      ...baseEntry,
+      previous_paths: [{ from: 'articles/auth', to: 'essays/auth' }],
+    };
+    const line = formatOkActor(entry);
+    expect(line).toContain('"previous_paths":[{"from":"articles/auth","to":"essays/auth"}]');
+  });
+
+  test('formatOkActor includes previous_paths after summaries when both present', () => {
+    const entry: OkActorEntry = {
+      ...baseEntry,
+      summaries: ['rename'],
+      previous_paths: [{ from: 'articles/auth', to: 'essays/auth' }],
+    };
+    const line = formatOkActor(entry);
+    const summariesIdx = line.indexOf('"summaries"');
+    const previousPathsIdx = line.indexOf('"previous_paths"');
+    expect(summariesIdx).toBeGreaterThan(0);
+    expect(previousPathsIdx).toBeGreaterThan(summariesIdx);
+  });
+
+  test('parseOkActor round-trips previous_paths chain', () => {
+    const entry: OkActorEntry = {
+      ...baseEntry,
+      previous_paths: [
+        { from: 'articles/auth', to: 'docs/auth' },
+        { from: 'docs/auth', to: 'essays/auth' },
+      ],
+    };
+    const parsed = parseOkActor(formatOkActor(entry));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.previous_paths).toEqual([
+      { from: 'articles/auth', to: 'docs/auth' },
+      { from: 'docs/auth', to: 'essays/auth' },
+    ]);
+  });
+
+  test('legacy ok-actor body (no previous_paths field) parses with previous_paths undefined', () => {
+    const line =
+      'ok-actor: {"v":1,"writer_id":"agent-a","principal":null,"agent_session":"a","agent_type":null,"client_name":null,"client_version":null,"label":null,"display_name":"Claude","color_seed":"claude","docs":["x.md"]}';
+    const parsed = parseOkActor(line);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.previous_paths).toBeUndefined();
+  });
+
+  test('parseOkActor drops previous_paths field when not an array', () => {
+    const line =
+      'ok-actor: {"v":1,"writer_id":"agent-a","display_name":"Claude","docs":["a.md"],"previous_paths":"not-an-array"}';
+    const parsed = parseOkActor(line);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.writer_id).toBe('agent-a');
+    expect(parsed?.previous_paths).toBeUndefined();
+  });
+
+  test('parseOkActor drops single malformed previous_paths entry but keeps the rest', () => {
+    const line =
+      'ok-actor: {"v":1,"writer_id":"agent-a","display_name":"Claude","docs":["a.md"],"previous_paths":[{"from":"a","to":"b"},{"from":42,"to":"c"},{"from":"c","to":"d"}]}';
+    const parsed = parseOkActor(line);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.previous_paths).toEqual([
+      { from: 'a', to: 'b' },
+      { from: 'c', to: 'd' },
+    ]);
+  });
+
+  test('parseOkActor drops previous_paths element missing required fields', () => {
+    const line =
+      'ok-actor: {"v":1,"writer_id":"agent-a","display_name":"Claude","docs":["a.md"],"previous_paths":[{"from":"only-from"},{"to":"only-to"},{"from":"a","to":"b"}]}';
+    const parsed = parseOkActor(line);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.previous_paths).toEqual([{ from: 'a', to: 'b' }]);
+  });
+
+  test('parseOkActor drops null entry inside previous_paths array', () => {
+    const line =
+      'ok-actor: {"v":1,"writer_id":"agent-a","display_name":"Claude","docs":["a.md"],"previous_paths":[null,{"from":"a","to":"b"}]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.previous_paths).toEqual([{ from: 'a', to: 'b' }]);
+  });
+
+  test('formatOkActor elides previous_paths when every element is malformed', () => {
+    const line =
+      'ok-actor: {"v":1,"writer_id":"agent-a","display_name":"Claude","docs":["a.md"],"previous_paths":[{"from":42},{"to":99}]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.previous_paths).toBeUndefined();
+  });
+
+  test('parseOkActors carries previous_paths on each writer', () => {
+    const body = [
+      'rename: articles/x -> essays/x',
+      '',
+      'ok-actor: {"v":1,"writer_id":"agent-alice","display_name":"Alice","docs":["essays/x.md"],"previous_paths":[{"from":"articles/x","to":"essays/x"}]}',
+      'ok-actor: {"v":1,"writer_id":"agent-bob","display_name":"Bob","docs":["essays/y.md"],"previous_paths":[{"from":"articles/y","to":"essays/y"}]}',
+    ].join('\n');
+    const actors = parseOkActors(body);
+    expect(actors).toHaveLength(2);
+    expect(actors[0]?.previous_paths).toEqual([{ from: 'articles/x', to: 'essays/x' }]);
+    expect(actors[1]?.previous_paths).toEqual([{ from: 'articles/y', to: 'essays/y' }]);
+  });
+
+  test('byte-identity: format(parse(legacyBody)) === legacyBody for a corpus of pre-spec lines', () => {
+    const corpus = [
+      'ok-actor: {"v":1,"writer_id":"agent-conn-abc123","principal":null,"agent_session":"conn-abc123","agent_type":"claude-3-5-sonnet","client_name":"claude-code","client_version":"1.0.0","label":"My agent","display_name":"Claude (abc1)","color_seed":"conn-abc123","docs":["notes.md","ideas.md"]}',
+      'ok-actor: {"v":1,"writer_id":"openknowledge-service","principal":null,"agent_session":null,"agent_type":null,"client_name":null,"client_version":null,"label":null,"display_name":"Open Knowledge (service)","color_seed":"openknowledge-service","docs":[]}',
+      'ok-actor: {"v":1,"writer_id":"agent-a","principal":null,"agent_session":"a","agent_type":null,"client_name":null,"client_version":null,"label":null,"display_name":"Claude","color_seed":"claude","docs":["a.md"],"summaries":["one","two"]}',
+    ];
+    for (const legacyLine of corpus) {
+      const parsed = parseOkActor(legacyLine);
+      expect(parsed).not.toBeNull();
+      const reformatted = formatOkActor(parsed as OkActorEntry);
+      expect(reformatted).toBe(legacyLine);
+    }
+  });
+
+  test('byte-identity: round-trip preserves previous_paths exactly', () => {
+    const entry: OkActorEntry = {
+      ...baseEntry,
+      previous_paths: [
+        { from: 'a', to: 'b' },
+        { from: 'b', to: 'c' },
+        { from: 'c', to: 'd' },
+      ],
+    };
+    const line = formatOkActor(entry);
+    const parsed = parseOkActor(line);
+    expect(parsed).not.toBeNull();
+    const relined = formatOkActor(parsed as OkActorEntry);
+    expect(relined).toBe(line);
+  });
+});
+
 describe('parseOkActors (plural — multi-writer L2 drain)', () => {
   test('empty body → []', () => {
     expect(parseOkActors('')).toEqual([]);
