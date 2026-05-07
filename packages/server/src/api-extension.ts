@@ -1596,7 +1596,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       if (e instanceof AgentSessionCapacityError) {
-        log.warn({ err: e, docName, agentId }, '[agent-write] session capacity exhausted');
+        log.warn({ err: e }, '[agent-write] session capacity exhausted');
         json(res, 503, { ok: false, error: 'too-many-agent-sessions' });
         return;
       }
@@ -1746,10 +1746,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       if (e instanceof AgentSessionCapacityError) {
-        log.warn(
-          { err: e, docName: resolvedDocName, agentId },
-          '[agent-write-md] session capacity exhausted',
-        );
+        log.warn({ err: e }, '[agent-write-md] session capacity exhausted');
         json(res, 503, { ok: false, error: 'too-many-agent-sessions' });
         return;
       }
@@ -2478,7 +2475,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       if (e instanceof AgentSessionCapacityError) {
-        log.warn({ err: e, docName, agentId }, '[agent-patch] session capacity exhausted');
+        log.warn({ err: e }, '[agent-patch] session capacity exhausted');
         json(res, 503, { ok: false, error: 'too-many-agent-sessions' });
         return;
       }

@@ -1634,3 +1634,103 @@ describe('createServer() — onAutoDisable scope pinning', () => {
     expect(body).not.toMatch(/scope:\s*'project'(?!-local)/);
   });
 });
+describe('createServer() — phantom-doc unload', () => {
+  let phantomTmpDir: string;
+
+  beforeEach(async () => {
+    phantomTmpDir = await mkdtemp(join(tmpdir(), 'ok-phantom-unload-'));
+  });
+
+  afterEach(async () => {
+    await rm(phantomTmpDir, { recursive: true, force: true });
+  });
+
+  async function waitForUnload(
+    server: ServerInstance,
+    docName: string,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!server.hocuspocus.documents.has(docName)) return true;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    return !server.hocuspocus.documents.has(docName);
+  }
+
+  test('phantom doc (no on-disk file, no content) unloads after last disconnect', async () => {
+    const server = createServer({
+      contentDir: phantomTmpDir,
+      projectDir: phantomTmpDir,
+      quiet: true,
+      debounce: 50,
+      maxDebounce: 100,
+    });
+    try {
+      await server.ready;
+
+      const docName = 'never-on-disk';
+      const conn = await server.hocuspocus.openDirectConnection(docName);
+      expect(server.hocuspocus.documents.has(docName)).toBe(true);
+      await conn.disconnect();
+
+      const unloaded = await waitForUnload(server, docName, 2_000);
+      expect(unloaded).toBe(true);
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('file-backed doc stays resident after disconnect', async () => {
+    const docName = 'on-disk';
+    writeFileSync(join(phantomTmpDir, `${docName}.md`), '# hello\n', 'utf-8');
+
+    const server = createServer({
+      contentDir: phantomTmpDir,
+      projectDir: phantomTmpDir,
+      quiet: true,
+      debounce: 50,
+      maxDebounce: 100,
+    });
+    try {
+      await server.ready;
+
+      const conn = await server.hocuspocus.openDirectConnection(docName);
+      expect(server.hocuspocus.documents.has(docName)).toBe(true);
+      await conn.disconnect();
+
+      await new Promise((r) => setTimeout(r, 500));
+      expect(server.hocuspocus.documents.has(docName)).toBe(true);
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('transient doc with CRDT content but no disk file stays resident', async () => {
+    const server = createServer({
+      contentDir: phantomTmpDir,
+      projectDir: phantomTmpDir,
+      quiet: true,
+      debounce: 60_000,
+      maxDebounce: 60_000,
+    });
+    try {
+      await server.ready;
+
+      const docName = 'transient-with-content';
+      const conn = await server.hocuspocus.openDirectConnection(docName);
+      await conn.transact((doc) => {
+        const fragment = doc.getXmlFragment('default');
+        const paragraph = new Y.XmlElement('paragraph');
+        paragraph.insert(0, [new Y.XmlText('user-typed-content')]);
+        fragment.insert(0, [paragraph]);
+      });
+      await conn.disconnect();
+
+      await new Promise((r) => setTimeout(r, 200));
+      expect(server.hocuspocus.documents.has(docName)).toBe(true);
+    } finally {
+      await server.destroy();
+    }
+  });
+});
