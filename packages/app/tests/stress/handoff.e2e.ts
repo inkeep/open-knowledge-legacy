@@ -13,8 +13,10 @@
  *   - Cells 1, 2, 4, 8: happy paths for installed targets — unchanged.
  *   - Cell 3: install-state flip — row is HIDDEN pre-flip (filter removes
  *     `installed:false` rows) and APPEARS post-flip.
- *   - Cell 5: Web Cursor — row is HIDDEN (filter removes the
- *     forced-`installed:false` web-host case).
+ *   - Cell 5: Web Cursor two-step happy path — POSTs to `/api/spawn-cursor`
+ *     and dispatches the `cursor://` prompt URL. PR #625 unified Cursor
+ *     transport across Electron and web hosts; this cell is the web mirror
+ *     of cell 2.
  *   - Cell 6: Claude web fallback — clicks the top-level
  *     `open-in-agent-claude-web-fallback` row.
  *   - Cell 7: empty-state — menu shows only the Claude web fallback row.
@@ -282,7 +284,7 @@ test.describe('handoff — 8-cell matrix', () => {
     expect(captured.openExternalCalls.length).toBe(0);
   });
 
-  test('cell 5: Web Cursor row is HIDDEN (v1) regardless of server response', async ({
+  test('cell 5: Web Cursor two-step happy path → POST /api/spawn-cursor + cursor:// dispatch', async ({
     page,
     api,
     workerServer,
@@ -290,6 +292,7 @@ test.describe('handoff — 8-cell matrix', () => {
     const cfg: HandoffMockConfig = {
       host: 'web',
       install: { claude: true, codex: true, cursor: true },
+      spawnCursor: { ok: true },
       workerBaseURL: workerServer.baseURL,
       workerContentDir: resolvedContentDir(workerServer.contentDir),
     };
@@ -299,17 +302,36 @@ test.describe('handoff — 8-cell matrix', () => {
     await openDropdown(page);
     await waitForProbeSettled(page, 'web');
 
-    await expect(page.getByTestId('open-in-agent-item-cursor')).toHaveCount(0);
+    await page.getByTestId('open-in-agent-item-cursor').click();
 
     await expect
-      .poll(
-        async () => {
-          const c = await readCapturedHandoff(page);
-          return c.anchorClicks.length + c.openExternalCalls.length;
-        },
-        { timeout: 1_000, intervals: [100, 200, 300, 400] },
-      )
-      .toBe(0);
+      .poll(async () => (await readCapturedHandoff(page)).spawnCursorCalls.length, {
+        timeout: 5_000,
+      })
+      .toBe(1);
+    const afterSpawn = await readCapturedHandoff(page);
+    expect(afterSpawn.spawnCursorCalls[0]).toBe(resolvedContentDir(workerServer.contentDir));
+
+    await expect
+      .poll(async () => (await readCapturedHandoff(page)).anchorClicks.length, {
+        timeout: 5_000,
+      })
+      .toBe(1);
+    const afterDispatch = await readCapturedHandoff(page);
+    const cursorUrl = afterDispatch.anchorClicks[0];
+    expect(cursorUrl).toBeTruthy();
+    const u = new URL(cursorUrl as string);
+    expect(u.protocol).toBe('cursor:');
+    expect(u.hostname).toBe('anysphere.cursor-deeplink');
+    expect(u.pathname).toBe('/prompt');
+    expect(u.searchParams.get('mode')).toBe('agent');
+    const textOnce = u.searchParams.get('text');
+    expect(textOnce).toBeTruthy();
+    expect(decodeURIComponent(textOnce as string)).toContain('Open Knowledge doc');
+
+    await expect(page.getByText('Opened in Cursor.')).toBeVisible();
+
+    expect(afterDispatch.openExternalCalls.length).toBe(0);
   });
 
   test('cell 6: Web Claude not installed — top-level "Open in claude.ai →" row dispatches https://claude.ai/new (v1)', async ({
@@ -319,7 +341,7 @@ test.describe('handoff — 8-cell matrix', () => {
   }) => {
     const cfg: HandoffMockConfig = {
       host: 'web',
-      install: { claude: false, codex: true, cursor: true },
+      install: { claude: false, codex: true, cursor: false },
       workerBaseURL: workerServer.baseURL,
       workerContentDir: resolvedContentDir(workerServer.contentDir),
     };

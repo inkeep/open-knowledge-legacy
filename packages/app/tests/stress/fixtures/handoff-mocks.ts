@@ -76,6 +76,14 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         body: JSON.stringify(cfg.install),
       });
     });
+    await page.route('**/api/spawn-cursor', async (route) => {
+      const result = cfg.spawnCursor ?? { ok: true };
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(result),
+      });
+    });
     await page.route('**/api/install-skill', async (route) => {
       await route.fulfill({
         status: 200,
@@ -143,6 +151,24 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
 
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (input, init) => {
+      try {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.href
+              : (input as Request).url;
+        if (url.includes('/api/spawn-cursor')) {
+          let path = '';
+          if (init?.body && typeof init.body === 'string') {
+            try {
+              const parsed = JSON.parse(init.body) as { path?: string };
+              path = parsed.path ?? '';
+            } catch {}
+          }
+          mocks.spawnCursorCalls.push(path);
+        }
+      } catch {}
       const res = await originalFetch(input, init);
       try {
         const url =
