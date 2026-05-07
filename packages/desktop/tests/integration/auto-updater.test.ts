@@ -158,7 +158,7 @@ function makeRig(
     feedUrl?: string;
     extraWindowCount?: number;
     prepareForRelaunch?: () => void;
-    showCheckNowResult?: (result: import('../../src/main/auto-updater.ts').CheckNowResult) => void;
+    showCheckNowResult?: Parameters<typeof startAutoUpdater>[0]['showCheckNowResult'];
   },
 ): {
   rig: TestRig;

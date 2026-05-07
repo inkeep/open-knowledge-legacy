@@ -67,7 +67,7 @@ interface StartAutoUpdaterOpts {
   logger?: Logger;
 }
 
-export type CheckNowResult =
+type CheckNowResult =
   | { kind: 'available'; currentVersion: string; latestVersion: string }
   | { kind: 'not-available'; currentVersion: string }
   | { kind: 'error'; message: string };
