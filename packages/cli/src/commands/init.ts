@@ -12,8 +12,17 @@
  * Missing editor config roots are skipped so init does not create new user-home
  * directories for tools that are not installed.
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type {
   InstallUserSkillOptions,
   InstallUserSkillResult,
@@ -91,6 +100,49 @@ function writeTomlConfig(path: string, config: Record<string, unknown>): void {
   mkdirSync(dirname(path), { recursive: true });
   const serialized = stringifyToml(config);
   writeFileSync(path, serialized.endsWith('\n') ? serialized : `${serialized}\n`, 'utf-8');
+}
+
+function assertProjectPathSafe(targetPath: string, cwd: string): void {
+  let realCwd: string;
+  try {
+    realCwd = realpathSync(cwd);
+  } catch {
+    realCwd = resolve(cwd);
+  }
+
+  let leafStat: ReturnType<typeof lstatSync> | undefined;
+  try {
+    leafStat = lstatSync(targetPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+  if (leafStat?.isSymbolicLink()) {
+    throw new Error(
+      `Refusing to write through a symbolic link at ${targetPath}. ` +
+        'Remove the symlink and re-run `ok init`, or pass `--no-mcp` to skip MCP config writes.',
+    );
+  }
+
+  let cursor = dirname(targetPath);
+  while (cursor.length > 1 && cursor !== sep) {
+    let cursorRealpath: string;
+    try {
+      cursorRealpath = realpathSync(cursor);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        cursor = dirname(cursor);
+        continue;
+      }
+      throw err;
+    }
+    const rel = relative(realCwd, cursorRealpath);
+    if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return;
+    throw new Error(
+      `Refusing to write at ${targetPath}: ancestor ${cursor} resolves to ${cursorRealpath}, ` +
+        `which is outside the project directory ${realCwd}. A symbolic link in the path likely ` +
+        'escapes the project. Remove the symlink and re-run, or pass `--no-mcp`.',
+    );
+  }
 }
 
 type McpScope = 'user' | 'project' | 'both';
@@ -231,6 +283,7 @@ function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {})
         };
 
   try {
+    assertProjectPathSafe(configPath, cwd);
     if (!existsSync(configPath)) {
       mkdirSync(dirname(configPath), { recursive: true });
       const content = { version: LAUNCH_JSON_VERSION, configurations: [entry] };
@@ -316,6 +369,22 @@ export function writeEditorMcpConfig(
     };
   }
 
+  if (configPathOverride !== undefined) {
+    try {
+      assertProjectPathSafe(configPath, cwd);
+    } catch (err) {
+      return {
+        editorId: target.id,
+        label: target.label,
+        action: 'failed',
+        configPath,
+        serverName,
+        error: err instanceof Error ? err.message : String(err),
+        configScope: 'project' as const,
+      };
+    }
+  }
+
   let config: Record<string, unknown>;
   try {
     config = target.format === 'toml' ? readTomlConfig(configPath) : readJsonConfig(configPath);
@@ -396,6 +465,7 @@ function writeProjectSkill(target: EditorMcpTarget, cwd: string): ProjectSkillRe
   try {
     const sourceDir = resolveBundledSkillDir();
     const targetDir = dirname(skillPath);
+    assertProjectPathSafe(targetDir, cwd);
     const action = existsSync(skillPath) ? 'overwritten' : 'written';
     rmSync(targetDir, { recursive: true, force: true });
     mkdirSync(dirname(targetDir), { recursive: true });
