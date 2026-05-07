@@ -6,6 +6,7 @@ import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import {
   type AgentDirectConnection,
+  AgentSessionCapacityError,
   AgentSessionManager,
   applyAgentMarkdownWrite,
   applyAgentUndo,
@@ -138,6 +139,25 @@ describe('getSession — composite key (docName + agentId)', () => {
 
   test('rejects reserved system doc names with a thrown error (D49)', async () => {
     await expect(manager.getSession('__system__', 'agent-alice')).rejects.toThrow(/reserved doc/i);
+  });
+
+  test('throws AgentSessionCapacityError once total live sessions hit the cap (DoS bound)', async () => {
+    const capped = new AgentSessionManager(mockHocuspocus as never, { maxSessions: 3 });
+    await capped.getSession('doc.md', 'agent-1');
+    await capped.getSession('doc.md', 'agent-2');
+    await capped.getSession('doc.md', 'agent-3');
+
+    await expect(capped.getSession('doc.md', 'agent-4')).rejects.toBeInstanceOf(
+      AgentSessionCapacityError,
+    );
+
+    const reused = await capped.getSession('doc.md', 'agent-2');
+    expect(reused).toBeDefined();
+
+    await capped.closeSession('doc.md', 'agent-1');
+    const replacement = await capped.getSession('doc.md', 'agent-4');
+    expect(replacement).toBeDefined();
+    await capped.closeAll();
   });
 
   test('rejects reserved config doc names with a thrown error (D49 / FR-29)', async () => {

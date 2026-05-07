@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  AGENT_ID_MAX_LEN,
   AGENT_ID_RE,
   AGENT_NAME_MAX_LEN,
   parseAgentBodyFields,
@@ -30,6 +31,15 @@ describe('validateAgentId', () => {
     expect(validateAgentId('bad space')).toBeNull();
     expect(validateAgentId(undefined)).toBeNull();
     expect(validateAgentId(null)).toBeNull();
+  });
+
+  test('rejects agentIds longer than AGENT_ID_MAX_LEN — DoS bound on session-map keys', () => {
+    const atLimit = 'a'.repeat(AGENT_ID_MAX_LEN);
+    const overLimit = 'a'.repeat(AGENT_ID_MAX_LEN + 1);
+    const wayOverLimit = 'a'.repeat(100_000);
+    expect(validateAgentId(atLimit)).toBe(atLimit);
+    expect(validateAgentId(overLimit)).toBeNull();
+    expect(validateAgentId(wayOverLimit)).toBeNull();
   });
 });
 
@@ -80,6 +90,13 @@ describe('parseAgentBodyFields', () => {
   test('non-string agentId is treated as absent', () => {
     const fields = parseAgentBodyFields({ agentId: 42 });
     expect(fields.rawAgentId).toBeUndefined();
+  });
+
+  test('overlong agentId is treated as absent (DoS bound on session map)', () => {
+    const overLimit = 'a'.repeat(AGENT_ID_MAX_LEN + 1);
+    const fields = parseAgentBodyFields({ agentId: overLimit });
+    expect(fields.rawAgentId).toBeUndefined();
+    expect(fields.writerId).toBeUndefined();
   });
 
   test('agentName sanitized; missing defaults to "Claude"', () => {

@@ -4,16 +4,18 @@ export {
   MalformedGitPointerError,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 export { AgentFocusBroadcaster } from './agent-focus.ts';
-export { AGENT_ID_RE, toBroadcasterKey, validateAgentId } from './agent-id.ts';
+export { AGENT_ID_MAX_LEN, AGENT_ID_RE, toBroadcasterKey, validateAgentId } from './agent-id.ts';
 export { AgentPresenceBroadcaster } from './agent-presence.ts';
 export {
   AGENT_WRITE_ORIGIN,
   type AgentDirectConnection,
+  AgentSessionCapacityError,
   type AgentSessionIdentity,
   AgentSessionManager,
   applyAgentMarkdownWrite,
   colorFromSeed,
   iconFromClientName,
+  MAX_AGENT_SESSIONS,
 } from './agent-sessions.ts';
 export {
   type ApiExtensionOptions,
