@@ -174,6 +174,9 @@ describe('GET /api/asset content-filter exclusions', () => {
       isDirExcluded(rel: string): boolean {
         return rel === excludedDirSegment || rel.startsWith(`${excludedDirSegment}/`);
       },
+      isPathIgnored(rel: string): boolean {
+        return rel === excludedDirSegment || rel.startsWith(`${excludedDirSegment}/`);
+      },
       getWatcherIgnoreGlobs(): string[] {
         return [excludedDirSegment];
       },

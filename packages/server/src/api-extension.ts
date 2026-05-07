@@ -1887,7 +1887,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                   return null;
                 }
               },
-              isExcluded: contentFilter ? (rel) => contentFilter.isExcluded(rel) : undefined,
+              isExcluded: contentFilter ? (rel) => contentFilter.isPathIgnored(rel) : undefined,
             }),
           };
         }
@@ -3521,7 +3521,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Invalid asset path' });
         return;
       }
-      if (contentFilter?.isExcluded(relativePath)) {
+      if (contentFilter?.isPathIgnored(relativePath)) {
         json(res, 404, { ok: false, error: 'Asset not found' });
         return;
       }
