@@ -885,6 +885,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  function readPageTitleForLinkedDocName(docName: string, admitted: Set<string>): string {
+    if (!admitted.has(docName)) return docName;
+    return readPageTitleForDocName(docName);
+  }
+
   const EMPTY_METADATA: FrontmatterMetadata = {
     cluster: undefined,
     category: undefined,
@@ -919,6 +924,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     } catch {
       return EMPTY_METADATA;
     }
+  }
+
+  function readFrontmatterMetadataForLinkedDocName(
+    docName: string,
+    admitted: Set<string>,
+  ): FrontmatterMetadata {
+    if (!admitted.has(docName)) return EMPTY_METADATA;
+    return readFrontmatterMetadataForDocName(docName);
   }
 
   function computeOrphanHints(
@@ -1994,6 +2007,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
       }
+      const admitted = collectAdmittedDocNames();
       json(res, 200, {
         ok: true,
         docName,
@@ -2003,7 +2017,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                 kind: 'doc' as const,
                 docName: entry.target,
                 anchor: entry.anchor,
-                title: readPageTitleForDocName(entry.target),
+                title: readPageTitleForLinkedDocName(entry.target, admitted),
                 snippet: entry.snippet,
               }
             : {
@@ -2058,15 +2072,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ({ nodes, links } = backlinkIndex.getLinkGraph());
       }
 
+      const admitted = collectAdmittedDocNames();
       const enrichedNodes = nodes.map((node) => {
         if (node.kind === 'doc') {
-          const meta = readFrontmatterMetadataForDocName(node.docName);
+          const meta = readFrontmatterMetadataForLinkedDocName(node.docName, admitted);
           return {
             id: node.id,
             kind: 'doc' as const,
             docName: node.docName,
             anchor: node.anchor ?? null,
-            label: readPageTitleForDocName(node.docName),
+            label: readPageTitleForLinkedDocName(node.docName, admitted),
             cluster: meta.cluster ?? null,
             category: meta.category ?? null,
             tags: meta.tags ?? null,
@@ -2131,9 +2146,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const rawLimit = url.searchParams.get('limit');
       const parsed = rawLimit ? Number.parseInt(rawLimit, 10) : 20;
       const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : 20;
+      const admitted = collectAdmittedDocNames();
       const hubs = backlinkIndex.getHubs(limit).map((hub) => ({
         docName: hub.docName,
-        title: readPageTitleForDocName(hub.docName),
+        title: readPageTitleForLinkedDocName(hub.docName, admitted),
         count: hub.count,
       }));
       json(res, 200, { ok: true, hubs });
