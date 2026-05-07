@@ -5,19 +5,21 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApiExtension } from './api-extension.ts';
+import type { ContentFilter } from './content-filter.ts';
 
 interface Harness {
   baseURL: string;
   close: () => Promise<void>;
 }
 
-async function startHarness(contentDir: string): Promise<Harness> {
+async function startHarness(contentDir: string, contentFilter?: ContentFilter): Promise<Harness> {
   const ext = createApiExtension({
     hocuspocus: {} as Parameters<typeof createApiExtension>[0]['hocuspocus'],
     sessionManager: {} as Parameters<typeof createApiExtension>[0]['sessionManager'],
     contentDir,
     serverInstanceId: 'test-server',
     getFileIndex: () => new Map(),
+    contentFilter,
   });
 
   const server: Server = createServer((req, res) => {
@@ -148,5 +150,55 @@ describe('GET /api/asset', () => {
     const res = await fetch(assetUrl(harness.baseURL, 'docs/photo.png'), { method: 'POST' });
 
     expect(res.status).toBe(405);
+  });
+});
+
+describe('GET /api/asset content-filter exclusions', () => {
+  let tmpDir: string;
+  let contentDir: string;
+  let harness: Harness;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'ok-api-asset-cf-'));
+    contentDir = join(tmpDir, 'content');
+    mkdirSync(join(contentDir, 'docs'), { recursive: true });
+    mkdirSync(join(contentDir, 'private'), { recursive: true });
+    writeFileSync(join(contentDir, 'docs', 'allowed.png'), 'allowed-bytes');
+    writeFileSync(join(contentDir, 'private', 'secret.png'), 'secret-bytes');
+
+    const excludedDirSegment = 'private';
+    const filter: ContentFilter = {
+      isExcluded(rel: string): boolean {
+        return rel === excludedDirSegment || rel.startsWith(`${excludedDirSegment}/`);
+      },
+      isDirExcluded(rel: string): boolean {
+        return rel === excludedDirSegment || rel.startsWith(`${excludedDirSegment}/`);
+      },
+      getWatcherIgnoreGlobs(): string[] {
+        return [excludedDirSegment];
+      },
+      incrementMdDir(): void {},
+      decrementMdDir(): void {},
+      rebuildDirCount(): void {},
+    };
+
+    harness = await startHarness(contentDir, filter);
+  });
+
+  afterEach(async () => {
+    await harness.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('serves assets that the filter admits', async () => {
+    const res = await fetch(assetUrl(harness.baseURL, 'docs/allowed.png'));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('allowed-bytes');
+  });
+
+  test('refuses assets excluded by .gitignore / .okignore as 404', async () => {
+    const res = await fetch(assetUrl(harness.baseURL, 'private/secret.png'));
+    expect(res.status).toBe(404);
+    expect(await res.text()).toContain('Asset not found');
   });
 });

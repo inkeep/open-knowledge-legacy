@@ -176,6 +176,7 @@ export function collectReferencedAssets(args: {
   contentDir: string;
   fileIndex: ReadonlyMap<string, FileIndexEntry>;
   readMarkdown: (path: string) => string | null;
+  isExcluded?: (relativePath: string) => boolean;
 }): ReferencedAssetEntry[] {
   let contentDir: string;
   try {
@@ -195,6 +196,7 @@ export function collectReferencedAssets(args: {
         href,
       });
       if (!asset) continue;
+      if (args.isExcluded?.(asset.relativePath)) continue;
       const mediaKind = mediaKindForAssetPath(asset.absolutePath);
       const existing = byPath.get(asset.relativePath);
       if (existing) {
