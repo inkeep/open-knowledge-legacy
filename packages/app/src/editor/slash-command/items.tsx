@@ -7,8 +7,6 @@ import {
   List,
   ListOrdered,
   ListTodo,
-  MessageSquare,
-  MessageSquareText,
   Minus,
   Quote,
   Sigma,
@@ -220,24 +218,6 @@ export const slashCommandItems: SlashCommandItem[] = [
     },
   },
   {
-    name: 'comment',
-    label: 'Comment',
-    icon: MessageSquare,
-    category: 'basic',
-    command: (editor) => editor.chain().focus().toggleComment().run(),
-    aliases: ['hidden', 'note', '%%'],
-    preview: {
-      description: 'Mark selected text as an author-private comment, rendered italic and muted.',
-      render: () => (
-        <p className="text-sm leading-6">
-          A line with{' '}
-          <span className="italic text-muted-foreground/70">an author-private note</span> rendered
-          alongside the regular prose.
-        </p>
-      ),
-    },
-  },
-  {
     name: 'footnote',
     label: 'Footnote',
     icon: Superscript,
@@ -278,23 +258,6 @@ export const slashCommandItems: SlashCommandItem[] = [
           </sup>{' '}
           and a definition shown below.
         </p>
-      ),
-    },
-  },
-  {
-    name: 'commentBlock',
-    label: 'Comment Block',
-    icon: MessageSquareText,
-    category: 'insert',
-    command: (editor) => editor.chain().focus().toggleCommentBlock().run(),
-    aliases: ['comment-block', 'hidden-block', 'note-block'],
-    preview: {
-      description: 'Wrap multiple lines of content as an author-private comment block.',
-      render: () => (
-        <aside className="border-l-2 border-muted-foreground/30 pl-3 italic text-muted-foreground/70 text-sm leading-6">
-          A multi-line comment that spans paragraphs, rendered italic and muted alongside
-          surrounding content.
-        </aside>
       ),
     },
   },

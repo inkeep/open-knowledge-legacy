@@ -27,6 +27,16 @@ function plainTextOf(json: JSONContent): string {
   return out;
 }
 
+function findCommentBlocks(json: JSONContent): JSONContent[] {
+  const out: JSONContent[] = [];
+  const visit = (n: JSONContent) => {
+    if (n.type === 'commentBlock') out.push(n);
+    for (const child of n.content ?? []) visit(child);
+  };
+  visit(json);
+  return out;
+}
+
 describe('comment-promoter — acceptance', () => {
   test('basic `%%hello%%`', () => {
     const json = mdManager.parse('%%hello%%\n');
@@ -57,11 +67,12 @@ describe('comment-promoter — acceptance', () => {
     expect(marks[0].text).toBe('a longer note here');
   });
 
-  test('inner whitespace-flanked `%%` does NOT close (`%%a %% b%%`)', () => {
+  test('inner `%%` claims close (`%%a %% b%%` matches `%%a %%`)', () => {
     const json = mdManager.parse('%%a %% b%%\n');
     const marks = collectCommentTextNodes(json);
     expect(marks.length).toBe(1);
-    expect(marks[0].text).toBe('a %% b');
+    expect(marks[0].text).toBe('a ');
+    expect(plainTextOf(json)).toBe('a  b%%');
   });
 
   test('with surrounding emphasis `*%%hi%%*`', () => {
@@ -85,6 +96,27 @@ describe('comment-promoter — acceptance', () => {
   test('with highlight `==%%note==%%` does NOT compose (delimiters cross)', () => {
     const json = mdManager.parse('==%%note==%%\n');
     expect(collectCommentTextNodes(json).length).toBe(0);
+  });
+
+  test('`%% text %%` (whitespace inside delimiters) is a comment', () => {
+    const json = mdManager.parse('%% hello %%\n');
+    const marks = collectCommentTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe(' hello ');
+  });
+
+  test('`%% text%%` (leading space only) is a comment', () => {
+    const json = mdManager.parse('%% hello%%\n');
+    const marks = collectCommentTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe(' hello');
+  });
+
+  test('`%%text %%` (trailing space only) is a comment', () => {
+    const json = mdManager.parse('%%hello %%\n');
+    const marks = collectCommentTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe('hello ');
   });
 
   test('cleanly-nested `==%%note%%==` produces highlight outside, comment inside', () => {
@@ -114,16 +146,10 @@ describe('comment-promoter — rejection (stay prose)', () => {
     expect(collectCommentTextNodes(json).length).toBe(0);
   });
 
-  test('open with leading space `%% text%%` (left-flanking violation)', () => {
-    const json = mdManager.parse('%% text%%\n');
+  test('whitespace-only body `%%   %%` stays prose (rule 4)', () => {
+    const json = mdManager.parse('%%   %%\n');
     expect(collectCommentTextNodes(json).length).toBe(0);
-    expect(plainTextOf(json)).toBe('%% text%%');
-  });
-
-  test('close with trailing space `%%text %%` (right-flanking violation)', () => {
-    const json = mdManager.parse('%%text %%\n');
-    expect(collectCommentTextNodes(json).length).toBe(0);
-    expect(plainTextOf(json)).toBe('%%text %%');
+    expect(plainTextOf(json)).toBe('%%   %%');
   });
 
   test('unmatched `%%text` (no closing delimiter)', () => {
@@ -210,63 +236,119 @@ describe('comment-promoter — protection from code spans + math', () => {
   });
 });
 
-describe('comment-promoter — MDX `<Comment>` JSX form', () => {
-  test('`<Comment>secret</Comment>` parses as comment mark', () => {
-    const json = mdManager.parse('<Comment>secret</Comment>\n');
-    const marks = collectCommentTextNodes(json);
-    expect(marks.length).toBe(1);
-    expect(marks[0].text).toBe('secret');
+describe('comment-promoter — HTML comment `<!-- ... -->` form', () => {
+  test('`<!-- secret -->` standalone block parses as commentBlock', () => {
+    const json = mdManager.parse('<!-- secret -->\n');
+    const blocks = findCommentBlocks(json);
+    expect(blocks.length).toBe(1);
+    expect(plainTextOf(blocks[0])).toBe('secret');
   });
 
-  test('mid-paragraph `<Comment>x</Comment>` parses as comment mark', () => {
-    const json = mdManager.parse('a <Comment>x</Comment> b\n');
+  test('mid-paragraph `<!-- x -->` parses as inline comment mark', () => {
+    const json = mdManager.parse('a <!-- x --> b\n');
     const marks = collectCommentTextNodes(json);
     expect(marks.length).toBe(1);
     expect(marks[0].text).toBe('x');
     expect(plainTextOf(json)).toBe('a x b');
   });
 
-  test('`<Comment>` with surrounding emphasis carries both marks', () => {
-    const json = mdManager.parse('*<Comment>x</Comment>*\n');
-    const marks = collectCommentTextNodes(json);
-    expect(marks.length).toBe(1);
-    const markTypes = (marks[0].marks ?? []).map((m) => m.type).sort();
-    expect(markTypes).toEqual(['comment', 'emphasis']);
-  });
-
-  test('`<Comment>` with bold inside `<Comment>**x**</Comment>`', () => {
-    const json = mdManager.parse('<Comment>**x**</Comment>\n');
-    const marks = collectCommentTextNodes(json);
-    expect(marks.length).toBe(1);
-    expect(marks[0].text).toBe('x');
-    const markTypes = (marks[0].marks ?? []).map((m) => m.type).sort();
-    expect(markTypes).toEqual(['comment', 'strong']);
-  });
-
-  test('lowercase `<comment>` does NOT promote (case-sensitive)', () => {
-    const json = mdManager.parse('<comment>x</comment>\n');
+  test('empty inline `<!-- -->` stays prose (preserves CommonMark list-break separator)', () => {
+    const json = mdManager.parse('a <!-- --> b\n');
     expect(collectCommentTextNodes(json).length).toBe(0);
+    expect(plainTextOf(json)).toBe('a <!-- --> b');
   });
 
-  test('empty `<Comment></Comment>` (inline, no body) parses without crashing', () => {
-    const json = mdManager.parse('<Comment></Comment>\n');
-    expect(collectCommentTextNodes(json).length).toBe(0);
+  test('empty standalone `<!-- -->` paragraph stays prose (block-form, list-break idiom)', () => {
+    const json = mdManager.parse('<!-- -->\n');
+    expect(findCommentBlocks(json).length).toBe(0);
   });
 
-  test('`<Comment foo="bar">x</Comment>` — attributes silently dropped', () => {
-    const json = mdManager.parse('<Comment foo="bar">x</Comment>\n');
-    const marks = collectCommentTextNodes(json);
-    expect(marks.length).toBe(1);
-    expect(marks[0].text).toBe('x');
-    const out = mdManager.serialize(json);
-    expect(out).toBe('%%x%%\n');
+  test('list-break separator: `- foo\\n\\n<!-- -->\\n\\n- bar` produces two lists', () => {
+    const json = mdManager.parse('- foo\n\n<!-- -->\n\n- bar\n');
+    expect(findCommentBlocks(json).length).toBe(0);
   });
 
-  test('two `<Comment>` on one line', () => {
-    const json = mdManager.parse('<Comment>a</Comment> and <Comment>b</Comment>\n');
+  test('two `<!-- ... -->` on one line', () => {
+    const json = mdManager.parse('<!-- a --> and <!-- b -->\n');
     const marks = collectCommentTextNodes(json);
     expect(marks.length).toBe(2);
     expect(marks.map((m) => m.text)).toEqual(['a', 'b']);
+  });
+
+  test('`<!-- text -->` and `%%text%%` mixed in same paragraph', () => {
+    const json = mdManager.parse('a %%first%% then <!-- second --> end\n');
+    const marks = collectCommentTextNodes(json);
+    expect(marks.length).toBe(2);
+    expect(marks.map((m) => m.text)).toEqual(['first', 'second']);
+  });
+
+  test('`<!--secret-->` (no spaces) parses as comment', () => {
+    const json = mdManager.parse('a <!--x--> b\n');
+    const marks = collectCommentTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe('x');
+  });
+
+  test('preserves `<!--` source form on save (inline)', () => {
+    const out = mdManager.serialize(mdManager.parse('a <!-- secret --> b\n'));
+    expect(out).toBe('a <!-- secret --> b\n');
+  });
+
+  test('preserves `<!--` source form on save (block)', () => {
+    const out = mdManager.serialize(mdManager.parse('<!-- secret -->\n'));
+    expect(out).toBe('<!-- secret -->\n');
+  });
+
+  test('block `<!-- ... -->` with inline markdown body is recognised (Case E)', () => {
+    const json = mdManager.parse('<!-- text with `code` and more -->\n');
+    const blocks = findCommentBlocks(json);
+    expect(blocks.length).toBe(1);
+    expect(plainTextOf(blocks[0])).toBe('text with code and more');
+  });
+
+  test('block `<!-- ... -->` with inline markdown round-trips byte-stable', () => {
+    const src = '<!-- text with `code` and more -->\n';
+    expect(mdManager.serialize(mdManager.parse(src))).toBe(src);
+  });
+
+  test('block `<!-- ... -->` with body containing `%%` round-trips byte-stable', () => {
+    const src = '<!-- has %%inner%% inside -->\n';
+    const r1 = mdManager.serialize(mdManager.parse(src));
+    expect(r1).toBe(src); // byte-stable
+    expect(mdManager.serialize(mdManager.parse(r1))).toBe(r1); // idempotent
+  });
+
+  test('inline `<!-- text with %%X%% inside -->` mid-paragraph preserves form', () => {
+    const src = 'a <!-- text with %%X%% inside --> b\n';
+    expect(mdManager.serialize(mdManager.parse(src))).toBe(src);
+  });
+
+  test('block `%% text with `code` %%` (multi-child paragraph) is recognised (Case F)', () => {
+    const json = mdManager.parse('%% text with `code` more %%\n');
+    const blocks = findCommentBlocks(json);
+    expect(blocks.length).toBe(1);
+    expect(plainTextOf(blocks[0])).toBe('text with code more');
+  });
+
+  test('block `%% text with `code` %%` round-trips byte-stable (sourceLayout: inline)', () => {
+    const src = '%% text with `code` more %%\n';
+    expect(mdManager.serialize(mdManager.parse(src))).toBe(src);
+  });
+
+  test('block `%% a %% b %% c %%` (multiple `%%` pairs) does NOT promote (inline walker handles)', () => {
+    const json = mdManager.parse('%%a%% b %%c%%\n');
+    const blocks = findCommentBlocks(json);
+    expect(blocks.length).toBe(0);
+    const marks = collectCommentTextNodes(json);
+    expect(marks.length).toBe(2);
+    expect(marks.map((m) => m.text)).toEqual(['a', 'c']);
+  });
+
+  test('block `<!-- ... **bold** ... -->` (markdown formatting in body) is recognised', () => {
+    const json = mdManager.parse('<!-- has **bold** inside -->\n');
+    const blocks = findCommentBlocks(json);
+    expect(blocks.length).toBe(1);
+    expect(plainTextOf(blocks[0])).toContain('bold');
   });
 });
 
@@ -291,9 +373,19 @@ describe('comment-promoter — round-trip', () => {
     expect(mdManager.serialize(mdManager.parse(src))).toBe(src);
   });
 
-  test('`<Comment>x</Comment>` normalizes to `%%x%%` on round-trip', () => {
-    const out = mdManager.serialize(mdManager.parse('<Comment>x</Comment>\n'));
-    expect(out).toBe('%%x%%\n');
+  test('`%% hello %%` (whitespace inside delimiters) round-trips byte-stable', () => {
+    const src = '%% hello %%\n';
+    expect(mdManager.serialize(mdManager.parse(src))).toBe(src);
+  });
+
+  test('`%% leading space%%` and `%%trailing space %%` round-trip byte-stable', () => {
+    expect(mdManager.serialize(mdManager.parse('%% hello%%\n'))).toBe('%% hello%%\n');
+    expect(mdManager.serialize(mdManager.parse('%%hello %%\n'))).toBe('%%hello %%\n');
+  });
+
+  test('`<!-- x -->` round-trips byte-stable (sourceForm preserved)', () => {
+    const src = 'a <!-- x --> b\n';
+    expect(mdManager.serialize(mdManager.parse(src))).toBe(src);
   });
 
   test('`%%text%%` inside code span round-trips as code (not comment)', () => {
@@ -334,16 +426,6 @@ describe('comment-promoter — round-trip', () => {
 });
 
 describe('comment-promoter — block form (`%%\\n…\\n%%`)', () => {
-  function findCommentBlocks(json: JSONContent): JSONContent[] {
-    const out: JSONContent[] = [];
-    const visit = (n: JSONContent) => {
-      if (n.type === 'commentBlock') out.push(n);
-      for (const child of n.content ?? []) visit(child);
-    };
-    visit(json);
-    return out;
-  }
-
   test('Case A — `%%\\nhello\\n%%` (single paragraph, no blank lines)', () => {
     const json = mdManager.parse('%%\nhello\n%%\n');
     const blocks = findCommentBlocks(json);
@@ -430,16 +512,16 @@ describe('comment-promoter — block form (`%%\\n…\\n%%`)', () => {
     expect(mdManager.serialize(mdManager.parse(src))).toBe(src);
   });
 
-  test('`<Comment>...</Comment>` MDX flow → commentBlock', () => {
-    const json = mdManager.parse('<Comment>\n\nbody\n\n</Comment>\n');
+  test('`<!-- body -->` standalone block → commentBlock', () => {
+    const json = mdManager.parse('<!-- body -->\n');
     const blocks = findCommentBlocks(json);
     expect(blocks.length).toBe(1);
     expect(plainTextOf(blocks[0])).toBe('body');
   });
 
-  test('`<Comment>...</Comment>` MDX flow normalizes to `%%\\n\\nbody\\n\\n%%` on save', () => {
-    const out = mdManager.serialize(mdManager.parse('<Comment>\n\nbody\n\n</Comment>\n'));
-    expect(out).toBe('%%\n\nbody\n\n%%\n');
+  test('`<!-- body -->` block round-trips byte-stable (sourceForm preserved)', () => {
+    const src = '<!-- body -->\n';
+    expect(mdManager.serialize(mdManager.parse(src))).toBe(src);
   });
 
   test('two consecutive block comments parse + round-trip byte-stable', () => {
@@ -468,31 +550,7 @@ describe('comment-promoter — direct mdast→markdown (sourceForm dispatch)', (
     safe: (s: string) => s,
   };
 
-  test('comment with sourceForm=mdx emits `<Comment>...</Comment>`', async () => {
-    const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
-    const node = {
-      type: 'comment' as const,
-      children: [{ type: 'text' as const, value: 'hi' }],
-      data: { sourceForm: 'mdx' },
-    };
-    // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
-    const out = (toMarkdownHandlers as any).comment(node, undefined, minimalState, {});
-    expect(out).toBe('<Comment>hi</Comment>');
-  });
-
-  test('comment with sourceForm=markdown emits `%%…%%`', async () => {
-    const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
-    const node = {
-      type: 'comment' as const,
-      children: [{ type: 'text' as const, value: 'hi' }],
-      data: { sourceForm: 'markdown' },
-    };
-    // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
-    const out = (toMarkdownHandlers as any).comment(node, undefined, minimalState, {});
-    expect(out).toBe('%%hi%%');
-  });
-
-  test('comment with no data field defaults to `%%…%%`', async () => {
+  test('comment with no sourceForm defaults to `%%children%%`', async () => {
     const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
     const node = {
       type: 'comment' as const,
@@ -501,6 +559,30 @@ describe('comment-promoter — direct mdast→markdown (sourceForm dispatch)', (
     // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
     const out = (toMarkdownHandlers as any).comment(node, undefined, minimalState, {});
     expect(out).toBe('%%hi%%');
+  });
+
+  test('comment with sourceForm=`percent` emits `%%children%%`', async () => {
+    const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
+    const node = {
+      type: 'comment' as const,
+      children: [{ type: 'text' as const, value: 'hi' }],
+      data: { sourceForm: 'percent' as const },
+    };
+    // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
+    const out = (toMarkdownHandlers as any).comment(node, undefined, minimalState, {});
+    expect(out).toBe('%%hi%%');
+  });
+
+  test('comment with sourceForm=`html` emits `<!-- children -->`', async () => {
+    const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
+    const node = {
+      type: 'comment' as const,
+      children: [{ type: 'text' as const, value: 'hi' }],
+      data: { sourceForm: 'html' as const },
+    };
+    // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
+    const out = (toMarkdownHandlers as any).comment(node, undefined, minimalState, {});
+    expect(out).toBe('<!-- hi -->');
   });
 
   // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
@@ -516,41 +598,7 @@ describe('comment-promoter — direct mdast→markdown (sourceForm dispatch)', (
     },
   };
 
-  test('commentBlock with sourceForm=mdx emits `<Comment>\\n\\n...\\n\\n</Comment>`', async () => {
-    const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
-    const node = {
-      type: 'commentBlock' as const,
-      children: [
-        {
-          type: 'paragraph' as const,
-          children: [{ type: 'text' as const, value: 'hello' }],
-        },
-      ],
-      data: { sourceForm: 'mdx' },
-    };
-    // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
-    const out = (toMarkdownHandlers as any).commentBlock(node, undefined, minimalBlockState, {});
-    expect(out).toBe('<Comment>\n\nhello\n\n</Comment>');
-  });
-
-  test('commentBlock with sourceForm=markdown emits `%%\\n\\n…\\n\\n%%`', async () => {
-    const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
-    const node = {
-      type: 'commentBlock' as const,
-      children: [
-        {
-          type: 'paragraph' as const,
-          children: [{ type: 'text' as const, value: 'hello' }],
-        },
-      ],
-      data: { sourceForm: 'markdown' },
-    };
-    // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
-    const out = (toMarkdownHandlers as any).commentBlock(node, undefined, minimalBlockState, {});
-    expect(out).toBe('%%\n\nhello\n\n%%');
-  });
-
-  test('commentBlock with no data field defaults to `%%\\n\\n…\\n\\n%%`', async () => {
+  test('commentBlock with no sourceForm emits `%%\\n\\n…\\n\\n%%`', async () => {
     const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
     const node = {
       type: 'commentBlock' as const,
@@ -564,5 +612,44 @@ describe('comment-promoter — direct mdast→markdown (sourceForm dispatch)', (
     // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
     const out = (toMarkdownHandlers as any).commentBlock(node, undefined, minimalBlockState, {});
     expect(out).toBe('%%\n\nhello\n\n%%');
+  });
+
+  test('commentBlock with sourceForm=`html` (single paragraph) emits `<!-- body -->`', async () => {
+    const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
+    const node = {
+      type: 'commentBlock' as const,
+      children: [
+        {
+          type: 'paragraph' as const,
+          children: [{ type: 'text' as const, value: 'hello' }],
+        },
+      ],
+      data: { sourceForm: 'html' as const },
+    };
+    // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
+    const out = (toMarkdownHandlers as any).commentBlock(node, undefined, minimalBlockState, {});
+    expect(out).toBe('<!-- hello -->');
+  });
+
+  test('commentBlock with sourceForm=`html` (multi-block body) falls back to `%%`', async () => {
+    const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
+    const node = {
+      type: 'commentBlock' as const,
+      children: [
+        {
+          type: 'paragraph' as const,
+          children: [{ type: 'text' as const, value: 'first' }],
+        },
+        {
+          type: 'paragraph' as const,
+          children: [{ type: 'text' as const, value: 'second' }],
+        },
+      ],
+      data: { sourceForm: 'html' as const },
+    };
+    // biome-ignore lint/suspicious/noExplicitAny: minimal smoke invocation
+    const out = (toMarkdownHandlers as any).commentBlock(node, undefined, minimalBlockState, {});
+    expect(out.startsWith('%%')).toBe(true);
+    expect(out.endsWith('%%')).toBe(true);
   });
 });

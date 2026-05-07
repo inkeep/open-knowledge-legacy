@@ -163,12 +163,12 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
       comment: {
         type: 'comment',
         children: [{ type: 'text', value: 'hi' }],
-        data: { sourceForm: 'markdown' },
+        data: { sourceForm: 'percent' },
       },
       commentBlock: {
         type: 'commentBlock',
         children: [{ type: 'paragraph', children: [{ type: 'text', value: 'hi' }] }],
-        data: { sourceForm: 'markdown' },
+        data: { sourceForm: 'percent' },
       },
       footnoteReference: {
         type: 'footnoteReference',
@@ -245,12 +245,12 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
       comment: {
         type: 'comment',
         children: [{ type: 'text', value: 'hi' }],
-        data: { sourceForm: 'markdown' },
+        data: { sourceForm: 'percent' },
       },
       commentBlock: {
         type: 'commentBlock',
         children: [{ type: 'paragraph', children: [{ type: 'text', value: 'hi' }] }],
-        data: { sourceForm: 'markdown' },
+        data: { sourceForm: 'percent' },
       },
       footnoteReference: {
         type: 'footnoteReference',

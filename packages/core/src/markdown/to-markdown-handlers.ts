@@ -461,56 +461,85 @@ export const toMarkdownHandlers = {
   },
 
   /**
-   * comment (Obsidian-style hidden text): emit `%%children%%` by default;
-   * emit `<Comment>children</Comment>` when the parse-side promoter tagged
-   * `data.sourceForm === 'mdx'`. PM round-trip drops sourceForm (the
-   * `comment` PM mark has no `sourceForm` attr), so PM-mediated saves of
-   * MDX-authored `<Comment>` normalize to `%%…%%` — same one-way
-   * normalization documented for `<Highlight>` → `==…==` and
-   * `$x$` → `$$x$$`.
+   * comment (literal authoring annotation, hidden in WYSIWYG): branch
+   * on `data.sourceForm` to preserve the authored delimiter form on
+   * round-trip. `'html'` emits `<!-- text -->`; `'percent'` (default)
+   * emits `%%text%%`.
    *
-   * Whitespace flanking note: heuristic rules 2/4 in `comment-promoter.ts`
-   * require non-whitespace immediately inside both delimiters. Rely on PM
-   * mark normalization (excludes leading/trailing whitespace from inline
-   * marks) plus the heuristic-walker symmetry on the inbound side.
+   * Source-form preservation matters for two reasons:
+   *
+   *   1. Author intent: `<!--` is the universal HTML comment form
+   *      familiar to anyone who's edited HTML or markdown that targets
+   *      HTML rendering; `%%` is Obsidian-specific. Authors who type
+   *      one shouldn't see it silently rewritten to the other.
+   *
+   *   2. Round-trip safety: HTML comments whose body contains literal
+   *      `%%` produce invalid byte sequences when canonicalised to
+   *      `%%body%%`. The inline `%%` walker re-claims part of the span
+   *      on re-parse (e.g. `%%text with %%X%% inside%%` matches as one
+   *      comment with body `text with %%X` plus orphan trailing `%%`),
+   *      splitting one comment into two and leaving leftover prose.
+   *      Preserving `<!--` form sidesteps this entirely — `<!--` /
+   *      `-->` delimiters never collide with `%%` body content.
+   *
+   * Whitespace note: post-relaxation, the `%%` parser accepts
+   * whitespace inside the delimiters (`%% text %%` matches with body
+   * ` text `; rule 4 only requires at least one non-whitespace char
+   * somewhere in the body). The serializer preserves the body bytes
+   * verbatim — leading/trailing whitespace inside the body survives
+   * round-trip. The `<!--` form has no flanking rules either; the
+   * parser trims one inner space on either side, so we re-emit with
+   * the same `<!-- text -->` spacing.
    */
   comment(node, _parent, state, info) {
-    const sourceForm = (node as { data?: { sourceForm?: string } }).data?.sourceForm;
+    const sourceForm = node.data?.sourceForm;
+    const open = sourceForm === 'html' ? '<!-- ' : '%%';
+    const close = sourceForm === 'html' ? ' -->' : '%%';
     const tracker = state.createTracker(info);
     const exit = state.enter('comment');
-    if (sourceForm === 'mdx') {
-      let value = tracker.move('<Comment>');
-      value += state.containerPhrasing(node as Parents, {
-        before: value,
-        after: '<',
-        ...tracker.current(),
-      });
-      value += tracker.move('</Comment>');
-      exit();
-      return value;
-    }
-    let value = tracker.move('%%');
+    let value = tracker.move(open);
     value += state.containerPhrasing(node as Parents, {
       before: value,
-      after: '%%',
+      after: close,
       ...tracker.current(),
     });
-    value += tracker.move('%%');
+    value += tracker.move(close);
     exit();
     return value;
   },
 
   commentBlock(node, _parent, state, info) {
-    const sourceForm = (node as { data?: { sourceForm?: string } }).data?.sourceForm;
     const tracker = state.createTracker(info);
     const exit = state.enter('commentBlock');
-    if (sourceForm === 'mdx') {
-      // biome-ignore lint/suspicious/noExplicitAny: containerFlow's FlowParents type narrows to a closed set; commentBlock is a custom block-level promoted type that holds flow children, but its augmented mdast type isn't in the FlowParents union. The runtime call is correct.
-      const inner = state.containerFlow(node as any, tracker.current());
+
+    const children = node.children ?? [];
+    const sourceForm = node.data?.sourceForm;
+    const sourceLayout = node.data?.sourceLayout;
+    const isSingleParagraph = children.length === 1 && children[0]?.type === 'paragraph';
+
+    if (sourceForm === 'html' && isSingleParagraph) {
+      const para = children[0] as Parents;
+      const inner = state.containerPhrasing(para, {
+        before: '<!-- ',
+        after: ' -->',
+        ...tracker.current(),
+      });
       exit();
-      return `<Comment>\n\n${inner}\n\n</Comment>`;
+      return `<!-- ${inner} -->`;
     }
-    // biome-ignore lint/suspicious/noExplicitAny: same FlowParents narrowing constraint as the mdx branch above
+
+    if (sourceLayout === 'inline' && isSingleParagraph) {
+      const para = children[0] as Parents;
+      const inner = state.containerPhrasing(para, {
+        before: '%% ',
+        after: ' %%',
+        ...tracker.current(),
+      });
+      exit();
+      return `%% ${inner} %%`;
+    }
+
+    // biome-ignore lint/suspicious/noExplicitAny: containerFlow's FlowParents type narrows to a closed set; commentBlock is a custom block-level promoted type that holds flow children, but its augmented mdast type isn't in the FlowParents union. The runtime call is correct.
     const inner = state.containerFlow(node as any, tracker.current());
     exit();
     return `%%\n\n${inner}\n\n%%`;
