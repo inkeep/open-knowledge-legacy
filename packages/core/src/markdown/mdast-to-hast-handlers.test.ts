@@ -504,6 +504,37 @@ describe('rawMdxFallback mdast→hast', () => {
   });
 });
 
+describe('comment + commentBlock mdast→hast (em-dash defense)', () => {
+  test('inline `comment` body containing `-->` is rendered with em-dash defense', () => {
+    const node = {
+      type: 'comment' as const,
+      children: [{ type: 'text' as const, value: 'sneaky --> escape attempt' }],
+    };
+    // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast node for handler smoke test
+    const out = html(wrap(node as any));
+    const commentCloses = out.match(/-->/g) ?? [];
+    expect(commentCloses.length).toBe(1);
+    expect(out).toContain('—> escape attempt');
+  });
+
+  test('block `commentBlock` body containing `-->` is rendered with em-dash defense', () => {
+    const node = {
+      type: 'commentBlock' as const,
+      children: [
+        {
+          type: 'paragraph' as const,
+          children: [{ type: 'text' as const, value: 'block sneaky --> escape' }],
+        },
+      ],
+    };
+    // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast node for handler smoke test
+    const out = html(wrap(node as any));
+    const commentCloses = out.match(/-->/g) ?? [];
+    expect(commentCloses.length).toBe(1);
+    expect(out).toContain('—> escape');
+  });
+});
+
 describe('footnoteReference mdast→hast', () => {
   test('renders as <sup id="fnref-N" data-footnote-ref><a href="#fn-N">[N]</a></sup>', () => {
     const node: FootnoteReference = {

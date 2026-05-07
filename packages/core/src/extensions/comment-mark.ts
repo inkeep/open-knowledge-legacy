@@ -16,6 +16,18 @@ export const CommentMark = Mark.create({
   excludes: '',
   inclusive: false,
 
+  addAttributes() {
+    return {
+      sourceForm: {
+        default: 'percent',
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute('data-source-form') === 'html' ? 'html' : 'percent',
+        renderHTML: (attrs: { sourceForm?: string }) =>
+          attrs.sourceForm === 'html' ? { 'data-source-form': 'html' } : {},
+      },
+    };
+  },
+
   parseHTML() {
     return [{ tag: 'span[data-comment-mark]' }];
   },
@@ -25,7 +37,9 @@ export const CommentMark = Mark.create({
       'span',
       {
         'data-comment-mark': '',
-        class: 'comment-mark italic text-muted-foreground/70',
+        'data-clipboard-omit': 'true',
+        class: 'comment-mark',
+        style: 'display: none;',
         ...HTMLAttributes,
       },
       0,

@@ -4,8 +4,6 @@ import type { MdxJsxFlowElement, MdxJsxTextElement } from 'mdast-util-mdx';
 import type { Handler, Handlers } from 'mdast-util-to-hast';
 import { wikiLinkHref } from '../utils/slug.ts';
 import type {
-  CommentBlockMdast,
-  CommentMdast,
   MarkMdast,
   PromotedMdastType,
   RawMdxFallbackMdast,
@@ -162,30 +160,26 @@ const markHandler: Handler = (state, node) => {
   return state.applyData(node, result);
 };
 
+function mdastTextContent(node: unknown): string {
+  if (typeof node !== 'object' || node === null) return '';
+  const n = node as { type?: string; value?: unknown; children?: unknown };
+  if (typeof n.value === 'string') return n.value;
+  if (Array.isArray(n.children)) {
+    return (n.children as unknown[]).map(mdastTextContent).join('');
+  }
+  return '';
+}
+
 const commentHandler: Handler = (state, node) => {
-  const result: Element = {
-    type: 'element',
-    tagName: 'span',
-    properties: {
-      className: ['comment-mark'],
-      dataCommentMark: '',
-    },
-    children: state.all(node as CommentMdast) as ElementContent[],
-  };
+  const safeValue = mdastTextContent(node).replace(/--/g, '—');
+  const result: Comment = { type: 'comment', value: safeValue };
   state.patch(node, result);
   return state.applyData(node, result);
 };
 
 const commentBlockHandler: Handler = (state, node) => {
-  const result: Element = {
-    type: 'element',
-    tagName: 'aside',
-    properties: {
-      className: ['comment-block'],
-      dataCommentBlock: '',
-    },
-    children: state.all(node as CommentBlockMdast) as ElementContent[],
-  };
+  const safeValue = mdastTextContent(node).replace(/--/g, '—');
+  const result: Comment = { type: 'comment', value: safeValue };
   state.patch(node, result);
   return state.applyData(node, result);
 };

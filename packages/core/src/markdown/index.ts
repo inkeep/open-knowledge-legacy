@@ -64,7 +64,12 @@ import type {
 import type { Processor } from 'unified';
 import { createRegistry } from '../registry/index.ts';
 import type { PropDef } from '../registry/types.ts';
-import type { WikiLinkEmbedMdast, WikiLinkMdast } from './mdast-augmentation.ts';
+import type {
+  CommentBlockMdast,
+  CommentMdast,
+  WikiLinkEmbedMdast,
+  WikiLinkMdast,
+} from './mdast-augmentation.ts';
 import { parseWithFallback } from './parse-with-fallback.ts';
 import {
   createParseProcessor,
@@ -472,9 +477,18 @@ function buildMdastToPmHandlers(
 
   if (m.highlight) handlers.mark = toPmMark(m.highlight);
 
-  if (m.comment) handlers.comment = toPmMark(m.comment);
+  if (m.comment) {
+    handlers.comment = toPmMark(m.comment, (node: CommentMdast) => ({
+      sourceForm: node.data?.sourceForm ?? 'percent',
+    }));
+  }
 
-  if (n.commentBlock) handlers.commentBlock = toPmNode(n.commentBlock);
+  if (n.commentBlock) {
+    handlers.commentBlock = toPmNode(n.commentBlock, (node: CommentBlockMdast) => ({
+      sourceForm: node.data?.sourceForm ?? 'percent',
+      sourceLayout: node.data?.sourceLayout ?? 'block',
+    }));
+  }
 
   if (m.emphasis) {
     handlers.emphasis = toPmMark(m.emphasis, (node: Emphasis) => ({
@@ -1249,11 +1263,18 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (m.comment) {
-    markHandlers.comment = fromPmMark('comment');
+    markHandlers.comment = fromPmMark('comment', (mark: PmMark) => ({
+      data: { sourceForm: mark.attrs.sourceForm === 'html' ? 'html' : 'percent' },
+    }));
   }
 
   if (n.commentBlock) {
-    nodeHandlers.commentBlock = fromPmNode('commentBlock');
+    nodeHandlers.commentBlock = fromPmNode('commentBlock', (pmNode: PmNode) => ({
+      data: {
+        sourceForm: pmNode.attrs.sourceForm === 'html' ? 'html' : 'percent',
+        sourceLayout: pmNode.attrs.sourceLayout === 'inline' ? 'inline' : 'block',
+      },
+    }));
   }
 
   if (n.footnoteReference) {

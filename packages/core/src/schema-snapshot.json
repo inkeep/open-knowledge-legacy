@@ -385,7 +385,14 @@
       "atom": true
     },
     "commentBlock": {
-      "attrs": {},
+      "attrs": {
+        "sourceForm": {
+          "hasDefault": true
+        },
+        "sourceLayout": {
+          "hasDefault": true
+        }
+      },
       "content": "block+",
       "group": "block",
       "inline": false,
@@ -541,7 +548,11 @@
       "spanning": true
     },
     "comment": {
-      "attrs": {},
+      "attrs": {
+        "sourceForm": {
+          "hasDefault": true
+        }
+      },
       "excludes": "",
       "group": "",
       "inclusive": false,

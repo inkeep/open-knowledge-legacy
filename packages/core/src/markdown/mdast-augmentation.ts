@@ -86,7 +86,7 @@ export interface CommentMdast {
   // biome-ignore lint/suspicious/noExplicitAny: see RootContentMap note above
   children: Array<any>;
   data?: {
-    sourceForm?: 'mdx' | 'markdown';
+    sourceForm?: 'percent' | 'html';
     [key: string]: unknown;
   };
   position?: Position;
@@ -97,7 +97,8 @@ export interface CommentBlockMdast {
   // biome-ignore lint/suspicious/noExplicitAny: see RootContentMap note above
   children: Array<any>;
   data?: {
-    sourceForm?: 'mdx' | 'markdown';
+    sourceForm?: 'percent' | 'html';
+    sourceLayout?: 'inline' | 'block';
     [key: string]: unknown;
   };
   position?: Position;

@@ -17,6 +17,25 @@ export const CommentBlock = Node.create({
   defining: true,
   priority: 60,
 
+  addAttributes() {
+    return {
+      sourceForm: {
+        default: 'percent',
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute('data-source-form') === 'html' ? 'html' : 'percent',
+        renderHTML: (attrs: { sourceForm?: string }) =>
+          attrs.sourceForm === 'html' ? { 'data-source-form': 'html' } : {},
+      },
+      sourceLayout: {
+        default: 'block',
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute('data-source-layout') === 'inline' ? 'inline' : 'block',
+        renderHTML: (attrs: { sourceLayout?: string }) =>
+          attrs.sourceLayout === 'inline' ? { 'data-source-layout': 'inline' } : {},
+      },
+    };
+  },
+
   parseHTML() {
     return [{ tag: 'aside[data-comment-block]' }, { tag: 'aside.comment-block' }];
   },
@@ -26,8 +45,9 @@ export const CommentBlock = Node.create({
       'aside',
       {
         'data-comment-block': '',
-        class:
-          'comment-block italic text-muted-foreground/70 border-l-2 border-muted-foreground/30 pl-3 my-2',
+        'data-clipboard-omit': 'true',
+        class: 'comment-block',
+        style: 'display: none;',
         ...HTMLAttributes,
       },
       0,
