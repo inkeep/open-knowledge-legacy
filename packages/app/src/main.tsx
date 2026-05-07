@@ -72,7 +72,7 @@ createRoot(root).render(
          * in the sidebar footer via <UpdateNotices /> for a persistent home
          * that matches their permanent-until-clicked semantics.
          */}
-        <Toaster richColors />
+        <Toaster richColors closeButton />
       </ThemeProvider>
     </QueryClientProvider>
   </StrictMode>,
