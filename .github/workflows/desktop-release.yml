@@ -210,39 +210,61 @@ jobs:
         working-directory: packages/desktop
         run: node scripts/prepare-universal.mjs
 
-      # Detect channel from packages/desktop/package.json#version. Maps the
-      # version's prerelease tag to electron-builder's `--config.publish.channel`
-      # (writes beta-mac.yml vs latest-mac.yml) and `--config.publish.releaseType`
-      # (sets the GitHub Release `prerelease` flag). Fail-fast on anything other
-      # than `-beta.*` or plain semver — `-rc.*` / `-canary.*` etc. would ship a
-      # manifest with a channel name that electron-updater's GitHub provider
-      # treats as exact-match-only (no cascade walk), producing a release that
-      # can't be picked up by any client subscribed to a recognized channel.
-      - name: Detect channel from version
+      # Detect channel from the release TAG (not package.json#version). For
+      # auto-cadence beta releases, tag and package.json agree; for stable
+      # promotions cut from a beta SHA via promote-stable.yml, tag is
+      # `v0.4.0` while package.json still says `0.4.0-beta.N` (same SHA,
+      # different version string in the binary). Tag is the source of truth
+      # for which manifest the consumer expects.
+      #
+      # Maps the version's prerelease tag to electron-builder's
+      # `--config.publish.channel` (writes beta-mac.yml vs latest-mac.yml)
+      # and `--config.publish.releaseType` (sets the GitHub Release
+      # `prerelease` flag). Also emits `version` for the
+      # `--config.extraMetadata.version` override below — needed when
+      # tag and package.json diverge so the DMG's `app.getVersion()`
+      # matches the tag.
+      #
+      # Fail-fast on anything other than `-beta.*` or plain semver —
+      # `-rc.*` / `-canary.*` etc. would ship a manifest with a channel
+      # name that electron-updater's GitHub provider treats as exact-match-
+      # only (no cascade walk), producing a release that can't be picked up
+      # by any client subscribed to a recognized channel.
+      - name: Detect channel from release tag
         id: channel
-        working-directory: packages/desktop
+        env:
+          # release:published carries event.release.tag_name; the
+          # workflow_dispatch fallback supplies inputs.release_tag.
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          set -euo pipefail
+          if [[ -z "${RELEASE_TAG:-}" ]]; then
+            echo "::error::No release tag available (neither github.event.release.tag_name nor inputs.release_tag is set). desktop-release.yml requires a tag to derive the version."
+            exit 1
+          fi
+          # Strip leading `v` (electron-builder + npm want bare semver).
+          VERSION="${RELEASE_TAG#v}"
           if [[ "$VERSION" == *-beta.* ]]; then
             echo "channel=beta" >> "$GITHUB_OUTPUT"
             echo "release_type=prerelease" >> "$GITHUB_OUTPUT"
-            echo "::notice::Building BETA channel from version $VERSION"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "::notice::Building BETA channel from tag $RELEASE_TAG"
           elif [[ "$VERSION" == *-beta ]]; then
             # The `*-beta.*` glob above requires a dot after `beta` (i.e.
             # `0.4.0-beta.0`, not `0.4.0-beta`). Trap the dotless form here
             # with a targeted message rather than letting it fall through
             # to the generic catch-all below — Changesets prerelease mode
-            # always emits `-beta.N`, but a hand-edited package.json could
-            # land here.
-            echo "::error::Version $VERSION is missing the .N suffix — beta releases must be tagged -beta.N (e.g. -beta.0, -beta.1) so electron-updater's cascade walk can order them. See packages/desktop/README.md beta-channel runbook."
+            # always emits `-beta.N`, but a hand-edited tag could land here.
+            echo "::error::Tag $RELEASE_TAG is missing the .N suffix — beta releases must be tagged -beta.N (e.g. -beta.0, -beta.1) so electron-updater's cascade walk can order them. See packages/desktop/README.md beta-channel runbook."
             exit 1
           elif [[ "$VERSION" == *-* ]]; then
-            echo "::error::Unsupported prerelease ID in version $VERSION — only -beta.N is supported. See packages/desktop/README.md beta-channel runbook for the supported lifecycle."
+            echo "::error::Unsupported prerelease ID in tag $RELEASE_TAG — only -beta.N is supported. See packages/desktop/README.md beta-channel runbook for the supported lifecycle."
             exit 1
           else
             echo "channel=latest" >> "$GITHUB_OUTPUT"
             echo "release_type=release" >> "$GITHUB_OUTPUT"
-            echo "::notice::Building LATEST channel from version $VERSION"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "::notice::Building LATEST channel from tag $RELEASE_TAG"
           fi
 
       - name: Build + sign + notarize + publish DMG/ZIP
@@ -276,7 +298,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: packages/desktop
         run: |
+          # extraMetadata.version override: when the tag is `v0.4.0` (stable
+          # promotion) but package.json still has `0.4.0-beta.N` because
+          # promote-stable.yml builds at the same SHA as the beta tag, the
+          # override forces the DMG's app.getVersion() + the manifest's
+          # `version` field to match the tag. For auto-cadence beta releases,
+          # tag and package.json agree, so the override is a no-op.
           bun run build:desktop && bunx electron-builder --mac --publish always \
+            --config.extraMetadata.version=${{ steps.channel.outputs.version }} \
             --config.publish.channel=${{ steps.channel.outputs.channel }} \
             --config.publish.releaseType=${{ steps.channel.outputs.release_type }}
 
