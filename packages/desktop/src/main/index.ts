@@ -428,6 +428,15 @@ function refreshApplicationMenu() {
       if (!target) return;
       target.webContents.executeJavaScript("window.location.hash = '#settings'; undefined");
     },
+    onCheckForUpdates: autoUpdaterHandle
+      ? () => {
+          void autoUpdaterHandle?.checkForUpdatesNow().catch((err) => {
+            console.warn('[main] checkForUpdatesNow rejected', {
+              message: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }
+      : undefined,
   }).catch((err) => {
     console.error('[main] installApplicationMenu failed', { err: (err as Error).message });
   });
@@ -969,7 +978,11 @@ function bootPrimaryInstance(): void {
           tryFire(createdWin as BrowserWindow);
         });
       },
+      prepareForRelaunch: () => {
+        wm?.killAllUtilities();
+      },
     });
+    refreshApplicationMenu();
   });
 
   app.on('will-quit', () => {

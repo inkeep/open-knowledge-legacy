@@ -310,6 +310,64 @@ describe('buildMenuTemplate', () => {
     }
   });
 
+  describe('Check for Updates… menu item', () => {
+    const isMac = process.platform === 'darwin';
+
+    test('omitted entirely when onCheckForUpdates dep is undefined (dev mode / boot failure)', () => {
+      const deps = makeDeps();
+      const template = buildMenuTemplate(deps);
+      expect(findByLabel(template, 'Check for Updates…')).toBeUndefined();
+    });
+
+    if (isMac) {
+      test('macOS: appears in App menu between About and Settings…', () => {
+        const onCheckForUpdates = mock(() => {});
+        const deps = makeDeps({ onCheckForUpdates, openSettings: mock(() => {}) });
+        const template = buildMenuTemplate(deps);
+        const appMenu = template.find((t) => t.label === deps.appName);
+        const sub = appMenu?.submenu as MenuItemConstructorOptions[] | undefined;
+        if (!sub) throw new Error('App submenu missing');
+        const aboutIdx = sub.findIndex((i) => i.role === 'about');
+        const checkIdx = sub.findIndex((i) => i.label === 'Check for Updates…');
+        const settingsIdx = sub.findIndex((i) => i.label === 'Settings…');
+        expect(aboutIdx).toBeGreaterThanOrEqual(0);
+        expect(checkIdx).toBeGreaterThan(aboutIdx);
+        expect(settingsIdx).toBeGreaterThan(checkIdx);
+      });
+
+      test('macOS: also appears in Help menu (cross-platform discoverability)', () => {
+        const onCheckForUpdates = mock(() => {});
+        const deps = makeDeps({ onCheckForUpdates });
+        const template = buildMenuTemplate(deps);
+        const helpMenu = template.find((t) => t.label === 'Help');
+        const sub = helpMenu?.submenu as MenuItemConstructorOptions[] | undefined;
+        if (!sub) throw new Error('Help submenu missing');
+        expect(sub.find((i) => i.label === 'Check for Updates…')).toBeDefined();
+      });
+    } else {
+      test('non-mac: appears in Help menu only (no App menu on these platforms)', () => {
+        const onCheckForUpdates = mock(() => {});
+        const deps = makeDeps({ onCheckForUpdates });
+        const template = buildMenuTemplate(deps);
+        const helpMenu = template.find((t) => t.label === 'Help');
+        const sub = helpMenu?.submenu as MenuItemConstructorOptions[] | undefined;
+        if (!sub) throw new Error('Help submenu missing');
+        expect(sub.find((i) => i.label === 'Check for Updates…')).toBeDefined();
+      });
+    }
+
+    test('click dispatches deps.onCheckForUpdates()', () => {
+      const onCheckForUpdates = mock(() => {});
+      const deps = makeDeps({ onCheckForUpdates });
+      const template = buildMenuTemplate(deps);
+      const item = findByLabel(template, 'Check for Updates…');
+      if (!item || typeof item.click !== 'function')
+        throw new Error('Check for Updates… click missing');
+      (item.click as () => void)();
+      expect(onCheckForUpdates).toHaveBeenCalledTimes(1);
+    });
+  });
+
   test('macOS-branch behavior for the current test host', () => {
     const template = buildMenuTemplate(makeDeps());
     const file = findByLabel(template, 'File');

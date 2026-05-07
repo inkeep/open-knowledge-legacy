@@ -178,6 +178,20 @@ export class WindowManager {
     return this.windowsByPath.size;
   }
 
+  killAllUtilities(): void {
+    for (const ctx of this.windowsByPath.values()) {
+      if (!ctx.ownsServer || !ctx.utility) continue;
+      try {
+        ctx.utility.kill('SIGKILL');
+      } catch (err) {
+        this.deps.log?.warn(
+          { err: (err as Error).message, projectPath: ctx.projectPath },
+          'utility SIGKILL failed during pre-relaunch teardown',
+        );
+      }
+    }
+  }
+
   async createProjectWindow(opts: CreateProjectWindowOpts): Promise<ProjectContext> {
     const projectPath = resolve(opts.projectPath);
     const canonicalKey = this.canonicalizeKey(projectPath);

@@ -249,6 +249,7 @@ const bridge: OkDesktopBridge = {
     relaunchNow: () => invoke('ok:update:relaunch-now'),
     setChannel: (channel: OkUpdateChannel) => invoke('ok:update:set-channel', { channel }),
     confirmDowngrade: () => invoke('ok:update:confirm-downgrade'),
+    checkNow: () => invoke('ok:update:check-now'),
   },
 
   state: {

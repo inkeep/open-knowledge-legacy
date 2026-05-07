@@ -16,6 +16,7 @@ export interface MenuDeps {
   reconfigureMcpWiring?(): Promise<void> | void;
   openInstallSkillDialog?(): void;
   openSettings?(): void;
+  onCheckForUpdates?(): void;
 }
 
 export async function installApplicationMenu(deps: MenuDeps): Promise<void> {
@@ -55,6 +56,15 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
             submenu: [
               { role: 'about' as const },
               { type: 'separator' as const },
+              ...(deps.onCheckForUpdates
+                ? ([
+                    {
+                      label: 'Check for Updates…',
+                      click: deps.onCheckForUpdates,
+                    },
+                    { type: 'separator' as const },
+                  ] satisfies MenuItemConstructorOptions[])
+                : []),
               {
                 label: 'Settings…',
                 accelerator: 'CmdOrCtrl+,',
@@ -190,6 +200,15 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
           label: 'Open Knowledge on GitHub',
           click: () => deps.openExternalUrl('https://github.com/inkeep/open-knowledge'),
         },
+        ...(deps.onCheckForUpdates
+          ? ([
+              { type: 'separator' as const },
+              {
+                label: 'Check for Updates…',
+                click: deps.onCheckForUpdates,
+              },
+            ] satisfies MenuItemConstructorOptions[])
+          : []),
       ],
     },
   ];

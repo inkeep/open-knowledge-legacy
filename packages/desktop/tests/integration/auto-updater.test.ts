@@ -157,6 +157,7 @@ function makeRig(
     forceDevBypass?: boolean;
     feedUrl?: string;
     extraWindowCount?: number;
+    prepareForRelaunch?: () => void;
   },
 ): {
   rig: TestRig;
@@ -168,6 +169,7 @@ function makeRig(
     forceDevBypass,
     feedUrl,
     extraWindowCount = 0,
+    prepareForRelaunch,
     ...stateOverrides
   } = overrides ?? {};
   const primaryCaptured: CapturedSend[] = [];
@@ -207,6 +209,7 @@ function makeRig(
     isPackaged,
     forceDevBypass,
     feedUrl,
+    prepareForRelaunch,
     clock: rig.clock,
     now: () => rig.now,
     onDispatch: (kind) => {
@@ -994,6 +997,100 @@ describe('ok:update:relaunch-now IPC handler (AC18)', () => {
     const { rig, handle } = makeRig();
     handle.destroy();
     expect(rig.ipc.handlers.has('ok:update:relaunch-now')).toBe(false);
+  });
+
+  test('prepareForRelaunch fires BEFORE quitAndInstall — utility kill ordering', () => {
+    const calls: string[] = [];
+    const updater = new FakeUpdater();
+    updater.quitAndInstall = mock(() => {
+      calls.push('quitAndInstall');
+    });
+    const ipc = makeFakeIpc();
+    const captured: CapturedSend[] = [];
+    let state: AppState = { ...emptyState(), versionPendingInstall: '0.3.2' };
+    startAutoUpdater({
+      updater,
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: (next) => {
+        state = next;
+      },
+      getPrimaryWindow: () => makeFakeWindow(captured),
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      prepareForRelaunch: () => {
+        calls.push('prepareForRelaunch');
+      },
+      clock: makeFakeClock(),
+      now: () => new Date(),
+      logger: {
+        info: mock(() => {}),
+        warn: mock(() => {}),
+        error: mock(() => {}),
+        debug: mock(() => {}),
+      },
+    });
+    ipc.invoke('ok:update:relaunch-now');
+    expect(calls).toEqual(['prepareForRelaunch', 'quitAndInstall']);
+  });
+
+  test('prepareForRelaunch does NOT fire when versionPendingInstall is null', () => {
+    const prepareForRelaunch = mock(() => {});
+    const { rig } = makeRig({ versionPendingInstall: null, prepareForRelaunch });
+    rig.ipc.invoke('ok:update:relaunch-now');
+    expect(prepareForRelaunch).not.toHaveBeenCalled();
+    expect(rig.updater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  test('prepareForRelaunch throw does NOT block quitAndInstall', () => {
+    const prepareForRelaunch = mock(() => {
+      throw new Error('teardown bug');
+    });
+    const { rig } = makeRig({ versionPendingInstall: '0.3.2', prepareForRelaunch });
+    rig.ipc.invoke('ok:update:relaunch-now');
+    expect(prepareForRelaunch).toHaveBeenCalledTimes(1);
+    expect(rig.updater.quitAndInstall).toHaveBeenCalledTimes(1);
+    expect(rig.logger.warn).toHaveBeenCalled();
+  });
+});
+
+describe('ok:update:check-now IPC handler', () => {
+  test('registers the handler on startup', () => {
+    const { rig } = makeRig();
+    expect(rig.ipc.handlers.has('ok:update:check-now')).toBe(true);
+  });
+
+  test('handler invocation calls updater.checkForUpdates', () => {
+    const { rig } = makeRig();
+    rig.updater.checkForUpdates.mockClear();
+    rig.ipc.invoke('ok:update:check-now');
+    expect(rig.updater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  test('handler invocation does NOT gate on versionPendingInstall', () => {
+    const { rig } = makeRig({ versionPendingInstall: null });
+    rig.updater.checkForUpdates.mockClear();
+    rig.ipc.invoke('ok:update:check-now');
+    expect(rig.updater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  test('checkForUpdatesNow handle method calls updater.checkForUpdates', () => {
+    const { rig, handle } = makeRig();
+    rig.updater.checkForUpdates.mockClear();
+    void handle.checkForUpdatesNow();
+    expect(rig.updater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  test('rejection from updater.checkForUpdates is swallowed in IPC path', () => {
+    const { rig } = makeRig();
+    rig.updater.checkForUpdates = mock(() => Promise.reject(new Error('network down')));
+    expect(() => rig.ipc.invoke('ok:update:check-now')).not.toThrow();
+  });
+
+  test('destroy() removes the check-now IPC handler', () => {
+    const { rig, handle } = makeRig();
+    handle.destroy();
+    expect(rig.ipc.handlers.has('ok:update:check-now')).toBe(false);
   });
 });
 
