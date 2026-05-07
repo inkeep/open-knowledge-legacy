@@ -260,23 +260,72 @@ jobs:
           echo "Publishing with --tag ${TAG} (VERSION=${VERSION})"
           bun changeset publish --tag "$TAG"
 
-          # Alias the @dev dist-tag to the just-published beta version.
-          # Done in the SAME step as publish so the OIDC-acquired auth
-          # state in ~/.npmrc is still live (it does not persist across
-          # GitHub Actions steps; each step is a fresh shell).
-          #
-          # Only @inkeep/open-knowledge (the CLI, packages/cli) is published.
-          # The other four fixed-group packages are private:true and never
-          # reach the registry, so `npm dist-tag add` for them returns 404
-          # and aborts under set -e. If additional packages become public
-          # later, add them with a registry-existence gate.
-          #
-          # `npm dist-tag add` takes a bare semver — the `v` prefix is for
-          # git tags only.
-          if [[ "$DO_DEV_ALIAS" == "true" ]]; then
-            echo "Aliasing @inkeep/open-knowledge@${VERSION} as dev..."
-            npm dist-tag add "@inkeep/open-knowledge@${VERSION}" dev
+          # Persist DO_DEV_ALIAS + VERSION for the next step. The
+          # OIDC-acquired auth state from `bun changeset publish` does
+          # NOT survive into a follow-up `npm dist-tag add` in the same
+          # step (npm CLI's TP token is single-use, scoped to the
+          # publish call), so the dev-alias has to mint its own token
+          # in a dedicated step.
+          {
+            echo "DO_DEV_ALIAS=$DO_DEV_ALIAS"
+            echo "DEV_ALIAS_VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
+
+      # Alias the @dev dist-tag to the just-published beta version.
+      # `npm publish` consumes the TP-acquired session token, so a
+      # subsequent `npm dist-tag add` in the same shell hits E401.
+      # Mint a fresh OIDC token here and exchange it via npm's TP
+      # endpoint to get a new session token specifically for this
+      # operation.
+      #
+      # Only @inkeep/open-knowledge (the CLI, packages/cli) is on the
+      # registry — the four private:true fixed-group packages are
+      # skipped, so this only acts on the CLI.
+      - name: Alias @dev dist-tag (fresh OIDC exchange)
+        if: ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.detect.outputs.kind == 'beta') && env.DO_DEV_ALIAS == 'true'
+        run: |
+          set -euo pipefail
+
+          # Request a fresh GitHub Actions OIDC token with the npm
+          # registry as audience. ACTIONS_ID_TOKEN_REQUEST_TOKEN +
+          # ACTIONS_ID_TOKEN_REQUEST_URL are populated automatically
+          # for any job with id-token: write permission.
+          OIDC_TOKEN=$(curl -sSLf \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" \
+            | jq -r '.value')
+
+          if [[ -z "$OIDC_TOKEN" || "$OIDC_TOKEN" == "null" ]]; then
+            echo "::error::Failed to mint GitHub Actions OIDC token for npm audience"
+            exit 1
           fi
+
+          # Exchange the OIDC JWT with npm's trusted-publishing
+          # endpoint for a session token usable on subsequent npm
+          # commands. The endpoint is what `npm publish` calls
+          # internally for TP.
+          NPM_TOKEN=$(curl -sSLf -X POST \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
+            -H "Content-Type: application/json" \
+            https://registry.npmjs.org/-/npm/v1/oidc/token/exchange \
+            | jq -r '.token')
+
+          if [[ -z "$NPM_TOKEN" || "$NPM_TOKEN" == "null" ]]; then
+            echo "::error::npm OIDC token exchange returned no token"
+            exit 1
+          fi
+
+          # Mask before any further use so it doesn't leak in logs.
+          echo "::add-mask::${NPM_TOKEN}"
+
+          # Write to ~/.npmrc so `npm dist-tag add` picks it up.
+          {
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}"
+            echo "registry=https://registry.npmjs.org"
+          } > "${HOME}/.npmrc"
+
+          echo "Aliasing @inkeep/open-knowledge@${DEV_ALIAS_VERSION} as dev..."
+          npm dist-tag add "@inkeep/open-knowledge@${DEV_ALIAS_VERSION}" dev
 
       - name: Restore working tree (dispatch path; defensive)
         # The dispatch path mutates package.json transiently. Make sure
