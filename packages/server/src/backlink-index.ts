@@ -226,7 +226,7 @@ function readInlineCode(line: string, start: number): { text: string; nextIndex:
     }
     i += closeLen;
   }
-  return null;
+  return { text: line.slice(start, openEnd), nextIndex: openEnd };
 }
 
 function readWikiLink(
