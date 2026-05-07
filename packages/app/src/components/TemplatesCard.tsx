@@ -1,15 +1,25 @@
-import { FileText, Plus } from 'lucide-react';
+import { MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { toast } from 'sonner';
+import { DeleteConfirmationDialog } from '@/components/DeleteConfirmationDialog';
 import { NewTemplateDialog } from '@/components/NewTemplateDialog';
-import { TemplatePreviewDialog } from '@/components/TemplatePreviewDialog';
+import { TemplateEditDialog } from '@/components/TemplateEditDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import type {
   AsyncState,
   FolderConfigSnapshot,
   TemplateMenuEntry,
 } from '@/hooks/use-folder-config';
+import { deleteTemplate } from '@/lib/folder-config-api';
 
 interface Props {
   folderPath: string;
@@ -18,8 +28,23 @@ interface Props {
 }
 
 export function TemplatesCard({ folderPath, state, onChange }: Props) {
-  const [openTemplate, setOpenTemplate] = useState<TemplateMenuEntry | null>(null);
+  const [editTarget, setEditTarget] = useState<TemplateMenuEntry | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TemplateMenuEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+
+  async function handleDelete(target: TemplateMenuEntry) {
+    setDeleting(true);
+    const result = await deleteTemplate(target.source_folder, target.name);
+    setDeleting(false);
+    if (!result.ok) {
+      toast.error(`Delete failed: ${result.error}`);
+      return;
+    }
+    toast.success(`Template "${target.name}" deleted`);
+    setDeleteTarget(null);
+    onChange();
+  }
 
   if (state.status === 'idle' || state.status === 'loading') {
     return (
@@ -60,7 +85,12 @@ export function TemplatesCard({ folderPath, state, onChange }: Props) {
               {templates.length}
             </Badge>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => setNewOpen(true)}>
+          <Button
+            variant="ghost"
+            className="font-mono uppercase"
+            size="sm"
+            onClick={() => setNewOpen(true)}
+          >
             <Plus className="size-3.5" aria-hidden />
             New template
           </Button>
@@ -71,57 +101,46 @@ export function TemplatesCard({ folderPath, state, onChange }: Props) {
               No templates resolve here. Add one to seed new docs in this folder.
             </p>
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-1">
               {templates.map((tpl) => (
-                <li key={tpl.path}>
-                  <Button
-                    variant="ghost"
-                    className="h-auto w-full justify-start px-3 py-3 hover:bg-muted/50"
-                    onClick={() => setOpenTemplate(tpl)}
-                  >
-                    <div className="flex w-full items-start gap-3 text-left">
-                      <FileText
-                        className="mt-0.5 size-4 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex flex-wrap items-baseline gap-2">
-                          <span className="font-medium">{tpl.title ?? tpl.name}</span>
-                          <code className="font-mono text-xs text-muted-foreground">
-                            {tpl.name}
-                          </code>
-                          <Badge
-                            variant={tpl.scope === 'local' ? 'secondary' : 'outline'}
-                            className="ml-auto"
-                          >
-                            {tpl.scope}
-                          </Badge>
-                        </div>
-                        {tpl.description ? (
-                          <p className="text-xs leading-relaxed text-muted-foreground line-clamp-2 whitespace-normal">
-                            {tpl.description}
-                          </p>
-                        ) : null}
-                        <code className="block font-mono text-[10px] text-muted-foreground/70">
-                          {tpl.path}
-                        </code>
-                      </div>
-                    </div>
-                  </Button>
-                </li>
+                <TemplateRow
+                  key={tpl.path}
+                  template={tpl}
+                  onEdit={() => setEditTarget(tpl)}
+                  onDelete={() => setDeleteTarget(tpl)}
+                />
               ))}
             </ul>
           )}
         </div>
       </section>
-      <TemplatePreviewDialog
+      <TemplateEditDialog
         folderPath={folderPath}
-        template={openTemplate}
+        template={editTarget}
         onOpenChange={(open) => {
-          if (!open) setOpenTemplate(null);
+          if (!open) setEditTarget(null);
         }}
-        onChange={onChange}
+        onSaved={onChange}
       />
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteTarget(null);
+        }}
+      >
+        {deleteTarget && (
+          <DeleteConfirmationDialog
+            itemName={`template "${deleteTarget.name}"`}
+            isSubmitting={deleting}
+            onDelete={() => handleDelete(deleteTarget)}
+            customDescription={`This permanently removes ${deleteTarget.path}. Agents that reference this template by name will fail until it's recreated or shadowed by an ancestor.${
+              deleteTarget.scope === 'inherited'
+                ? '\n\nThis template lives at an ancestor folder — deleting affects every folder under that ancestor that does not shadow it locally.'
+                : ''
+            }`}
+          />
+        )}
+      </Dialog>
       <NewTemplateDialog
         folderPath={folderPath}
         existingNames={new Set(templates.map((t) => t.name))}
@@ -130,5 +149,65 @@ export function TemplatesCard({ folderPath, state, onChange }: Props) {
         onCreated={onChange}
       />
     </>
+  );
+}
+
+function TemplateRow({
+  template,
+  onEdit,
+  onDelete,
+}: {
+  template: TemplateMenuEntry;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const showName = template.title && template.title !== template.name;
+  return (
+    <li className="group flex items-center gap-2 rounded-md px-2 py-2 hover:bg-muted/50 text-sm">
+      <button
+        type="button"
+        onClick={onEdit}
+        className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-medium truncate">{template.title ?? template.name}</span>
+          {showName ? (
+            <code className="font-mono text-xs text-muted-foreground shrink-0">
+              {template.name}
+            </code>
+          ) : null}
+          {template.scope === 'inherited' ? (
+            <Badge variant="gray" className="ml-auto shrink-0 text-2xs">
+              inherited
+            </Badge>
+          ) : null}
+        </div>
+        {template.description ? (
+          <p className="text-sm text-muted-foreground truncate mt-0.5">{template.description}</p>
+        ) : null}
+      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+            aria-label={`Actions for ${template.title ?? template.name}`}
+          >
+            <MoreVertical className="size-4" aria-hidden />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={onEdit}>
+            <Pencil aria-hidden />
+            Edit
+          </DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+            <Trash2 aria-hidden />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </li>
   );
 }

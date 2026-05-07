@@ -91,55 +91,6 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
   );
 }
 
-export function TextareaWidget({
-  keyName,
-  value,
-  onCommit,
-  rows = 3,
-}: CommonWidgetProps<string> & { rows?: number }) {
-  const [draft, setDraft] = useState(value);
-  const focusedRef = useRef(false);
-  const revertingRef = useRef(false);
-  useEffect(() => {
-    if (!focusedRef.current) setDraft(value);
-  }, [value]);
-  return (
-    <textarea
-      data-testid="textarea-widget"
-      data-key={keyName}
-      value={draft}
-      placeholder="Empty"
-      aria-label={`${keyName} value`}
-      rows={rows}
-      onChange={(e) => setDraft(e.target.value)}
-      onFocus={() => {
-        focusedRef.current = true;
-      }}
-      onBlur={() => {
-        focusedRef.current = false;
-        if (revertingRef.current) {
-          revertingRef.current = false;
-          return;
-        }
-        if (draft !== value) onCommit(draft);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || e.shiftKey)) {
-          e.preventDefault();
-          if (draft !== value) onCommit(draft);
-          (e.currentTarget as HTMLTextAreaElement).blur();
-        } else if (e.key === 'Escape') {
-          e.preventDefault();
-          revertingRef.current = true;
-          setDraft(value);
-          (e.currentTarget as HTMLTextAreaElement).blur();
-        }
-      }}
-      className="block w-full resize-y border-transparent bg-transparent px-2 py-1 text-sm leading-relaxed shadow-none rounded-sm placeholder:text-muted-foreground/60 focus-visible:border-transparent focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-0 dark:bg-transparent dark:focus-visible:bg-muted"
-    />
-  );
-}
-
 export function NumberWidget({ keyName, value, onCommit }: CommonWidgetProps<number>) {
   const [draft, setDraft] = useState<string>(String(value));
   const focusedRef = useRef(false);
