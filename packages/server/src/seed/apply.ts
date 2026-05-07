@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import { assertEntryPathInProject } from './path-safety.ts';
 import {
   buildStarterFolderFrontmatterYaml,
   LOG_MD_TEMPLATE,
@@ -7,6 +8,7 @@ import {
   STARTER_TEMPLATES,
 } from './starter.ts';
 import type { ApplyError, ApplyResult, FileEntry, ScaffoldPlan, SeedOptions } from './types.ts';
+import { SeedRootDirError } from './types.ts';
 
 function resolveFileContent(templateId: string): string | undefined {
   if (templateId === 'log.md') return LOG_MD_TEMPLATE;
@@ -34,10 +36,28 @@ export async function applySeed(plan: ScaffoldPlan, opts: SeedOptions = {}): Pro
   let applied = 0;
   const errors: ApplyError[] = [];
 
-  for (const entry of plan.created.filter(
-    (e): e is FileEntry & { kind: 'folder' } => e.kind === 'folder',
+  const safeEntries: Array<{ entry: FileEntry; absPath: string }> = [];
+  for (const entry of plan.created) {
+    try {
+      const absPath = assertEntryPathInProject(projectDir, entry.path);
+      safeEntries.push({ entry, absPath });
+    } catch (err) {
+      errors.push({
+        path: typeof entry.path === 'string' ? entry.path : String(entry.path),
+        error:
+          err instanceof SeedRootDirError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : String(err),
+      });
+    }
+  }
+
+  for (const { entry, absPath } of safeEntries.filter(
+    (e): e is { entry: FileEntry & { kind: 'folder' }; absPath: string } =>
+      e.entry.kind === 'folder',
   )) {
-    const absPath = join(projectDir, entry.path);
     try {
       mkdirSync(absPath, { recursive: true });
       applied += 1;
@@ -46,10 +66,9 @@ export async function applySeed(plan: ScaffoldPlan, opts: SeedOptions = {}): Pro
     }
   }
 
-  for (const entry of plan.created.filter(
-    (e): e is FileEntry & { kind: 'file' } => e.kind === 'file',
+  for (const { entry, absPath } of safeEntries.filter(
+    (e): e is { entry: FileEntry & { kind: 'file' }; absPath: string } => e.entry.kind === 'file',
   )) {
-    const absPath = join(projectDir, entry.path);
     const templateId = entry.template ?? entry.path;
     const content = resolveFileContent(templateId);
     if (content === undefined) {

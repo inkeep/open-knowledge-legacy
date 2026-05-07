@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 import { OK_DIR } from '@inkeep/open-knowledge-core';
+import { assertEntryPathInProject } from './path-safety.ts';
 import {
   STARTER_FOLDER_FRONTMATTER_FILENAME,
   STARTER_FOLDERS,
@@ -32,13 +33,7 @@ function normalizeRootDir(rootDir: string | undefined, projectDir: string): stri
   if (posix.split('/').some((seg) => seg === '..')) {
     throw new SeedRootDirError(`rootDir must not contain '..' segments, got: ${rootDir}`);
   }
-  const projectAbs = resolve(projectDir);
-  const candidateAbs = resolve(projectAbs, posix);
-  if (candidateAbs !== projectAbs && !candidateAbs.startsWith(projectAbs + sep)) {
-    throw new SeedRootDirError(
-      `rootDir must resolve inside the project directory, got: ${rootDir}`,
-    );
-  }
+  assertEntryPathInProject(projectDir, posix);
   return posix;
 }
 
