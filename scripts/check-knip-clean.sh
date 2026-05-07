@@ -2,15 +2,19 @@
 #
 # Run `bun run knip` and fail if it mutated the working tree.
 #
-# CI runs `bun run knip && bun run lint`. Knip's `--fix-type exports`
-# auto-removes unused exports/types; when the auto-fix produces code biome
-# rejects (e.g. `export { X } from 'foo'` → bare `;`, see PR #283), lint fails
-# in CI. `bun run check` locally did not run knip, so developers could not
-# reproduce the failure before pushing.
+# As of Phase B (#500), the `knip` script no longer passes
+# `--fix-type exports --fix-type types`, so knip should not modify
+# files in normal operation — it only reports findings and exits
+# non-zero on findings, which fails CI directly. This wrapper is
+# kept as a defensive guard against the `--fix-type` flag being
+# reintroduced in the future: auto-fixes in CI sandboxes never
+# reach main, but they DO produce code biome rejects (e.g. `export
+# { X } from 'foo'` → bare `;`, see PR #283), which then fails
+# the subsequent `bun run lint`.
 #
-# This wrapper runs knip, compares `git diff` before/after, and exits non-zero
-# if knip added new modifications. Developer WIP changes are preserved — only
-# NEW mutations from knip trigger the failure. Review with `git diff` and
+# Compares `git diff` before/after, exits non-zero if knip added new
+# modifications. Developer WIP changes are preserved — only NEW
+# mutations from knip trigger the failure. Review with `git diff` and
 # either commit the cleanup or `git checkout --` to revert.
 
 set -euo pipefail

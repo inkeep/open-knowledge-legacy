@@ -15,6 +15,8 @@ export default {
     'packages/desktop/src/shared/ipc-events.ts': ['files'],
     'packages/app/src/components/CloneDialog.tsx': ['files'],
     'docs/content/**/*.mdx': ['files'],
+    'packages/app/src/components/McpConsentDialogBody.tsx': ['duplicates'],
+    'packages/core/src/extensions/list.ts': ['duplicates'],
   },
   workspaces: {
     'packages/app': {
