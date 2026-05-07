@@ -155,7 +155,7 @@ function readInlineCode(line: string, start: number): { text: string; nextIndex:
     index += closeLength;
   }
 
-  return null;
+  return { text: line.slice(start, openEnd), nextIndex: openEnd };
 }
 
 function readWikiLink(

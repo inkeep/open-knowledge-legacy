@@ -1,6 +1,7 @@
+import { lstatSync, realpathSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 const ALLOWED_URL_PATTERNS: RegExp[] = [
   /^https?:\/\//i,
@@ -29,12 +30,54 @@ export function expandTilde(p: string): string {
   return p;
 }
 
-export function isSafeLocalPath(dirPath: string): boolean {
+function tryRealpathSync(p: string): string | null {
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+export function isPathWithinHome(dirPath: string, home: string): boolean {
   if (!dirPath || typeof dirPath !== 'string') return false;
   if (dirPath.includes('\0')) return false;
-  const home = homedir();
-  const resolved = resolve(expandTilde(dirPath));
-  return resolved === home || resolved.startsWith(`${home}/`);
+
+  const realHome = tryRealpathSync(home);
+  if (realHome === null) return false;
+
+  const lexicalAbs = resolve(expandTilde(dirPath));
+
+  const suffix: string[] = [];
+  let current = lexicalAbs;
+  while (true) {
+    let exists = true;
+    try {
+      lstatSync(current);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        exists = false;
+      } else {
+        return false;
+      }
+    }
+
+    if (exists) {
+      const real = tryRealpathSync(current);
+      if (real === null) return false;
+      const canonical = suffix.length === 0 ? real : join(real, ...suffix);
+      const rel = relative(realHome, canonical);
+      return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+    }
+
+    const parent = dirname(current);
+    if (parent === current) return false;
+    suffix.unshift(basename(current));
+    current = parent;
+  }
+}
+
+export function isSafeLocalPath(dirPath: string): boolean {
+  return isPathWithinHome(dirPath, homedir());
 }
 
 export function isLoopbackRequest(req: IncomingMessage): boolean {

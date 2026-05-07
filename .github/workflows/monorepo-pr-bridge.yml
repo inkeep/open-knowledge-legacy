@@ -62,17 +62,18 @@ jobs:
           PUBLIC_PR_NUMBER: ${{ github.event.pull_request.number }}
           PUBLIC_REPO: ${{ github.repository }}
           PUBLIC_TOKEN: ${{ github.token }}
+          # Only the 4 root-level overlay-mapped files need explicit rewrites.
+          # Workflow + script files now live in-tree at
+          # public/open-knowledge/.github/, so MONOREPO_PATH_PREFIX maps them
+          # correctly without an entry here. Stale entries pointing at the
+          # deleted overlay .github/ paths would route bridged PR diffs to
+          # non-existent locations.
           PUBLIC_PR_PATH_REWRITES: >-
             {
               "README.md": "copybara/public-open-knowledge-overlay/README.md",
               "CONTRIBUTING.md": "copybara/public-open-knowledge-overlay/CONTRIBUTING.md",
               "AGENTS.md": "copybara/public-open-knowledge-overlay/AGENTS.md",
-              ".gitignore": "copybara/public-open-knowledge-overlay/.gitignore",
-              ".github/CODEOWNERS": "copybara/public-open-knowledge-overlay/.github/CODEOWNERS",
-              ".github/workflows/ci.yml": "copybara/public-open-knowledge-overlay/.github/workflows/ci.yml",
-              ".github/workflows/desktop-build.yml": "copybara/public-open-knowledge-overlay/.github/workflows/desktop-build.yml",
-              ".github/workflows/monorepo-pr-bridge.yml": "copybara/public-open-knowledge-overlay/.github/workflows/monorepo-pr-bridge.yml",
-              ".github/scripts/bridge-public-pr-to-monorepo.mjs": "copybara/public-open-knowledge-overlay/.github/scripts/bridge-public-pr-to-monorepo.mjs"
+              ".gitignore": "copybara/public-open-knowledge-overlay/.gitignore"
             }
           # Drop pre-cutover internal-only paths from the bridged diff. Old
           # `inkeep/open-knowledge-legacy` branches predate the agents-private cutover

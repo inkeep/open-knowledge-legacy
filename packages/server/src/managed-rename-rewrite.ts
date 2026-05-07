@@ -49,7 +49,7 @@ function readInlineCode(line: string, start: number): { nextIndex: number } | nu
     i += closeLen;
   }
 
-  return null;
+  return { nextIndex: openEnd };
 }
 
 function readWikiLink(

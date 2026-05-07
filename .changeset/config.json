@@ -1,5 +1,6 @@
 {
   "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+  "//": "Pre-1.0 convention: NEVER declare 'major' in changesets — see .changeset/README.md. The fixed group below bumps in lock-step.",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "fixed": [

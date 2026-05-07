@@ -67,7 +67,7 @@ jobs:
             echo "::error::Beta tag '${BETA_TAG}' not found on legacy. Did the auto-cadence release run?"
             exit 1
           fi
-          echo "Tag ${BETA_TAG} resolves to $(git rev-parse refs/tags/${BETA_TAG})"
+          echo "Tag ${BETA_TAG} resolves to $(git rev-parse "refs/tags/${BETA_TAG}")"
 
       - name: Compute stable version from beta tag
         id: ver

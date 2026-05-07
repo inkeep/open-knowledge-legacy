@@ -138,6 +138,19 @@ describe('extractWikiLinksFromMarkdown', () => {
       { target: 'target', anchor: null, snippet: 'See foo``bar and target.' },
     ]);
   });
+
+  test('long unclosed backtick run does not trigger quadratic scan', () => {
+    const prefix = 'prefix ';
+    const backticks = '`'.repeat(50_000);
+    const markdown = `${prefix}${backticks}\n\nSee [[target]].\n`;
+
+    const start = performance.now();
+    const links = extractWikiLinksFromMarkdown(markdown);
+    const elapsed = performance.now() - start;
+
+    expect(links).toEqual([{ target: 'target', anchor: null, snippet: 'See target.' }]);
+    expect(elapsed).toBeLessThan(1000);
+  });
 });
 
 describe('BacklinkIndex', () => {
