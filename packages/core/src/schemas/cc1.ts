@@ -10,6 +10,8 @@ export const CC1_CHANNEL_DISK_ACK = 'disk-ack' as const;
 
 export const CC1_CHANNEL_CONFIG_VALIDATION_REJECTED = 'config-validation-rejected' as const;
 
+export const CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR = 'config-ignore-nested-error' as const;
+
 export const DerivedViewChannelSchema = z.enum([
   'files',
   'backlinks',
@@ -25,7 +27,8 @@ export type CC1Channel =
   | typeof CC1_CHANNEL_SERVER_INFO
   | typeof CC1_CHANNEL_BRANCH_SWITCHED
   | typeof CC1_CHANNEL_DISK_ACK
-  | typeof CC1_CHANNEL_CONFIG_VALIDATION_REJECTED;
+  | typeof CC1_CHANNEL_CONFIG_VALIDATION_REJECTED
+  | typeof CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR;
 
 export const CC1ServerInfoPayloadSchema = z
   .object({
@@ -79,4 +82,17 @@ export const CC1ConfigValidationRejectedPayloadSchema = z
   .loose();
 export type CC1ConfigValidationRejectedPayload = z.infer<
   typeof CC1ConfigValidationRejectedPayloadSchema
+>;
+
+export const CC1ConfigIgnoreNestedErrorPayloadSchema = z
+  .object({
+    v: z.literal(CC1_CONTRACT_VERSION),
+    ch: z.literal(CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR),
+    seq: z.number(),
+    path: z.string().min(1),
+    error: z.string().min(1),
+  })
+  .loose();
+export type CC1ConfigIgnoreNestedErrorPayload = z.infer<
+  typeof CC1ConfigIgnoreNestedErrorPayloadSchema
 >;

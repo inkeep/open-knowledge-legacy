@@ -22,7 +22,7 @@ Edits made anywhere reflect everywhere; an open Settings pane refreshes live.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `content.dir` | string | `"."` | Content directory, relative to project root. Excluded paths live in `.okignore`. |
+| `content.dir` | string | `"."` | Content directory, relative to project root. Excluded paths live in `.okignore` — see [Ignore patterns](/features/ignore-patterns). |
 | `preview.baseUrl` | URL | (unset) | Override for `previewUrl` returned by MCP tools. Project-scope only. |
 | `appearance.theme` | `"light" \| "dark" \| "system"` | (unset) | Editor theme. |
 | `appearance.editorModeDefault` | `"wysiwyg" \| "source"` | (unset) | Initial editor mode for new docs. |
@@ -31,6 +31,10 @@ Edits made anywhere reflect everywhere; an open Settings pane refreshes live.
 ## Folder-level frontmatter
 
 Default frontmatter for a folder lives in that folder's `.ok/frontmatter.yml`, not in `config.yml`. Drop a `.ok/` directory inside any folder and Open Knowledge applies its rules to docs underneath. Set rules from the editor's folder properties pane, or via the `set_folder_rule` MCP tool.
+
+## Ignore patterns
+
+Path exclusions live in a project-root `.okignore` file using gitignore syntax — `.gitignore` rules are honored automatically alongside it, and a leading `!` re-includes a file `.gitignore` excluded. Edit patterns from the **Ignore patterns** section of the Settings pane, the right-click menu in the file tree, or by hand in any editor; the running server picks up changes without a restart. See [Ignore patterns](/features/ignore-patterns) for the full UX.
 
 ## Precedence
 

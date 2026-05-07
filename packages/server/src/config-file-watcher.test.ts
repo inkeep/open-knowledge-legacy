@@ -7,6 +7,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 import {
   type ConfigFileWatcherUnsubscribe,
   startConfigFileWatcher,
+  startMultiPathConfigFileWatcher,
 } from './config-file-watcher.ts';
 
 interface Fixture {
@@ -166,5 +167,201 @@ describe('startConfigFileWatcher', () => {
     writeFileSync(fx.absPath, 'theme: dark\n', 'utf-8');
     const fired = await waitFor(() => secondFired);
     expect(fired).toBe(true);
+  });
+});
+
+describe('startMultiPathConfigFileWatcher', () => {
+  function makeMultiFixture(): { root: string; pathA: string; pathB: string; cleanup: () => void } {
+    const root = mkdtempSync(join(tmpdir(), 'ok-multi-config-watcher-'));
+    const pathA = join(root, '.okignore');
+    const pathB = join(root, '.gitignore');
+    return {
+      root,
+      pathA,
+      pathB,
+      cleanup: () => {
+        try {
+          rmSync(root, { recursive: true, force: true });
+        } catch {}
+      },
+    };
+  }
+
+  let multiFx: { root: string; pathA: string; pathB: string; cleanup: () => void };
+
+  beforeEach(() => {
+    multiFx = makeMultiFixture();
+  });
+
+  afterEach(() => {
+    multiFx.cleanup();
+  });
+
+  test('rejects empty paths array', async () => {
+    let threw = false;
+    try {
+      await startMultiPathConfigFileWatcher([], () => {});
+    } catch (err) {
+      threw = true;
+      expect((err as Error).message).toContain('at least one');
+    }
+    expect(threw).toBe(true);
+  });
+
+  test('fires onChange with the path that changed when one of multiple watched files appears', async () => {
+    const events: Array<{ path: string; content: string }> = [];
+    const cleanup = await startMultiPathConfigFileWatcher(
+      [multiFx.pathA, multiFx.pathB],
+      (path, content) => {
+        events.push({ path, content });
+      },
+    );
+    cleanups.push(cleanup);
+
+    writeFileSync(multiFx.pathA, 'drafts/\n', 'utf-8');
+
+    let attempt = 0;
+    const fired = await waitFor(() => {
+      if (events.length > 0) return true;
+      attempt++;
+      writeFileSync(multiFx.pathA, `drafts/\nattempt: ${attempt}\n`, 'utf-8');
+      return false;
+    }, 20_000);
+    expect(fired).toBe(true);
+    const matched = events.find((e) => e.path === multiFx.pathA);
+    expect(matched).toBeDefined();
+    expect(matched?.content.startsWith('drafts/\n')).toBe(true);
+    expect(events.some((e) => e.path === multiFx.pathB)).toBe(false);
+  }, 25_000);
+
+  test('dispatches independent callbacks per path when both files change', async () => {
+    writeFileSync(multiFx.pathA, '*.tmp\n', 'utf-8');
+    writeFileSync(multiFx.pathB, 'node_modules/\n', 'utf-8');
+
+    const events: Array<{ path: string; content: string }> = [];
+    const cleanup = await startMultiPathConfigFileWatcher(
+      [multiFx.pathA, multiFx.pathB],
+      (path, content) => {
+        events.push({ path, content });
+      },
+    );
+    cleanups.push(cleanup);
+
+    writeFileSync(multiFx.pathA, '*.tmp\n*.log\n', 'utf-8');
+    writeFileSync(multiFx.pathB, 'node_modules/\ndist/\n', 'utf-8');
+
+    const fired = await waitFor(
+      () =>
+        events.some((e) => e.path === multiFx.pathA && e.content.includes('*.log')) &&
+        events.some((e) => e.path === multiFx.pathB && e.content.includes('dist/')),
+    );
+    expect(fired).toBe(true);
+  });
+
+  test('does NOT fire on the initial scan (ignoreInitial honored across both paths)', async () => {
+    writeFileSync(multiFx.pathA, 'drafts/\n', 'utf-8');
+    writeFileSync(multiFx.pathB, 'node_modules/\n', 'utf-8');
+
+    const events: Array<{ path: string; content: string }> = [];
+    const cleanup = await startMultiPathConfigFileWatcher(
+      [multiFx.pathA, multiFx.pathB],
+      (path, content) => {
+        events.push({ path, content });
+      },
+    );
+    cleanups.push(cleanup);
+
+    await wait(750);
+    expect(events).toEqual([]);
+  });
+
+  test('atomic tmp+rename on one path produces a single change event for that path only', async () => {
+    writeFileSync(multiFx.pathA, '*.tmp\n', 'utf-8');
+    writeFileSync(multiFx.pathB, 'node_modules/\n', 'utf-8');
+
+    const events: Array<{ path: string; content: string }> = [];
+    const cleanup = await startMultiPathConfigFileWatcher(
+      [multiFx.pathA, multiFx.pathB],
+      (path, content) => {
+        events.push({ path, content });
+      },
+    );
+    cleanups.push(cleanup);
+
+    const tmpPath = `${multiFx.pathA}.tmp.test`;
+    writeFileSync(tmpPath, '*.tmp\n*.log\n', 'utf-8');
+    await rename(tmpPath, multiFx.pathA);
+
+    const fired = await waitFor(() => events.length > 0);
+    expect(fired).toBe(true);
+    const matchedA = events.filter((e) => e.path === multiFx.pathA);
+    expect(matchedA.length).toBeGreaterThan(0);
+    expect(matchedA.at(-1)?.content).toBe('*.tmp\n*.log\n');
+    expect(events.some((e) => e.path === multiFx.pathB)).toBe(false);
+
+    await wait(200);
+    expect(matchedA.length).toBeLessThanOrEqual(2);
+  });
+
+  test('handler exception on one path does not break event delivery for the other', async () => {
+    let threwOnceForA = false;
+    const seenOnB: string[] = [];
+    const cleanup = await startMultiPathConfigFileWatcher(
+      [multiFx.pathA, multiFx.pathB],
+      (path, content) => {
+        if (path === multiFx.pathA && !threwOnceForA) {
+          threwOnceForA = true;
+          throw new Error('boom on A');
+        }
+        if (path === multiFx.pathB) seenOnB.push(content);
+      },
+    );
+    cleanups.push(cleanup);
+
+    writeFileSync(multiFx.pathA, 'first\n', 'utf-8');
+    await waitFor(() => threwOnceForA);
+
+    writeFileSync(multiFx.pathB, 'expected\n', 'utf-8');
+    const fired = await waitFor(() => seenOnB.includes('expected\n'));
+    expect(fired).toBe(true);
+  });
+
+  test('cleanup function is idempotent', async () => {
+    const cleanup = await startMultiPathConfigFileWatcher([multiFx.pathA, multiFx.pathB], () => {});
+    await cleanup();
+    await cleanup();
+  });
+
+  test('does not fire onChange for sibling files in the same dir that are not in the watched set', async () => {
+    const events: Array<{ path: string; content: string }> = [];
+    const cleanup = await startMultiPathConfigFileWatcher(
+      [multiFx.pathA, multiFx.pathB],
+      (path, content) => {
+        events.push({ path, content });
+      },
+    );
+    cleanups.push(cleanup);
+
+    const siblingPath = join(multiFx.root, 'unrelated.txt');
+    writeFileSync(siblingPath, 'hello\n', 'utf-8');
+    await wait(750);
+    expect(events).toEqual([]);
+  });
+
+  test('does not fire onChange when a watched file is unlinked', async () => {
+    writeFileSync(multiFx.pathA, '*.tmp\n', 'utf-8');
+
+    const events: Array<{ path: string; content: string }> = [];
+    const cleanup = await startMultiPathConfigFileWatcher(
+      [multiFx.pathA, multiFx.pathB],
+      (path, content) => {
+        events.push({ path, content });
+      },
+    );
+    cleanups.push(cleanup);
+
+    unlinkSync(multiFx.pathA);
+    await wait(250);
+    expect(events).toEqual([]);
   });
 });

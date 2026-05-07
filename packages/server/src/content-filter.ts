@@ -24,6 +24,8 @@ import { ASSET_EXTENSIONS } from '@inkeep/open-knowledge-core';
 import ignore, { type Ignore } from 'ignore';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
+import { getLogger } from './logger.ts';
+import { withSpan } from './telemetry.ts';
 
 const BUILTIN_SKIP_DIRS = new Set([
   'node_modules',
@@ -53,7 +55,21 @@ const IGNORE_FILE_NAMES = ['.gitignore', '.okignore'] as const;
 export interface ContentFilterOptions {
   projectDir: string;
   contentDir: string;
+  onAfterRebuild?: () => void;
 }
+
+export type RebuildResult =
+  | {
+      ok: true;
+      patternCount: number;
+      nestedFileCount: number;
+      bytes: number;
+      durationMs: number;
+    }
+  | {
+      ok: false;
+      error: { message: string };
+    };
 
 export interface ContentFilter {
   isExcluded(relativePath: string): boolean;
@@ -63,49 +79,89 @@ export interface ContentFilter {
   incrementMdDir(dir: string): void;
   decrementMdDir(dir: string): void;
   rebuildDirCount(): void;
+  rebuildIgnorePatterns(): Promise<RebuildResult>;
 }
 
 export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
-  const { projectDir, contentDir } = opts;
-
-  const ig = ignore();
-
-  ig.add('.git');
-
-  const rootIgnorePatterns: string[] = [];
-  for (const name of IGNORE_FILE_NAMES) {
-    const path = join(projectDir, name);
-    if (!existsSync(path)) continue;
-    try {
-      const patterns = parseIgnorePatterns(readFileSync(path, 'utf-8'));
-      rootIgnorePatterns.push(...patterns);
-      ig.add(patterns);
-    } catch (err) {
-      console.warn(`[content-filter] Failed to read ${name} at ${path}:`, err);
-    }
-  }
+  const { projectDir, contentDir, onAfterRebuild } = opts;
 
   const contentRelPrefix = relative(projectDir, contentDir);
   const contentOutsideProject = contentRelPrefix.startsWith('..');
 
-  if (contentRelPrefix && !contentOutsideProject) {
+  let ig: Ignore;
+  let rootIgnorePatterns: string[];
+  let watcherIgnoreGlobs: string[];
+  let lastPatternCount = 0;
+  let lastNestedFileCount = 0;
+  let lastBytes = 0;
+
+  function buildPatternState(): {
+    patternCount: number;
+    nestedFileCount: number;
+    bytes: number;
+  } {
+    const newIg = ignore();
+
+    newIg.add('.git');
+
+    const newRootPatterns: string[] = [];
+    let bytes = 0;
+    let nestedFileCount = 0;
+
     for (const name of IGNORE_FILE_NAMES) {
-      const path = join(contentDir, name);
+      const path = join(projectDir, name);
       if (!existsSync(path)) continue;
       try {
-        const patterns = parseIgnorePatterns(readFileSync(path, 'utf-8'));
-        const prefixed = patterns.map((p) => prefixPattern(p, contentRelPrefix));
-        ig.add(prefixed);
+        const content = readFileSync(path, 'utf-8');
+        bytes += content.length;
+        const patterns = parseIgnorePatterns(content);
+        newRootPatterns.push(...patterns);
+        newIg.add(patterns);
       } catch (err) {
         console.warn(`[content-filter] Failed to read ${name} at ${path}:`, err);
       }
     }
-  }
-  loadNestedIgnoreFiles(contentDir, projectDir, ig);
 
-  const watcherIgnoreGlobs = rootIgnorePatterns.filter(
-    (p) => p.length > 0 && !p.startsWith('!') && !p.startsWith('#'),
-  );
+    if (contentRelPrefix && !contentOutsideProject) {
+      for (const name of IGNORE_FILE_NAMES) {
+        const path = join(contentDir, name);
+        if (!existsSync(path)) continue;
+        try {
+          const content = readFileSync(path, 'utf-8');
+          bytes += content.length;
+          nestedFileCount++;
+          const patterns = parseIgnorePatterns(content);
+          const prefixed = patterns.map((p) => prefixPattern(p, contentRelPrefix));
+          newIg.add(prefixed);
+        } catch (err) {
+          console.warn(`[content-filter] Failed to read ${name} at ${path}:`, err);
+        }
+      }
+    }
+
+    const bytesAcc = { value: bytes };
+    nestedFileCount += loadNestedIgnoreFiles(contentDir, projectDir, newIg, bytesAcc);
+    bytes = bytesAcc.value;
+
+    const newWatcherGlobs = newRootPatterns.filter(
+      (p) => p.length > 0 && !p.startsWith('!') && !p.startsWith('#'),
+    );
+
+    ig = newIg;
+    rootIgnorePatterns = newRootPatterns;
+    watcherIgnoreGlobs = newWatcherGlobs;
+    lastPatternCount = newRootPatterns.length;
+    lastNestedFileCount = nestedFileCount;
+    lastBytes = bytes;
+
+    return {
+      patternCount: lastPatternCount,
+      nestedFileCount: lastNestedFileCount,
+      bytes: lastBytes,
+    };
+  }
+
+  buildPatternState();
 
   const dirCount = new Map<string, number>();
 
@@ -180,8 +236,98 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
     },
 
     rebuildDirCount(): void {
+      const prev = new Map(dirCount);
       dirCount.clear();
-      populateDirCount(contentDir, '', isIgnored, dirCount);
+      try {
+        populateDirCount(contentDir, '', isIgnored, dirCount);
+      } catch (err) {
+        for (const [k, v] of prev) dirCount.set(k, v);
+        getLogger('content-filter').warn(
+          { err: err instanceof Error ? err : new Error(String(err)) },
+          'content-filter rebuildDirCount walk failed — retaining previous counts',
+        );
+      }
+    },
+
+    async rebuildIgnorePatterns(): Promise<RebuildResult> {
+      const log = getLogger('content-filter');
+
+      const prevIg = ig;
+      const prevRootPatterns = rootIgnorePatterns;
+      const prevWatcherGlobs = watcherIgnoreGlobs;
+      const prevPatternCount = lastPatternCount;
+      const prevNestedFileCount = lastNestedFileCount;
+      const prevBytes = lastBytes;
+
+      const startedAt = Date.now();
+
+      return withSpan('config.ignore.rebuild', { attributes: {} }, async (span) => {
+        try {
+          const counts = buildPatternState();
+          dirCount.clear();
+          populateDirCount(contentDir, '', isIgnored, dirCount);
+
+          const durationMs = Date.now() - startedAt;
+          span.setAttributes({
+            'ok.ignore.pattern_count': counts.patternCount,
+            'ok.ignore.nested_file_count': counts.nestedFileCount,
+            'ok.ignore.bytes': counts.bytes,
+          });
+          log.info(
+            {
+              patternCount: counts.patternCount,
+              nestedFileCount: counts.nestedFileCount,
+              bytes: counts.bytes,
+              durationMs,
+            },
+            'content-filter rebuild succeeded',
+          );
+
+          if (onAfterRebuild) {
+            try {
+              onAfterRebuild();
+            } catch (err) {
+              log.warn(
+                { err: err instanceof Error ? err : new Error(String(err)) },
+                'content-filter onAfterRebuild callback threw — derived views may be stale',
+              );
+            }
+          }
+
+          return {
+            ok: true as const,
+            patternCount: counts.patternCount,
+            nestedFileCount: counts.nestedFileCount,
+            bytes: counts.bytes,
+            durationMs,
+          };
+        } catch (err) {
+          ig = prevIg;
+          rootIgnorePatterns = prevRootPatterns;
+          watcherIgnoreGlobs = prevWatcherGlobs;
+          lastPatternCount = prevPatternCount;
+          lastNestedFileCount = prevNestedFileCount;
+          lastBytes = prevBytes;
+          dirCount.clear();
+          try {
+            populateDirCount(contentDir, '', isIgnored, dirCount);
+          } catch (rollbackErr) {
+            log.warn(
+              {
+                err: rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr)),
+              },
+              'content-filter rollback dirCount re-walk failed — sibling-asset counts may be stale until next rebuild',
+            );
+          }
+
+          const message = err instanceof Error ? err.message : String(err);
+          log.warn(
+            { err: err instanceof Error ? err : new Error(message) },
+            'content-filter rebuild failed — rolled back to previous state',
+          );
+          return { ok: false as const, error: { message } };
+        }
+      });
     },
   };
 }
@@ -195,7 +341,8 @@ function populateDirCount(
   let entries: import('node:fs').Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (err) {
+    console.warn(`[content-filter] Failed to read directory for dir-count: ${dir}`, err);
     return;
   }
   for (const entry of entries) {
@@ -222,14 +369,21 @@ function prefixPattern(pattern: string, relPrefix: string): string {
   return `${relPrefix}/${pattern}`;
 }
 
-function loadNestedIgnoreFiles(dir: string, projectDir: string, ig: Ignore): void {
+function loadNestedIgnoreFiles(
+  dir: string,
+  projectDir: string,
+  ig: Ignore,
+  bytesAcc: { value: number },
+): number {
   let entries: import('node:fs').Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
   } catch (err) {
     console.warn(`[content-filter] Failed to read directory ${dir}:`, err);
-    return;
+    return 0;
   }
+
+  let count = 0;
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
@@ -247,14 +401,19 @@ function loadNestedIgnoreFiles(dir: string, projectDir: string, ig: Ignore): voi
       const filePath = join(dirPath, name);
       if (!existsSync(filePath)) continue;
       try {
-        const patterns = parseIgnorePatterns(readFileSync(filePath, 'utf-8'));
+        const content = readFileSync(filePath, 'utf-8');
+        bytesAcc.value += content.length;
+        const patterns = parseIgnorePatterns(content);
         const prefixed = patterns.map((p) => prefixPattern(p, relToProject));
         ig.add(prefixed);
+        count++;
       } catch (err) {
         console.warn(`[content-filter] Failed to read nested ${name} at ${filePath}:`, err);
       }
     }
 
-    loadNestedIgnoreFiles(dirPath, projectDir, ig);
+    count += loadNestedIgnoreFiles(dirPath, projectDir, ig, bytesAcc);
   }
+
+  return count;
 }

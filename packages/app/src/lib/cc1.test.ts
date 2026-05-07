@@ -1,11 +1,13 @@
 import { describe, expect, mock, test } from 'bun:test';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
   CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   dispatchCC1Stateless,
   parseCC1BranchSwitched,
+  parseCC1ConfigIgnoreNestedError,
   parseCC1ConfigValidationRejected,
   parseCC1DerivedView,
   parseCC1DiskAck,
@@ -406,5 +408,149 @@ describe('parseCC1ConfigValidationRejected', () => {
       { onConfigValidationRejected: handler },
     );
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('parseCC1ConfigIgnoreNestedError', () => {
+  test('exports the channel literal', () => {
+    expect(CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR).toBe('config-ignore-nested-error');
+  });
+
+  test('parses a well-formed nested-error payload', () => {
+    const payload = {
+      v: CC1_CONTRACT_VERSION,
+      ch: CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
+      seq: 4,
+      path: 'subdir/.okignore',
+      error: 'unparseable line',
+    };
+    expect(parseCC1ConfigIgnoreNestedError(JSON.stringify(payload))).toEqual(payload);
+  });
+
+  test('preserves unknown wire fields (forward-compat via .loose())', () => {
+    const payload = {
+      v: CC1_CONTRACT_VERSION,
+      ch: CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
+      seq: 7,
+      path: 'subdir/.okignore',
+      error: 'broken',
+      extra: 'whatever',
+    };
+    expect(parseCC1ConfigIgnoreNestedError(JSON.stringify(payload))).toEqual(payload);
+  });
+
+  test('returns null for malformed JSON', () => {
+    expect(parseCC1ConfigIgnoreNestedError('{')).toBeNull();
+  });
+
+  test('returns null for unknown contract version', () => {
+    expect(
+      parseCC1ConfigIgnoreNestedError(
+        JSON.stringify({
+          v: 2,
+          ch: CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
+          seq: 1,
+          path: 'subdir/.okignore',
+          error: 'broken',
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  test('returns null for a different channel', () => {
+    expect(
+      parseCC1ConfigIgnoreNestedError(
+        JSON.stringify({
+          v: CC1_CONTRACT_VERSION,
+          ch: 'files',
+          seq: 1,
+          path: 'subdir/.okignore',
+          error: 'broken',
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  test('returns null when path is missing or empty', () => {
+    expect(
+      parseCC1ConfigIgnoreNestedError(
+        JSON.stringify({
+          v: CC1_CONTRACT_VERSION,
+          ch: CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
+          seq: 1,
+          error: 'broken',
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseCC1ConfigIgnoreNestedError(
+        JSON.stringify({
+          v: CC1_CONTRACT_VERSION,
+          ch: CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
+          seq: 1,
+          path: '',
+          error: 'broken',
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  test('returns null when error is missing or empty', () => {
+    expect(
+      parseCC1ConfigIgnoreNestedError(
+        JSON.stringify({
+          v: CC1_CONTRACT_VERSION,
+          ch: CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
+          seq: 1,
+          path: 'subdir/.okignore',
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseCC1ConfigIgnoreNestedError(
+        JSON.stringify({
+          v: CC1_CONTRACT_VERSION,
+          ch: CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
+          seq: 1,
+          path: 'subdir/.okignore',
+          error: '',
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  test('dispatchCC1Stateless routes config-ignore-nested-error to its handler', () => {
+    const handler = mock(() => {});
+    dispatchCC1Stateless(
+      JSON.stringify({
+        v: CC1_CONTRACT_VERSION,
+        ch: CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
+        seq: 1,
+        path: 'subdir/.okignore',
+        error: 'malformed',
+      }),
+      { onConfigIgnoreNestedError: handler },
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  test('config-ignore-nested-error is mutually exclusive with config-validation-rejected', () => {
+    const nested = mock(() => {});
+    const rejected = mock(() => {});
+    dispatchCC1Stateless(
+      JSON.stringify({
+        v: CC1_CONTRACT_VERSION,
+        ch: CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
+        seq: 1,
+        path: 'subdir/.okignore',
+        error: 'malformed',
+      }),
+      {
+        onConfigIgnoreNestedError: nested,
+        onConfigValidationRejected: rejected,
+      },
+    );
+    expect(nested).toHaveBeenCalledTimes(1);
+    expect(rejected).not.toHaveBeenCalled();
   });
 });

@@ -1,12 +1,15 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   bindConfigDoc,
+  bindOkignoreDoc,
+  CONFIG_DOC_NAME_OKIGNORE,
   CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
   type Config,
   type ConfigBinding,
   mergeLayered,
+  type OkignoreBinding,
   type WriteScope,
 } from '@inkeep/open-knowledge-core';
 import { useTheme } from 'next-themes';
@@ -18,6 +21,8 @@ interface ConfigContextValue {
   userBinding: ConfigBinding | null;
   projectBinding: ConfigBinding | null;
   projectLocalBinding: ConfigBinding | null;
+  okignoreBinding: OkignoreBinding | null;
+  okignoreSynced: boolean;
   userConfig: Config | null;
   projectConfig: Config | null;
   projectLocalConfig: Config | null;
@@ -45,6 +50,28 @@ function makeBinding(collabUrl: string, docName: string, scope: WriteScope): Sco
   return { binding, config: binding.current(), cleanup };
 }
 
+interface OkignoreScoped {
+  binding: OkignoreBinding;
+  provider: HocuspocusProvider;
+  cleanup: () => void;
+}
+
+function makeOkignoreBinding(collabUrl: string): OkignoreScoped {
+  const ydoc = new Y.Doc();
+  const provider = new HocuspocusProvider({
+    url: collabUrl,
+    name: CONFIG_DOC_NAME_OKIGNORE,
+    document: ydoc,
+  });
+  const binding = bindOkignoreDoc(provider);
+  const cleanup = () => {
+    binding.dispose();
+    provider.destroy();
+    ydoc.destroy();
+  };
+  return { binding, provider, cleanup };
+}
+
 export function ConfigProvider({ children }: { children: ReactNode }) {
   const { collabUrl } = useDocumentContext();
   const [userState, setUserState] = useState<{ binding: ConfigBinding; config: Config } | null>(
@@ -59,6 +86,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     config: Config;
     synced: boolean;
   } | null>(null);
+  const [okignoreState, setOkignoreState] = useState<{
+    binding: OkignoreBinding;
+    synced: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (collabUrl === null) return;
@@ -69,6 +100,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       CONFIG_DOC_NAME_PROJECT_LOCAL,
       'project-local',
     );
+    const okignoreScoped = makeOkignoreBinding(collabUrl);
     setUserState({ binding: userScoped.binding, config: userScoped.config });
     setProjectState({ binding: projectScoped.binding, config: projectScoped.config });
     setProjectLocalState({
@@ -76,6 +108,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       config: projectLocalScoped.config,
       synced: projectLocalScoped.binding.hasSynced(),
     });
+    setOkignoreState({ binding: okignoreScoped.binding, synced: false });
+
     const unsubUser = userScoped.binding.subscribe((next) => {
       setUserState((prev) =>
         prev?.binding === userScoped.binding ? { ...prev, config: next } : prev,
@@ -96,17 +130,27 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         prev?.binding === projectLocalScoped.binding ? { ...prev, synced: true } : prev,
       );
     });
+    const handleOkignoreSynced = () => {
+      setOkignoreState((prev) =>
+        prev?.binding === okignoreScoped.binding ? { ...prev, synced: true } : prev,
+      );
+    };
+    okignoreScoped.provider.on('synced', handleOkignoreSynced);
+
     return () => {
       unsubUser();
       unsubProject();
       unsubProjectLocal();
       unsubProjectLocalSynced();
+      okignoreScoped.provider.off('synced', handleOkignoreSynced);
       userScoped.cleanup();
       projectScoped.cleanup();
       projectLocalScoped.cleanup();
+      okignoreScoped.cleanup();
       setUserState((prev) => (prev?.binding === userScoped.binding ? null : prev));
       setProjectState((prev) => (prev?.binding === projectScoped.binding ? null : prev));
       setProjectLocalState((prev) => (prev?.binding === projectLocalScoped.binding ? null : prev));
+      setOkignoreState((prev) => (prev?.binding === okignoreScoped.binding ? null : prev));
     };
   }, [collabUrl]);
 
@@ -127,6 +171,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     userBinding: userState?.binding ?? null,
     projectBinding: projectState?.binding ?? null,
     projectLocalBinding: projectLocalState?.binding ?? null,
+    okignoreBinding: okignoreState?.binding ?? null,
+    okignoreSynced: okignoreState?.synced ?? false,
     userConfig: userState?.config ?? null,
     projectConfig: projectState?.config ?? null,
     projectLocalConfig: projectLocalState?.config ?? null,

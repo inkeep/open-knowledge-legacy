@@ -351,7 +351,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
 
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
-    expect(shutdownLogs[0].payload.documentCount).toBe(4);
+    expect(shutdownLogs[0].payload.documentCount).toBe(5);
   });
 
   test('destroy() flushes multiple documents before resolving (multi-doc drain)', async () => {
@@ -400,7 +400,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
 
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
-    expect(shutdownLogs[0].payload.documentCount).toBe(7);
+    expect(shutdownLogs[0].payload.documentCount).toBe(8);
   });
 });
 
@@ -768,6 +768,179 @@ describe('createServer() — project-local file watcher → engine.setEnabled', 
     expect(disabled).toBe(true);
 
     await srv.destroy();
+  });
+});
+
+describe('createServer() — okignore + gitignore multi-path watcher (US-005)', () => {
+  let testProjectDir: string;
+
+  beforeEach(() => {
+    testProjectDir = mkdtempSync(resolve(tmpdir(), 'ok-okignore-watcher-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(testProjectDir, { recursive: true, force: true });
+  });
+
+  test('external write to .okignore propagates to __config__/okignore Y.Text + ContentFilter rebuilds', async () => {
+    mkdirSync(join(testProjectDir, 'drafts'), { recursive: true });
+    writeFileSync(join(testProjectDir, 'keep.md'), '# Keep\n', 'utf-8');
+    writeFileSync(join(testProjectDir, 'drafts', 'foo.md'), '# Foo\n', 'utf-8');
+
+    const srv = createServer({
+      contentDir: testProjectDir,
+      projectDir: testProjectDir,
+      quiet: true,
+    });
+    await srv.ready;
+
+    expect(srv.contentFilter.isExcluded('drafts/foo.md')).toBe(false);
+    expect(srv.contentFilter.isExcluded('keep.md')).toBe(false);
+
+    const okignoreDoc = srv.hocuspocus.documents.get('__config__/okignore');
+    expect(okignoreDoc).toBeDefined();
+    if (!okignoreDoc) {
+      await srv.destroy();
+      return;
+    }
+    const ytext = okignoreDoc.getText('source');
+    expect(ytext.toString()).toBe('');
+
+    const okignorePath = join(testProjectDir, '.okignore');
+    const newContent = 'drafts/\n';
+    writeFileSync(okignorePath, newContent, 'utf-8');
+
+    const ytextSynced = await waitFor(() => ytext.toString() === newContent);
+    expect(ytextSynced).toBe(true);
+
+    const filterUpdated = await waitFor(() => srv.contentFilter.isExcluded('drafts/foo.md'));
+    expect(filterUpdated).toBe(true);
+    expect(srv.contentFilter.isExcluded('keep.md')).toBe(false);
+
+    await srv.destroy();
+  });
+
+  test('external write to .gitignore triggers ContentFilter rebuild WITHOUT mutating __config__/okignore Y.Text', async () => {
+    mkdirSync(join(testProjectDir, 'logs'), { recursive: true });
+    writeFileSync(join(testProjectDir, 'index.md'), '# Index\n', 'utf-8');
+    writeFileSync(join(testProjectDir, 'logs', 'debug.md'), '# Debug\n', 'utf-8');
+
+    const srv = createServer({
+      contentDir: testProjectDir,
+      projectDir: testProjectDir,
+      quiet: true,
+    });
+    await srv.ready;
+
+    expect(srv.contentFilter.isExcluded('logs/debug.md')).toBe(false);
+
+    const okignoreDoc = srv.hocuspocus.documents.get('__config__/okignore');
+    if (!okignoreDoc) {
+      await srv.destroy();
+      return;
+    }
+    const ytext = okignoreDoc.getText('source');
+    expect(ytext.toString()).toBe('');
+
+    const gitignorePath = join(testProjectDir, '.gitignore');
+    writeFileSync(gitignorePath, 'logs/\n', 'utf-8');
+
+    const filterUpdated = await waitFor(() => srv.contentFilter.isExcluded('logs/debug.md'));
+    expect(filterUpdated).toBe(true);
+    expect(srv.contentFilter.isExcluded('index.md')).toBe(false);
+    expect(ytext.toString()).toBe('');
+
+    await srv.destroy();
+  });
+
+  test('persistence-hook write of __config__/okignore Y.Text ends in atomic .okignore on disk + ContentFilter visibility change', async () => {
+    writeFileSync(join(testProjectDir, 'visible.md'), '# Visible\n', 'utf-8');
+    mkdirSync(join(testProjectDir, 'tmp'), { recursive: true });
+    writeFileSync(join(testProjectDir, 'tmp', 'cache.md'), '# Cache\n', 'utf-8');
+
+    const srv = createServer({
+      contentDir: testProjectDir,
+      projectDir: testProjectDir,
+      quiet: true,
+    });
+    await srv.ready;
+
+    expect(srv.contentFilter.isExcluded('tmp/cache.md')).toBe(false);
+
+    const okignoreDoc = srv.hocuspocus.documents.get('__config__/okignore');
+    if (!okignoreDoc) {
+      await srv.destroy();
+      return;
+    }
+    const ytext = okignoreDoc.getText('source');
+
+    const newContent = 'tmp/\n';
+    okignoreDoc.transact(() => {
+      ytext.insert(0, newContent);
+    });
+
+    const okignorePath = join(testProjectDir, '.okignore');
+    const fileLanded = await waitFor(
+      () => existsSync(okignorePath) && readFileSync(okignorePath, 'utf-8') === newContent,
+    );
+    expect(fileLanded).toBe(true);
+
+    const filterUpdated = await waitFor(() => srv.contentFilter.isExcluded('tmp/cache.md'));
+    expect(filterUpdated).toBe(true);
+    expect(srv.contentFilter.isExcluded('visible.md')).toBe(false);
+
+    await srv.destroy();
+  });
+
+  test('Y.Text mirror throw does NOT block ContentFilter rebuild', async () => {
+    mkdirSync(join(testProjectDir, 'drafts'), { recursive: true });
+    writeFileSync(join(testProjectDir, 'keep.md'), '# Keep\n', 'utf-8');
+    writeFileSync(join(testProjectDir, 'drafts', 'foo.md'), '# Foo\n', 'utf-8');
+
+    const logCapture = captureAllLoggers();
+    const srv = createServer({
+      contentDir: testProjectDir,
+      projectDir: testProjectDir,
+      quiet: true,
+    });
+    try {
+      await srv.ready;
+      expect(srv.contentFilter.isExcluded('drafts/foo.md')).toBe(false);
+
+      const okignoreDoc = srv.hocuspocus.documents.get('__config__/okignore');
+      expect(okignoreDoc).toBeDefined();
+      if (!okignoreDoc) return;
+
+      const origTransact = okignoreDoc.transact.bind(okignoreDoc);
+      Object.defineProperty(okignoreDoc, 'transact', {
+        value: () => {
+          throw new Error('test-injected: simulated Y.Doc transact failure');
+        },
+        writable: true,
+        configurable: true,
+      });
+
+      try {
+        const okignorePath = join(testProjectDir, '.okignore');
+        writeFileSync(okignorePath, 'drafts/\n', 'utf-8');
+
+        const filterUpdated = await waitFor(() => srv.contentFilter.isExcluded('drafts/foo.md'));
+        expect(filterUpdated).toBe(true);
+        expect(srv.contentFilter.isExcluded('keep.md')).toBe(false);
+
+        const errorEntries = logCapture.getCalls('error', 'applyExternalConfigChange failed');
+        expect(errorEntries.length).toBeGreaterThanOrEqual(1);
+      } finally {
+        Object.defineProperty(okignoreDoc, 'transact', {
+          value: origTransact,
+          writable: true,
+          configurable: true,
+        });
+      }
+    } finally {
+      loggerFactory.reset();
+      await srv.destroy();
+    }
   });
 });
 

@@ -3,13 +3,16 @@ import { setTimeout as wait } from 'node:timers/promises';
 import type { Hocuspocus } from '@hocuspocus/server';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
   CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   CC1BranchSwitchedPayloadSchema,
+  CC1ConfigIgnoreNestedErrorPayloadSchema,
   CC1ConfigValidationRejectedPayloadSchema,
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
+  CONFIG_DOC_NAME_OKIGNORE,
   CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
@@ -35,6 +38,7 @@ describe('isSystemDoc', () => {
     expect(isSystemDoc(CONFIG_DOC_NAME_PROJECT)).toBe(false);
     expect(isSystemDoc(CONFIG_DOC_NAME_PROJECT_LOCAL)).toBe(false);
     expect(isSystemDoc(CONFIG_DOC_NAME_USER)).toBe(false);
+    expect(isSystemDoc(CONFIG_DOC_NAME_OKIGNORE)).toBe(false);
   });
 
   test('SYSTEM_DOC_NAME matches expected value', () => {
@@ -62,6 +66,11 @@ describe('isConfigDoc', () => {
     expect(isConfigDoc(CONFIG_DOC_NAME_PROJECT_LOCAL)).toBe(true);
   });
 
+  test('returns true for the well-known okignore config doc', () => {
+    expect(isConfigDoc('__config__/okignore')).toBe(true);
+    expect(isConfigDoc(CONFIG_DOC_NAME_OKIGNORE)).toBe(true);
+  });
+
   test('returns false for system doc and regular content names', () => {
     expect(isConfigDoc(SYSTEM_DOC_NAME)).toBe(false);
     expect(isConfigDoc('notes/intro')).toBe(false);
@@ -78,10 +87,13 @@ describe('isConfigDoc', () => {
     expect(isConfigDoc('__local__/project.yml')).toBe(false);
     expect(isConfigDoc('__local__/')).toBe(false);
     expect(isConfigDoc('a__local__/project')).toBe(false);
+    expect(isConfigDoc('__config__/okignore.md')).toBe(false);
+    expect(isConfigDoc('__config__/okignore/')).toBe(false);
   });
 
-  test('CONFIG_DOC_NAMES contains exactly the three well-known names', () => {
+  test('CONFIG_DOC_NAMES contains exactly the four well-known names', () => {
     expect([...CONFIG_DOC_NAMES].sort()).toEqual([
+      '__config__/okignore',
       '__config__/project',
       '__local__/project',
       '__user__/config.yml',
@@ -461,5 +473,80 @@ describe('CC1Broadcaster', () => {
     if (!issue) throw new Error('issue missing');
     expect(issue.path).toEqual(['mcp', 'tools', 'grep', 'maxResults']);
     expect(issue.source?.line).toBe(5);
+  });
+
+  test('emitConfigIgnoreNestedError publishes payload with path + error + seq=1', () => {
+    broadcaster.emitConfigIgnoreNestedError(
+      'subdir/.okignore',
+      'failed to read nested ignore file',
+    );
+    expect(broadcasts).toHaveLength(1);
+    const payload = CC1ConfigIgnoreNestedErrorPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    expect(payload).toEqual({
+      v: 1,
+      ch: CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
+      seq: 1,
+      path: 'subdir/.okignore',
+      error: 'failed to read nested ignore file',
+    });
+  });
+
+  test('emitConfigIgnoreNestedError emits synchronously — no debounce', () => {
+    broadcaster.emitConfigIgnoreNestedError('a/.okignore', 'oops');
+    expect(broadcasts).toHaveLength(1);
+  });
+
+  test('emitConfigIgnoreNestedError seq increments monotonically across calls', () => {
+    broadcaster.emitConfigIgnoreNestedError('a/.okignore', 'one');
+    broadcaster.emitConfigIgnoreNestedError('b/.okignore', 'two');
+    broadcaster.emitConfigIgnoreNestedError('c/.okignore', 'three');
+    expect(broadcasts).toHaveLength(3);
+    const seqs = broadcasts.map(
+      (b) => CC1ConfigIgnoreNestedErrorPayloadSchema.parse(JSON.parse(b)).seq,
+    );
+    expect(seqs).toEqual([1, 2, 3]);
+  });
+
+  test('emitConfigIgnoreNestedError graceful no-op when __system__ document missing', () => {
+    mockHocuspocus.documents.clear();
+    broadcaster.emitConfigIgnoreNestedError('a/.okignore', 'oops');
+    expect(broadcasts).toHaveLength(0);
+  });
+
+  test('emitConfigIgnoreNestedError seq independent from other channels', async () => {
+    broadcaster.signal('files');
+    await wait(120);
+    broadcaster.emitConfigIgnoreNestedError('a/.okignore', 'first ignore error');
+    broadcaster.emitConfigIgnoreNestedError('b/.okignore', 'second ignore error');
+
+    expect(broadcasts).toHaveLength(3);
+    const derived = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    const err1 = CC1ConfigIgnoreNestedErrorPayloadSchema.parse(JSON.parse(broadcasts[1]));
+    const err2 = CC1ConfigIgnoreNestedErrorPayloadSchema.parse(JSON.parse(broadcasts[2]));
+    expect(derived).toMatchObject({ ch: 'files', seq: 1 });
+    expect(err1.seq).toBe(1);
+    expect(err2.seq).toBe(2);
+  });
+
+  test('emitConfigIgnoreNestedError updates cc1LastSeq metric for the nested-error channel', () => {
+    broadcaster.emitConfigIgnoreNestedError('a/.okignore', 'one');
+    broadcaster.emitConfigIgnoreNestedError('b/.okignore', 'two');
+    const m = getMetrics();
+    expect(m.cc1LastSeq[CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR]).toBe(2);
+    expect(m.cc1BroadcastCount).toBe(2);
+  });
+
+  test('emitConfigIgnoreNestedError carries the supplied path and error verbatim', () => {
+    const path = 'deeply/nested/folder/.okignore';
+    const error = 'EACCES: permission denied';
+    broadcaster.emitConfigIgnoreNestedError(path, error);
+    const payload = CC1ConfigIgnoreNestedErrorPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    expect(payload.path).toBe(path);
+    expect(payload.error).toBe(error);
+  });
+
+  test('emitConfigIgnoreNestedError does NOT throw when payload is invalid (catches Zod parse errors)', () => {
+    expect(() => broadcaster.emitConfigIgnoreNestedError('', 'something broke')).not.toThrow();
+    expect(broadcasts).toHaveLength(0);
   });
 });

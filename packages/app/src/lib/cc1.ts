@@ -1,10 +1,13 @@
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
   CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   type CC1BranchSwitchedPayload,
   CC1BranchSwitchedPayloadSchema,
+  type CC1ConfigIgnoreNestedErrorPayload,
+  CC1ConfigIgnoreNestedErrorPayloadSchema,
   type CC1ConfigValidationRejectedPayload,
   CC1ConfigValidationRejectedPayloadSchema,
   type CC1DerivedViewPayload,
@@ -19,6 +22,7 @@ import type { z } from 'zod';
 
 export {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR,
   CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
@@ -49,6 +53,12 @@ export function parseCC1ConfigValidationRejected(
   return safeParseJson(payload, CC1ConfigValidationRejectedPayloadSchema);
 }
 
+export function parseCC1ConfigIgnoreNestedError(
+  payload: string,
+): CC1ConfigIgnoreNestedErrorPayload | null {
+  return safeParseJson(payload, CC1ConfigIgnoreNestedErrorPayloadSchema);
+}
+
 export function parseCC1DiskAck(payload: string): CC1DiskAckParsed | null {
   const validated = safeParseJson(payload, CC1DiskAckPayloadSchema);
   if (!validated) return null;
@@ -74,6 +84,7 @@ interface CC1StatelessHandlers {
   onDiskAck?: (parsed: CC1DiskAckParsed) => void;
   onDerivedView?: (payload: CC1DerivedViewPayload) => void;
   onConfigValidationRejected?: (payload: CC1ConfigValidationRejectedPayload) => void;
+  onConfigIgnoreNestedError?: (payload: CC1ConfigIgnoreNestedErrorPayload) => void;
   onUnknown?: (rawPayload: string) => void;
 }
 
@@ -101,6 +112,11 @@ export function dispatchCC1Stateless(payload: string, handlers: CC1StatelessHand
   const configRejected = parseCC1ConfigValidationRejected(payload);
   if (configRejected) {
     handlers.onConfigValidationRejected?.(configRejected);
+    return;
+  }
+  const configIgnoreNestedError = parseCC1ConfigIgnoreNestedError(payload);
+  if (configIgnoreNestedError) {
+    handlers.onConfigIgnoreNestedError?.(configIgnoreNestedError);
     return;
   }
   handlers.onUnknown?.(payload);

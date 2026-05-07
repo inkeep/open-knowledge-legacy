@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import type { Document, Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import {
   type BasenameIndex,
+  CONFIG_DOC_NAME_OKIGNORE,
   CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_PROJECT_LOCAL,
   CONFIG_DOC_NAME_USER,
@@ -34,6 +35,7 @@ import { getLocalDir } from './config/paths.ts';
 import {
   type ConfigFileWatcherUnsubscribe,
   startConfigFileWatcher,
+  startMultiPathConfigFileWatcher,
 } from './config-file-watcher.ts';
 import { applyExternalConfigChange } from './config-persistence.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
@@ -244,6 +246,24 @@ export function createServer(options: ServerOptions): ServerInstance {
     contentFilter = createContentFilter({
       projectDir,
       contentDir,
+      onAfterRebuild: () => {
+        try {
+          backlinkIndex.rebuildFromDisk(getActiveBranch());
+        } catch (err) {
+          getLogger('server-factory').warn(
+            { err },
+            '[content-filter] backlink-index rebuild failed after onAfterRebuild',
+          );
+        }
+        try {
+          tagIndex.init();
+        } catch (err) {
+          getLogger('server-factory').warn(
+            { err },
+            '[content-filter] tag-index rebuild failed after onAfterRebuild',
+          );
+        }
+      },
     });
     backlinkIndex = new BacklinkIndex({ projectDir, contentDir, contentFilter });
     tagIndex = new TagIndex({ contentDir, contentFilter });
@@ -1363,6 +1383,80 @@ export function createServer(options: ServerOptions): ServerInstance {
         );
         degraded.push(`config-file-watcher:${configDocName}`);
       }
+    }
+
+    try {
+      const okignorePath = resolve(contentDir, '.okignore');
+      const gitignorePath = resolve(projectDir, '.gitignore');
+      const ignoreLog = log;
+      ignoreLog.info(
+        { okignorePath, gitignorePath },
+        '[ignore-watcher] starting multi-path watcher for .okignore + .gitignore',
+      );
+      const ignoreCleanup = await startMultiPathConfigFileWatcher(
+        [okignorePath, gitignorePath],
+        (changedPath, content) => {
+          void (async () => {
+            if (changedPath === okignorePath) {
+              try {
+                const document = hocuspocus.documents.get(CONFIG_DOC_NAME_OKIGNORE) ?? null;
+                const outcome = applyExternalConfigChange(
+                  document,
+                  CONFIG_DOC_NAME_OKIGNORE,
+                  content,
+                  persistence.configPersistenceCtx,
+                );
+                ignoreLog.info(
+                  { docName: CONFIG_DOC_NAME_OKIGNORE, outcome },
+                  '[ignore-watcher] applyExternalConfigChange outcome',
+                );
+              } catch (err) {
+                ignoreLog.error(
+                  { err, changedPath: relative(projectDir, changedPath) },
+                  '[ignore-watcher] applyExternalConfigChange failed; rebuild proceeds independently',
+                );
+              }
+            }
+
+            const result = await contentFilter.rebuildIgnorePatterns();
+            if (result.ok) {
+              ignoreLog.info(
+                {
+                  changedPath: relative(projectDir, changedPath),
+                  patternCount: result.patternCount,
+                  nestedFileCount: result.nestedFileCount,
+                  durationMs: result.durationMs,
+                },
+                '[ignore-watcher] rebuild succeeded — broadcasting files channel',
+              );
+              cc1Broadcaster?.signal('files');
+            } else {
+              const projectRelPath = relative(projectDir, changedPath) || '.';
+              ignoreLog.warn(
+                { changedPath: projectRelPath, error: result.error.message },
+                '[ignore-watcher] rebuild failed — emitting config-ignore-nested-error',
+              );
+              cc1Broadcaster?.emitConfigIgnoreNestedError(projectRelPath, result.error.message);
+            }
+          })().catch((err) => {
+            ignoreLog.error(
+              { err, changedPath: relative(projectDir, changedPath) || '.' },
+              '[ignore-watcher] handler threw',
+            );
+          });
+        },
+      );
+      configFileWatcherCleanups.push({ docName: '__ignore-files__', cleanup: ignoreCleanup });
+      ignoreLog.info(
+        { okignorePath, gitignorePath },
+        '[ignore-watcher] multi-path watcher started',
+      );
+    } catch (err) {
+      log.warn(
+        { err, projectDir, contentDir },
+        '[ignore-watcher] failed to start multi-path watcher',
+      );
+      degraded.push('ignore-files-watcher');
     }
 
     const gitDirForInit = resolveGitDir(projectDir);
