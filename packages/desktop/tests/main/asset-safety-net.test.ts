@@ -69,9 +69,14 @@ describe('matchAssetUrl', () => {
   });
 });
 
+function noopOpenExternal(_: string): Promise<void> {
+  return Promise.resolve();
+}
+
 describe('attachAssetSafetyNet — setWindowOpenHandler', () => {
   test('asset URL new-window request → denied + openAsset fires', async () => {
     const openAsset = mock(async (_: string) => ({ ok: true }) as const);
+    const openExternal = mock(noopOpenExternal);
     const log = mock((_: unknown) => {});
 
     let installedHandler: ((details: { url: string }) => { action: 'allow' | 'deny' }) | null =
@@ -83,7 +88,7 @@ describe('attachAssetSafetyNet — setWindowOpenHandler', () => {
       on: () => {},
     };
 
-    attachAssetSafetyNet(webContents, { openAsset, editorOrigin: ORIGIN, log });
+    attachAssetSafetyNet(webContents, { openAsset, openExternal, editorOrigin: ORIGIN, log });
 
     const result = installedHandler?.({
       url: 'http://localhost:5173/notes/meeting.pdf',
@@ -93,11 +98,13 @@ describe('attachAssetSafetyNet — setWindowOpenHandler', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(openAsset).toHaveBeenCalledWith('notes/meeting.pdf');
+    expect(openExternal).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();
   });
 
-  test('non-asset new-window request → denied with no openAsset call', async () => {
+  test('cross-origin https new-window → denied + openExternal fires', async () => {
     const openAsset = mock(async (_: string) => ({ ok: true }) as const);
+    const openExternal = mock(noopOpenExternal);
 
     let installedHandler: ((details: { url: string }) => { action: 'allow' | 'deny' }) | null =
       null;
@@ -108,16 +115,54 @@ describe('attachAssetSafetyNet — setWindowOpenHandler', () => {
       on: () => {},
     };
 
-    attachAssetSafetyNet(webContents, { openAsset, editorOrigin: ORIGIN });
+    attachAssetSafetyNet(webContents, { openAsset, openExternal, editorOrigin: ORIGIN });
 
-    const result = installedHandler?.({ url: 'https://example.com/' });
+    const result = installedHandler?.({ url: 'https://example.com/path' });
     expect(result).toEqual({ action: 'deny' });
     await Promise.resolve();
     expect(openAsset).not.toHaveBeenCalled();
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/path');
+  });
+
+  test('disallowed scheme new-window (javascript:) → denied + openExternal throw is logged', async () => {
+    const openAsset = mock(async (_: string) => ({ ok: true }) as const);
+    const openExternal = mock(async (_: string) => {
+      throw new Error('shell.openExternal blocked: scheme-not-allowed: javascript:');
+    });
+    const logEvents: unknown[] = [];
+
+    let installedHandler: ((details: { url: string }) => { action: 'allow' | 'deny' }) | null =
+      null;
+    const webContents = {
+      setWindowOpenHandler(handler: (details: { url: string }) => { action: 'allow' | 'deny' }) {
+        installedHandler = handler;
+      },
+      on: () => {},
+    };
+
+    attachAssetSafetyNet(webContents, {
+      openAsset,
+      openExternal,
+      editorOrigin: ORIGIN,
+      log: (evt) => logEvents.push(evt),
+    });
+
+    const result = installedHandler?.({ url: 'javascript:alert(1)' });
+    expect(result).toEqual({ action: 'deny' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(openAsset).not.toHaveBeenCalled();
+    expect(openExternal).toHaveBeenCalledWith('javascript:alert(1)');
+    expect(logEvents).toHaveLength(1);
+    expect(logEvents[0]).toMatchObject({
+      level: 'warn',
+      message: 'openExternal refused from setWindowOpenHandler',
+    });
   });
 
   test('openAsset refusal (path-escape on pdf) is logged', async () => {
     const openAsset = mock(async (_: string) => ({ ok: false, reason: 'path-escape' }) as const);
+    const openExternal = mock(noopOpenExternal);
     const logEvents: unknown[] = [];
     const log = (evt: unknown) => {
       logEvents.push(evt);
@@ -132,7 +177,7 @@ describe('attachAssetSafetyNet — setWindowOpenHandler', () => {
       on: () => {},
     };
 
-    attachAssetSafetyNet(webContents, { openAsset, editorOrigin: ORIGIN, log });
+    attachAssetSafetyNet(webContents, { openAsset, openExternal, editorOrigin: ORIGIN, log });
 
     installedHandler?.({ url: 'http://localhost:5173/notes/meeting.pdf' });
     await Promise.resolve();
@@ -148,6 +193,7 @@ describe('attachAssetSafetyNet — setWindowOpenHandler', () => {
 describe('attachAssetSafetyNet — will-navigate', () => {
   test('asset URL navigation → preventDefault + openAsset fires', async () => {
     const openAsset = mock(async (_: string) => ({ ok: true }) as const);
+    const openExternal = mock(noopOpenExternal);
 
     let installedHandler: ((event: { preventDefault: () => void }, url: string) => void) | null =
       null;
@@ -161,7 +207,7 @@ describe('attachAssetSafetyNet — will-navigate', () => {
       },
     };
 
-    attachAssetSafetyNet(webContents, { openAsset, editorOrigin: ORIGIN });
+    attachAssetSafetyNet(webContents, { openAsset, openExternal, editorOrigin: ORIGIN });
 
     const preventDefault = mock(() => {});
     installedHandler?.({ preventDefault }, 'http://localhost:5173/notes/meeting.pdf');
@@ -169,10 +215,12 @@ describe('attachAssetSafetyNet — will-navigate', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(openAsset).toHaveBeenCalledWith('notes/meeting.pdf');
+    expect(openExternal).not.toHaveBeenCalled();
   });
 
-  test('non-asset navigation → no preventDefault, no openAsset', async () => {
+  test('same-origin navigation (Vite reload, app bundle) → no preventDefault, no delegation', async () => {
     const openAsset = mock(async (_: string) => ({ ok: true }) as const);
+    const openExternal = mock(noopOpenExternal);
 
     let installedHandler: ((event: { preventDefault: () => void }, url: string) => void) | null =
       null;
@@ -186,12 +234,65 @@ describe('attachAssetSafetyNet — will-navigate', () => {
       },
     };
 
-    attachAssetSafetyNet(webContents, { openAsset, editorOrigin: ORIGIN });
+    attachAssetSafetyNet(webContents, { openAsset, openExternal, editorOrigin: ORIGIN });
 
     const preventDefault = mock(() => {});
     installedHandler?.({ preventDefault }, 'http://localhost:5173/');
     expect(preventDefault).not.toHaveBeenCalled();
     await Promise.resolve();
     expect(openAsset).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  test('malformed URL → silent drop (no preventDefault, no delegation, no crash)', async () => {
+    const openAsset = mock(async (_: string) => ({ ok: true }) as const);
+    const openExternal = mock(noopOpenExternal);
+
+    let installedHandler: ((event: { preventDefault: () => void }, url: string) => void) | null =
+      null;
+    const webContents = {
+      setWindowOpenHandler: () => {},
+      on(
+        event: 'will-navigate',
+        handler: (event: { preventDefault: () => void }, url: string) => void,
+      ) {
+        if (event === 'will-navigate') installedHandler = handler;
+      },
+    };
+
+    attachAssetSafetyNet(webContents, { openAsset, openExternal, editorOrigin: ORIGIN });
+
+    const preventDefault = mock(() => {});
+    expect(() => installedHandler?.({ preventDefault }, 'not a valid url')).not.toThrow();
+    expect(preventDefault).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(openAsset).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  test('cross-origin navigation (pasted https link) → preventDefault + openExternal fires', async () => {
+    const openAsset = mock(async (_: string) => ({ ok: true }) as const);
+    const openExternal = mock(noopOpenExternal);
+
+    let installedHandler: ((event: { preventDefault: () => void }, url: string) => void) | null =
+      null;
+    const webContents = {
+      setWindowOpenHandler: () => {},
+      on(
+        event: 'will-navigate',
+        handler: (event: { preventDefault: () => void }, url: string) => void,
+      ) {
+        if (event === 'will-navigate') installedHandler = handler;
+      },
+    };
+
+    attachAssetSafetyNet(webContents, { openAsset, openExternal, editorOrigin: ORIGIN });
+
+    const preventDefault = mock(() => {});
+    installedHandler?.({ preventDefault }, 'https://example.com/page');
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    expect(openAsset).not.toHaveBeenCalled();
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/page');
   });
 });

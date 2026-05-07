@@ -323,6 +323,9 @@ async function openProject(projectPath: string, pendingDeepLinkDoc?: string) {
         },
         relPath,
       ),
+    openExternal: handleShellOpenExternal({
+      openExternal: (url) => shell.openExternal(url),
+    }),
   });
   appState = addRecentProject(appState, ctx.projectPath, ctx.projectName);
   saveAppState(appState);
