@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, symlinkSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer as createHttpServer } from 'node:http';
+import {
+  createServer as createHttpServer,
+  request as httpRequest,
+  type IncomingMessage,
+} from 'node:http';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import type { Scheduler } from '@inkeep/open-knowledge-core';
@@ -86,6 +90,49 @@ async function get(port: number, path: string) {
   const res = await fetch(`http://localhost:${port}${path}`);
   const body = await res.text();
   return { status: res.status, body, headers: res.headers };
+}
+
+async function rawRequest(opts: {
+  port: number;
+  path: string;
+  method?: string;
+  host?: string;
+  origin?: string;
+  body?: string;
+  contentType?: string;
+}): Promise<{ status: number; body: string; headers: Record<string, string | string[]> }> {
+  return new Promise((done, fail) => {
+    const req = httpRequest(
+      {
+        host: 'localhost',
+        port: opts.port,
+        path: opts.path,
+        method: opts.method ?? 'GET',
+        headers: {
+          host: opts.host ?? `127.0.0.1:${opts.port}`,
+          ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
+          ...(opts.contentType ? { 'content-type': opts.contentType } : {}),
+          ...(opts.body !== undefined
+            ? { 'content-length': String(Buffer.byteLength(opts.body)) }
+            : {}),
+        },
+      },
+      (res: IncomingMessage) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c as Buffer));
+        res.on('end', () => {
+          done({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString('utf-8'),
+            headers: res.headers as Record<string, string | string[]>,
+          });
+        });
+      },
+    );
+    req.on('error', fail);
+    if (opts.body !== undefined) req.write(opts.body);
+    req.end();
+  });
 }
 
 describe('resolveRequestedPort', () => {
@@ -412,6 +459,93 @@ describe('startUiServer', () => {
     handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
     const { body } = await get(handle.port, '/evil.html');
     expect(body).not.toContain('<script>alert(1)</script>');
+  });
+
+  test('/api/* gate rejects requests with non-loopback Host header (DNS-rebind defense)', async () => {
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const res = await rawRequest({
+      port: handle.port,
+      path: '/api/config',
+      host: 'attacker.com:1234',
+    });
+    expect(res.status).toBe(403);
+    expect(String(res.headers['content-type'] ?? '')).toContain('application/json');
+    const body = JSON.parse(res.body) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe('host-header-not-allowed');
+  });
+
+  test('/api/* gate rejects requests with non-loopback Origin (CSRF defense)', async () => {
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const res = await rawRequest({
+      port: handle.port,
+      path: '/api/config',
+      origin: 'http://attacker.com',
+    });
+    expect(res.status).toBe(403);
+    const body = JSON.parse(res.body) as { ok: boolean; error: string };
+    expect(body.error).toBe('origin-not-allowed');
+  });
+
+  test('/api/* gate accepts loopback Origin (legitimate Vite dev server)', async () => {
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const res = await rawRequest({
+      port: handle.port,
+      path: '/api/config',
+      origin: 'http://localhost:5173',
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test('/api/* gate accepts Origin: null (Electron packaged renderer)', async () => {
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const res = await rawRequest({
+      port: handle.port,
+      path: '/api/config',
+      origin: 'null',
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test('/api/* proxy gate rejects DNS-rebind Host even when collab server is up', async () => {
+    let upstreamHits = 0;
+    const upstream = createHttpServer((_req, res) => {
+      upstreamHits++;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    await new Promise<void>((done) => upstream.listen(0, 'localhost', () => done()));
+    const upstreamPort = (upstream.address() as { port: number }).port;
+    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateServerLockPort(lockDir, upstreamPort);
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    try {
+      const res = await rawRequest({
+        port: handle.port,
+        path: '/api/agent-write-md',
+        method: 'POST',
+        host: 'attacker.com:1234',
+        contentType: 'application/json',
+        body: JSON.stringify({ docName: 'malicious', content: 'pwn' }),
+      });
+      expect(res.status).toBe(403);
+      const body = JSON.parse(res.body) as { ok: boolean; error: string };
+      expect(body.error).toBe('host-header-not-allowed');
+      expect(upstreamHits).toBe(0);
+    } finally {
+      await new Promise<void>((done) => upstream.close(() => done()));
+    }
+  });
+
+  test('non-/api/* paths are NOT subject to the gate (Host check would harm SPA)', async () => {
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const res = await rawRequest({
+      port: handle.port,
+      path: '/missing.png',
+      host: 'attacker.com:1234',
+    });
+    expect(res.status).not.toBe(403);
   });
 
   test('asset serve: non-inline admitted asset gets Content-Disposition: attachment', async () => {

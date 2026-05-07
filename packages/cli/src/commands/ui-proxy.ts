@@ -5,6 +5,11 @@ import type {
   ServerResponse,
 } from 'node:http';
 import { createServer as createHttpServer, request as httpRequest } from 'node:http';
+import {
+  isAllowedApiOrigin,
+  isAllowedWorkspaceHostHeader,
+  isLoopbackAddress,
+} from '@inkeep/open-knowledge-server';
 
 export interface ProxyServerHandle {
   httpServer: HttpServer;
@@ -21,6 +26,33 @@ interface StartProxyOptions {
 }
 
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 10_000;
+
+export function rejectIfNotLoopbackApi(req: IncomingMessage, res: ServerResponse): boolean {
+  const peerAddress = req.socket?.remoteAddress;
+  if (peerAddress !== undefined && !isLoopbackAddress(peerAddress)) {
+    sendGate403(res, 'loopback-required');
+    return true;
+  }
+  if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+    sendGate403(res, 'host-header-not-allowed');
+    return true;
+  }
+  const origin = req.headers.origin;
+  if (origin !== undefined && !isAllowedApiOrigin(origin)) {
+    sendGate403(res, 'origin-not-allowed');
+    return true;
+  }
+  return false;
+}
+
+function sendGate403(res: ServerResponse, error: string): void {
+  res.writeHead(403, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(JSON.stringify({ ok: false, error }));
+}
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -40,6 +72,7 @@ const HOP_BY_HOP_HEADERS: readonly string[] = [
 export async function startProxyServer(opts: StartProxyOptions): Promise<ProxyServerHandle> {
   const timeoutMs = opts.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
   const httpServer: HttpServer = createHttpServer((req, res) => {
+    if (rejectIfNotLoopbackApi(req, res)) return;
     forwardRequest(req, res, opts.upstreamHost, opts.upstreamPort, timeoutMs);
   });
 

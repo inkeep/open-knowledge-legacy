@@ -1,6 +1,46 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
+import {
+  createServer as createHttpServer,
+  type Server as HttpServer,
+  request as httpRequest,
+  type IncomingMessage,
+} from 'node:http';
 import { type ProxyServerHandle, startProxyServer } from './ui-proxy.ts';
+
+async function rawRequest(opts: {
+  port: number;
+  path: string;
+  method?: string;
+  host?: string;
+  origin?: string;
+}): Promise<{ status: number; body: string }> {
+  return new Promise((done, fail) => {
+    const req = httpRequest(
+      {
+        host: 'localhost',
+        port: opts.port,
+        path: opts.path,
+        method: opts.method ?? 'GET',
+        headers: {
+          host: opts.host ?? `127.0.0.1:${opts.port}`,
+          ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
+        },
+      },
+      (res: IncomingMessage) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c as Buffer));
+        res.on('end', () => {
+          done({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString('utf-8'),
+          });
+        });
+      },
+    );
+    req.on('error', fail);
+    req.end();
+  });
+}
 
 type UpstreamHandle = { httpServer: HttpServer; port: number; close: () => Promise<void> };
 
@@ -163,6 +203,75 @@ describe('startProxyServer', () => {
     proxy = null;
 
     await expect(fetch(`http://localhost:${port}/`)).rejects.toThrow();
+  });
+
+  test('rejects requests with non-loopback Host header (DNS-rebind defense)', async () => {
+    let upstreamHits = 0;
+    upstream = await startUpstream((_req, res) => {
+      upstreamHits++;
+      res.end('upstream reached');
+    });
+    proxy = await startProxyServer({
+      listenPort: 0,
+      host: 'localhost',
+      upstreamHost: 'localhost',
+      upstreamPort: upstream.port,
+    });
+
+    const res = await rawRequest({
+      port: proxy.port,
+      path: '/api/agent-write-md',
+      method: 'POST',
+      host: 'attacker.com:1234',
+    });
+    expect(res.status).toBe(403);
+    const body = JSON.parse(res.body) as { ok: boolean; error: string };
+    expect(body.error).toBe('host-header-not-allowed');
+    expect(upstreamHits).toBe(0);
+  });
+
+  test('rejects requests with non-loopback Origin', async () => {
+    let upstreamHits = 0;
+    upstream = await startUpstream((_req, res) => {
+      upstreamHits++;
+      res.end('upstream reached');
+    });
+    proxy = await startProxyServer({
+      listenPort: 0,
+      host: 'localhost',
+      upstreamHost: 'localhost',
+      upstreamPort: upstream.port,
+    });
+
+    const res = await rawRequest({
+      port: proxy.port,
+      path: '/api/agent-write-md',
+      origin: 'http://attacker.com',
+    });
+    expect(res.status).toBe(403);
+    const body = JSON.parse(res.body) as { ok: boolean; error: string };
+    expect(body.error).toBe('origin-not-allowed');
+    expect(upstreamHits).toBe(0);
+  });
+
+  test('accepts loopback Origin and forwards', async () => {
+    upstream = await startUpstream((_req, res) => {
+      res.writeHead(200);
+      res.end('ok');
+    });
+    proxy = await startProxyServer({
+      listenPort: 0,
+      host: 'localhost',
+      upstreamHost: 'localhost',
+      upstreamPort: upstream.port,
+    });
+
+    const res = await rawRequest({
+      port: proxy.port,
+      path: '/api/anything',
+      origin: 'http://127.0.0.1:5173',
+    });
+    expect(res.status).toBe(200);
   });
 
   test('listens on the requested port when nonzero', async () => {

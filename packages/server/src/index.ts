@@ -22,6 +22,7 @@ export {
   ROLLBACK_ORIGIN,
   safeSubdir,
 } from './api-extension.ts';
+export { isAllowedApiOrigin } from './api-origin.ts';
 export {
   type AssetServeFilter,
   createAssetServeMiddleware,
@@ -147,6 +148,7 @@ export {
   PinoLogger,
   type PinoLoggerConfig,
 } from './logger.ts';
+export { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 export {
   type RenameRewriteResult,
   rewriteMarkdownLinksForDocumentRename,
