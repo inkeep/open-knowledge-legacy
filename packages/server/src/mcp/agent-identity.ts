@@ -7,3 +7,5 @@ export interface AgentIdentity {
   displayName: string;
   colorSeed: string;
 }
+
+export const MCP_CONNECTION_ID_HEADER = 'x-ok-connection-id';

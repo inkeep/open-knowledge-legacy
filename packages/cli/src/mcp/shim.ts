@@ -6,6 +6,7 @@ import type { Readable, Writable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
 import {
   isProcessAlive as defaultIsProcessAlive,
+  MCP_CONNECTION_ID_HEADER,
   readServerLock,
   type ServerLockMetadata,
 } from '@inkeep/open-knowledge-server';
@@ -88,6 +89,7 @@ interface BridgeStdioToHttpMcpOptions {
   stdin?: Readable;
   stdout?: Writable;
   requestTimeoutMs?: number;
+  connectionId?: string;
   onclose?: () => void;
   createStdioTransport?: (
     stdin: Readable | undefined,
@@ -271,6 +273,9 @@ export async function bridgeStdioToHttpMcp(
     ? opts.createHttpTransport(new URL(endpointUrl))
     : (new StreamableHTTPClientTransport(new URL(endpointUrl), {
         fetch: makeFetchWithTimeout(requestTimeoutMs),
+        ...(opts.connectionId !== undefined
+          ? { requestInit: { headers: { [MCP_CONNECTION_ID_HEADER]: opts.connectionId } } }
+          : {}),
       }) as unknown as ShimTransport);
 
   let closed = false;
@@ -362,6 +367,7 @@ export async function startMcpShim(opts: StartMcpShimOptions): Promise<void> {
   try {
     bridge = await bridgeFn(endpointUrl, {
       stderr,
+      connectionId,
       onclose: () => {
         if (!shuttingDown) {
           keepalive.close();

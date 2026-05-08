@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { validateAgentId } from './agent-id.ts';
 import type { Config } from './config/schema.ts';
 import { MCP_SERVER_NAME } from './constants.ts';
-import type { AgentIdentity } from './mcp/agent-identity.ts';
+import { type AgentIdentity, MCP_CONNECTION_ID_HEADER } from './mcp/agent-identity.ts';
 import { buildInstructions } from './mcp/instructions.ts';
 import { registerAllTools } from './mcp/tools/index.ts';
 import { resolveWithinRoot } from './mcp/tools/path-safety.ts';
@@ -61,6 +62,7 @@ function sanitizeClientName(name: string | undefined, fallback: string): string 
 function createSessionServer(
   opts: McpHttpHandlerOptions,
   transport: StreamableHTTPServerTransport,
+  forwardedConnectionId: string | undefined,
 ): McpHttpSession {
   const config = opts.config;
   const server = new McpServer(
@@ -73,7 +75,7 @@ function createSessionServer(
     },
   );
 
-  const connectionId = randomUUID();
+  const connectionId = forwardedConnectionId ?? randomUUID();
   const identityRef: { current: AgentIdentity } = {
     current: {
       connectionId,
@@ -172,12 +174,21 @@ export function createMcpHttpHandler(opts: McpHttpHandlerOptions): McpHttpHandle
         return;
       }
 
+      const rawConnectionIdHeader = firstHeader(req.headers[MCP_CONNECTION_ID_HEADER]);
+      const forwardedConnectionId = validateAgentId(rawConnectionIdHeader) ?? undefined;
+      if (rawConnectionIdHeader !== undefined && forwardedConnectionId === undefined) {
+        opts.log?.warn?.(
+          { headerLength: rawConnectionIdHeader.length },
+          'MCP HTTP forwarded connectionId header failed validation; falling back to randomUUID',
+        );
+      }
+
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
         onsessioninitialized: async (newSessionId) => {
           try {
-            const session = createSessionServer(opts, transport);
+            const session = createSessionServer(opts, transport, forwardedConnectionId);
             await session.server.connect(transport);
             sessions.set(newSessionId, session);
             touchSession(newSessionId, session);
