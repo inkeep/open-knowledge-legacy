@@ -44,7 +44,15 @@ import {
 import type { NodeViewProps } from '@tiptap/core';
 import { TextSelection } from '@tiptap/pm/state';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
-import { ArrowDown, ArrowUp, Settings2, Trash2 } from 'lucide-react';
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  ArrowDown,
+  ArrowUp,
+  Settings2,
+  Trash2,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { ErrorBoundary, type FallbackProps } from 'react-error-boundary';
@@ -431,6 +439,16 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         className="jsx-component-wrapper my-2"
         data-jsx-component=""
         data-component-type={descriptor.name.toLowerCase()}
+        data-align={(() => {
+          const rawAlign = currentProps.align;
+          if (rawAlign === 'left' || rawAlign === 'right' || rawAlign === 'center') {
+            return rawAlign;
+          }
+          if (descriptor.name === 'img' || descriptor.name === 'CommonMarkImage') {
+            return 'center';
+          }
+          return undefined;
+        })()}
         data-selected={isInnermostSelected ? 'true' : undefined}
         data-has-child-selected={hasChildSelected ? 'true' : undefined}
         data-selection-origin={selectionOrigin}
@@ -460,6 +478,76 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           onMouseDown={(e) => e.stopPropagation()}
           {...{ [OPT_OUT_ATTR]: 'true' }}
         >
+          {/* Image alignment — left / center / right buttons. Renders for
+            both the `img` canonical AND the `CommonMarkImage` compat
+            (`![alt](src)` form). Placed in the hover-revealed chrome bar
+            rather than the bubble menu because clicking an image triggers
+            `react-medium-image-zoom`'s lightbox before PM can settle a
+            NodeSelection — the bubble-menu path doesn't reach the user.
+            Chrome bar shows on HOVER, no click required, so it sidesteps
+            the click-vs-zoom conflict.
+
+            CommonMarkImage's prop set is just src/alt/title — no align.
+            When the user picks a non-`center` alignment on a CommonMarkImage,
+            the click handler upgrades the descriptor to `img` (which DOES
+            have `align`) so the value persists through serialization. The
+            `![alt](src)` source upgrades to `<img ... align="…" />` on save
+            — a one-way conversion the user can revert by deleting the
+            block and re-typing the markdown. */}
+          {(descriptor.name === 'img' || descriptor.name === 'CommonMarkImage') &&
+            (
+              [
+                { value: 'left' as const, label: 'Align left', Icon: AlignLeft },
+                { value: 'center' as const, label: 'Align center', Icon: AlignCenter },
+                { value: 'right' as const, label: 'Align right', Icon: AlignRight },
+              ] as const
+            ).map(({ value, label, Icon }) => {
+              const rawAlign =
+                typeof currentProps.align === 'string' ? currentProps.align : 'center';
+              const currentAlign =
+                rawAlign === 'left' || rawAlign === 'right' || rawAlign === 'center'
+                  ? rawAlign
+                  : 'center';
+              const isActive = currentAlign === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  className="jsx-chrome-btn"
+                  aria-label={label}
+                  aria-pressed={isActive}
+                  data-active={isActive ? 'true' : undefined}
+                  onClick={() => {
+                    if (typeof pos !== 'number') return;
+                    const curNode = editor.state.doc.nodeAt(pos);
+                    if (!curNode || curNode.type.name !== 'jsxComponent') return;
+                    const curDescriptorName = String(curNode.attrs.componentName ?? '');
+                    if (curDescriptorName !== 'img' && curDescriptorName !== 'CommonMarkImage') {
+                      return;
+                    }
+                    if (curNode.attrs.kind !== 'element') return;
+                    const isCommonMark = curDescriptorName === 'CommonMarkImage';
+                    const nextProps = {
+                      ...((curNode.attrs.props as Record<string, unknown>) ?? {}),
+                      align: value,
+                    };
+                    const nextAttrs = isCommonMark
+                      ? {
+                          ...curNode.attrs,
+                          componentName: 'img',
+                          props: nextProps,
+                          sourceDirty: true,
+                        }
+                      : { ...curNode.attrs, props: nextProps, sourceDirty: true };
+                    editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, null, nextAttrs));
+                    markUserTyping();
+                  }}
+                >
+                  <Icon size={12} aria-hidden="true" />
+                </button>
+              );
+            })}
+
           {/* Move up/down — only for children inside containers; hidden at boundaries.
             `doc.resolve(pos)` / `doc.slice(...)` can throw `RangeError` when the
             node's position is out-of-bounds because a concurrent remote peer edit

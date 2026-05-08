@@ -218,6 +218,15 @@ const htmlImgProps: PropDef[] = [
     advanced: true,
     description: 'Referrer policy for the image fetch (HTML referrerpolicy values)',
   },
+  {
+    name: 'align',
+    type: 'enum',
+    enumValues: ['center', 'left', 'right'],
+    defaultValue: 'center',
+    required: false,
+    omitOnDefault: true,
+    description: 'Alignment within the column',
+  },
 ];
 
 const htmlVideoProps: PropDef[] = [
