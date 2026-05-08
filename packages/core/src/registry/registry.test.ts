@@ -175,7 +175,7 @@ describe('builtInComponents manifest', () => {
     );
   });
 
-  test('img exposes the 12-prop HTML-native surface (2 common + 10 advanced)', () => {
+  test('img exposes the 13-prop HTML-native surface (3 common + 10 advanced)', () => {
     const img = builtInComponents.find((m) => m.name === 'img');
     expect(img).toBeDefined();
     if (!img) return;
@@ -184,6 +184,7 @@ describe('builtInComponents manifest', () => {
       [
         'src',
         'alt',
+        'align',
         'width',
         'height',
         'srcset',
@@ -196,6 +197,28 @@ describe('builtInComponents manifest', () => {
         'referrerpolicy',
       ].sort(),
     );
+  });
+
+  test('img.align is a 3-value enum with center default (omitOnDefault, common-tier)', () => {
+    const img = builtInComponents.find((m) => m.name === 'img');
+    const align = img?.props.find((p) => p.name === 'align');
+    expect(align).toBeDefined();
+    if (align?.type === 'enum') {
+      expect([...align.enumValues].sort()).toEqual(['center', 'left', 'right'].sort());
+      expect(align.defaultValue).toBe('center');
+      expect(align.omitOnDefault).toBe(true);
+      expect(align.advanced).toBeUndefined();
+      expect(align.enumValues[0]).toBe('center');
+    }
+  });
+
+  test('CommonMarkImage compat exposes exactly src + alt + title (no align)', () => {
+    const cmi = builtInComponents.find((m) => m.name === 'CommonMarkImage');
+    expect(cmi).toBeDefined();
+    if (!cmi) return;
+    const propNames = cmi.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(['alt', 'src', 'title'].sort());
+    expect(cmi.props.find((p) => p.name === 'align')).toBeUndefined();
   });
 
   test('img has `loading` as a 2-value enum with lazy default (advanced-tagged)', () => {
@@ -480,7 +503,7 @@ describe('common/advanced split per descriptor', () => {
   type Split = { common: string[]; advanced: string[] };
   const expected: Record<string, Split> = {
     img: {
-      common: ['src', 'alt'],
+      common: ['src', 'alt', 'align'],
       advanced: [
         'width',
         'height',

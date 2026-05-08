@@ -1579,6 +1579,18 @@ button:active:not(:disabled) {
 .ProseMirror .jsx-component-wrapper {
   position: relative;
   border-radius: 0.375rem;
+  /* Reserve vertical space above each component wrapper for the chrome
+   * bar (`.jsx-component-chrome` floats at `top: -11px`, ~28px tall, so
+   * it extends ~11-39px above the wrapper). Without this gap, the bar
+   * visually overlaps the previous block's bottom AND gets clipped at
+   * the editor's scroll-top edge when the wrapper is the first block.
+   * The Tailwind class on the element (`my-2` = 0.5rem each side) is
+   * insufficient for the bar's 11px above-wrapper extension; this rule
+   * overrides via descendant-selector specificity (0,2,0 vs 0,1,0).
+   * Symmetric block spacing — both top and bottom — keeps the visual
+   * weight consistent block-to-block. */
+  margin-top: 1.25rem;
+  margin-bottom: 1.25rem;
   /* Establishes a stacking context for the behind-content halo (§7a).
    * `position: relative` alone is NOT sufficient: with `z-index: auto`
    * the wrapper doesn't open its own stacking context, so the `::after`
@@ -1722,6 +1734,38 @@ button:active:not(:disabled) {
 .ProseMirror .jsx-component-wrapper[data-component-type="audio"] {
   width: fit-content;
   max-width: 100%;
+}
+
+/* Image alignment within the column. Driven by `data-align` on the
+ * `JsxComponentView` wrapper, which is set from the descriptor's `align`
+ * prop (`htmlImgProps`, default `center`). Both descriptors that render
+ * as an image — the `img` canonical AND the `CommonMarkImage` compat
+ * (`![alt](src)` form) — get the alignment surface; the chrome-bar click
+ * handler upgrades a CommonMarkImage to `img` on first non-default
+ * alignment so the value persists through serialization.
+ *
+ * Implemented via `text-align` on the wrapper (the inline `<img>` inside
+ * is centered/left/right via inline-content alignment). This is
+ * deliberately DIFFERENT from the `width: fit-content + margin: auto`
+ * approach — that would shrink the wrapper to the image's natural
+ * dimensions, causing the right-anchored chrome bar (~120px wide,
+ * `top: -11px`) to overlap the image's click region for small images.
+ * The decorative-PNG comment on the `data-component-type="video|audio"`
+ * fit-content rule above was written to protect against exactly this
+ * overlap; `text-align` keeps the wrapper at its natural column width
+ * so the chrome bar stays at the column's right edge while the image
+ * sits left/center/right inside. */
+.ProseMirror .jsx-component-wrapper[data-component-type="img"][data-align="left"],
+.ProseMirror .jsx-component-wrapper[data-component-type="commonmarkimage"][data-align="left"] {
+  text-align: left;
+}
+.ProseMirror .jsx-component-wrapper[data-component-type="img"][data-align="center"],
+.ProseMirror .jsx-component-wrapper[data-component-type="commonmarkimage"][data-align="center"] {
+  text-align: center;
+}
+.ProseMirror .jsx-component-wrapper[data-component-type="img"][data-align="right"],
+.ProseMirror .jsx-component-wrapper[data-component-type="commonmarkimage"][data-align="right"] {
+  text-align: right;
 }
 
 .ProseMirror .jsx-component-wrapper[data-component-type="callout"],
@@ -2510,6 +2554,15 @@ button:active:not(:disabled) {
     color 0.1s;
 }
 .jsx-chrome-btn:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+/* Active-state for toggle buttons (image alignment left/center/right —
+ * only one is "pressed" at a time, reflecting the current `props.align`).
+ * Keyed off `data-active="true"` rather than `aria-pressed` so the
+ * selector composes cleanly with the hover rule above without specificity
+ * tricks. */
+.jsx-chrome-btn[data-active="true"] {
   background: var(--accent);
   color: var(--accent-foreground);
 }

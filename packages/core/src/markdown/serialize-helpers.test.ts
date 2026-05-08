@@ -252,3 +252,53 @@ describe('emitMdxJsx — empty-string-omission for optional strings', () => {
     expect(names).toContain('controls');
   });
 });
+
+describe('emitMdxJsx — img.align byte-stability invariant', () => {
+  const alignPropDefs: PropDef[] = [
+    { name: 'src', type: 'string', required: true },
+    {
+      name: 'align',
+      type: 'enum',
+      enumValues: ['center', 'left', 'right'],
+      defaultValue: 'center',
+      required: false,
+      omitOnDefault: true,
+    },
+  ];
+
+  test('omits align when value matches default (center)', () => {
+    const node = makeNode({ src: '/x.png', align: 'center' });
+    const result = emitMdxJsx('img', node, stubCtx, alignPropDefs);
+    const names = result.attributes.map((a) => ('name' in a ? a.name : '<expr>'));
+    expect(names).toContain('src');
+    expect(names).not.toContain('align');
+  });
+
+  test('omits align when value is unset (treated as default)', () => {
+    const node = makeNode({ src: '/x.png' });
+    const result = emitMdxJsx('img', node, stubCtx, alignPropDefs);
+    const names = result.attributes.map((a) => ('name' in a ? a.name : '<expr>'));
+    expect(names).toContain('src');
+    expect(names).not.toContain('align');
+  });
+
+  test('emits align="left" verbatim', () => {
+    const node = makeNode({ src: '/x.png', align: 'left' });
+    const result = emitMdxJsx('img', node, stubCtx, alignPropDefs);
+    const alignAttr = result.attributes.find((a) => 'name' in a && a.name === 'align') as
+      | { value?: unknown }
+      | undefined;
+    expect(alignAttr).toBeDefined();
+    expect(alignAttr?.value).toBe('left');
+  });
+
+  test('emits align="right" verbatim', () => {
+    const node = makeNode({ src: '/x.png', align: 'right' });
+    const result = emitMdxJsx('img', node, stubCtx, alignPropDefs);
+    const alignAttr = result.attributes.find((a) => 'name' in a && a.name === 'align') as
+      | { value?: unknown }
+      | undefined;
+    expect(alignAttr).toBeDefined();
+    expect(alignAttr?.value).toBe('right');
+  });
+});

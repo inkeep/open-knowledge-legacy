@@ -405,9 +405,10 @@ describe('PropPanel — descriptor.props narrowing (real registry)', () => {
     });
     expect(html).toContain('id="prop-src"');
     expect(html).toContain('id="prop-alt"');
+    expect(html).toContain('id="prop-align"');
+    expect(html).toContain('data-prop-panel-advanced-trigger');
     expect(html).toContain('id="prop-width"');
     expect(html).toContain('id="prop-height"');
-    expect(html).toContain('data-prop-panel-advanced-trigger');
     expect(html).toContain('id="prop-srcset"');
     expect(html).toContain('id="prop-sizes"');
     expect(html).toContain('id="prop-loading"');
@@ -417,6 +418,6 @@ describe('PropPanel — descriptor.props narrowing (real registry)', () => {
     expect(html).toContain('id="prop-crossorigin"');
     expect(html).toContain('id="prop-referrerpolicy"');
     const propIds = html.match(/id="prop-[^"]+"/g) ?? [];
-    expect(propIds.length).toBe(12);
+    expect(propIds.length).toBe(13);
   });
 });
