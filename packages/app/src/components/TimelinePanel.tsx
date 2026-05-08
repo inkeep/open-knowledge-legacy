@@ -348,7 +348,7 @@ function SummaryBullets({ summaries }: SummaryBulletsProps) {
           }}
         >
           {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-          {expanded ? `Hide ${rest.length} more` : `Show ${rest.length} more`}
+          {expanded ? 'Hide' : `Show ${rest.length} more`}
         </button>
       )}
     </div>
