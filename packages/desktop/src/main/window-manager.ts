@@ -60,6 +60,7 @@ export interface BrowserWindowLike {
   isMinimized?(): boolean;
   isDestroyed?(): boolean;
   isVisible?(): boolean;
+  close?(): void;
   on(event: 'closed', cb: () => void): void;
   once(event: 'ready-to-show', cb: () => void): void;
   webContents: {

@@ -73,7 +73,7 @@ import {
   runMcpWiringOnFirstLaunch,
 } from './mcp-wiring.ts';
 import { installApplicationMenu } from './menu.ts';
-import { createNavigatorWindow } from './navigator-window.ts';
+import { createNavigatorWindow, tryCloseNavigator } from './navigator-window.ts';
 import { handleShellOpenExternal } from './shell-allowlist.ts';
 import {
   type AppState,
@@ -327,6 +327,7 @@ async function openProject(projectPath: string, pendingDeepLinkDoc?: string) {
       openExternal: (url) => shell.openExternal(url),
     }),
   });
+  tryCloseNavigator(navigatorWindow, { projectPath });
   appState = addRecentProject(appState, ctx.projectPath, ctx.projectName);
   saveAppState(appState);
   refreshApplicationMenu();
