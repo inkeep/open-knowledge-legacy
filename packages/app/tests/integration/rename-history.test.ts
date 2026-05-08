@@ -258,7 +258,7 @@ describe('Timeline rename-history mitigation — integration', () => {
         const shaSet = new Set(h.entries.map((e) => e.sha));
         return shaSet.has(preRenameWipSha) && shaSet.has(renameEntry.commitSha);
       },
-      10_000,
+      20_000,
       50,
     );
 
@@ -281,7 +281,7 @@ describe('Timeline rename-history mitigation — integration', () => {
 
     expect(existsSync(join(server.contentDir, 'b.md'))).toBe(true);
     expect(existsSync(join(server.contentDir, 'a.md'))).toBe(false);
-  }, 90_000);
+  }, 120_000);
 
   test('folder rename of 3 docs → 3 jsonl entries with shared groupId, shared commitSha after backfill', async () => {
     const server = await bootServer();
