@@ -102,4 +102,4 @@ program.addCommand(syncCommand(() => resolvedConfig));
 program.addCommand(pushCommand(() => resolvedConfig));
 program.addCommand(pullCommand(() => resolvedConfig));
 
-await program.parseAsync();
+await program.parseAsync(process.argv, { from: 'node' });
