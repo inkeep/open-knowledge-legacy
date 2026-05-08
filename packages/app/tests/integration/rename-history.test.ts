@@ -249,6 +249,19 @@ describe('Timeline rename-history mitigation — integration', () => {
     expect(renameEntry).toBeDefined();
     expect(renameEntry?.kind).toBe('file');
 
+    await pollUntil(
+      async () => {
+        if (preRenameWipSha === undefined || renameEntry?.commitSha === undefined) {
+          return false;
+        }
+        const h = await getHistory(server.port, 'b');
+        const shaSet = new Set(h.entries.map((e) => e.sha));
+        return shaSet.has(preRenameWipSha) && shaSet.has(renameEntry.commitSha);
+      },
+      10_000,
+      50,
+    );
+
     const postRename = await getHistory(server.port, 'b');
     expect(postRename.ok).toBe(true);
     const shas = postRename.entries.map((e) => e.sha);
@@ -268,7 +281,7 @@ describe('Timeline rename-history mitigation — integration', () => {
 
     expect(existsSync(join(server.contentDir, 'b.md'))).toBe(true);
     expect(existsSync(join(server.contentDir, 'a.md'))).toBe(false);
-  }, 60_000);
+  }, 90_000);
 
   test('folder rename of 3 docs → 3 jsonl entries with shared groupId, shared commitSha after backfill', async () => {
     const server = await bootServer();
@@ -279,11 +292,13 @@ describe('Timeline rename-history mitigation — integration', () => {
       position: 'replace',
       ...AGENT,
     });
+    await awaitWipCommit(server, 'articles/auth');
     await agentWriteMd(server.port, '# sso\n', {
       docName: 'articles/sso',
       position: 'replace',
       ...AGENT,
     });
+    await awaitWipCommit(server, 'articles/sso');
     await agentWriteMd(server.port, '# oauth\n', {
       docName: 'articles/oauth',
       position: 'replace',
@@ -464,11 +479,13 @@ describe('Timeline rename-history mitigation — integration', () => {
       position: 'replace',
       ...AGENT,
     });
+    await awaitWipCommit(server, 'parent/overview');
     await agentWriteMd(server.port, '# faq\n\nbody\n', {
       docName: 'parent/faq',
       position: 'replace',
       ...AGENT,
     });
+    await awaitWipCommit(server, 'parent/faq');
     await agentWriteMd(
       server.port,
       '# getting-started\n\nSee [[parent/overview]] and [[parent/faq]].\n',
@@ -559,11 +576,13 @@ describe('Timeline rename-history mitigation — integration', () => {
       position: 'replace',
       ...AGENT,
     });
+    await awaitWipCommit(server, 'src-folder/a');
     await agentWriteMd(server.port, '# b\n', {
       docName: 'src-folder/b',
       position: 'replace',
       ...AGENT,
     });
+    await awaitWipCommit(server, 'src-folder/b');
     await agentWriteMd(server.port, '# c\n', {
       docName: 'src-folder/c',
       position: 'replace',

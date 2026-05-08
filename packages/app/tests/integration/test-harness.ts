@@ -487,13 +487,13 @@ export async function testReset(port: number, docName?: string): Promise<void> {
 }
 
 export async function pollUntil(
-  condition: () => boolean,
+  condition: () => boolean | Promise<boolean>,
   timeoutMs = 5000,
   intervalMs = 100,
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (condition()) return;
+    if (await condition()) return;
     await wait(intervalMs);
   }
   throw new Error(`pollUntil timed out after ${timeoutMs}ms`);
