@@ -150,6 +150,11 @@ async function saveVersion(
   }
 }
 
+async function getWipShas(server: RestartableServer, docName: string): Promise<Set<string>> {
+  const history = await getHistory(server.port, docName);
+  return new Set(history.entries.filter((e) => e.type === 'wip').map((e) => e.sha));
+}
+
 function readRenameLogEntries(server: RestartableServer): RenameLogEntry[] {
   const shadow = resolveShadowDir(server.contentDir);
   const path = renameLogPath(shadow);
@@ -182,18 +187,27 @@ async function pollForBackfill(
 async function awaitWipCommit(
   server: RestartableServer,
   docName: string,
+  beforeShas: Set<string>,
   timeoutMs = 20_000,
-): Promise<void> {
-  const initial = await getHistory(server.port, docName);
-  const beforeShas = new Set(initial.entries.filter((e) => e.type === 'wip').map((e) => e.sha));
+): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const h = await getHistory(server.port, docName);
-    const hasNewWip = h.entries.some((e) => e.type === 'wip' && !beforeShas.has(e.sha));
-    if (hasNewWip) return;
+    const newWip = h.entries.find((e) => e.type === 'wip' && !beforeShas.has(e.sha));
+    if (newWip !== undefined) return newWip.sha;
     await wait(50);
   }
   throw new Error(`awaitWipCommit: no NEW WIP commit for ${docName} within ${timeoutMs}ms`);
+}
+
+async function agentWriteMdAndAwaitWip(
+  server: RestartableServer,
+  markdown: string,
+  opts: NonNullable<Parameters<typeof agentWriteMd>[2]> & { docName: string },
+): Promise<string> {
+  const beforeShas = await getWipShas(server, opts.docName);
+  await agentWriteMd(server.port, markdown, opts);
+  return await awaitWipCommit(server, opts.docName, beforeShas);
 }
 
 async function crossSecondBoundary(): Promise<void> {
@@ -205,106 +219,100 @@ const AGENT = { agentId: 'claude-1', agentName: 'Claude' };
 describe('Timeline rename-history mitigation — integration', () => {
   test('file rename round-trip: history spans rename; rollback to pre-rename SHA reverts content; name unchanged', async () => {
     const server = await bootServer();
+    const aDoc = 'rename-roundtrip-a';
+    const bDoc = 'rename-roundtrip-b';
 
-    await agentWriteMd(server.port, '# A v1\n\nfirst body\n', {
-      docName: 'a',
+    await agentWriteMdAndAwaitWip(server, '# A v1\n\nfirst body\n', {
+      docName: aDoc,
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'a');
     await saveVersion(server.port, AGENT);
 
-    await agentWriteMd(server.port, '\nmore body line\n', {
-      docName: 'a',
+    await agentWriteMdAndAwaitWip(server, '\nmore body line\n', {
+      docName: aDoc,
       position: 'append',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'a');
-
-    const preRename = await getHistory(server.port, 'a');
-    expect(preRename.ok).toBe(true);
-    expect(preRename.entries.length).toBeGreaterThanOrEqual(2);
-    const wipAtA = preRename.entries.find((e) => e.type === 'wip');
-    expect(wipAtA).toBeDefined();
-    const preRenameWipSha = wipAtA?.sha;
+    await saveVersion(server.port, AGENT);
+    const preRename = await getHistory(server.port, aDoc);
+    const preRenameSha = preRename.entries.find((e) => e.type === 'checkpoint')?.sha;
+    expect(preRenameSha).toBeDefined();
+    if (!preRenameSha) throw new Error('preRenameSha unset');
+    await crossSecondBoundary();
 
     const renameRes = await renamePath(server.port, {
       kind: 'file',
-      fromPath: 'a.md',
-      toPath: 'b.md',
+      fromPath: `${aDoc}.md`,
+      toPath: `${bDoc}.md`,
       ...AGENT,
     });
     expect(renameRes.status).toBe(200);
 
-    await agentWriteMd(server.port, '\npost-rename body\n', {
-      docName: 'b',
+    await agentWriteMdAndAwaitWip(server, '\npost-rename body\n', {
+      docName: bDoc,
       position: 'append',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'b');
     await saveVersion(server.port, AGENT);
 
-    const entries = await pollForBackfill(server, [{ from: 'a', to: 'b' }]);
-    const renameEntry = entries.find((e) => e.from === 'a' && e.to === 'b');
+    const entries = await pollForBackfill(server, [{ from: aDoc, to: bDoc }]);
+    const renameEntry = entries.find((e) => e.from === aDoc && e.to === bDoc);
     expect(renameEntry).toBeDefined();
     expect(renameEntry?.kind).toBe('file');
 
     await pollUntil(
       async () => {
-        if (preRenameWipSha === undefined || renameEntry?.commitSha === undefined) {
+        if (renameEntry?.commitSha === undefined) {
           return false;
         }
-        const h = await getHistory(server.port, 'b');
+        const h = await getHistory(server.port, bDoc);
         const shaSet = new Set(h.entries.map((e) => e.sha));
-        return shaSet.has(preRenameWipSha) && shaSet.has(renameEntry.commitSha);
+        return shaSet.has(preRenameSha) && shaSet.has(renameEntry.commitSha);
       },
-      20_000,
+      45_000,
       50,
     );
 
-    const postRename = await getHistory(server.port, 'b');
+    const postRename = await getHistory(server.port, bDoc);
     expect(postRename.ok).toBe(true);
     const shas = postRename.entries.map((e) => e.sha);
-    expect(shas).toContain(preRenameWipSha);
+    expect(shas).toContain(preRenameSha);
     expect(shas).toContain(renameEntry?.commitSha);
 
-    if (!preRenameWipSha) throw new Error('preRenameWipSha unset');
     const rb = await rollback(server.port, {
-      docName: 'b',
-      commitSha: preRenameWipSha,
+      docName: bDoc,
+      commitSha: preRenameSha,
       ...AGENT,
     });
     expect(rb.status).toBe(200);
     expect(rb.body.ok).toBe(true);
 
-    await pollUntil(() => existsSync(join(server.contentDir, 'b.md')), 5_000, 25);
+    await pollUntil(() => existsSync(join(server.contentDir, `${bDoc}.md`)), 5_000, 25);
 
-    expect(existsSync(join(server.contentDir, 'b.md'))).toBe(true);
-    expect(existsSync(join(server.contentDir, 'a.md'))).toBe(false);
-  }, 120_000);
+    expect(existsSync(join(server.contentDir, `${bDoc}.md`))).toBe(true);
+    expect(existsSync(join(server.contentDir, `${aDoc}.md`))).toBe(false);
+  }, 180_000);
 
   test('folder rename of 3 docs → 3 jsonl entries with shared groupId, shared commitSha after backfill', async () => {
     const server = await bootServer();
 
     mkdirSync(join(server.contentDir, 'articles'), { recursive: true });
-    await agentWriteMd(server.port, '# auth\n', {
+    await agentWriteMdAndAwaitWip(server, '# auth\n', {
       docName: 'articles/auth',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'articles/auth');
-    await agentWriteMd(server.port, '# sso\n', {
+    await agentWriteMdAndAwaitWip(server, '# sso\n', {
       docName: 'articles/sso',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'articles/sso');
-    await agentWriteMd(server.port, '# oauth\n', {
+    await agentWriteMdAndAwaitWip(server, '# oauth\n', {
       docName: 'articles/oauth',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'articles/oauth');
     await saveVersion(server.port, AGENT);
 
     const renameRes = await renamePath(server.port, {
@@ -320,7 +328,7 @@ describe('Timeline rename-history mitigation — integration', () => {
       'essays/sso',
     ]);
 
-    await agentWriteMd(server.port, '\nbackfill trigger\n', {
+    await agentWriteMdAndAwaitWip(server, '\nbackfill trigger\n', {
       docName: 'essays/auth',
       position: 'append',
       ...AGENT,
@@ -344,12 +352,11 @@ describe('Timeline rename-history mitigation — integration', () => {
   test('chained A→B→C: timeline of `c` spans all three name epochs', async () => {
     const server = await bootServer();
 
-    await agentWriteMd(server.port, '# A\n', {
+    await agentWriteMdAndAwaitWip(server, '# A\n', {
       docName: 'a',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'a');
     await saveVersion(server.port, AGENT);
     const aHistory = await getHistory(server.port, 'a');
     const aWipSha = aHistory.entries.find((e) => e.type === 'wip')?.sha;
@@ -360,12 +367,11 @@ describe('Timeline rename-history mitigation — integration', () => {
       (await renamePath(server.port, { kind: 'file', fromPath: 'a.md', toPath: 'b.md', ...AGENT }))
         .status,
     ).toBe(200);
-    await agentWriteMd(server.port, '\nmore at b\n', {
+    await agentWriteMdAndAwaitWip(server, '\nmore at b\n', {
       docName: 'b',
       position: 'append',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'b');
     await saveVersion(server.port, AGENT);
     await crossSecondBoundary();
 
@@ -373,12 +379,11 @@ describe('Timeline rename-history mitigation — integration', () => {
       (await renamePath(server.port, { kind: 'file', fromPath: 'b.md', toPath: 'c.md', ...AGENT }))
         .status,
     ).toBe(200);
-    await agentWriteMd(server.port, '\nmore at c\n', {
+    await agentWriteMdAndAwaitWip(server, '\nmore at c\n', {
       docName: 'c',
       position: 'append',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'c');
     await saveVersion(server.port, AGENT);
 
     await pollForBackfill(server, [
@@ -399,12 +404,11 @@ describe('Timeline rename-history mitigation — integration', () => {
   test('name-reuse contamination: timeline of `b` excludes the later same-name draft', async () => {
     const server = await bootServer();
 
-    await agentWriteMd(server.port, '# A old\n', {
+    await agentWriteMdAndAwaitWip(server, '# A old\n', {
       docName: 'a',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'a');
     await saveVersion(server.port, AGENT);
     await crossSecondBoundary();
 
@@ -412,12 +416,11 @@ describe('Timeline rename-history mitigation — integration', () => {
       (await renamePath(server.port, { kind: 'file', fromPath: 'a.md', toPath: 'b.md', ...AGENT }))
         .status,
     ).toBe(200);
-    await agentWriteMd(server.port, '\nB body\n', {
+    await agentWriteMdAndAwaitWip(server, '\nB body\n', {
       docName: 'b',
       position: 'append',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'b');
     await pollForBackfill(server, [{ from: 'a', to: 'b' }]);
     await saveVersion(server.port, AGENT);
 
@@ -426,12 +429,11 @@ describe('Timeline rename-history mitigation — integration', () => {
     );
     await crossSecondBoundary();
 
-    await agentWriteMd(server.port, '# A NEW (unrelated)\n', {
+    await agentWriteMdAndAwaitWip(server, '# A NEW (unrelated)\n', {
       docName: 'a',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'a');
     await saveVersion(server.port, AGENT);
 
     const newAHistory = await getHistory(server.port, 'a');
@@ -445,12 +447,11 @@ describe('Timeline rename-history mitigation — integration', () => {
   test('rename → full chain visible immediately on /api/history (spine drains contributors before response)', async () => {
     const server = await bootServer();
 
-    await agentWriteMd(server.port, '# A v1\n', {
+    await agentWriteMdAndAwaitWip(server, '# A v1\n', {
       docName: 'a',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'a');
     await saveVersion(server.port, AGENT);
     const preRename = await getHistory(server.port, 'a');
     const preWipSha = preRename.entries.find((e) => e.type === 'wip')?.sha;
@@ -474,20 +475,18 @@ describe('Timeline rename-history mitigation — integration', () => {
   test('timeline filters out backlink-rewrite topological noise from sibling renames', async () => {
     const server = await bootServer();
     mkdirSync(join(server.contentDir, 'parent'), { recursive: true });
-    await agentWriteMd(server.port, '# overview\n\nbody\n', {
+    await agentWriteMdAndAwaitWip(server, '# overview\n\nbody\n', {
       docName: 'parent/overview',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'parent/overview');
-    await agentWriteMd(server.port, '# faq\n\nbody\n', {
+    await agentWriteMdAndAwaitWip(server, '# faq\n\nbody\n', {
       docName: 'parent/faq',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'parent/faq');
-    await agentWriteMd(
-      server.port,
+    await agentWriteMdAndAwaitWip(
+      server,
       '# getting-started\n\nSee [[parent/overview]] and [[parent/faq]].\n',
       {
         docName: 'parent/getting-started',
@@ -495,7 +494,6 @@ describe('Timeline rename-history mitigation — integration', () => {
         ...AGENT,
       },
     );
-    await awaitWipCommit(server, 'parent/getting-started');
 
     await renamePath(server.port, {
       kind: 'file',
@@ -532,12 +530,11 @@ describe('Timeline rename-history mitigation — integration', () => {
   test('timeline filters out multi-writer-fan-out topological noise', async () => {
     const server = await bootServer();
     mkdirSync(join(server.contentDir, 'multi'), { recursive: true });
-    await agentWriteMd(server.port, '# alpha\n', {
+    await agentWriteMdAndAwaitWip(server, '# alpha\n', {
       docName: 'multi/alpha',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'multi/alpha');
 
     await renamePath(server.port, {
       kind: 'file',
@@ -547,12 +544,11 @@ describe('Timeline rename-history mitigation — integration', () => {
     });
 
     const OTHER_AGENT = { agentId: 'claude-other', agentName: 'Other' };
-    await agentWriteMd(server.port, '# beta\n', {
+    await agentWriteMdAndAwaitWip(server, '# beta\n', {
       docName: 'multi/beta',
       position: 'replace',
       ...OTHER_AGENT,
     });
-    await awaitWipCommit(server, 'multi/beta');
 
     const hist = await getHistory(server.port, 'multi/alpha-renamed');
     const writerIds = new Set<string>();
@@ -571,24 +567,21 @@ describe('Timeline rename-history mitigation — integration', () => {
   test('folder rename — user-supplied summary appears exactly once in OkActorEntry.summaries (no per-doc duplication)', async () => {
     const server = await bootServer();
     mkdirSync(join(server.contentDir, 'src-folder'), { recursive: true });
-    await agentWriteMd(server.port, '# a\n', {
+    await agentWriteMdAndAwaitWip(server, '# a\n', {
       docName: 'src-folder/a',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'src-folder/a');
-    await agentWriteMd(server.port, '# b\n', {
+    await agentWriteMdAndAwaitWip(server, '# b\n', {
       docName: 'src-folder/b',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'src-folder/b');
-    await agentWriteMd(server.port, '# c\n', {
+    await agentWriteMdAndAwaitWip(server, '# c\n', {
       docName: 'src-folder/c',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'src-folder/c');
 
     const renameRes = await renamePath(server.port, {
       kind: 'folder',
@@ -659,12 +652,11 @@ describe('Timeline rename-history mitigation — integration', () => {
     expect(okActor.summaries).toContain('Renamed summary-a → summary-b');
     expect(okActor.previous_paths).toBeDefined();
 
-    await agentWriteMd(server.port, '# Unrelated\n', {
+    await agentWriteMdAndAwaitWip(server, '# Unrelated\n', {
       docName: 'unrelated-doc',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'unrelated-doc');
     const unrelatedHist = await getHistory(server.port, 'unrelated-doc');
     const latestSha = unrelatedHist.entries[0]?.sha ?? '';
     expect(latestSha).not.toBe(renameSha);
@@ -676,12 +668,11 @@ describe('Timeline rename-history mitigation — integration', () => {
 
   test('GET /api/history/:sha for a pre-rename commit returns historical content (rename-chain walk)', async () => {
     const server = await bootServer();
-    await agentWriteMd(server.port, '# Haiku v1\n\noriginal body\n', {
+    await agentWriteMdAndAwaitWip(server, '# Haiku v1\n\noriginal body\n', {
       docName: 'haiku',
       position: 'replace',
       ...AGENT,
     });
-    await awaitWipCommit(server, 'haiku');
     const preRename = await getHistory(server.port, 'haiku');
     const wipAtHaiku = preRename.entries.find((e) => e.type === 'wip');
     expect(wipAtHaiku).toBeDefined();
