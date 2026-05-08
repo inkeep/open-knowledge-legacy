@@ -1,44 +1,36 @@
 import { FRONTMATTER_TAG_VALUE_RE } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
-import { NodeSelection } from '@tiptap/pm/state';
+import { TextSelection } from '@tiptap/pm/state';
 import { NodeViewWrapper } from '@tiptap/react';
 import { useEffect, useRef, useState } from 'react';
-import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
-import { PropPanel } from '../components/PropPanel.tsx';
-import type { JsxComponentDescriptor } from '../registry/types.ts';
-import { consumeAutoOpen } from '../slash-command/component-items.tsx';
 
-const tagInlineDescriptor = {
-  name: 'Tag',
-  surface: 'canonical',
-  hasChildren: false,
-  isSelfClosing: true,
-  category: 'content',
-  description: 'Inline tag',
-  props: [
-    {
-      name: 'value',
-      type: 'string',
-      required: true,
-      autoFocus: true,
-      description: 'Tag name (without #)',
-    },
-  ],
-} as unknown as JsxComponentDescriptor;
-
-interface EmptyTagPlaceholderProps {
-  hint: string;
+function commitDraft(
+  editor: NodeViewProps['editor'],
+  pos: number | undefined,
+  next: string,
+): boolean {
+  if (typeof pos !== 'number') return false;
+  if (!next || !FRONTMATTER_TAG_VALUE_RE.test(next)) return false;
+  const { state, view } = editor;
+  const curNode = state.doc.nodeAt(pos);
+  if (!curNode || curNode.type.name !== 'tag') return false;
+  const tr = state.tr.setNodeMarkup(pos, null, { ...curNode.attrs, value: next });
+  const after = pos + curNode.nodeSize;
+  tr.insertText(' ', after);
+  tr.setSelection(TextSelection.create(tr.doc, after + 1));
+  view.dispatch(tr);
+  view.focus();
+  return true;
 }
 
-function EmptyTagPlaceholder({ hint }: EmptyTagPlaceholderProps) {
-  return (
-    <span
-      className="tag tag-placeholder inline-flex items-center rounded-sm border border-dashed border-muted-foreground/40 bg-muted/30 px-1.5 py-0.5 text-xs italic text-muted-foreground hover:bg-muted/60 cursor-pointer"
-      data-component-type="tag-placeholder"
-    >
-      {hint}
-    </span>
-  );
+function cancelDraft(editor: NodeViewProps['editor'], pos: number | undefined): void {
+  if (typeof pos !== 'number') return;
+  const { state, view } = editor;
+  const curNode = state.doc.nodeAt(pos);
+  if (!curNode || curNode.type.name !== 'tag') return;
+  const tr = state.tr.delete(pos, pos + curNode.nodeSize);
+  view.dispatch(tr);
+  view.focus();
 }
 
 interface RenderedTagChipProps {
@@ -53,81 +45,103 @@ function RenderedTagChip({ value }: RenderedTagChipProps) {
   );
 }
 
-export function TagView({ node, selected, getPos, editor }: NodeViewProps) {
-  const value = typeof node.attrs.value === 'string' ? node.attrs.value : '';
-  const [popoverOpen, setPopoverOpen] = useState(false);
-  const wasSelected = useRef(false);
-  const [validationError, setValidationError] = useState<string | null>(null);
+interface PlaceholderInputProps {
+  initialDraft: string;
+  onCommit: (next: string) => boolean;
+  onCancel: () => void;
+}
+
+function PlaceholderInput({ initialDraft, onCommit, onCancel }: PlaceholderInputProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState(initialDraft);
+  const committedRef = useRef(false);
 
   useEffect(() => {
-    if (selected && !wasSelected.current) {
-      const pos = typeof getPos === 'function' ? (getPos() ?? 0) : 0;
-      consumeAutoOpen(pos);
-      setPopoverOpen(true);
-    } else if (!selected && wasSelected.current) {
-      setPopoverOpen(false);
-      setValidationError(null);
-    }
-    wasSelected.current = selected;
-  }, [selected, getPos]);
+    const handle = requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(handle);
+  }, []);
 
   return (
-    <NodeViewWrapper as="span" className={selected ? 'tag-inline-selected' : undefined}>
-      <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-        <PopoverTrigger asChild>
-          <span className="tag-inline-trigger" data-component-type="tag-inline">
-            {value ? <RenderedTagChip value={value} /> : <EmptyTagPlaceholder hint="#tag-name" />}
-          </span>
-        </PopoverTrigger>
-        <PopoverContent
-          className="z-60 w-72 p-0"
-          side="bottom"
-          align="start"
-          onOpenAutoFocus={(e) => {
+    <span
+      className="tag tag-placeholder inline-flex items-center rounded-sm border border-dashed border-muted-foreground/40 bg-muted/30 px-1.5 py-0.5 text-xs text-muted-foreground"
+      data-component-type="tag-placeholder"
+    >
+      <span aria-hidden="true" className="font-mono">
+        #
+      </span>
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        size={Math.max(draft.length, 8)}
+        placeholder="tag-name"
+        aria-label="Tag value"
+        spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
+        className="bg-transparent border-0 p-0 outline-none focus:outline-none focus:ring-0 text-inherit font-inherit"
+        onChange={(e) => {
+          const next = e.target.value;
+          if (next === '' || FRONTMATTER_TAG_VALUE_RE.test(next)) {
+            setDraft(next);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-          }}
-          onCloseAutoFocus={(e) => {
+            committedRef.current = true;
+            const ok = onCommit(draft);
+            if (!ok) {
+              committedRef.current = false;
+              onCancel();
+            }
+          } else if (e.key === 'Escape') {
             e.preventDefault();
-            editor.view.focus();
-          }}
-        >
-          <div className="text-xs font-medium text-muted-foreground px-3 pt-2">Tag Properties</div>
-          <PropPanel
-            descriptor={tagInlineDescriptor}
-            values={{ value }}
-            onChange={(propName, nextValue) => {
-              if (propName !== 'value') return;
-              const next = typeof nextValue === 'string' ? nextValue : '';
-              if (next !== '' && !FRONTMATTER_TAG_VALUE_RE.test(next)) {
-                setValidationError(
-                  `Tag must match ${FRONTMATTER_TAG_VALUE_RE.source} (letter then word/-//).`,
-                );
-                return;
-              }
-              setValidationError(null);
-              const p = typeof getPos === 'function' ? getPos() : undefined;
-              if (typeof p !== 'number') return;
-              const curNode = editor.state.doc.nodeAt(p);
-              if (!curNode || curNode.type.name !== 'tag') return;
-              const tr = editor.state.tr.setNodeMarkup(p, null, {
-                ...curNode.attrs,
-                value: next,
-              });
-              tr.setSelection(NodeSelection.create(tr.doc, p));
-              editor.view.dispatch(tr);
-            }}
-          />
-          {validationError ? (
-            <div
-              className="px-3 pb-2 text-xs text-destructive"
-              data-testid="tag-validation-error"
-              role="alert"
-            >
-              {validationError}
-            </div>
-          ) : null}
-        </PopoverContent>
-      </Popover>
+            onCancel();
+          } else if (e.key === 'Backspace' && draft === '') {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        onBlur={() => {
+          if (committedRef.current) return;
+          if (draft === '') {
+            onCancel();
+            return;
+          }
+          if (FRONTMATTER_TAG_VALUE_RE.test(draft)) {
+            onCommit(draft);
+          } else {
+            onCancel();
+          }
+        }}
+      />
+    </span>
+  );
+}
+
+export function TagView({ node, getPos, editor }: NodeViewProps) {
+  const value = typeof node.attrs.value === 'string' ? node.attrs.value : '';
+
+  if (value === '') {
+    return (
+      <NodeViewWrapper as="span">
+        <PlaceholderInput
+          initialDraft=""
+          onCommit={(next) =>
+            commitDraft(editor, typeof getPos === 'function' ? getPos() : undefined, next)
+          }
+          onCancel={() => cancelDraft(editor, typeof getPos === 'function' ? getPos() : undefined)}
+        />
+      </NodeViewWrapper>
+    );
+  }
+
+  return (
+    <NodeViewWrapper as="span">
+      <RenderedTagChip value={value} />
     </NodeViewWrapper>
   );
 }

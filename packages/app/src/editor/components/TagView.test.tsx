@@ -38,13 +38,23 @@ describe('TagView — filled chip', () => {
     expect(html).toContain('href="#tag/proj/team/2026"');
     expect(html).toContain('proj/team/2026</a>');
   });
+
+  test('filled chip does NOT render an input element', () => {
+    const html = renderToString(<TagView {...makeProps('typescript')} />);
+    expect(html).not.toContain('<input');
+  });
 });
 
 describe('TagView — empty placeholder', () => {
   test('empty value renders the placeholder pill with `tag-placeholder` class', () => {
     const html = renderToString(<TagView {...makeProps('')} />);
     expect(html).toContain('tag-placeholder');
-    expect(html).toContain('#tag-name');
+  });
+
+  test('placeholder embeds an `<input>` (inline-edit, no separate popover)', () => {
+    const html = renderToString(<TagView {...makeProps('')} />);
+    expect(html).toContain('<input');
+    expect(html).toContain('aria-label="Tag value"');
   });
 
   test('placeholder does NOT carry `data-tag` (so `tag-click-plugin` skips it)', () => {

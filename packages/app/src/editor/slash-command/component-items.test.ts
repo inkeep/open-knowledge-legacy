@@ -1,10 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  consumeAutoOpen,
-  createChildNode,
-  getComponentItems,
-  getInlineComponentItems,
-} from './component-items';
+import { createChildNode, getComponentItems, getInlineComponentItems } from './component-items';
 
 describe('getComponentItems (descriptor-driven slash menu)', () => {
   test('returns exactly the canonical descriptors (5-pack + Math + Mermaid + Pdf)', () => {
@@ -72,7 +67,7 @@ describe('createChildNode — default props on slash insert', () => {
   });
 });
 
-describe('getInlineComponentItems (D-T11 / FR-T14)', () => {
+describe('getInlineComponentItems — inline-atom slash entries', () => {
   test('returns the Tag entry with the SlashCommandItem contract', () => {
     const items = getInlineComponentItems();
     expect(items.length).toBe(1);
@@ -83,56 +78,37 @@ describe('getInlineComponentItems (D-T11 / FR-T14)', () => {
     expect(tag.icon).toBeDefined();
     expect(tag.command).toBeFunction();
     expect(tag.aliases).toContain('hashtag');
+    expect(tag.aliases).toContain('#');
   });
 
-  test('command inserts an empty `tag` atom and queues auto-open', () => {
+  test('command inserts an empty `tag` atom WITHOUT leading focus() (NodeView grabs focus)', () => {
+    let chainFocusCalled = false;
     let inserted = false;
-    let setNodeSelectionCalled = -1;
-    let setPendingPos = -1;
-
-    const originalRAF = globalThis.requestAnimationFrame;
-    try {
-      globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
-        cb(0);
-        return 0;
-      }) as typeof globalThis.requestAnimationFrame;
-
-      const tagNode = { type: { name: 'tag' }, attrs: { value: '' } };
-      const doc = {
-        descendants: (cb: (node: typeof tagNode, pos: number) => boolean | undefined) => {
-          if (!inserted) return; // pre-insert: no tag nodes
-          cb(tagNode, 5); // post-insert: one new tag at pos 5
-        },
-      };
-      const editor = {
-        state: { doc },
-        chain: () => ({
-          focus: () => ({
-            insertTag: (_value: string) => ({
+    let insertedValue: string | undefined;
+    const editor = {
+      chain: () => ({
+        focus: () => {
+          chainFocusCalled = true;
+          return {
+            insertTag: (value: string) => ({
               run: () => {
                 inserted = true;
+                insertedValue = value;
               },
             }),
-          }),
-        }),
-        commands: {
-          setNodeSelection: (pos: number) => {
-            setNodeSelectionCalled = pos;
-          },
+          };
         },
-      };
-
-      const items = getInlineComponentItems();
-      items[0].command(editor as never);
-
-      expect(inserted).toBe(true);
-      expect(setNodeSelectionCalled).toBe(5);
-
-      setPendingPos = 5;
-      expect(consumeAutoOpen(setPendingPos)).toBe(true);
-      expect(consumeAutoOpen(setPendingPos)).toBe(false);
-    } finally {
-      globalThis.requestAnimationFrame = originalRAF;
-    }
+        insertTag: (value: string) => ({
+          run: () => {
+            inserted = true;
+            insertedValue = value;
+          },
+        }),
+      }),
+    };
+    getInlineComponentItems()[0].command(editor as never);
+    expect(inserted).toBe(true);
+    expect(insertedValue).toBe('');
+    expect(chainFocusCalled).toBe(false);
   });
 });
