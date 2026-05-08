@@ -52,14 +52,14 @@ describe('applyPatchToDocument — auto-vivification through scalar intermediate
   });
 
   test('existing populated parent is preserved (no clobber)', () => {
-    const doc = parseDocument('appearance:\n  editorModeDefault: source\n');
+    const doc = parseDocument('appearance:\n  density: cozy\n');
 
     const applied = applyPatchToDocument(doc, {
       appearance: { theme: 'dark' },
     } as never);
 
     expect(applied).toEqual(['appearance.theme']);
-    expect(doc.getIn(['appearance', 'editorModeDefault'])).toBe('source');
+    expect(doc.getIn(['appearance', 'density'])).toBe('cozy');
     expect(doc.getIn(['appearance', 'theme'])).toBe('dark');
   });
 

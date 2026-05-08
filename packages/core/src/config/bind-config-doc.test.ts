@@ -514,7 +514,7 @@ describe('bindConfigDoc — multi-client / cross-process simulation (NR9 LWW)', 
     const bindingB = bindConfigDoc(provB, 'user');
 
     const resA = bindingA.patch({ appearance: { theme: 'dark' } });
-    const resB = bindingB.patch({ appearance: { editorModeDefault: 'source' } });
+    const resB = bindingB.patch({ appearance: { theme: 'light' } });
     expect(resA.ok).toBe(true);
     expect(resB.ok).toBe(true);
 

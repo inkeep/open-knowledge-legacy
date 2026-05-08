@@ -81,13 +81,12 @@ export function buildConfigYmlContent(_version: string): string {
 
 
 # --- Appearance ------------------------------------------------------------
-# Theme + default editor mode for new docs. Both default UNSET so the
-# existing localStorage cache (\`ok-theme-v1\` / \`ok-editor-mode-v1\`) keeps
-# powering FOUC-free first paint until you explicitly write here.
+# Theme for the chrome. Defaults UNSET so the existing localStorage cache
+# (\`ok-theme-v1\`) keeps powering FOUC-free first paint until you
+# explicitly write here.
 #
 # appearance:
 #   theme: system            # 'light' | 'dark' | 'system'
-#   editorModeDefault: wysiwyg  # 'wysiwyg' | 'source'
 
 
 # --- Folders: per-folder frontmatter defaults -------------------------------

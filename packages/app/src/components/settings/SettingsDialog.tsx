@@ -1,32 +1,3 @@
-/**
- * Settings pane.
- *
- * Replaces the document view in the main editor area when invoked via Cmd-,,
- * the App menu, HelpPopover, or CommandPalette. Sub-tabs separate
- * project ("This project") and user-global ("User") scopes;
- * each tab acquires its own `HocuspocusProvider` and binds via
- * `bindConfigDoc`.
- *
- * Auto-save: per-control commits via `binding.patch`. Client-side L1
- * validation gates writes; invalid commits never mutate Y.Text. Per-field
- * reset writes the schema default. Modified-at-scope indicator shows a
- * colored bar on `'either'` fields whose value differs from the schema
- * default.
- *
- * Form harness: a single `useForm<Config>` instance owned by
- * `useConfigForm(binding)` (resolver-less); external Y.Text updates merge
- * in via `binding.subscribe → form.reset({keepDirtyValues: true,
- * keepDirty: true, keepTouched: true})`. Each `SettingsField` wraps its
- * body in a shadcn `FormField` whose render-prop dispatches on the
- * schema-walker's type tag.
- *
- * L3 rejection from non-pane writers (CLI, MCP, hand-edit) surfaces as a
- * sonner toast + brief field flash.
- *
- * The Integrations section hosts an "Install in Claude Desktop" row that
- * opens `<InstallInClaudeDesktopDialog>`.
- */
-
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   bindConfigDoc,
@@ -40,8 +11,9 @@ import {
   getFieldMeta,
   humanFormat,
   isKnownConfigError,
+  type OkignoreBinding,
 } from '@inkeep/open-knowledge-core';
-import { Check, RotateCcw, X } from 'lucide-react';
+import { Check, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { type ControllerRenderProps, type FieldPath, useFormContext } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -49,6 +21,7 @@ import * as Y from 'yjs';
 import { EnableSyncConfirmDialog } from '@/components/EnableSyncConfirmDialog';
 import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import {
   Form,
   FormControl,
@@ -71,7 +44,7 @@ import {
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { useConfigContext } from '@/lib/config-provider';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
-import type { SettingsScope } from '@/lib/use-settings-route';
+import { cn } from '@/lib/utils';
 import { ChannelSection } from './ChannelSection';
 import { OkignoreSection } from './OkignoreSection';
 import {
@@ -83,17 +56,18 @@ import {
 import type { SlotForwardedProps } from './slot-forwarded-props';
 import { pickFirstIssueForPath, useConfigForm } from './use-config-form';
 
-interface SettingsPaneProps {
-  scope: SettingsScope;
-  onClose: () => void;
-  onScopeChange: (scope: SettingsScope) => void;
+type Scope = 'user' | 'project';
+
+interface SidebarItem {
+  id: string;
+  label: string;
 }
 
-interface SectionDef {
-  id: string;
-  title: string;
-  description: string;
-  fields: FieldDef[];
+interface SidebarGroup {
+  id: 'user' | 'project' | 'integrations';
+  label: string;
+  enabled: boolean;
+  items: SidebarItem[];
 }
 
 interface FieldDef {
@@ -103,37 +77,20 @@ interface FieldDef {
   control?: 'enum-toggle';
 }
 
-const SECTIONS: SectionDef[] = [
+const FIELDS_APPEARANCE: FieldDef[] = [
   {
-    id: 'preview',
-    title: 'Preview',
-    description: 'Where the preview tab points when no local UI is running.',
-    fields: [
-      {
-        path: ['preview', 'baseUrl'],
-        label: 'Preview base URL',
-        description: 'URL of your team’s deployed wiki (project-only).',
-      },
-    ],
+    path: ['appearance', 'theme'],
+    label: 'Theme',
+    description: 'Light, dark, or follow the OS.',
+    control: 'enum-toggle',
   },
+];
+
+const FIELDS_PREVIEW: FieldDef[] = [
   {
-    id: 'appearance',
-    title: 'Appearance',
-    description: 'UI preferences. Editor toggles continue to write localStorage as a cache.',
-    fields: [
-      {
-        path: ['appearance', 'theme'],
-        label: 'Theme',
-        description: 'Light, dark, or follow the OS.',
-        control: 'enum-toggle',
-      },
-      {
-        path: ['appearance', 'editorModeDefault'],
-        label: 'Default editor mode',
-        description: 'Which mode new docs open in by default.',
-        control: 'enum-toggle',
-      },
-    ],
+    path: ['preview', 'baseUrl'],
+    label: 'Preview base URL',
+    description: 'URL of your team’s deployed wiki (project-only).',
   },
 ];
 
@@ -143,105 +100,305 @@ interface ConfigDocConnection {
   synced: boolean;
 }
 
-function useConfigDocConnection(
+function useConfigDocConnections(
   collabUrl: string | null,
-  scope: SettingsScope,
-): ConfigDocConnection | null {
-  const [state, setState] = useState<ConfigDocConnection | null>(null);
+  enabled: boolean,
+): { user: ConfigDocConnection | null; project: ConfigDocConnection | null } {
+  const [state, setState] = useState<{
+    user: ConfigDocConnection | null;
+    project: ConfigDocConnection | null;
+  }>({ user: null, project: null });
 
   useEffect(() => {
-    if (collabUrl === null) return;
-    const docName = scope === 'project' ? CONFIG_DOC_NAME_PROJECT : CONFIG_DOC_NAME_USER;
-    const ydoc = new Y.Doc();
-    const provider = new HocuspocusProvider({
-      url: collabUrl,
-      name: docName,
-      document: ydoc,
-    });
-    const binding = bindConfigDoc(provider, scope);
+    if (!enabled || collabUrl === null) {
+      setState({ user: null, project: null });
+      return;
+    }
 
-    let mounted = true;
-    const handleSynced = () => {
-      if (!mounted) return;
-      setState((prev) => {
-        if (prev?.provider !== provider) return prev;
-        return { ...prev, synced: true };
-      });
+    const make = (
+      docName: string,
+      scope: Scope,
+    ): { conn: ConfigDocConnection; cleanup: () => void } => {
+      const ydoc = new Y.Doc();
+      const provider = new HocuspocusProvider({ url: collabUrl, name: docName, document: ydoc });
+      const binding = bindConfigDoc(provider, scope);
+      const conn: ConfigDocConnection = { provider, binding, synced: false };
+
+      const onSynced = () => {
+        setState((prev) => {
+          const cur = prev[scope];
+          if (cur?.provider !== provider) return prev;
+          return { ...prev, [scope]: { ...cur, synced: true } };
+        });
+      };
+      provider.on('synced', onSynced);
+
+      return {
+        conn,
+        cleanup: () => {
+          provider.off('synced', onSynced);
+          binding.dispose();
+          provider.destroy();
+          ydoc.destroy();
+        },
+      };
     };
-    provider.on('synced', handleSynced);
 
-    setState({ provider, binding, synced: false });
+    const userConn = make(CONFIG_DOC_NAME_USER, 'user');
+    const projectConn = make(CONFIG_DOC_NAME_PROJECT, 'project');
+
+    setState({ user: userConn.conn, project: projectConn.conn });
 
     return () => {
-      mounted = false;
-      provider.off('synced', handleSynced);
-      binding.dispose();
-      provider.destroy();
-      ydoc.destroy();
-      setState((prev) => (prev?.provider === provider ? null : prev));
+      userConn.cleanup();
+      projectConn.cleanup();
+      setState({ user: null, project: null });
     };
-  }, [collabUrl, scope]);
+  }, [collabUrl, enabled]);
 
   return state;
 }
 
-export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProps) {
+interface SettingsDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { collabUrl } = useDocumentContext();
-  const connection = useConfigDocConnection(collabUrl, scope);
+  const connections = useConfigDocConnections(collabUrl, open);
+  const { okignoreBinding, okignoreSynced } = useConfigContext();
+
+  const [activeId, setActiveId] = useState<string>('preferences');
+  useEffect(() => {
+    if (open) setActiveId('preferences');
+  }, [open]);
+
+  const hasProject = collabUrl !== null;
+
+  const claudeDesktopAvailable = useClaudeDesktopAvailable();
+
+  const groups: SidebarGroup[] = [
+    {
+      id: 'user',
+      label: 'User',
+      enabled: true,
+      items: [{ id: 'preferences', label: 'Preferences' }],
+    },
+    {
+      id: 'project',
+      label: 'This project',
+      enabled: hasProject,
+      items: [
+        { id: 'project-general', label: 'General' },
+        { id: 'okignore', label: 'Ignore patterns' },
+      ],
+    },
+    {
+      id: 'integrations',
+      label: 'Integrations',
+      enabled: true,
+      items: claudeDesktopAvailable ? [{ id: 'claude-desktop', label: 'Claude Desktop' }] : [],
+    },
+  ];
 
   return (
-    <div
-      className="flex h-full min-h-0 flex-col overflow-hidden"
-      data-testid="settings-pane"
-      data-scope={scope}
-    >
-      <header className="flex h-12 shrink-0 items-center justify-between border-b px-4">
-        <div className="flex items-center gap-3">
-          <h1 className="text-sm font-semibold">Settings</h1>
-          <ToggleGroup
-            type="single"
-            value={scope}
-            onValueChange={(v) => {
-              if (v === 'project' || v === 'user') onScopeChange(v);
-            }}
-            aria-label="Settings scope"
-            variant="segmented"
-            size="sm"
-            spacing={1}
-            className="bg-muted dark:bg-background p-0.5 rounded-lg"
-          >
-            <ToggleGroupItem value="project" className="text-xs">
-              This project
-            </ToggleGroupItem>
-            <ToggleGroupItem value="user" className="text-xs">
-              User
-            </ToggleGroupItem>
-          </ToggleGroup>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="grid h-[700px] max-h-[calc(100dvh-4rem)] w-[900px] max-w-[calc(100%-2rem)] grid-cols-[220px_1fr] gap-0 overflow-hidden p-0 sm:max-w-[900px]"
+        data-testid="settings-dialog"
+      >
+        <DialogTitle className="sr-only">Settings</DialogTitle>
+        <DialogDescription className="sr-only">
+          Configure user, project, and integration settings.
+        </DialogDescription>
+        <SettingsSidebar groups={groups} activeId={activeId} onSelect={setActiveId} />
+        <div className="min-h-0 overflow-y-auto overscroll-contain subtle-scrollbar p-6">
+          <SettingsContent
+            activeId={activeId}
+            userBinding={connections.user?.synced ? connections.user.binding : null}
+            projectBinding={connections.project?.synced ? connections.project.binding : null}
+            okignoreBinding={okignoreBinding}
+            okignoreSynced={okignoreSynced}
+          />
         </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onClose}
-              aria-label="Close settings"
-              className="text-muted-foreground"
-            >
-              <X className="size-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Close</TooltipContent>
-        </Tooltip>
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {connection === null || !connection.synced ? (
-          <SettingsSkeleton />
-        ) : (
-          <BoundSettingsForm scope={scope} binding={connection.binding} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function useClaudeDesktopAvailable(): boolean {
+  const [available, setAvailable] = useState(true);
+
+  useEffect(() => {
+    const desktopBridge =
+      typeof window !== 'undefined'
+        ? (window as { okDesktop?: { skill?: { detectClaudeDesktop?: () => Promise<boolean> } } })
+            .okDesktop
+        : undefined;
+    const detect = desktopBridge?.skill?.detectClaudeDesktop;
+    if (!detect) {
+      setAvailable(true);
+      return;
+    }
+    let cancelled = false;
+    void detect()
+      .then((present) => {
+        if (!cancelled) setAvailable(present);
+      })
+      .catch(() => {
+        if (!cancelled) setAvailable(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return available;
+}
+
+interface SettingsSidebarProps {
+  groups: SidebarGroup[];
+  activeId: string;
+  onSelect: (id: string) => void;
+}
+
+function SettingsSidebar({ groups, activeId, onSelect }: SettingsSidebarProps) {
+  return (
+    <aside
+      aria-label="Settings sections"
+      className="h-full overflow-y-auto overscroll-contain subtle-scrollbar border-r bg-muted/30 px-3 py-4"
+    >
+      <nav>
+        {groups.map((group) => (
+          <SettingsSidebarGroup
+            key={group.id}
+            group={group}
+            activeId={activeId}
+            onSelect={onSelect}
+          />
+        ))}
+      </nav>
+    </aside>
+  );
+}
+
+function SettingsSidebarGroup({
+  group,
+  activeId,
+  onSelect,
+}: {
+  group: SidebarGroup;
+  activeId: string;
+  onSelect: (id: string) => void;
+}) {
+  if (group.items.length === 0) return null;
+  const headerId = `settings-group-${group.id}`;
+  const captionId = `${headerId}-caption`;
+  return (
+    <div className="mb-4">
+      <h2
+        id={headerId}
+        aria-describedby={group.enabled ? undefined : captionId}
+        className={cn(
+          'mb-1 px-2 text-xs font-semibold uppercase tracking-wide font-mono',
+          group.enabled ? 'text-muted-foreground/80' : 'text-muted-foreground/50',
         )}
-      </div>
+      >
+        {group.label}
+      </h2>
+      {!group.enabled ? (
+        <p id={captionId} className="mb-1 px-2 text-xs italic text-muted-foreground/60">
+          Open a project to edit.
+        </p>
+      ) : null}
+      <ul aria-labelledby={headerId} className="space-y-0.5">
+        {group.items.map((item) => (
+          <li key={item.id}>
+            <button
+              type="button"
+              aria-current={activeId === item.id ? 'true' : undefined}
+              aria-disabled={group.enabled ? undefined : true}
+              tabIndex={group.enabled ? 0 : -1}
+              disabled={!group.enabled}
+              onClick={() => group.enabled && onSelect(item.id)}
+              data-testid={`settings-sidebar-item-${item.id}`}
+              className={cn(
+                'w-full rounded px-2 py-1.5 text-left text-sm transition-colors',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+                activeId === item.id && group.enabled
+                  ? 'bg-accent text-accent-foreground'
+                  : 'hover:bg-accent/50',
+              )}
+            >
+              {item.label}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
+}
+
+interface SettingsContentProps {
+  activeId: string;
+  userBinding: ConfigBinding | null;
+  projectBinding: ConfigBinding | null;
+  okignoreBinding: OkignoreBinding | null;
+  okignoreSynced: boolean;
+}
+
+function SettingsContent({
+  activeId,
+  userBinding,
+  projectBinding,
+  okignoreBinding,
+  okignoreSynced,
+}: SettingsContentProps) {
+  if (activeId === 'preferences') {
+    return (
+      <div className="space-y-8">
+        {userBinding ? (
+          <BoundSchemaSection
+            title="Appearance"
+            description="UI preferences. Editor toggles continue to write localStorage as a cache."
+            scope="user"
+            binding={userBinding}
+            fields={FIELDS_APPEARANCE}
+          />
+        ) : (
+          <SectionSkeleton />
+        )}
+        <ChannelSection />
+      </div>
+    );
+  }
+  if (activeId === 'project-general') {
+    return (
+      <div className="space-y-8">
+        <SyncSection />
+        {projectBinding ? (
+          <BoundSchemaSection
+            title="Preview"
+            description="Where the preview tab points when no local UI is running."
+            scope="project"
+            binding={projectBinding}
+            fields={FIELDS_PREVIEW}
+          />
+        ) : (
+          <SectionSkeleton />
+        )}
+      </div>
+    );
+  }
+  if (activeId === 'okignore') {
+    return <OkignoreSection binding={okignoreBinding} synced={okignoreSynced} />;
+  }
+  if (activeId === 'claude-desktop') {
+    return <IntegrationsSection />;
+  }
+  return null;
 }
 
 function firstIssuePath(error: ConfigValidationError): string | null {
@@ -251,41 +408,43 @@ function firstIssuePath(error: ConfigValidationError): string | null {
   return first.path.map(String).join('.');
 }
 
-function SettingsSkeleton() {
+function SectionSkeleton() {
   return (
-    <div className="space-y-6 p-6">
-      {Array.from({ length: 3 }).map((_, sectionIdx) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: skeleton placeholder; index is stable across renders
-        <div key={sectionIdx} className="space-y-3">
-          <Skeleton className="h-5 w-32" />
-          <Skeleton className="h-4 w-64" />
-          <div className="space-y-2">
-            <Skeleton className="h-9 w-full" />
-            <Skeleton className="h-9 w-full" />
-          </div>
-        </div>
-      ))}
+    <div className="space-y-3">
+      <Skeleton className="h-5 w-32" />
+      <Skeleton className="h-4 w-64" />
+      <div className="space-y-2">
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+      </div>
     </div>
   );
 }
 
-interface BoundSettingsFormProps {
-  scope: SettingsScope;
+interface BoundSchemaSectionProps {
+  title: string;
+  description: string;
+  scope: Scope;
   binding: ConfigBinding;
+  fields: FieldDef[];
 }
 
-function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
+function BoundSchemaSection({
+  title,
+  description,
+  scope,
+  binding,
+  fields,
+}: BoundSchemaSectionProps) {
   const { form, commitField } = useConfigForm(binding);
   const [flashedPath, setFlashedPath] = useState<string | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    const docName = scope === 'project' ? CONFIG_DOC_NAME_PROJECT : CONFIG_DOC_NAME_USER;
     const unsubscribe = subscribeToConfigValidationRejected(
       (event: CC1ConfigValidationRejectedPayload) => {
-        const isMatchingScope =
-          (scope === 'project' && event.docName === CONFIG_DOC_NAME_PROJECT) ||
-          (scope === 'user' && event.docName === CONFIG_DOC_NAME_USER);
-        if (!isMatchingScope) return;
+        if (event.docName !== docName) return;
 
         toast.error(humanFormat(event.error), { duration: 8000 });
 
@@ -313,47 +472,56 @@ function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
 
   return (
     <Form {...form}>
-      <SettingsForm scope={scope} commitField={commitField} flashedPath={flashedPath} />
+      <SchemaSection
+        title={title}
+        description={description}
+        scope={scope}
+        fields={fields}
+        commitField={commitField}
+        flashedPath={flashedPath}
+      />
     </Form>
   );
 }
 
-interface SettingsFormProps {
-  scope: SettingsScope;
+interface SchemaSectionProps {
+  title: string;
+  description: string;
+  scope: Scope;
+  fields: FieldDef[];
   commitField: (name: FieldPath<Config>) => boolean;
   flashedPath: string | null;
 }
 
-function SettingsForm({ scope, commitField, flashedPath }: SettingsFormProps) {
-  const { okignoreBinding, okignoreSynced } = useConfigContext();
+function SchemaSection({
+  title,
+  description,
+  scope,
+  fields,
+  commitField,
+  flashedPath,
+}: SchemaSectionProps) {
+  const titleId = `settings-section-${scope}-title`;
   return (
-    <div className="mx-auto max-w-3xl space-y-8 p-6">
-      {SECTIONS.map((section) => {
-        const visibleFields = section.fields.filter((field) =>
-          isFieldVisibleAtScope(field.path, scope),
-        );
-        if (visibleFields.length === 0) return null;
-        return (
-          <SettingsSection key={section.id} section={section}>
-            {visibleFields.map((field) => (
-              <SettingsField
-                key={field.path.join('.')}
-                field={field}
-                scope={scope}
-                commitField={commitField}
-                isFlashed={flashedPath === field.path.join('.')}
-              />
-            ))}
-          </SettingsSection>
-        );
-      })}
-      {scope === 'project' ? <SyncSection /> : null}
-      {scope === 'project' ? (
-        <OkignoreSection binding={okignoreBinding} synced={okignoreSynced} />
-      ) : null}
-      {scope === 'user' ? <ChannelSection /> : null}
-      <IntegrationsSection />
-    </div>
+    <section aria-labelledby={titleId} className="space-y-10">
+      <div className="space-y-1">
+        <h2 id={titleId} className="text-base font-semibold">
+          {title}
+        </h2>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+      <div className="space-y-10">
+        {fields.map((field) => (
+          <SettingsField
+            key={field.path.join('.')}
+            field={field}
+            scope={scope}
+            commitField={commitField}
+            isFlashed={flashedPath === field.path.join('.')}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -385,7 +553,7 @@ function SyncSection() {
             <label htmlFor="settings-sync-toggle" className="text-sm font-medium">
               Git auto-sync
             </label>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-muted-foreground text-1sm">
               {enabled
                 ? 'Auto-sync is on — your commits push and remote changes pull on intervals.'
                 : 'Auto-sync is off — your edits stay local until you commit and push manually.'}
@@ -410,39 +578,9 @@ function SyncSection() {
   );
 }
 
-function isFieldVisibleAtScope(path: readonly string[], scope: SettingsScope): boolean {
-  const leafSchema = resolveLeafSchema(ConfigSchema, path);
-  if (!leafSchema) return true;
-  const meta = getFieldMeta(leafSchema);
-  if (!meta) return true;
-  if (meta.scope === 'project' && scope !== 'project') return false;
-  if (meta.scope === 'user' && scope !== 'user') return false;
-  return true;
-}
-
-function SettingsSection({
-  section,
-  children,
-}: {
-  section: SectionDef;
-  children: React.ReactNode;
-}) {
-  return (
-    <section aria-labelledby={`settings-${section.id}-title`} className="space-y-3">
-      <div className="space-y-1">
-        <h2 id={`settings-${section.id}-title`} className="text-base font-semibold">
-          {section.title}
-        </h2>
-        <p className="text-sm text-muted-foreground">{section.description}</p>
-      </div>
-      <div className="space-y-4">{children}</div>
-    </section>
-  );
-}
-
 interface SettingsFieldProps {
   field: FieldDef;
-  scope: SettingsScope;
+  scope: Scope;
   commitField: (name: FieldPath<Config>) => boolean;
   isFlashed: boolean;
 }
@@ -453,8 +591,12 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
   const leafSchema = resolveLeafSchema(ConfigSchema, field.path);
   const typeTag = leafSchema ? getLeafTypeTag(leafSchema) : undefined;
   const defaultValue = leafSchema ? getFieldDefault(leafSchema) : undefined;
-  const meta = leafSchema ? getFieldMeta(leafSchema) : undefined;
   const enumOptions = leafSchema ? getEnumOptions(leafSchema) : undefined;
+
+  const meta = leafSchema ? getFieldMeta(leafSchema) : undefined;
+  const scopeMismatch =
+    (meta?.scope === 'project' && scope !== 'project') ||
+    (meta?.scope === 'user' && scope !== 'user');
 
   const dottedName = field.path.join('.') as FieldPath<Config>;
 
@@ -490,39 +632,19 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
     runCommit();
   };
 
-  const readonlyReason: string | null =
-    meta?.scope === 'project' && scope !== 'project'
-      ? "This field can only be set per-project. Switch to the 'This project' tab to edit it."
-      : meta?.scope === 'user' && scope !== 'user'
-        ? "This field can only be set globally. Switch to the 'User' tab to edit it."
-        : null;
-
-  const wrapperClass = `relative space-y-1 ${isFlashed ? 'animate-settings-flash' : ''}`;
+  const wrapperClass = cn('relative', isFlashed && 'animate-settings-flash');
 
   return (
     <FormField
       control={form.control}
       name={dottedName}
       render={({ field: ctl }) => {
-        const isModified =
-          defaultValue === undefined
-            ? ctl.value !== undefined && ctl.value !== null
-            : !valuesEqual(ctl.value, defaultValue);
         const showResetButton =
-          !readonlyReason && (defaultValue !== undefined || ctl.value !== undefined);
-        const indicator = isModified ? (
-          <span
-            data-modified="true"
-            className="absolute -left-3 top-1 h-5 w-0.5 rounded-full bg-primary"
-          >
-            <span className="sr-only">Modified from default</span>
-          </span>
-        ) : null;
+          !scopeMismatch && (defaultValue !== undefined || ctl.value !== undefined);
 
         return (
           <FormItem className={wrapperClass} data-field={field.path.join('.')} data-scope={scope}>
-            {indicator}
-            <div className="flex items-baseline justify-between gap-2">
+            <div className="flex items-center justify-between gap-2">
               <FormLabel className="text-sm font-medium">{field.label}</FormLabel>
               {showResetButton ? (
                 <Tooltip>
@@ -530,7 +652,7 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-6 w-6 text-muted-foreground opacity-60 hover:opacity-100"
+                      className="h-5 w-5 text-muted-foreground opacity-60 hover:opacity-100"
                       onClick={reset}
                       aria-label={`Reset ${field.label} to default`}
                     >
@@ -542,33 +664,22 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
               ) : null}
             </div>
             {field.description ? (
-              <FormDescription className="text-xs text-muted-foreground">
+              <FormDescription className="text-muted-foreground text-1sm">
                 {field.description}
               </FormDescription>
             ) : null}
-            {readonlyReason ? (
+            <div className="flex items-center gap-2">
               <FormControl>
-                <div
-                  role="note"
-                  className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground"
-                >
-                  {readonlyReason}
-                </div>
+                <FieldControlBody
+                  field={field}
+                  ctl={ctl}
+                  typeTag={typeTag}
+                  enumOptions={enumOptions}
+                  onCommit={runCommitIfDirty}
+                />
               </FormControl>
-            ) : (
-              <div className="flex items-center gap-2">
-                <FormControl>
-                  <FieldControlBody
-                    field={field}
-                    ctl={ctl}
-                    typeTag={typeTag}
-                    enumOptions={enumOptions}
-                    onCommit={runCommitIfDirty}
-                  />
-                </FormControl>
-                <SavedIndicator visible={savedTick} />
-              </div>
-            )}
+              <SavedIndicator visible={savedTick} />
+            </div>
             <FormMessage data-field-error={field.path.join('.')} />
           </FormItem>
         );
@@ -634,7 +745,7 @@ function FieldControlBody({
               key={opt}
               value={opt}
               id={idx === 0 ? forwardedId : undefined}
-              className="text-xs capitalize"
+              className="text-1sm capitalize"
             >
               {opt}
             </ToggleGroupItem>
@@ -793,58 +904,8 @@ function SavedIndicator({ visible }: { visible: boolean }) {
   );
 }
 
-function valuesEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-      if (!valuesEqual(a[i], b[i])) return false;
-    }
-    return true;
-  }
-  if (a && b && typeof a === 'object' && typeof b === 'object') {
-    const aKeys = Object.keys(a as Record<string, unknown>);
-    const bKeys = Object.keys(b as Record<string, unknown>);
-    if (aKeys.length !== bKeys.length) return false;
-    for (const k of aKeys) {
-      if (!valuesEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  return false;
-}
-
 function IntegrationsSection() {
   const [installOpen, setInstallOpen] = useState(false);
-  const [showRow, setShowRow] = useState(true);
-
-  useEffect(() => {
-    const desktopBridge =
-      typeof window !== 'undefined'
-        ? (window as { okDesktop?: { skill?: { detectClaudeDesktop?: () => Promise<boolean> } } })
-            .okDesktop
-        : undefined;
-    const detect = desktopBridge?.skill?.detectClaudeDesktop;
-    if (!detect) {
-      setShowRow(true);
-      return;
-    }
-    let cancelled = false;
-    void detect()
-      .then((present) => {
-        if (!cancelled) setShowRow(present);
-      })
-      .catch(() => {
-        if (!cancelled) setShowRow(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!showRow) return null;
 
   return (
     <section aria-labelledby="settings-integrations-title" className="space-y-3">
@@ -860,7 +921,7 @@ function IntegrationsSection() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-sm font-medium">Install in Claude Desktop</div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-muted-foreground text-1sm">
               Make this knowledge base available as a Claude Skill.
             </p>
           </div>
@@ -869,8 +930,9 @@ function IntegrationsSection() {
             size="sm"
             onClick={() => setInstallOpen(true)}
             data-testid="settings-install-claude-desktop"
+            className="uppercase font-mono"
           >
-            Install…
+            Install
           </Button>
         </div>
       </div>

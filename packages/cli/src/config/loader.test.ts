@@ -52,7 +52,6 @@ describe('loadConfig', () => {
     expect(config.content.dir).toBe('.');
 
     expect(config.appearance.theme).toBeUndefined();
-    expect(config.appearance.editorModeDefault).toBeUndefined();
 
     expect(config.autoSync.enabled).toBeNull();
   });

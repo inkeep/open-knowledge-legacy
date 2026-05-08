@@ -77,7 +77,7 @@ describe('published dist/config-schema.json', () => {
     const fixture = {
       content: { dir: '.', include: ['**/*.md'], exclude: [] },
       mcp: { autoStart: true, tools: { search: { maxResults: 50 } } },
-      appearance: { theme: 'dark', editorModeDefault: 'wysiwyg' },
+      appearance: { theme: 'dark' },
       folders: [{ match: 'specs/**', frontmatter: { description: 'Specs' } }],
     };
     const ok = validate(fixture);

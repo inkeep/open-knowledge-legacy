@@ -11,6 +11,7 @@ import { EditorTabs } from './EditorTabs';
 import { HelpPopover } from './HelpPopover';
 import { OpenInAgentMenu } from './handoff/OpenInAgentMenu';
 import { buildHandoffInput } from './handoff/useHandoffDispatch';
+import { SettingsButton } from './SettingsButton';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -104,6 +105,7 @@ export function EditorHeader({
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
         <BetaBadge />
+        <SettingsButton />
         <HelpPopover />
         <ThemeToggle />
       </div>

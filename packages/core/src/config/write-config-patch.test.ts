@@ -241,7 +241,7 @@ describe('writeConfigPatch — validation failures', () => {
       scope: 'user',
       homedirOverride: testDir,
       // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed for the test
-      patch: { appearance: { editorModeDefault: 'vim' as any } },
+      patch: { appearance: { theme: 'midnight' as any } },
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');

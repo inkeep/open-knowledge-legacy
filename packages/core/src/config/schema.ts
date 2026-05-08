@@ -50,14 +50,6 @@ export const ConfigSchema = z.looseObject({
           defaultScope: 'user',
         })
         .optional(),
-      editorModeDefault: z
-        .enum(['wysiwyg', 'source'])
-        .register(fieldRegistry, {
-          scope: 'user',
-          agentSettable: false,
-          defaultScope: 'user',
-        })
-        .optional(),
     })
     .default({}),
   autoSync: z

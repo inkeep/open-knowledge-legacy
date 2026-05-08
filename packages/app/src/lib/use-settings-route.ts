@@ -1,13 +1,10 @@
 import { useEffect, useState } from 'react';
 
-export type SettingsScope = 'project' | 'user';
-
 export const SETTINGS_OPEN_HASH = '#settings';
 
 interface SettingsRouteState {
-  scope: SettingsScope | null;
+  open: boolean;
   close: () => void;
-  setScope: (next: SettingsScope) => void;
 }
 
 interface ShortcutEventLike {
@@ -27,15 +24,9 @@ export function isSettingsShortcut(e: ShortcutEventLike): boolean {
   return Boolean(modKey && !e.altKey && e.key === ',');
 }
 
-export function parseSettingsHash(hash: string): SettingsScope | null {
+export function isSettingsHashOpen(hash: string): boolean {
   const cleaned = hash.replace(/^#/, '');
-  if (cleaned === 'settings' || cleaned === 'settings/project') return 'project';
-  if (cleaned === 'settings/user') return 'user';
-  return null;
-}
-
-export function settingsHash(scope: SettingsScope): string {
-  return `#settings/${scope}`;
+  return cleaned === 'settings';
 }
 
 function readCurrentHash(): string {
@@ -44,13 +35,11 @@ function readCurrentHash(): string {
 }
 
 export function useSettingsRoute(): SettingsRouteState {
-  const [scope, setScopeState] = useState<SettingsScope | null>(() =>
-    parseSettingsHash(readCurrentHash()),
-  );
+  const [open, setOpen] = useState<boolean>(() => isSettingsHashOpen(readCurrentHash()));
 
   useEffect(() => {
     const onHashChange = () => {
-      setScopeState(parseSettingsHash(readCurrentHash()));
+      setOpen(isSettingsHashOpen(readCurrentHash()));
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
@@ -58,18 +47,9 @@ export function useSettingsRoute(): SettingsRouteState {
 
   const close = () => {
     if (typeof window === 'undefined') return;
-    if (parseSettingsHash(readCurrentHash()) === null) return;
+    if (!isSettingsHashOpen(readCurrentHash())) return;
     window.history.back();
   };
 
-  const setScope = (next: SettingsScope) => {
-    if (typeof window === 'undefined') return;
-    const nextHash = settingsHash(next);
-    if (window.location.hash === nextHash) return;
-    const { pathname, search } = window.location;
-    window.history.replaceState(null, '', `${pathname}${search}${nextHash}`);
-    setScopeState(next);
-  };
-
-  return { scope, close, setScope };
+  return { open, close };
 }
