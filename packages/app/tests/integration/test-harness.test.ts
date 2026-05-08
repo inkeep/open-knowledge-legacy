@@ -25,4 +25,16 @@ describe('pollUntil', () => {
     await pollUntil(() => ++n >= 3, 1000, 25);
     expect(n).toBeGreaterThanOrEqual(3);
   });
+
+  test('propagates async predicate rejection', async () => {
+    await expect(
+      pollUntil(
+        async () => {
+          throw new Error('predicate-failure');
+        },
+        1000,
+        25,
+      ),
+    ).rejects.toThrow('predicate-failure');
+  });
 });

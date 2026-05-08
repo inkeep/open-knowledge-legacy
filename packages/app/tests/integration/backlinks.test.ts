@@ -2,20 +2,7 @@ import { test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import { createTestClient, createTestServer } from './test-harness';
-
-async function pollUntilAsync(
-  condition: () => Promise<boolean>,
-  timeoutMs = 5000,
-  intervalMs = 100,
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await condition()) return;
-    await wait(intervalMs);
-  }
-  throw new Error('Timed out waiting for async condition');
-}
+import { createTestClient, createTestServer, pollUntil } from './test-harness';
 
 test('backlink endpoints update after persisted agent writes', async () => {
   const server = await createTestServer();
@@ -43,7 +30,7 @@ test('backlink endpoints update after persisted agent writes', async () => {
     });
     if (!beta.ok) throw new Error(`beta write failed: ${beta.status}`);
 
-    await pollUntilAsync(async () => {
+    await pollUntil(async () => {
       const res = await fetch(`http://localhost:${server.port}/api/backlinks?docName=beta`);
       const data = (await res.json()) as {
         ok: boolean;
@@ -70,7 +57,7 @@ test('backlink endpoints update from live client edits before persistence deboun
   try {
     client.ytext.insert(0, '# Alpha\n\nLinks to [[beta]].\n');
 
-    await pollUntilAsync(
+    await pollUntil(
       async () => {
         const res = await fetch(`http://localhost:${server.port}/api/backlinks?docName=beta`);
         const data = (await res.json()) as {
@@ -114,7 +101,7 @@ test('backlink endpoints update after external disk edits', async () => {
 
     await wait(600);
 
-    await pollUntilAsync(async () => {
+    await pollUntil(async () => {
       const res = await fetch(`http://localhost:${server.port}/api/backlinks?docName=beta`);
       const data = (await res.json()) as {
         ok: boolean;
