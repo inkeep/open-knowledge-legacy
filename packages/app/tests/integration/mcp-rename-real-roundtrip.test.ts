@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { setTimeout as wait } from 'node:timers/promises';
 import { ConfigSchema } from '@inkeep/open-knowledge-server';
 import { register as registerRenameDocument } from '../../../server/src/mcp/tools/rename-document';
 import { register as registerRenameFolder } from '../../../server/src/mcp/tools/rename-folder';
 import type { ServerInstance } from '../../../server/src/mcp/tools/shared';
-import { createRestartableServer } from './test-harness';
+import { awaitFileWatcherIndexed, createRestartableServer } from './test-harness';
 
 interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
@@ -70,7 +69,12 @@ describe('MCP rename tools — real roundtrip against live OK server (QA-004 / Q
       '# Index\n\nLink: [[articles/a]]\n',
       'utf-8',
     );
-    await wait(500);
+    await Promise.all([
+      awaitFileWatcherIndexed(server, 'articles/a'),
+      awaitFileWatcherIndexed(server, 'articles/b'),
+      awaitFileWatcherIndexed(server, 'articles/c'),
+      awaitFileWatcherIndexed(server, 'index'),
+    ]);
 
     const { server: mcp, registrations } = createCapturingServer();
     registerRenameFolder(mcp, {
@@ -118,7 +122,10 @@ describe('MCP rename tools — real roundtrip against live OK server (QA-004 / Q
 
     writeFileSync(join(server.contentDir, 'auth.md'), '# Auth\n', 'utf-8');
     writeFileSync(join(server.contentDir, 'index.md'), '# Index\n\nLink: [[auth]]\n', 'utf-8');
-    await wait(500);
+    await Promise.all([
+      awaitFileWatcherIndexed(server, 'auth'),
+      awaitFileWatcherIndexed(server, 'index'),
+    ]);
 
     const { server: mcp, registrations } = createCapturingServer();
     registerRenameDocument(mcp, {
