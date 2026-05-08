@@ -1,3 +1,17 @@
+/**
+ * Session-level test for `createMcpHttpHandler` config plumbing (US-006 / IS-4).
+ *
+ * Historically booted a real HTTP MCP server with a synthetic `Config` whose
+ * `mcp.tools.grep.maxResults` (formerly `mcp.tools.search.maxResults`) was
+ * set to a non-default value, opened a real MCP session over HTTP, called
+ * the `grep` tool, and asserted the response reflected the configured
+ * ceiling. The cap is now a hardcoded constant (`GREP_MAX_RESULTS`), so the
+ * "configured value reaches the tool" tests no longer apply — surface tests
+ * here cover session lifecycle (cap, TTL, etc.) only.
+ *
+ * Co-located with `mcp-http.ts`; the `packages/app/tests/integration/mcp-http.test.ts`
+ * sibling covers the basic init+tools/list flow.
+ */
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
@@ -6,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { type Config, ConfigSchema } from './config/schema.ts';
+import { MCP_CONNECTION_ID_HEADER } from './mcp/agent-identity.ts';
 import {
   createMcpHttpHandler,
   type McpHttpHandler,
@@ -207,6 +222,259 @@ test('mcp-tool-path-traversal: explicit cwd outside configured project root is r
   expect(body.result?.isError).toBe(true);
   const text = body.result?.content?.[0]?.text ?? '';
   expect(text).toMatch(/not within the configured project root|escapes the configured root/);
+});
+
+test('forwarded connectionId header reaches /api/agent-write-md as agentId', async () => {
+  const config: Config = ConfigSchema.parse({});
+  const contentDir = mkdtempSync(join(tmpdir(), 'ok-mcp-http-cid-'));
+  const port = await getFreePort();
+  let handler: McpHttpHandler | null = null;
+  let httpServer: HttpServer | null = null;
+  let capturedAgentId: string | undefined;
+
+  try {
+    handler = createMcpHttpHandler({
+      contentDir,
+      projectDir: contentDir,
+      config,
+      getServerUrl: () => `http://localhost:${port}`,
+    });
+
+    httpServer = createHttpServer((req, res) => {
+      const url = req.url?.split('?')[0];
+      if (url === '/mcp') {
+        // biome-ignore lint/style/noNonNullAssertion: handler set inside try
+        handler!.handle(req, res).catch(() => {
+          if (!res.writableEnded) {
+            res.writeHead(500);
+            res.end('handler error');
+          }
+        });
+        return;
+      }
+      if (url === '/api/agent-write-md' && req.method === 'POST') {
+        const chunks: Buffer[] = [];
+        req.on('data', (c: Buffer) => chunks.push(c));
+        req.on('end', () => {
+          try {
+            const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as {
+              agentId?: unknown;
+            };
+            if (typeof body.agentId === 'string') capturedAgentId = body.agentId;
+          } catch {}
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end('Not found');
+    });
+    await new Promise<void>((res) => {
+      // biome-ignore lint/style/noNonNullAssertion: httpServer set above
+      httpServer!.listen(port, () => res());
+    });
+
+    const forwarded = 'forwarded-keepalive-id-1234';
+
+    const init = await fetch(`http://localhost:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+        [MCP_CONNECTION_ID_HEADER]: forwarded,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: 'forwarded-id-probe', version: '0.0.0' },
+        },
+      }),
+    });
+    expect(init.status).toBe(200);
+    const sessionId = init.headers.get('mcp-session-id') as string;
+    expect(sessionId).toBeTruthy();
+    const initBody = (await init.json()) as { result?: { protocolVersion?: string } };
+    const protocolVersion = initBody.result?.protocolVersion ?? MCP_PROTOCOL_VERSION;
+
+    const initialized = await fetch(`http://localhost:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+        'mcp-session-id': sessionId,
+        'mcp-protocol-version': protocolVersion,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    });
+    expect(initialized.status).toBe(202);
+
+    const call = await fetch(`http://localhost:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+        'mcp-session-id': sessionId,
+        'mcp-protocol-version': protocolVersion,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'write_document',
+          arguments: {
+            docName: 'forwarded-id-probe',
+            markdown: 'hello\n',
+            position: 'replace',
+          },
+        },
+      }),
+    });
+    expect(call.status).toBe(200);
+    expect(capturedAgentId).toBe(forwarded);
+  } finally {
+    if (handler) await handler.close();
+    if (httpServer) await new Promise<void>((res) => httpServer?.close(() => res()));
+    rmSync(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('invalid connectionId header is ignored — session falls back to a fresh UUID', async () => {
+  const config: Config = ConfigSchema.parse({});
+  const contentDir = mkdtempSync(join(tmpdir(), 'ok-mcp-http-cid-bad-'));
+  const port = await getFreePort();
+  let handler: McpHttpHandler | null = null;
+  let httpServer: HttpServer | null = null;
+  let capturedAgentId: string | undefined;
+  const warnCalls: Array<{ obj: object; msg: string }> = [];
+
+  try {
+    handler = createMcpHttpHandler({
+      contentDir,
+      projectDir: contentDir,
+      config,
+      getServerUrl: () => `http://localhost:${port}`,
+      log: {
+        warn: (obj, msg) => {
+          warnCalls.push({ obj, msg });
+        },
+      },
+    });
+
+    httpServer = createHttpServer((req, res) => {
+      const url = req.url?.split('?')[0];
+      if (url === '/mcp') {
+        // biome-ignore lint/style/noNonNullAssertion: handler set inside try
+        handler!.handle(req, res).catch(() => {
+          if (!res.writableEnded) {
+            res.writeHead(500);
+            res.end('handler error');
+          }
+        });
+        return;
+      }
+      if (url === '/api/agent-write-md' && req.method === 'POST') {
+        const chunks: Buffer[] = [];
+        req.on('data', (c: Buffer) => chunks.push(c));
+        req.on('end', () => {
+          try {
+            const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as {
+              agentId?: unknown;
+            };
+            if (typeof body.agentId === 'string') capturedAgentId = body.agentId;
+          } catch {}
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end('Not found');
+    });
+    await new Promise<void>((res) => {
+      // biome-ignore lint/style/noNonNullAssertion: httpServer set above
+      httpServer!.listen(port, () => res());
+    });
+
+    const forwarded = 'bad value with spaces!';
+
+    const init = await fetch(`http://localhost:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+        [MCP_CONNECTION_ID_HEADER]: forwarded,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: 'bad-cid-probe', version: '0.0.0' },
+        },
+      }),
+    });
+    expect(init.status).toBe(200);
+    const sessionId = init.headers.get('mcp-session-id') as string;
+    const initBody = (await init.json()) as { result?: { protocolVersion?: string } };
+    const protocolVersion = initBody.result?.protocolVersion ?? MCP_PROTOCOL_VERSION;
+    await fetch(`http://localhost:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+        'mcp-session-id': sessionId,
+        'mcp-protocol-version': protocolVersion,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    });
+
+    const call = await fetch(`http://localhost:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+        'mcp-session-id': sessionId,
+        'mcp-protocol-version': protocolVersion,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'write_document',
+          arguments: {
+            docName: 'bad-cid-probe',
+            markdown: 'hello\n',
+            position: 'replace',
+          },
+        },
+      }),
+    });
+    expect(call.status).toBe(200);
+    expect(capturedAgentId).toBeDefined();
+    expect(capturedAgentId).not.toContain(forwarded);
+    expect(capturedAgentId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+
+    const headerWarn = warnCalls.find((call) =>
+      call.msg.includes('forwarded connectionId header failed validation'),
+    );
+    expect(headerWarn).toBeDefined();
+    expect(headerWarn?.obj).toEqual({ headerLength: forwarded.length });
+  } finally {
+    if (handler) await handler.close();
+    if (httpServer) await new Promise<void>((res) => httpServer?.close(() => res()));
+    rmSync(contentDir, { recursive: true, force: true });
+  }
 });
 
 test('inactive MCP sessions expire and return 404 on later use', async () => {

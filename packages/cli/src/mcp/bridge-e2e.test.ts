@@ -9,6 +9,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 import {
   ConfigSchema,
   createMcpHttpHandler,
+  MCP_CONNECTION_ID_HEADER,
   MCP_SERVER_NAME,
   type McpHttpHandler,
 } from '@inkeep/open-knowledge-server';
@@ -159,6 +160,65 @@ async function handlerClose(handler: McpHttpHandler): Promise<void> {
 afterEach(async () => {
   const harnesses = openHarnesses.splice(0);
   await Promise.allSettled(harnesses.map((harness) => cleanupHarness(harness)));
+});
+
+test('stdio shim forwards connectionId via x-ok-connection-id header through real HTTP transport', async () => {
+  const harness = await startHttpMcpServer();
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const reader = createMessageReader(stdout);
+  const expectedConnectionId = 'shim-fwd-cid-1234';
+
+  const capturedConnectionIds: string[] = [];
+  harness.httpServer.removeAllListeners('request');
+  harness.httpServer.on('request', (req, res) => {
+    const url = req.url?.split('?')[0];
+    if (url === '/mcp') {
+      const header = req.headers[MCP_CONNECTION_ID_HEADER];
+      const headerValue = Array.isArray(header) ? header[0] : header;
+      if (typeof headerValue === 'string') capturedConnectionIds.push(headerValue);
+      harness.handler.handle(req, res).catch((err: unknown) => {
+        if (!res.writableEnded) {
+          res.writeHead(500);
+          res.end(`Internal server error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end('Not found');
+  });
+
+  const bridge = await bridgeStdioToHttpMcp(harness.endpointUrl, {
+    stdin,
+    stdout,
+    stderr,
+    connectionId: expectedConnectionId,
+  });
+
+  try {
+    stdin.write(
+      encodeMessage({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: 'bridge-e2e-cid', version: '0.0.0' },
+        },
+      }),
+    );
+
+    const initialize = await reader.waitFor((message) => message.id === 1);
+    expect(initialize.error).toBeUndefined();
+
+    expect(capturedConnectionIds.length).toBeGreaterThan(0);
+    expect(capturedConnectionIds[0]).toBe(expectedConnectionId);
+  } finally {
+    await bridge.close();
+  }
 });
 
 test('stdio shim proxies initialize and tool calls to the HTTP MCP server', async () => {
