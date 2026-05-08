@@ -174,28 +174,7 @@ export function getInlineComponentItems(): SlashCommandItem[] {
       aliases: ['#', 'hashtag', 'label'],
       description: 'Inline tag (`#tagname`) for cross-doc linking',
       command: (editor: Editor) => {
-        const beforeRefs = new WeakSet<object>();
-        editor.state.doc.descendants((node) => {
-          if (node.type.name === 'tag') {
-            beforeRefs.add(node);
-          }
-        });
-
-        editor.chain().focus().insertTag('').run();
-
-        let insertPos = -1;
-        editor.state.doc.descendants((node, pos) => {
-          if (insertPos >= 0) return false;
-          if (node.type.name === 'tag' && !beforeRefs.has(node)) {
-            insertPos = pos;
-          }
-        });
-
-        if (insertPos < 0) return;
-        setPendingAutoOpen(insertPos);
-        requestAnimationFrame(() => {
-          editor.commands.setNodeSelection(insertPos);
-        });
+        editor.chain().insertTag('').run();
       },
     },
   ];
