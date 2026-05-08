@@ -1,5 +1,21 @@
 import type { BrowserWindowLike, WindowManagerDeps } from './window-manager.ts';
 
+export function tryCloseNavigator(
+  nav: BrowserWindowLike | null,
+  context: { projectPath: string },
+  log: (event: string, fields: Record<string, unknown>) => void = (event, fields) =>
+    console.warn(`[main] ${event}`, fields),
+): void {
+  try {
+    if (nav && nav.isDestroyed?.() !== true) nav.close?.();
+  } catch (err) {
+    log('failed to close Navigator after project open', {
+      projectPath: context.projectPath,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 interface NavigatorDeps {
   createWindow: WindowManagerDeps['createWindow'];
   rendererEntryPath: string;
