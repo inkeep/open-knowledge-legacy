@@ -31,8 +31,8 @@ import type { EditorMode } from './EditorPane';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
 
-const SettingsPane = lazy(() =>
-  import('@/components/settings/SettingsPane').then((m) => ({ default: m.SettingsPane })),
+const SettingsDialog = lazy(() =>
+  import('@/components/settings/SettingsDialog').then((m) => ({ default: m.SettingsDialog })),
 );
 
 interface EditorAreaProps {
@@ -53,8 +53,28 @@ export function EditorArea(props: EditorAreaProps) {
           See PropertyContext.tsx for the design notes. */}
       <PropertyProvider>
         <EditorAreaInner {...props} />
+        <SettingsDialogPortal />
       </PropertyProvider>
     </ProfilerBoundary>
+  );
+}
+
+function SettingsDialogPortal() {
+  const settingsRoute = useSettingsRoute();
+  const [hasOpened, setHasOpened] = useState(false);
+  useEffect(() => {
+    if (settingsRoute.open) setHasOpened(true);
+  }, [settingsRoute.open]);
+  if (!hasOpened) return null;
+  return (
+    <Suspense fallback={null}>
+      <SettingsDialog
+        open={settingsRoute.open}
+        onOpenChange={(next) => {
+          if (!next) settingsRoute.close();
+        }}
+      />
+    </Suspense>
   );
 }
 
@@ -64,7 +84,6 @@ function EditorAreaInner({
   activeTab,
   onActiveTabChange,
 }: EditorAreaProps) {
-  const settingsRoute = useSettingsRoute();
   const {
     activeDocName,
     activeProvider,
@@ -141,18 +160,6 @@ function EditorAreaInner({
       setPreviousDocName(prior);
     }
   }, [activeDocName]);
-
-  if (settingsRoute.scope !== null) {
-    return (
-      <Suspense fallback={<EditorSkeleton />}>
-        <SettingsPane
-          scope={settingsRoute.scope}
-          onClose={settingsRoute.close}
-          onScopeChange={settingsRoute.setScope}
-        />
-      </Suspense>
-    );
-  }
 
   if (activeTarget?.kind === 'folder') {
     return <FolderOverview folderPath={activeTarget.folderPath} />;

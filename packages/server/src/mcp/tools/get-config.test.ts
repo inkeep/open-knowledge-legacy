@@ -12,7 +12,7 @@ import type { ServerInstance } from './shared.ts';
 const BASE_CONFIG: Config = ConfigSchema.parse({
   content: { dir: '.' },
   preview: { baseUrl: 'https://example.com/wiki' },
-  appearance: { theme: 'dark', editorModeDefault: 'wysiwyg' },
+  appearance: { theme: 'dark' },
 });
 
 interface ToolResult {
@@ -56,12 +56,8 @@ describe('get_config tool', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-'));
     const handler = captureRegistration(cwd);
     const result = await handler({ path: ['appearance'] });
-    const value = result.structuredContent?.value as {
-      theme: string;
-      editorModeDefault: string;
-    };
+    const value = result.structuredContent?.value as { theme: string };
     expect(value.theme).toBe('dark');
-    expect(value.editorModeDefault).toBe('wysiwyg');
   });
 
   test('returns scalar leaf when path resolves to a primitive', async () => {

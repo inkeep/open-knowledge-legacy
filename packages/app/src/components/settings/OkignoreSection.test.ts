@@ -9,7 +9,7 @@ import {
 } from './OkignoreSection';
 
 const SECTION_SRC = readFileSync(join(__dirname, 'OkignoreSection.tsx'), 'utf8');
-const PANE_SRC = readFileSync(join(__dirname, 'SettingsPane.tsx'), 'utf8');
+const PANE_SRC = readFileSync(join(__dirname, 'SettingsDialog.tsx'), 'utf8');
 const CONFIG_PROVIDER_SRC = readFileSync(
   join(__dirname, '..', '..', 'lib', 'config-provider.tsx'),
   'utf8',
@@ -142,7 +142,7 @@ describe('OkignoreSection source-level guards', () => {
     expect(SECTION_SRC).toMatch(/editPatternAt\(doc,\s*patternIndex,\s*trimmed\)/);
   });
 
-  test('per-row SavedIndicator flashes a green check on commit (matches SettingsPane pattern)', () => {
+  test('per-row SavedIndicator flashes a green check on commit (matches SettingsDialog pattern)', () => {
     expect(SECTION_SRC).toContain('settings-okignore-saved-indicator');
     expect(SECTION_SRC).toMatch(/text-emerald-600/);
     expect(SECTION_SRC).toMatch(/SAVED_FLASH_MS/);
@@ -174,14 +174,14 @@ describe('OkignoreSection source-level guards', () => {
   });
 });
 
-describe('OkignoreSection wiring in SettingsPane', () => {
+describe('OkignoreSection wiring in SettingsDialog', () => {
   test('imports OkignoreSection from a sibling module', () => {
     expect(PANE_SRC).toMatch(/from\s+['"]\.\/OkignoreSection['"]/);
     expect(PANE_SRC).toContain('OkignoreSection');
   });
 
-  test('renders OkignoreSection only on the project tab (D12 LOCKED)', () => {
-    expect(PANE_SRC).toMatch(/scope\s*===\s*'project'\s*\?\s*\(?\s*<OkignoreSection/);
+  test('renders OkignoreSection under THIS PROJECT in the "Ignore patterns" sidebar item (D12 LOCKED)', () => {
+    expect(PANE_SRC).toMatch(/activeId\s*===\s*['"]okignore['"]\s*\)[\s\S]*?<OkignoreSection\b/);
   });
 
   test('reads the binding + sync state from the ConfigProvider context', () => {

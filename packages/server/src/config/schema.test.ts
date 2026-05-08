@@ -6,7 +6,6 @@ describe('ConfigSchema', () => {
     const config = ConfigSchema.parse({});
     expect(config.content.dir).toBe('.');
     expect(config.appearance.theme).toBeUndefined();
-    expect(config.appearance.editorModeDefault).toBeUndefined();
     expect(config.autoSync.enabled).toBeNull();
   });
 
@@ -33,13 +32,6 @@ describe('ConfigSchema', () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error.issues[0].path).toContain('theme');
-    }
-  });
-
-  test('appearance.editorModeDefault accepts wysiwyg | source', () => {
-    for (const mode of ['wysiwyg', 'source'] as const) {
-      const config = ConfigSchema.parse({ appearance: { editorModeDefault: mode } });
-      expect(config.appearance.editorModeDefault).toBe(mode);
     }
   });
 

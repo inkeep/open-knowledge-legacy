@@ -2,16 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const SRC = readFileSync(join(__dirname, 'SettingsPane.tsx'), 'utf8');
+const SRC = readFileSync(join(__dirname, 'SettingsDialog.tsx'), 'utf8');
 
-describe('SettingsPane module', () => {
-  test('exports SettingsPane component', async () => {
-    const mod = await import('./SettingsPane');
-    expect(typeof mod.SettingsPane).toBe('function');
+describe('SettingsDialog module', () => {
+  test('exports SettingsDialog component', async () => {
+    const mod = await import('./SettingsDialog');
+    expect(typeof mod.SettingsDialog).toBe('function');
   });
 });
 
-describe('SettingsPane source-level guards', () => {
+describe('SettingsDialog source-level guards', () => {
   test('binds via core bindConfigDoc', () => {
     expect(SRC).toContain("from '@inkeep/open-knowledge-core'");
     expect(SRC).toContain('bindConfigDoc(');
@@ -32,8 +32,10 @@ describe('SettingsPane source-level guards', () => {
     expect(SRC).toContain("type: 'config-validation-rejected'");
   });
 
-  test('renders as a pane, NOT a Dialog overlay', () => {
-    expect(SRC).not.toMatch(/from\s+['"]@\/components\/ui\/dialog['"]/);
+  test('renders as a Dialog overlay (not a full-pane page)', () => {
+    expect(SRC).toMatch(/from\s+['"]@\/components\/ui\/dialog['"]/);
+    expect(SRC).toMatch(/<Dialog\s+open=\{open\}/);
+    expect(SRC).toMatch(/<DialogContent\b/);
   });
 
   test('has Integrations section with Install in Claude Desktop row', () => {
@@ -46,9 +48,15 @@ describe('SettingsPane source-level guards', () => {
     expect(SRC).toContain('detectClaudeDesktop');
   });
 
-  test('renders both scope sub-tabs', () => {
-    expect(SRC).toContain('This project');
-    expect(SRC).toContain('User');
+  test('sidebar exposes the three required group labels', () => {
+    expect(SRC).toContain("label: 'User'");
+    expect(SRC).toContain("label: 'This project'");
+    expect(SRC).toContain("label: 'Integrations'");
+  });
+
+  test('no top-level scope toggle in the dialog header', () => {
+    expect(SRC).not.toMatch(/value=\{scope\}/);
+    expect(SRC).not.toMatch(/aria-label=["']Settings scope["']/);
   });
 
   test('uses sonner for L3 rejection toast', () => {
@@ -82,22 +90,40 @@ describe('SettingsPane source-level guards', () => {
     expect(SRC).toMatch(/from\s+['"]\.\/use-config-form['"]/);
     expect(SRC).toContain('useConfigForm(');
   });
+
+  test('mounts both user + project bindings simultaneously', () => {
+    expect(SRC).toContain('useConfigDocConnections');
+    expect(SRC).toMatch(
+      /CONFIG_DOC_NAME_USER[\s\S]*?CONFIG_DOC_NAME_PROJECT|CONFIG_DOC_NAME_PROJECT[\s\S]*?CONFIG_DOC_NAME_USER/,
+    );
+  });
 });
 
-describe('SettingsPane Channel section guards', () => {
+describe('SettingsDialog Channel section guards', () => {
   test('imports ChannelSection from a sibling module', () => {
     expect(SRC).toMatch(/from\s+['"]\.\/ChannelSection['"]/);
     expect(SRC).toContain('ChannelSection');
   });
 
-  test('Channel section renders only on the User tab', () => {
-    expect(SRC).toMatch(/scope\s*===\s*'user'[^\n]*<ChannelSection\s*\/>/);
+  test('Channel section appears under USER in the "Preferences" item', () => {
+    expect(SRC).toMatch(/activeId\s*===\s*['"]preferences['"]\s*\)[\s\S]*?<ChannelSection\s*\/>/);
   });
 });
 
-describe('SettingsPane Sync section guards', () => {
-  test('Sync section renders only on the project tab', () => {
-    expect(SRC).toMatch(/scope\s*===\s*'project'[^\n]*<SyncSection\s*\/>/);
+describe('SettingsDialog Okignore section guards', () => {
+  test('imports OkignoreSection from a sibling module', () => {
+    expect(SRC).toMatch(/from\s+['"]\.\/OkignoreSection['"]/);
+    expect(SRC).toContain('OkignoreSection');
+  });
+
+  test('Okignore section appears under THIS PROJECT in the "Ignore patterns" item', () => {
+    expect(SRC).toMatch(/activeId\s*===\s*['"]okignore['"]\s*\)[\s\S]*?<OkignoreSection\b/);
+  });
+});
+
+describe('SettingsDialog Sync section guards', () => {
+  test('Sync section appears under THIS PROJECT in the combined "General" item', () => {
+    expect(SRC).toMatch(/activeId\s*===\s*['"]project-general['"]\s*\)[\s\S]*?<SyncSection\s*\/>/);
   });
 
   test('Sync section toggle goes through the shared confirmation hook', () => {

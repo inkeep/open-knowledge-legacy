@@ -1,59 +1,39 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  isSettingsShortcut,
-  parseSettingsHash,
-  SETTINGS_OPEN_HASH,
-  settingsHash,
-} from './use-settings-route';
+import { isSettingsHashOpen, isSettingsShortcut, SETTINGS_OPEN_HASH } from './use-settings-route';
 
-describe('parseSettingsHash', () => {
-  test('empty hash → null', () => {
-    expect(parseSettingsHash('')).toBeNull();
+describe('isSettingsHashOpen', () => {
+  test('empty hash → false', () => {
+    expect(isSettingsHashOpen('')).toBe(false);
   });
 
-  test('non-settings hash → null', () => {
-    expect(parseSettingsHash('#/some-doc')).toBeNull();
-    expect(parseSettingsHash('#install-claude-desktop')).toBeNull();
+  test('non-settings hash → false', () => {
+    expect(isSettingsHashOpen('#/some-doc')).toBe(false);
+    expect(isSettingsHashOpen('#install-claude-desktop')).toBe(false);
   });
 
-  test('bare `#settings` → project (canonical synonym)', () => {
-    expect(parseSettingsHash('#settings')).toBe('project');
-  });
-
-  test('`#settings/project` → project', () => {
-    expect(parseSettingsHash('#settings/project')).toBe('project');
-  });
-
-  test('`#settings/user` → user', () => {
-    expect(parseSettingsHash('#settings/user')).toBe('user');
-  });
-
-  test('typo / unrecognized scope → null', () => {
-    expect(parseSettingsHash('#settings/global')).toBeNull();
-    expect(parseSettingsHash('#settings/')).toBeNull();
+  test('`#settings` → true', () => {
+    expect(isSettingsHashOpen('#settings')).toBe(true);
   });
 
   test('hash without leading `#` is tolerated', () => {
-    expect(parseSettingsHash('settings/project')).toBe('project');
-  });
-});
-
-describe('settingsHash', () => {
-  test('builds canonical hashes', () => {
-    expect(settingsHash('project')).toBe('#settings/project');
-    expect(settingsHash('user')).toBe('#settings/user');
+    expect(isSettingsHashOpen('settings')).toBe(true);
   });
 
-  test('round-trips with parseSettingsHash', () => {
-    expect(parseSettingsHash(settingsHash('project'))).toBe('project');
-    expect(parseSettingsHash(settingsHash('user'))).toBe('user');
+  test('legacy sub-routes are no longer recognized', () => {
+    expect(isSettingsHashOpen('#settings/project')).toBe(false);
+    expect(isSettingsHashOpen('#settings/user')).toBe(false);
+  });
+
+  test('typo / unrecognized hash → false', () => {
+    expect(isSettingsHashOpen('#settings-typo')).toBe(false);
+    expect(isSettingsHashOpen('#settings/')).toBe(false);
   });
 });
 
 describe('SETTINGS_OPEN_HASH', () => {
-  test('is the bare-`#settings` synonym (project tab on open)', () => {
+  test('is the canonical `#settings` literal', () => {
     expect(SETTINGS_OPEN_HASH).toBe('#settings');
-    expect(parseSettingsHash(SETTINGS_OPEN_HASH)).toBe('project');
+    expect(isSettingsHashOpen(SETTINGS_OPEN_HASH)).toBe(true);
   });
 });
 

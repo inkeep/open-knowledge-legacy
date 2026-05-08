@@ -59,16 +59,6 @@ const FIXTURES: Fixture[] = [
     shouldAccept: false,
   },
   {
-    name: 'appearance.editorModeDefault=source accepted',
-    input: { appearance: { editorModeDefault: 'source' } },
-    shouldAccept: true,
-  },
-  {
-    name: 'appearance.editorModeDefault=invalid rejected',
-    input: { appearance: { editorModeDefault: 'plaintext' } },
-    shouldAccept: false,
-  },
-  {
     name: 'unknown top-level key passes (looseObject)',
     input: { future_feature: { enabled: true } },
     shouldAccept: true,
@@ -121,6 +111,5 @@ describe('loose-mode forgiveness', () => {
   test('appearance.theme defaults to UNSET', () => {
     const config = ConfigSchema.parse({});
     expect(config.appearance.theme).toBeUndefined();
-    expect(config.appearance.editorModeDefault).toBeUndefined();
   });
 });

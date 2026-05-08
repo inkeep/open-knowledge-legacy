@@ -8,7 +8,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   test('project tab shows the section, empty-state, primer link, and add-pattern affordance', async ({
     page,
   }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
 
     const section = page.getByTestId('settings-okignore-section');
     await expect(section).toBeVisible({ timeout: 10_000 });
@@ -33,7 +34,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   test('typing a pattern enables the Add button, committing populates the row list', async ({
     page,
   }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
 
     const section = page.getByTestId('settings-okignore-section');
     await expect(section).toBeVisible({ timeout: 10_000 });
@@ -55,7 +57,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   });
 
   test('row exposes drag handle, editable input, and remove button', async ({ page }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     const addInput = page.getByTestId('settings-okignore-add-input');
@@ -79,7 +82,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   });
 
   test('editing a row in place commits on blur and persists the new value', async ({ page }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     const stamp = Date.now();
@@ -109,7 +113,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   });
 
   test('removing a row drops it from the list', async ({ page }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     const stamp = Date.now();
@@ -133,7 +138,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   });
 
   test('adding a pattern flashes a per-row green check (saved indicator)', async ({ page }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     const pattern = `flash-${Date.now()}.tmp`;
@@ -155,16 +161,17 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   test('user-scope tab does not render the section (D12 LOCKED — project-only)', async ({
     page,
   }) => {
-    await page.goto('/#settings/user');
+    await page.goto('/#settings');
 
-    await expect(page.getByTestId('settings-pane')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('settings-dialog')).toBeVisible({ timeout: 10_000 });
 
     await expect(page.getByTestId('settings-okignore-section')).toHaveCount(0);
     await expect(page.getByTestId('settings-okignore-skeleton')).toHaveCount(0);
   });
 
   test('US-009: heuristic warnings flag suspicious patterns in the add input', async ({ page }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     const addInput = page.getByTestId('settings-okignore-add-input');
@@ -188,7 +195,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   test('US-009: heuristic-warning row still commits (warnings are non-blocking)', async ({
     page,
   }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     const stamp = Date.now();
@@ -204,7 +212,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   test('US-010: Show advanced toggle reveals a textarea bound to the same Y.Text', async ({
     page,
   }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     await page.evaluate(() => {
@@ -243,7 +252,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   test('US-010: editing in textarea persists and the list view reflects the new patterns', async ({
     page,
   }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     await page.evaluate(() => {
@@ -284,7 +294,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   });
 
   test('US-010: round-trip preserves comments and blank lines byte-for-byte', async ({ page }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     await page.evaluate(() => {
@@ -314,7 +325,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   });
 
   test('US-010: toggle state persists in localStorage across page reloads', async ({ page }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     await page.evaluate(() => {
@@ -365,7 +377,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   test('US-011: typing a pattern in the add input shows a debounced "matches N files" preview', async ({
     page,
   }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     const input = page.getByTestId('settings-okignore-add-input');
@@ -383,7 +396,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   test('US-011: clearing the add input hides the preview (preview-state="hidden")', async ({
     page,
   }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     const input = page.getByTestId('settings-okignore-add-input');
@@ -402,7 +416,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   });
 
   test('US-011: per-row preview attaches to a committed pattern row', async ({ page }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     const stamp = Date.now().toString();
@@ -421,7 +436,8 @@ test.describe('Settings — Ignore patterns section (US-007 / US-008 / US-009 / 
   });
 
   test('US-011: preview pluralizes correctly (1 file vs N files)', async ({ page }) => {
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     await expect(page.getByTestId('settings-okignore-section')).toBeVisible({ timeout: 10_000 });
 
     const stamp = Date.now().toString();
@@ -458,7 +474,8 @@ test.describe('FileTree right-click → Hide this file/folder (US-013)', () => {
 
     await expect(treeItem).toBeHidden({ timeout: 10_000 });
 
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     const list = page.getByTestId('settings-okignore-list');
     await expect(list).toBeVisible({ timeout: 10_000 });
     const row = list.getByTestId('settings-okignore-row-input').first();
@@ -495,7 +512,8 @@ test.describe('FileTree right-click → Hide this file/folder (US-013)', () => {
       page.getByRole('treeitem', { name: new RegExp(`keep-${stamp}\\.md`) }),
     ).toBeVisible();
 
-    await page.goto('/#settings/project');
+    await page.goto('/#settings');
+    await page.getByTestId('settings-sidebar-item-okignore').click();
     const list = page.getByTestId('settings-okignore-list');
     await expect(list).toBeVisible({ timeout: 10_000 });
     const row = list.getByTestId('settings-okignore-row-input').first();

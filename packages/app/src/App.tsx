@@ -22,6 +22,11 @@ import { assetPathFromHash, docNameFromHash } from '@/lib/doc-hash';
 import { mark, ProfilerBoundary } from '@/lib/perf';
 import { isSettingsShortcut, SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 
+const INSTALL_DIALOG_HASH = '#install-claude-desktop';
+function isAuxiliaryDialogHash(hash: string): boolean {
+  return hash === SETTINGS_OPEN_HASH || hash === INSTALL_DIALOG_HASH;
+}
+
 function NavigationHandler() {
   const { clearTarget } = useDocumentContext();
   const { openTargetTransition } = useDocumentTransition();
@@ -31,6 +36,9 @@ function NavigationHandler() {
     onHashChange();
 
     function onHashChange() {
+      if (isAuxiliaryDialogHash(window.location.hash)) {
+        return;
+      }
       const assetPath = assetPathFromHash(window.location.hash);
       if (assetPath) {
         const assetExt = assetPath.split('.').pop() ?? '';
@@ -68,7 +76,6 @@ function NavigationHandler() {
   return null;
 }
 
-const INSTALL_DIALOG_HASH = '#install-claude-desktop';
 function InstallInClaudeDesktopTrigger() {
   const [open, setOpen] = useState(
     typeof window !== 'undefined' && window.location.hash === INSTALL_DIALOG_HASH,

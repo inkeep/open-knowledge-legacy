@@ -64,7 +64,6 @@ describe('getFieldDefault against ConfigSchema', () => {
 
   test('returns undefined for fields without .default()', () => {
     expect(getFieldDefault(requireLeaf(['appearance', 'theme']))).toBeUndefined();
-    expect(getFieldDefault(requireLeaf(['appearance', 'editorModeDefault']))).toBeUndefined();
     expect(getFieldDefault(requireLeaf(['preview', 'baseUrl']))).toBeUndefined();
   });
 });
