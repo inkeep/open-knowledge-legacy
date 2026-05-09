@@ -51,11 +51,11 @@ describe('pdf embed — basic round-trip', () => {
 });
 
 describe('pdf embed — parse correctness', () => {
-  test('parses to PM jsxComponent atom carrying the WikiEmbedPdf descriptor', () => {
+  test('parses to PM jsxComponent atom carrying the WikiEmbedFile descriptor', () => {
     const json = mdManager.parse('![[Document.pdf]]\n');
     const components = findNodes(json, 'jsxComponent');
     expect(components.length).toBe(1);
-    expect(components[0].attrs?.componentName).toBe('WikiEmbedPdf');
+    expect(components[0].attrs?.componentName).toBe('WikiEmbedFile');
   });
 
   test('props bag carries target / anchor / alias from the wikiLinkEmbed mdast', () => {
@@ -68,17 +68,17 @@ describe('pdf embed — parse correctness', () => {
     expect(props.alias).toBe('Spec');
   });
 
-  test('non-pdf extensions do NOT promote to WikiEmbedPdf', () => {
+  test('image extensions route to WikiEmbedImage, not WikiEmbedFile (image-tier branch wins first)', () => {
     const json = mdManager.parse('![[image.png]]\n');
     const components = findNodes(json, 'jsxComponent');
     expect(components.length).toBeGreaterThan(0);
     expect(components[0].attrs?.componentName).toBe('WikiEmbedImage');
   });
 
-  test('inline-position `![[doc.pdf]]` mid-prose does NOT promote to WikiEmbedPdf', () => {
+  test('inline-position `![[doc.pdf]]` mid-prose does NOT promote to WikiEmbedFile', () => {
     const json = mdManager.parse('Inline ![[doc.pdf]] embed.\n');
     const components = findNodes(json, 'jsxComponent');
-    expect(components.find((c) => c.attrs?.componentName === 'WikiEmbedPdf')).toBeUndefined();
+    expect(components.find((c) => c.attrs?.componentName === 'WikiEmbedFile')).toBeUndefined();
   });
 });
 

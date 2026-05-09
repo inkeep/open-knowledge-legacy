@@ -1,6 +1,7 @@
 import { Accordion } from './Accordion.tsx';
 import { Audio } from './Audio.tsx';
 import { Callout } from './Callout.tsx';
+import { File } from './File.tsx';
 import { Image } from './Image.tsx';
 import { MathView } from './Math.tsx';
 import { MermaidView } from './Mermaid.tsx';
@@ -18,6 +19,7 @@ export const componentMap: Record<string, React.ComponentType<any>> = {
   video: Video,
   audio: Audio,
   Pdf,
+  File,
   Accordion,
   Math: MathView,
   Mermaid: MermaidView,

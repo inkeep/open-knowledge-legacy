@@ -78,7 +78,7 @@ test.describe('asset-embed — drop UX (SPEC §6 FR-1, FR-1a, FR-2, FR-8)', () =
       .toContain('![[draft.pdf]]');
   });
 
-  test('P1.2: drop a CSV (opaque ext) → emits as [data.csv](data.csv) markdown link', async ({
+  test('P1.2: drop a CSV (FILE_ATTACHMENT_EXTENSIONS) → emits as ![[data.csv]] wikilink', async ({
     page,
   }) => {
     const csvBytes = Array.from(Buffer.from('a,b,c\n1,2,3\n', 'utf-8'));
@@ -86,9 +86,7 @@ test.describe('asset-embed — drop UX (SPEC §6 FR-1, FR-1a, FR-2, FR-8)', () =
 
     await expect
       .poll(async () => await getSourceText(page), { timeout: 5_000 })
-      .toContain('data.csv');
-    const text = await getSourceText(page);
-    expect(text).not.toContain('![[data.csv]]');
+      .toContain('![[data.csv]]');
   });
 
   test('P3.1: same PNG dropped twice → second drop dedups, single file on disk', async ({

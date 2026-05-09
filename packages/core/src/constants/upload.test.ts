@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   AUDIO_EXTENSIONS,
+  FILE_ATTACHMENT_EXTENSIONS,
   IMAGE_EXTENSIONS,
   VIDEO_EXTENSIONS,
   WIKI_EMBED_EXTENSIONS,
@@ -40,12 +41,12 @@ describe('upload extension sets', () => {
     }
   });
 
-  test('IMAGE ∪ VIDEO ∪ AUDIO ∪ {pdf} === WIKI_EMBED_EXTENSIONS (set equality)', () => {
+  test('IMAGE ∪ VIDEO ∪ AUDIO ∪ FILE_ATTACHMENT === WIKI_EMBED_EXTENSIONS (set equality)', () => {
     const union = new Set<string>([
       ...IMAGE_EXTENSIONS,
       ...VIDEO_EXTENSIONS,
       ...AUDIO_EXTENSIONS,
-      'pdf',
+      ...FILE_ATTACHMENT_EXTENSIONS,
     ]);
 
     for (const ext of union) {
@@ -57,5 +58,13 @@ describe('upload extension sets', () => {
     }
 
     expect(union.size).toBe(WIKI_EMBED_EXTENSIONS.size);
+  });
+
+  test('FILE_ATTACHMENT_EXTENSIONS is disjoint from IMAGE / VIDEO / AUDIO', () => {
+    for (const ext of FILE_ATTACHMENT_EXTENSIONS) {
+      expect(IMAGE_EXTENSIONS.has(ext)).toBe(false);
+      expect(VIDEO_EXTENSIONS.has(ext)).toBe(false);
+      expect(AUDIO_EXTENSIONS.has(ext)).toBe(false);
+    }
   });
 });

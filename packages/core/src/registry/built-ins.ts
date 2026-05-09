@@ -521,13 +521,25 @@ const mermaidProps: PropDef[] = [
 ];
 const mermaidFenceProps: PropDef[] = [mermaidProps[0]];
 
-const wikiEmbedPdfProps: PropDef[] = [
+const wikiEmbedFileProps: PropDef[] = [
   {
     name: 'alias',
     type: 'string',
     required: false,
     defaultValue: '',
-    description: 'Title text (Obsidian alias syntax: `![[doc.pdf|title]]`)',
+    description: 'Display name override (Obsidian alias syntax: `![[file.zip|label]]`)',
+  },
+];
+
+const fileProps: PropDef[] = [
+  {
+    name: 'src',
+    type: 'string',
+    required: true,
+    defaultValue: '',
+    description: 'File URL',
+    accept: ['*/*'],
+    autoFocus: true,
   },
 ];
 
@@ -674,6 +686,20 @@ export const builtInComponents: JsxComponentMeta[] = [
     searchTerms: ['pdf', 'document', 'embed', 'pdfjs'],
     placeholder: { label: 'Add a PDF' },
     serialize: (node, ctx) => emitMdxJsx('Pdf', node, ctx, pdfProps),
+  },
+  {
+    name: 'File',
+    surface: 'canonical',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: fileProps,
+    icon: 'Paperclip',
+    category: 'media',
+    displayName: 'File',
+    description: 'Downloadable file attachment — inline row with name + size + download link',
+    searchTerms: ['file', 'attachment', 'download', 'document', 'zip', 'docx', 'doc'],
+    placeholder: { label: 'Add a file' },
+    serialize: (node, ctx) => emitMdxJsx('File', node, ctx, fileProps),
   },
 
   {
@@ -887,25 +913,24 @@ export const builtInComponents: JsxComponentMeta[] = [
   },
 
   {
-    name: 'WikiEmbedPdf',
+    name: 'WikiEmbedFile',
     surface: 'compat',
     hasChildren: false,
     isSelfClosing: true,
-    props: wikiEmbedPdfProps,
-    icon: 'FileText',
+    props: wikiEmbedFileProps,
+    icon: 'Paperclip',
     category: 'media',
-    displayName: 'Wiki Embed PDF',
+    displayName: 'Wiki Embed File',
     description:
-      'Obsidian-style `![[doc.pdf]]` wiki-embed — read-only compat. Renders through the `Pdf` canonical (pdfjs-dist multi-page canvas viewer with custom toolbar). Edit the title via the alias slot; `#page=N` scrolls the matching `<canvas>` slot into view on first render, `#height=N` sizes the scroll container.',
-    rendersAs: 'Pdf',
+      'Obsidian-style `![[file.zip]]` wiki-embed — read-only compat for arbitrary downloadable attachments. Renders through the `File` canonical (inline row with file-up icon + bold name + optional dim size). Edit the display name via the alias slot.',
+    rendersAs: 'File',
     translateProps: (props) => {
       const alias = typeof props.alias === 'string' && props.alias.length > 0 ? props.alias : null;
-      const target = typeof props.target === 'string' ? props.target : '';
-      const anchor = typeof props.anchor === 'string' ? props.anchor : '';
+      const size = typeof props.size === 'string' && props.size.length > 0 ? props.size : null;
       return {
         src: props.src,
-        title: alias ?? target,
-        anchor,
+        name: alias ?? undefined,
+        size: size ?? undefined,
       };
     },
     serialize: serializeWikiEmbed,

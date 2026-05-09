@@ -14,10 +14,10 @@ describe('canonical/compat split — registry shape', () => {
     }
   });
 
-  test('exactly 8 canonical descriptors (5-pack + Math + Mermaid + Pdf)', () => {
-    expect(canonicalDescriptors.length).toBe(8);
+  test('exactly 9 canonical descriptors (5-pack + Math + Mermaid + Pdf + File)', () => {
+    expect(canonicalDescriptors.length).toBe(9);
     expect(canonicalDescriptors.map((m) => m.name).sort()).toEqual(
-      ['Accordion', 'Callout', 'Math', 'Mermaid', 'Pdf', 'audio', 'img', 'video'].sort(),
+      ['Accordion', 'Callout', 'File', 'Math', 'Mermaid', 'Pdf', 'audio', 'img', 'video'].sort(),
     );
   });
 
@@ -31,8 +31,8 @@ describe('canonical/compat split — registry shape', () => {
         'MathFence',
         'MermaidFence',
         'WikiEmbedAudio',
+        'WikiEmbedFile',
         'WikiEmbedImage',
-        'WikiEmbedPdf',
         'WikiEmbedVideo',
       ].sort(),
     );

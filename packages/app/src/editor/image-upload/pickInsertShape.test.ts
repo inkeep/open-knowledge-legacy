@@ -27,21 +27,25 @@ describe('pickInsertShape — emit-dispatch by extension', () => {
     expect(pickInsertShape('vox.opus').kind).toBe('jsx-audio');
   });
 
-  test('non-image-non-video-non-audio wikiembed extension emits wikiembed (PDF only)', () => {
-    expect(pickInsertShape('draft.pdf').kind).toBe('wikiembed');
+  test('FILE_ATTACHMENT extension emits jsx-file (PDF + office docs + archives + structured-text)', () => {
+    expect(pickInsertShape('draft.pdf').kind).toBe('jsx-file');
+    expect(pickInsertShape('archive.zip').kind).toBe('jsx-file');
+    expect(pickInsertShape('report.docx').kind).toBe('jsx-file');
+    expect(pickInsertShape('data.csv').kind).toBe('jsx-file');
+    expect(pickInsertShape('budget.xlsx').kind).toBe('jsx-file');
   });
 
-  test('opaque extension emits markdown-link', () => {
-    expect(pickInsertShape('archive.zip').kind).toBe('markdown-link');
-    expect(pickInsertShape('report.docx').kind).toBe('markdown-link');
-    expect(pickInsertShape('data.csv').kind).toBe('markdown-link');
+  test('truly-opaque extension (not in any set) emits markdown-link', () => {
+    expect(pickInsertShape('mystery.xyz').kind).toBe('markdown-link');
+    expect(pickInsertShape('payload.qux').kind).toBe('markdown-link');
   });
 
   test('extension matching is case-insensitive', () => {
     expect(pickInsertShape('PHOTO.PNG').kind).toBe('jsx-img');
     expect(pickInsertShape('Clip.MP4').kind).toBe('jsx-video');
     expect(pickInsertShape('Song.MP3').kind).toBe('jsx-audio');
-    expect(pickInsertShape('DRAFT.PDF').kind).toBe('wikiembed');
+    expect(pickInsertShape('DRAFT.PDF').kind).toBe('jsx-file');
+    expect(pickInsertShape('Archive.ZIP').kind).toBe('jsx-file');
   });
 
   describe('markdown files emit wiki-link (link semantic, not embed)', () => {

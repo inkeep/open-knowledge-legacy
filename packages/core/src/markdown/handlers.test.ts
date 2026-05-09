@@ -293,7 +293,7 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
     expect(props?.src).toBe('/stories/wiki-links-next/IMG.PNG');
   });
 
-  test('PDF wiki-embed emits server-absolute src on jsxComponent(WikiEmbedPdf)', () => {
+  test('PDF wiki-embed emits server-absolute src on jsxComponent(WikiEmbedFile)', () => {
     const json = mdManager.parse('![[doc.pdf]]\n', {
       resolveEmbed: (target: string, _source: string) => {
         if (target === 'doc.pdf') return 'docs/sub/doc.pdf';
@@ -301,10 +301,43 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
       },
       sourcePath: 'docs/sub/notes.md',
     });
-    const node = findJsxComponentInJson(json, 'WikiEmbedPdf');
+    const node = findJsxComponentInJson(json, 'WikiEmbedFile');
     expect(node).not.toBeNull();
     const props = node?.attrs?.props as Record<string, unknown> | undefined;
     expect(props?.src).toBe('/docs/sub/doc.pdf');
+  });
+
+  test('WikiEmbedFile stamps formatted size when resolveSize returns bytes', () => {
+    const json = mdManager.parse('![[doc.pdf]]\n', {
+      resolveEmbed: (target: string) => (target === 'doc.pdf' ? 'docs/sub/doc.pdf' : null),
+      resolveSize: (target: string) => (target === 'doc.pdf' ? 909_312 : null),
+      sourcePath: 'docs/sub/notes.md',
+    });
+    const node = findJsxComponentInJson(json, 'WikiEmbedFile');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.size).toBe('888 KiB');
+  });
+
+  test('WikiEmbedFile size prop is null when resolveSize is omitted (renderer omits the size span)', () => {
+    const json = mdManager.parse('![[doc.pdf]]\n', {
+      resolveEmbed: (target: string) => (target === 'doc.pdf' ? 'docs/sub/doc.pdf' : null),
+      sourcePath: 'docs/sub/notes.md',
+    });
+    const node = findJsxComponentInJson(json, 'WikiEmbedFile');
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.size).toBeNull();
+  });
+
+  test('WikiEmbedFile size prop is null when resolveSize returns null (file moved / unreadable)', () => {
+    const json = mdManager.parse('![[doc.pdf]]\n', {
+      resolveEmbed: (target: string) => (target === 'doc.pdf' ? 'docs/sub/doc.pdf' : null),
+      resolveSize: () => null,
+      sourcePath: 'docs/sub/notes.md',
+    });
+    const node = findJsxComponentInJson(json, 'WikiEmbedFile');
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.size).toBeNull();
   });
 
   test('video wiki-embed (MP4) emits server-absolute src on jsxComponent(WikiEmbedVideo)', () => {
@@ -390,10 +423,10 @@ describe('handlers.wikiLinkEmbed — WikiEmbedImage dispatch (US-002)', () => {
     expect(props?.anchor).toBe('frag');
   });
 
-  test('PDF extension (![[doc.pdf]]) routes to WikiEmbedPdf descriptor', () => {
+  test('PDF extension (![[doc.pdf]]) routes to WikiEmbedFile descriptor', () => {
     const json = mdManager.parse('![[doc.pdf]]\n');
     expect(findJsxComponentInJson(json, 'WikiEmbedImage')).toBeNull();
-    expect(findJsxComponentInJson(json, 'WikiEmbedPdf')).not.toBeNull();
+    expect(findJsxComponentInJson(json, 'WikiEmbedFile')).not.toBeNull();
   });
 
   test('round-trip: ![[photo.png]] is byte-identical', () => {

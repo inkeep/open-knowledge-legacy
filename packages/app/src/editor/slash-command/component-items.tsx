@@ -1,6 +1,7 @@
 import type { Editor } from '@tiptap/react';
-import { Hash } from 'lucide-react';
+import { FileUp, Hash } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { uploadAndInsert } from '../image-upload/index.ts';
 import { resolveIcon } from '../registry/icons.ts';
 import { getDescriptor, getRegisteredDescriptors } from '../registry/index.ts';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
@@ -138,10 +139,28 @@ function createInsertCommand(descriptor: JsxComponentDescriptor): (editor: Edito
   };
 }
 
-export function getComponentItems(): SlashCommandItem[] {
-  const descriptors = getRegisteredDescriptors().filter((desc) => desc.surface === 'canonical');
+const SLASH_HIDDEN_CANONICALS = new Set(['File']);
 
-  return descriptors.map((desc) => {
+function getCustomBlockComponentItems(): SlashCommandItem[] {
+  return [
+    {
+      name: 'component-File',
+      label: 'File',
+      icon: FileUp,
+      category: 'media',
+      aliases: ['file', 'attachment', 'download', 'upload', 'document', 'doc', 'docx', 'zip'],
+      description: 'Attach a downloadable file (`.pdf` / `.docx` / `.zip` / …)',
+      command: openFilePickerAndUpload,
+    },
+  ];
+}
+
+export function getComponentItems(): SlashCommandItem[] {
+  const descriptors = getRegisteredDescriptors().filter(
+    (desc) => desc.surface === 'canonical' && !SLASH_HIDDEN_CANONICALS.has(desc.name),
+  );
+
+  const descriptorItems = descriptors.map((desc) => {
     const previewConfig = PREVIEW_CONFIG[desc.name];
     const Component = desc.Component;
     const preview: SlashCommandItem['preview'] = previewConfig
@@ -162,6 +181,30 @@ export function getComponentItems(): SlashCommandItem[] {
       preview,
     };
   });
+
+  return [...descriptorItems, ...getCustomBlockComponentItems()];
+}
+
+function openFilePickerAndUpload(editor: Editor): void {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '*/*';
+  input.style.display = 'none';
+  input.addEventListener(
+    'change',
+    () => {
+      const file = input.files?.[0];
+      if (file) {
+        const insertPos = editor.state.selection.from;
+        void uploadAndInsert(file, editor, insertPos);
+      }
+      input.remove();
+    },
+    { once: true },
+  );
+  input.addEventListener('cancel', () => input.remove(), { once: true });
+  document.body.appendChild(input);
+  input.click();
 }
 
 export function getInlineComponentItems(): SlashCommandItem[] {

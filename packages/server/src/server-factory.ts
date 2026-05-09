@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, relative, resolve } from 'node:path';
 import type { Document, Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
@@ -230,6 +230,25 @@ export function createServer(options: ServerOptions): ServerInstance {
   const resolveEmbed = (basename: string, sourcePath: string): string | null =>
     basenameIndex.resolveEmbed(basename, sourcePath);
 
+  const resolveSize = (basename: string, sourcePath: string): number | null => {
+    let candidatePath: string | null = basenameIndex.resolveEmbed(basename, sourcePath);
+    if (!candidatePath && basename.includes('/')) {
+      candidatePath = basename.replace(/^\.?\//, '');
+    }
+    if (!candidatePath) return null;
+    const fullPath = resolve(contentDir, candidatePath);
+    const contentDirAbs = resolve(contentDir);
+    if (fullPath !== contentDirAbs && !fullPath.startsWith(`${contentDirAbs}/`)) {
+      return null;
+    }
+    try {
+      const stat = statSync(fullPath);
+      return stat.isFile() ? stat.size : null;
+    } catch {
+      return null;
+    }
+  };
+
   let contentFilter: ReturnType<typeof createContentFilter>;
   let backlinkIndex: BacklinkIndex;
   let tagIndex: TagIndex;
@@ -324,6 +343,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       configHomedirOverride,
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
       resolveEmbed,
+      resolveSize,
       getPrincipal: () => loadedPrincipal,
       onAgentCommit: () => cc1Broadcaster?.signal('session-activity'),
       onDiskFlush: (docName, sv) => cc1Broadcaster?.emitDiskAck(docName, sv),
@@ -513,6 +533,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         contentRoot,
         getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
         resolveEmbed,
+        resolveSize,
       }),
     );
   } catch (err) {
@@ -547,7 +568,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   }
 
   const applyToDoc = (docName: string, content: string): void =>
-    applyExternalChange(hocuspocus, docName, content, resolveEmbed);
+    applyExternalChange(hocuspocus, docName, content, resolveEmbed, resolveSize);
 
   const rerenderDocsReferencingAssetBasename = (assetBasename: string): void => {
     if (!assetBasename) return;

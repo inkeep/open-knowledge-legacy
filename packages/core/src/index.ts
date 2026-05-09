@@ -159,6 +159,7 @@ export {
   type DedupUIMode,
   type EmitFormat,
   EXECUTABLE_BLOCKLIST_EXTENSIONS,
+  FILE_ATTACHMENT_EXTENSIONS,
   IMAGE_EXTENSIONS,
   INLINE_RENDERABLE_EXTENSIONS,
   type InlineAssetMediaKind,
@@ -642,6 +643,7 @@ export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export { ChunkedInsertError, chunkedYTextInsert } from './utils/chunked-insert.ts';
 export { createCodeFenceTracker } from './utils/code-fence-tracker.ts';
 export { extensionOf } from './utils/extension.ts';
+export { formatFileSize } from './utils/file-size.ts';
 export {
   AGENT_COLORS,
   AGENT_ICON_COLORS,

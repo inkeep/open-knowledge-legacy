@@ -88,7 +88,7 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     await page.click('.ProseMirror');
   });
 
-  test('P9.1: post-reload `![[file.pdf]]` renders inline via WikiEmbedPdf (no link chip)', async ({
+  test('P9.1: post-reload `![[file.pdf]]` renders as a File row via WikiEmbedFile (no link chip)', async ({
     page,
     api,
   }) => {
@@ -97,11 +97,14 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     await waitForProvider(page);
     await page.waitForSelector('.ProseMirror');
 
-    const pdfWrapper = page.locator('.ok-pdf').first();
-    await pdfWrapper.waitFor({ state: 'visible', timeout: 5_000 });
+    const fileRow = page.locator('.ok-file-attachment').first();
+    await fileRow.waitFor({ state: 'visible', timeout: 5_000 });
 
     const pdfChip = page.locator('span[data-link]').filter({ hasText: 'meeting.pdf' });
     await expect(pdfChip).toHaveCount(0);
+
+    const pdfWrapper = page.locator('.ok-pdf');
+    await expect(pdfWrapper).toHaveCount(0);
   });
 
   test('P9.9: [[foo]] wiki-link chip — bare click does NOT fire dispatcher (regression guard)', async ({
