@@ -15,8 +15,10 @@ async function dropFileIntoEditor(
 ): Promise<void> {
   await page.evaluate(
     ({ bytes, name, type }) => {
-      const editor = document.querySelector('.ProseMirror') as HTMLElement | null;
-      if (!editor) throw new Error('no editor');
+      const active = (window as unknown as { __activeEditor?: { view?: { dom?: HTMLElement } } })
+        .__activeEditor;
+      const editor = active?.view?.dom ?? null;
+      if (!editor) throw new Error('no active editor (window.__activeEditor.view.dom)');
       const file = new File([new Uint8Array(bytes)], name, { type });
       const dt = new DataTransfer();
       dt.items.add(file);
@@ -117,8 +119,10 @@ test.describe('asset-embed — drop UX (SPEC §6 FR-1, FR-1a, FR-2, FR-8)', () =
   }) => {
     await page.evaluate(
       ({ bytes, name, type }) => {
-        const editor = document.querySelector('.ProseMirror') as HTMLElement | null;
-        if (!editor) throw new Error('no editor');
+        const active = (window as unknown as { __activeEditor?: { view?: { dom?: HTMLElement } } })
+          .__activeEditor;
+        const editor = active?.view?.dom ?? null;
+        if (!editor) throw new Error('no active editor (window.__activeEditor.view.dom)');
         const file = new File([new Uint8Array(bytes)], name, { type });
         const dt = new DataTransfer();
         dt.items.add(file);

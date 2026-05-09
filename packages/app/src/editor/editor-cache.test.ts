@@ -9,7 +9,6 @@ import {
   __getCacheOrder,
   __getCacheSize,
   __peekCm,
-  __peekTiptap,
   __resetCacheForTests,
   BYTES_CACHE_THRESHOLD,
   CACHE_ENABLED,
@@ -21,12 +20,20 @@ import {
   mountTiptapEditor,
   parkCmEditor,
   parkTiptapEditor,
+  peekTiptap,
   setActivityMountList,
   shouldCacheEditor,
   subscribePoolEviction,
   type TiptapCacheEntry,
   VIEW_COUNT_CACHE_THRESHOLD,
 } from './editor-cache';
+import {
+  __mountPromiseCacheSize,
+  __mountPromiseSettled,
+  __resetMountPromiseCache,
+  MountAbortError,
+  mountTiptapEditorPromise,
+} from './mount-promise';
 
 interface FakeNode {
   parentElement: FakeNode | null;
@@ -64,13 +71,14 @@ function makeNode(): FakeNode {
 interface FakeTiptapEditorSpies {
   destroyCalls: number;
   focusCalls: number;
+  mountCalls: number;
 }
 
 function makeFakeTiptapEditor(dom: FakeNode): {
   editor: Editor;
   spies: FakeTiptapEditorSpies;
 } {
-  const spies: FakeTiptapEditorSpies = { destroyCalls: 0, focusCalls: 0 };
+  const spies: FakeTiptapEditorSpies = { destroyCalls: 0, focusCalls: 0, mountCalls: 0 };
   const editor = {
     editorView: {
       dom,
@@ -80,6 +88,10 @@ function makeFakeTiptapEditor(dom: FakeNode): {
       focus() {
         spies.focusCalls++;
       },
+    },
+    mount(target: FakeNode) {
+      spies.mountCalls++;
+      target.appendChild(dom);
     },
     destroy() {
       spies.destroyCalls++;
@@ -359,7 +371,7 @@ describe('TipTap cache — lifecycle', () => {
     expect(h.editorDom.parentElement).not.toBe(h.container);
     expect(h.container.children).not.toContain(h.editorDom);
     expect(h.spies.destroyCalls).toBe(0);
-    expect(__peekTiptap(h.docName)).toBe(entry);
+    expect(peekTiptap(h.docName)).toBe(entry);
     expect(entry.activeMountKey).toBeNull();
   });
 
@@ -391,7 +403,7 @@ describe('TipTap cache — lifecycle', () => {
     expect(h.spies.destroyCalls).toBe(1);
     expect(h.providerSpies.destroyCalls).toBe(1);
     expect(ydocDestroySpy).toHaveBeenCalledTimes(1);
-    expect(__peekTiptap(h.docName)).toBeUndefined();
+    expect(peekTiptap(h.docName)).toBeUndefined();
     expect(__getCacheSize('tiptap')).toBe(0);
 
     expect(evictTiptapEditor(h.docName)).toBe(false);
@@ -483,8 +495,8 @@ describe('TipTap cache — mount-park-mount round-trip', () => {
     a.ytext.insert(0, 'a-content');
     b.ytext.insert(0, 'b-content');
 
-    const peekA = __peekTiptap(a.docName);
-    const peekB = __peekTiptap(b.docName);
+    const peekA = peekTiptap(a.docName);
+    const peekB = peekTiptap(b.docName);
     if (!peekA || !peekB) throw new Error('cache entries missing');
     parkTiptapEditor(peekA);
     parkTiptapEditor(peekB);
@@ -527,8 +539,8 @@ describe('TipTap cache — LRU eviction at MAX_CACHE capacity', () => {
       factory: extra.factory as unknown as (el: HTMLElement) => ReturnType<typeof extra.factory>,
     });
     expect(__getCacheSize('tiptap')).toBe(MAX_CACHE);
-    expect(__peekTiptap('doc-0')).toBeUndefined();
-    expect(__peekTiptap('doc-extra')).toBeDefined();
+    expect(peekTiptap('doc-0')).toBeUndefined();
+    expect(peekTiptap('doc-extra')).toBeDefined();
     expect(harnesses[0].spies.destroyCalls).toBe(1);
   });
 
@@ -581,7 +593,7 @@ describe('TipTap cache — __uncached / kill-switch path', () => {
     expect(entry.activeMountKey).toBeNull();
   });
 
-  test('__uncached entry: NOT stored in cache (verified by __peekTiptap)', () => {
+  test('__uncached entry: NOT stored in cache (verified by peekTiptap)', () => {
     expect(__getCacheSize('tiptap')).toBe(0);
     const h = makeTiptapHarness('doc-a');
     const entry: TiptapCacheEntry = {
@@ -594,7 +606,7 @@ describe('TipTap cache — __uncached / kill-switch path', () => {
       activeMountKey: h.docName,
       __uncached: true,
     };
-    expect(__peekTiptap(h.docName)).toBeUndefined();
+    expect(peekTiptap(h.docName)).toBeUndefined();
     parkTiptapEditor(entry);
     expect(h.spies.destroyCalls).toBe(1);
   });
@@ -673,7 +685,7 @@ describe('TipTap cache — undoManager.restore cleanup on destroy', () => {
     expect(h.spies.destroyCalls).toBe(1);
     expect(h.providerSpies.destroyCalls).toBe(1);
     expect(undoManager.restore).toBeUndefined();
-    expect(__peekTiptap(h.docName)).toBeUndefined();
+    expect(peekTiptap(h.docName)).toBeUndefined();
   });
 
   test('cleanup is resilient when editor.destroy() throws', () => {
@@ -724,7 +736,7 @@ describe('TipTap cache — undoManager.restore cleanup on destroy', () => {
     expect(h.spies.destroyCalls).toBe(1);
     expect(h.providerSpies.destroyCalls).toBe(1);
     expect(undoManager.restore).toBeUndefined();
-    expect(__peekTiptap(h.docName)).toBeUndefined();
+    expect(peekTiptap(h.docName)).toBeUndefined();
   });
 
   test('evictTiptapEditor cleanup is resilient when editor.destroy() throws', () => {
@@ -746,7 +758,7 @@ describe('TipTap cache — undoManager.restore cleanup on destroy', () => {
     expect(h.spies.destroyCalls).toBe(1);
     expect(h.providerSpies.destroyCalls).toBe(1);
     expect(undoManager.restore).toBeUndefined();
-    expect(__peekTiptap(h.docName)).toBeUndefined();
+    expect(peekTiptap(h.docName)).toBeUndefined();
   });
 
   test('capture-before-destroy ordering: state inaccessible AFTER destroy still clears restore', () => {
@@ -1078,7 +1090,7 @@ describe('mountTiptapEditor — size gate falls through to __uncached', () => {
     });
     expect(entry.__uncached).toBe(true);
     expect(__getCacheSize('tiptap')).toBe(0);
-    expect(__peekTiptap(h.docName)).toBeUndefined();
+    expect(peekTiptap(h.docName)).toBeUndefined();
   });
 
   test('gate-admitted mount: entry IS cached (no __uncached tag)', () => {
@@ -1091,7 +1103,7 @@ describe('mountTiptapEditor — size gate falls through to __uncached', () => {
     });
     expect(entry.__uncached).toBeUndefined();
     expect(__getCacheSize('tiptap')).toBe(1);
-    expect(__peekTiptap(h.docName)).toBe(entry);
+    expect(peekTiptap(h.docName)).toBe(entry);
   });
 
   test('omitted sizeStats: entry is cached (legacy callers default to cache)', () => {
@@ -1235,7 +1247,7 @@ describe('setActivityMountList — connect/disconnect transitions', () => {
     };
     const unsubscribe = subscribePoolEviction(fakePool);
     try {
-      expect(__peekTiptap('orphan-doc')).toBeUndefined();
+      expect(peekTiptap('orphan-doc')).toBeUndefined();
       expect(__peekCm('orphan-doc')).toBeUndefined();
 
       setActivityMountList(['orphan-doc']);
@@ -1297,13 +1309,13 @@ describe('subscribePoolEviction — onEvict propagation', () => {
         container: cm.container as unknown as HTMLElement,
         factory: cm.factory as unknown as (el: HTMLElement) => ReturnType<typeof cm.factory>,
       });
-      expect(__peekTiptap('doc-shared')).toBeDefined();
+      expect(peekTiptap('doc-shared')).toBeDefined();
       expect(__peekCm('doc-shared')).toBeDefined();
       expect(captured).not.toBeNull();
 
       captured?.('doc-shared');
 
-      expect(__peekTiptap('doc-shared')).toBeUndefined();
+      expect(peekTiptap('doc-shared')).toBeUndefined();
       expect(__peekCm('doc-shared')).toBeUndefined();
       expect(tip.spies.destroyCalls).toBe(1);
       expect(cm.spies.destroyCalls).toBe(1);
@@ -1326,7 +1338,7 @@ describe('subscribePoolEviction — onEvict propagation', () => {
     const unsubscribe = subscribePoolEviction(fakePool);
     try {
       expect(captured).not.toBeNull();
-      expect(__peekTiptap('never-mounted')).toBeUndefined();
+      expect(peekTiptap('never-mounted')).toBeUndefined();
       expect(__peekCm('never-mounted')).toBeUndefined();
       expect(() => captured?.('never-mounted')).not.toThrow();
     } finally {
@@ -1359,8 +1371,8 @@ describe('LRU eviction respects activity-mount list (never evicts active doc)', 
       factory: extra.factory as unknown as (el: HTMLElement) => ReturnType<typeof extra.factory>,
     });
 
-    expect(__peekTiptap('doc-0')).toBeDefined(); // Activity-mounted — spared
-    expect(__peekTiptap('doc-1')).toBeUndefined(); // Oldest non-active — evicted
+    expect(peekTiptap('doc-0')).toBeDefined(); // Activity-mounted — spared
+    expect(peekTiptap('doc-1')).toBeUndefined(); // Oldest non-active — evicted
     expect(harnesses[0].spies.destroyCalls).toBe(0);
     expect(harnesses[1].spies.destroyCalls).toBe(1);
   });
@@ -1660,5 +1672,206 @@ describe('US-001 (cap-calibration-probes): cache-hit reparent span marks', () =>
       factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
     });
     expect(performance.getEntriesByName('ok/cache/hit').length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+let __us004DocumentStubInstalled = false;
+function installDocumentStub(): void {
+  if (typeof globalThis.document !== 'undefined') return;
+  // biome-ignore lint/suspicious/noExplicitAny: minimal test-only stub for `document.createElement`
+  (globalThis as any).document = {
+    createElement: (_tag: string) => makeNode(),
+  };
+  __us004DocumentStubInstalled = true;
+}
+
+function uninstallDocumentStub(): void {
+  if (!__us004DocumentStubInstalled) return;
+  // biome-ignore lint/suspicious/noExplicitAny: tearing down the test-only stub installed above
+  delete (globalThis as any).document;
+  __us004DocumentStubInstalled = false;
+}
+
+describe('US-004: D20 mount-promise cancellation wired into park', () => {
+  beforeEach(() => {
+    __resetCacheForTests();
+    __resetMountPromiseCache();
+    installDocumentStub();
+  });
+  afterEach(() => {
+    __resetCacheForTests();
+    __resetMountPromiseCache();
+    uninstallDocumentStub();
+  });
+
+  test('park-after-mount: PRESERVES the mount-promise cache so the next mount returns the same Promise reference (no Suspense flash)', async () => {
+    const h = makeTiptapHarness('doc-park-preserves');
+    const construct = () => ({
+      editor: h.editor,
+      ydoc: h.ydoc,
+      ytext: h.ytext,
+      provider: h.provider,
+    });
+
+    const firstPromise = mountTiptapEditorPromise({
+      docName: h.docName,
+      construct,
+    });
+    const entry = await firstPromise;
+
+    expect(__mountPromiseCacheSize()).toBe(1);
+    expect(__mountPromiseSettled(h.docName)).toBe(true);
+    expect(__getCacheSize('tiptap')).toBe(1);
+    expect(entry.activeMountKey).toBe(h.docName);
+
+    parkTiptapEditor(entry);
+
+    expect(__mountPromiseCacheSize()).toBe(1);
+    expect(__mountPromiseSettled(h.docName)).toBe(true);
+    expect(peekTiptap(h.docName)).toBeDefined();
+    expect(h.spies.destroyCalls).toBe(0);
+
+    const secondPromise = mountTiptapEditorPromise({
+      docName: h.docName,
+      construct,
+    });
+    expect(secondPromise).toBe(firstPromise);
+  });
+
+  test('park-on-already-parked entry: no-op for both V2 cache and mount-promise (preservation contract)', async () => {
+    const h = makeTiptapHarness('doc-park-twice');
+    const construct = () => ({
+      editor: h.editor,
+      ydoc: h.ydoc,
+      ytext: h.ytext,
+      provider: h.provider,
+    });
+    const entry = await mountTiptapEditorPromise({
+      docName: h.docName,
+      construct,
+    });
+
+    parkTiptapEditor(entry);
+    expect(__mountPromiseCacheSize()).toBe(1);
+    expect(entry.activeMountKey).toBeNull();
+    expect(h.spies.destroyCalls).toBe(0);
+
+    parkTiptapEditor(entry);
+    expect(__mountPromiseCacheSize()).toBe(1);
+    expect(h.spies.destroyCalls).toBe(0);
+  });
+
+  test('__uncached park: invalidates mount-promise BEFORE the kill-switch destroy fires', async () => {
+    const h = makeTiptapHarness('doc-uncached-park');
+    h.container.appendChild(h.editorDom);
+    const entry: TiptapCacheEntry = {
+      editor: h.editor,
+      ydoc: h.ydoc,
+      ytext: h.ytext,
+      provider: h.provider,
+      scrollTop: 0,
+      hadFocus: false,
+      activeMountKey: h.docName,
+      __uncached: true,
+    };
+
+    const primer = makeTiptapHarness(h.docName);
+    const construct = () => ({
+      editor: primer.editor,
+      ydoc: primer.ydoc,
+      ytext: primer.ytext,
+      provider: primer.provider,
+    });
+    const pending = mountTiptapEditorPromise({ docName: h.docName, construct });
+    const settled = pending.catch(() => {});
+    expect(__mountPromiseCacheSize()).toBe(1);
+
+    expect(h.spies.destroyCalls).toBe(0);
+    parkTiptapEditor(entry);
+    expect(__mountPromiseCacheSize()).toBe(0);
+    expect(h.spies.destroyCalls).toBe(1);
+
+    await settled;
+  });
+});
+
+describe('US-004: D20 mount-promise cancellation wired into evict', () => {
+  beforeEach(() => {
+    __resetCacheForTests();
+    __resetMountPromiseCache();
+    installDocumentStub();
+  });
+  afterEach(() => {
+    __resetCacheForTests();
+    __resetMountPromiseCache();
+    uninstallDocumentStub();
+  });
+
+  test('evict-after-mount: invalidates mount-promise cache + destroys V2 entry', async () => {
+    const h = makeTiptapHarness('doc-evict-invalidates');
+    const construct = () => ({
+      editor: h.editor,
+      ydoc: h.ydoc,
+      ytext: h.ytext,
+      provider: h.provider,
+    });
+    await mountTiptapEditorPromise({ docName: h.docName, construct });
+
+    expect(__mountPromiseCacheSize()).toBe(1);
+    expect(__getCacheSize('tiptap')).toBe(1);
+
+    const result = evictTiptapEditor(h.docName);
+
+    expect(result).toBe(true);
+    expect(__mountPromiseCacheSize()).toBe(0);
+    expect(peekTiptap(h.docName)).toBeUndefined();
+    expect(h.spies.destroyCalls).toBe(1);
+    expect(h.providerSpies.destroyCalls).toBe(1);
+  });
+
+  test('evict-during-yield-window: aborts in-flight body, rejects with MountAbortError, destroys pre-mount editor', async () => {
+    const h = makeTiptapHarness('doc-evict-during-yield');
+    let constructed = false;
+    const construct = () => {
+      constructed = true;
+      return {
+        editor: h.editor,
+        ydoc: h.ydoc,
+        ytext: h.ytext,
+        provider: h.provider,
+      };
+    };
+
+    const pending = mountTiptapEditorPromise({ docName: h.docName, construct });
+    expect(__mountPromiseCacheSize()).toBe(1);
+    expect(__getCacheSize('tiptap')).toBe(0);
+
+    const result = evictTiptapEditor(h.docName);
+    expect(result).toBe(false); // V2 had no entry to evict
+    expect(__mountPromiseCacheSize()).toBe(0);
+
+    let caught: unknown = null;
+    try {
+      await pending;
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(MountAbortError);
+    expect(constructed).toBe(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(h.spies.destroyCalls).toBe(1);
+    expect(h.spies.mountCalls).toBe(0);
+    expect(__getCacheSize('tiptap')).toBe(0);
+  });
+
+  test('evict-on-no-entry-anywhere: safe no-op for both caches', () => {
+    expect(__mountPromiseCacheSize()).toBe(0);
+    expect(__getCacheSize('tiptap')).toBe(0);
+
+    const result = evictTiptapEditor('never-existed');
+
+    expect(result).toBe(false);
+    expect(__mountPromiseCacheSize()).toBe(0);
+    expect(__getCacheSize('tiptap')).toBe(0);
   });
 });

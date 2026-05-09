@@ -8,15 +8,15 @@ import {
   hasNewEntries,
   MarkdownManager,
 } from '@inkeep/open-knowledge-core';
-import { Editor, Extension } from '@tiptap/core';
+import { type AnyExtension, Editor, type EditorOptions, Extension, getSchema } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
 import Placeholder from '@tiptap/extension-placeholder';
 import { EditorContent } from '@tiptap/react';
-import { yCursorPlugin } from '@tiptap/y-tiptap';
-import { type FC, useEffect, useRef, useState } from 'react';
+import { initProseMirrorDoc, yCursorPlugin } from '@tiptap/y-tiptap';
+import { type FC, use, useEffect, useRef, useState } from 'react';
 import { Breadcrumb } from '@/components/editor/Breadcrumb';
 import { SelectionAnnouncer } from '@/components/editor/SelectionAnnouncer';
-import { mountTiptapEditor, parkTiptapEditor, type TiptapCacheEntry } from './editor-cache';
+import { parkTiptapEditor } from './editor-cache';
 import { InteractionLayerView } from './interaction-layer';
 import { getInteractionLayer } from './interaction-layer-host';
 
@@ -39,6 +39,7 @@ import { useDocumentContext } from './DocumentContext';
 import { setEditorDocName } from './extensions/doc-context.ts';
 import { sharedExtensions } from './extensions/shared.ts';
 import { uploadDecorationPlugin } from './image-upload/index.ts';
+import { mountTiptapEditorPromise } from './mount-promise';
 import { markUserTyping } from './observers';
 import { TableControlsMenu } from './table-controls/TableControlsMenu';
 import { getEditorView } from './utils/get-editor-view';
@@ -86,6 +87,135 @@ interface TiptapEditorProps {
   isSourceMode: boolean;
 }
 
+type ClipboardState = ReturnType<typeof buildClipboardState>;
+
+type ProsemirrorMapping = ReturnType<typeof initProseMirrorDoc>['mapping'];
+
+function buildClipboardState() {
+  const mdManager = new MarkdownManager({ extensions: coreExtensions });
+  return {
+    mdManager,
+    text: createClipboardTextSerializer({ mdManager }),
+    html: createClipboardHtmlSerializer({ mdManager }),
+    paste: createHandlePaste({ mdManager }),
+    drop: createHandleDrop({ mdManager }),
+  };
+}
+
+interface BuildEditorOptionsArgs {
+  provider: HocuspocusProvider;
+  placeholder?: string;
+  clipboard: ClipboardState;
+  ctorStart: number;
+  prebuiltMapping?: ProsemirrorMapping;
+}
+
+function buildExtensionList(args: BuildEditorOptionsArgs): AnyExtension[] {
+  const { provider, placeholder, prebuiltMapping } = args;
+  return [
+    ...sharedExtensions.map((ext) => {
+      if (ext.name === 'link' || ext.name === 'wikiLink') {
+        return ext.configure({ docName: provider.configuration.name ?? '' });
+      }
+      return ext;
+    }),
+    Placeholder.configure({
+      placeholder: placeholder ?? "Type '/' for commands",
+      showOnlyCurrent: true,
+    }),
+    Collaboration.configure({
+      document: provider.document,
+      ...(prebuiltMapping ? { ySyncOptions: { mapping: prebuiltMapping } } : {}),
+    }),
+    Extension.create({
+      name: 'imageUploadDecoration',
+      addProseMirrorPlugins() {
+        return [uploadDecorationPlugin];
+      },
+    }),
+    Extension.create({
+      name: 'collaborationCursor',
+      addProseMirrorPlugins() {
+        const awareness = provider.awareness;
+        if (!awareness) {
+          throw new Error(
+            '[TiptapEditor] HocuspocusProvider has no awareness instance — cursor plugin cannot initialize',
+          );
+        }
+        return [
+          yCursorPlugin(awareness, {
+            cursorBuilder: renderCursor,
+          }),
+        ];
+      },
+    }),
+  ];
+}
+
+function buildEditorOptions(args: BuildEditorOptionsArgs): Partial<EditorOptions> {
+  const { provider, clipboard, ctorStart } = args;
+  return {
+    onBeforeCreate: ({ editor }) => {
+      editorCtorStartTimes.set(editor, ctorStart);
+    },
+    onCreate: ({ editor }) => {
+      clipboard.html.setView(editor.view);
+      const start = editorCtorStartTimes.get(editor);
+      editorCtorStartTimes.delete(editor);
+      if (start == null) return;
+      const now = performance.now();
+      mark(
+        'ok/editor/create-tiptap',
+        {
+          docName: provider.configuration.name ?? 'unknown',
+          ytextLength: provider.document.getText('source').length,
+        },
+        { startTime: start, duration: Math.max(0, now - start) },
+      );
+    },
+    editorProps: {
+      attributes: {
+        class: 'pt-4 pb-4 h-full',
+      },
+      clipboardTextParser: (text, _context, _plain, view) => {
+        const json = clipboard.mdManager.parse(text);
+        const node = view.state.schema.nodeFromJSON(json);
+        // biome-ignore lint/suspicious/noExplicitAny: TipTap's clipboardTextParser expects a Slice-like return but ProseMirror Fragment works at runtime; no public type expresses the union
+        return node.content as any;
+      },
+      clipboardTextSerializer: (slice, view) => clipboard.text(slice, view),
+      clipboardSerializer: clipboard.html.serializer,
+      handlePaste: (view, event) => clipboard.paste(view, event),
+      handleDrop: (view, event) => clipboard.drop(view, event as DragEvent),
+    },
+    extensions: wrapExtensionsWithTiming(buildExtensionList(args)),
+  };
+}
+
+interface BuildPatternDConstructorOptionsArgs {
+  provider: HocuspocusProvider;
+  placeholder?: string;
+  clipboard: ClipboardState;
+  ctorStart: number;
+}
+
+type PatternDConstructorOptions = Partial<EditorOptions> & { element: null };
+
+export function buildPatternDConstructorOptions(
+  args: BuildPatternDConstructorOptionsArgs,
+): PatternDConstructorOptions {
+  const { provider, placeholder, clipboard, ctorStart } = args;
+  const baseExtensions = buildExtensionList({ provider, placeholder, clipboard, ctorStart });
+  const schema = getSchema(baseExtensions);
+  const fragment = provider.document.getXmlFragment('default');
+  const { doc: prebuiltDoc, mapping: prebuiltMapping } = initProseMirrorDoc(fragment, schema);
+  return {
+    ...buildEditorOptions({ provider, placeholder, clipboard, ctorStart, prebuiltMapping }),
+    content: prebuiltDoc.toJSON(),
+    element: null,
+  };
+}
+
 export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isSourceMode }) => {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
@@ -93,137 +223,77 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
   const { principal, activeDocName } = useDocumentContext();
   const docName = provider.configuration.name ?? '';
 
-  const [clipboard] = useState(() => {
-    const mdManager = new MarkdownManager({ extensions: coreExtensions });
+  const [clipboard] = useState(buildClipboardState);
+
+  const [construct] = useState(() => () => {
+    const ctorStart = performance.now();
+    const tipTapEditor = new Editor(
+      buildPatternDConstructorOptions({
+        provider,
+        placeholder,
+        clipboard,
+        ctorStart,
+      }),
+    );
     return {
-      mdManager,
-      text: createClipboardTextSerializer({ mdManager }),
-      html: createClipboardHtmlSerializer({ mdManager }),
-      paste: createHandlePaste({ mdManager }),
-      drop: createHandleDrop({ mdManager }),
+      editor: tipTapEditor,
+      ydoc: provider.document,
+      ytext: provider.document.getText('source'),
+      provider,
     };
   });
 
-  const [editor, setEditor] = useState<Editor | null>(null);
-  const [mountError, setMountError] = useState<Error | null>(null);
-  if (mountError) throw mountError;
-  const cacheEntryRef = useRef<TiptapCacheEntry | null>(null);
+  const bytes = provider.document.getText('source').length;
+  const sizeStats = { viewCount: 0, bytes };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: placeholder intentionally excluded — see comment above
+  const entry = use(mountTiptapEditorPromise({ docName, construct, sizeStats }));
+  const editor = entry.editor;
+
   useEffect(() => {
-    let entry: TiptapCacheEntry | null = null;
-    try {
-      const bytes = provider.document.getText('source').length;
-      const sizeStats = { viewCount: 0, bytes };
-      const transient = document.createElement('div');
-      entry = mountTiptapEditor({
-        docName,
-        container: transient,
-        sizeStats,
-        factory: (el) => {
-          const ctorStart = performance.now();
-          const tipTapEditor = new Editor({
-            element: el,
-            onBeforeCreate: ({ editor }) => {
-              editorCtorStartTimes.set(editor, ctorStart);
-            },
-            onCreate: ({ editor }) => {
-              clipboard.html.setView(editor.view);
-              const start = editorCtorStartTimes.get(editor);
-              editorCtorStartTimes.delete(editor);
-              if (start == null) return;
-              const now = performance.now();
-              mark(
-                'ok/editor/create-tiptap',
-                {
-                  docName: provider.configuration.name ?? 'unknown',
-                  ytextLength: provider.document.getText('source').length,
-                },
-                { startTime: start, duration: Math.max(0, now - start) },
-              );
-            },
-            editorProps: {
-              attributes: {
-                class: 'pt-4 pb-4 h-full',
-              },
-              clipboardTextParser: (text, _context, _plain, view) => {
-                const json = clipboard.mdManager.parse(text);
-                const node = view.state.schema.nodeFromJSON(json);
-                // biome-ignore lint/suspicious/noExplicitAny: TipTap's clipboardTextParser expects a Slice-like return but ProseMirror Fragment works at runtime; no public type expresses the union
-                return node.content as any;
-              },
-              clipboardTextSerializer: (slice, view) => clipboard.text(slice, view),
-              clipboardSerializer: clipboard.html.serializer,
-              handlePaste: (view, event) => clipboard.paste(view, event),
-              handleDrop: (view, event) => clipboard.drop(view, event as DragEvent),
-            },
-            extensions: wrapExtensionsWithTiming([
-              ...sharedExtensions.map((ext) => {
-                if (ext.name === 'link' || ext.name === 'wikiLink') {
-                  return ext.configure({ docName: provider.configuration.name ?? '' });
-                }
-                return ext;
-              }),
-              Placeholder.configure({
-                placeholder: placeholder ?? "Type '/' for commands",
-                showOnlyCurrent: true,
-              }),
-              Collaboration.configure({
-                document: provider.document,
-              }),
-              Extension.create({
-                name: 'imageUploadDecoration',
-                addProseMirrorPlugins() {
-                  return [uploadDecorationPlugin];
-                },
-              }),
-              Extension.create({
-                name: 'collaborationCursor',
-                addProseMirrorPlugins() {
-                  const awareness = provider.awareness;
-                  if (!awareness) {
-                    throw new Error(
-                      '[TiptapEditor] HocuspocusProvider has no awareness instance — cursor plugin cannot initialize',
-                    );
-                  }
-                  return [
-                    yCursorPlugin(awareness, {
-                      cursorBuilder: renderCursor,
-                    }),
-                  ];
-                },
-              }),
-            ]),
-          });
-          return {
-            editor: tipTapEditor,
-            ydoc: provider.document,
-            ytext: provider.document.getText('source'),
-            provider,
-          };
-        },
-      });
-      cacheEntryRef.current = entry;
-      setEditor(entry.editor);
-    } catch (err) {
-      console.error('[TiptapEditor] mountTiptapEditor failed', err);
-      cacheEntryRef.current = null;
-      setEditor(null);
-      setMountError(err instanceof Error ? err : new Error(String(err)));
-    }
-
     return () => {
-      const cur = cacheEntryRef.current;
-      if (cur) {
-        parkTiptapEditor(cur);
-      }
-      cacheEntryRef.current = null;
-      setEditor(null);
+      parkTiptapEditor(entry);
     };
-  }, [docName, provider, clipboard]);
+  }, [entry]);
 
+  return (
+    <TiptapEditorChrome
+      provider={provider}
+      isSourceMode={isSourceMode}
+      docName={docName}
+      activeDocName={activeDocName}
+      identity={identity}
+      principal={principal}
+      editor={editor}
+      wrapperRef={wrapperRef}
+      flashStateRef={flashStateRef}
+    />
+  );
+};
+
+interface TiptapEditorChromeProps {
+  provider: HocuspocusProvider;
+  isSourceMode: boolean;
+  docName: string;
+  activeDocName: string | null;
+  identity: ReturnType<typeof useIdentity>;
+  principal: ReturnType<typeof useDocumentContext>['principal'];
+  editor: Editor;
+  wrapperRef: React.RefObject<HTMLDivElement | null>;
+  flashStateRef: React.RefObject<AgentFlashState>;
+}
+
+const TiptapEditorChrome: FC<TiptapEditorChromeProps> = ({
+  provider,
+  isSourceMode,
+  docName,
+  activeDocName,
+  identity,
+  principal,
+  editor,
+  wrapperRef,
+  flashStateRef,
+}) => {
   useEffect(() => {
-    if (!editor) return;
     const docName = provider.configuration.name ?? null;
     setEditorDocName(editor, docName);
     return () => {
@@ -232,7 +302,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
   }, [editor, provider]);
 
   useEffect(() => {
-    if (!editor || !import.meta.env.DEV) return;
+    if (!import.meta.env.DEV) return;
     const docName = provider.configuration.name;
     if (!docName) return;
     registerEditor(docName, editor);
@@ -240,11 +310,10 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
   }, [editor, provider]);
 
   useEffect(() => {
-    if (!editor) return;
     const mark = () => markUserTyping();
     let attachedDom: HTMLElement | null = null;
     const attach = () => {
-      if (attachedDom || !editor || editor.isDestroyed) return;
+      if (attachedDom || editor.isDestroyed) return;
       const view = getEditorView(editor);
       if (!view) return;
       attachedDom = view.dom;
@@ -274,7 +343,6 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
   }, [editor]);
 
   useEffect(() => {
-    if (!editor) return;
     const activityMap = provider.document.getMap('agent-flash');
     let lastSeenTimestamp = Date.now();
     let lastFlashTime = 0;
@@ -407,7 +475,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
       if (flashEndTimeout) clearTimeout(flashEndTimeout);
       if (flashSettledTimeout) clearTimeout(flashSettledTimeout);
     };
-  }, [editor, provider.document]);
+  }, [provider.document, flashStateRef, wrapperRef]);
 
   useEffect(() => {
     const hash = window.location.hash;
@@ -442,10 +510,9 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
   }, [provider]);
 
   useEffect(() => {
-    if (!editor) return;
     function onNav(e: Event) {
       const detail = (e as CustomEvent<OutlineNavDetail>).detail;
-      if (!detail || detail.mode !== 'wysiwyg' || !editor || editor.isDestroyed) return;
+      if (!detail || detail.mode !== 'wysiwyg' || editor.isDestroyed) return;
       const realView = getEditorView(editor);
       if (!realView) return;
       const headings = realView.dom.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
@@ -478,8 +545,8 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
       data-agent-flash-position="append"
       data-agent-flash-agent-id=""
     >
-      {editor && <BubbleMenuBar editor={editor} />}
-      {editor && <TableControlsMenu editor={editor} />}
+      <BubbleMenuBar editor={editor} />
+      <TableControlsMenu editor={editor} />
       {/* Drag handle + "+" chrome is registered as the imperative
           `BlockDragHandle` TipTap extension in `sharedExtensions` —
           bare DOM container, no React involvement. A React-wrapper
@@ -502,8 +569,8 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
       {/* Selection layer footer — ancestry breadcrumb + aria-live announcer.
           Breadcrumb renders only when a block is selected; announcer is
           always in the DOM (role=status + sr-only) and updates imperatively. */}
-      {editor && <Breadcrumb editor={editor} />}
-      {editor && <SelectionAnnouncer editor={editor} />}
+      <Breadcrumb editor={editor} />
+      <SelectionAnnouncer editor={editor} />
       {/*
        * <InteractionLayerView> renders the singleton PropPanel / Toolbar /
        * Breadcrumb subtree FOR THE ACTIVE chip — inside the main React tree
@@ -518,7 +585,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
        * Rendered AFTER EditorContent so its absolute-positioned PropPanels
        * stack above editor content (z-index handled in CSS).
        */}
-      {editor && <InteractionLayerView store={getInteractionLayer(editor).store} />}
+      <InteractionLayerView store={getInteractionLayer(editor).store} />
     </div>
   );
 };

@@ -1469,7 +1469,7 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
       container: makeFakeNode() as unknown as HTMLElement,
       factory: () => ({ view: fakeView, ydoc: fakeYDoc, ytext: fakeYText, provider: makeProv() }),
     });
-    expect(cacheModule.__peekTiptap('doc-eviction-regression')).toBeDefined();
+    expect(cacheModule.peekTiptap('doc-eviction-regression')).toBeDefined();
     expect(cacheModule.__peekCm('doc-eviction-regression')).toBeDefined();
 
     pool = new ProviderPool(3, DUMMY_WS);
@@ -1477,7 +1477,7 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
     pool.open('doc-eviction-regression');
     pool.close('doc-eviction-regression');
 
-    expect(cacheModule.__peekTiptap('doc-eviction-regression')).toBeUndefined();
+    expect(cacheModule.peekTiptap('doc-eviction-regression')).toBeUndefined();
     expect(cacheModule.__peekCm('doc-eviction-regression')).toBeUndefined();
   });
 
@@ -1526,7 +1526,7 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
     pool.open('doc-recycle-regression');
     pool.recycle('doc-recycle-regression');
 
-    expect(cacheModule.__peekTiptap('doc-recycle-regression')).toBeUndefined();
+    expect(cacheModule.peekTiptap('doc-recycle-regression')).toBeUndefined();
     expect(cacheModule.__peekCm('doc-recycle-regression')).toBeUndefined();
   });
 
@@ -1576,8 +1576,8 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
     pool.open('dispose-b');
     pool.dispose();
 
-    expect(cacheModule.__peekTiptap('dispose-a')).toBeUndefined();
-    expect(cacheModule.__peekTiptap('dispose-b')).toBeUndefined();
+    expect(cacheModule.peekTiptap('dispose-a')).toBeUndefined();
+    expect(cacheModule.peekTiptap('dispose-b')).toBeUndefined();
   });
 });
 

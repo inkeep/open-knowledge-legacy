@@ -5,8 +5,9 @@ import { yUndoPluginKey } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 import { mark } from '@/lib/perf';
 import { readNumericOverride } from '@/lib/perf/env-override';
+import { invalidateMountPromise } from './mount-promise';
 
-function readEditorUndoManager(editor: Editor): { restore?: unknown } | null {
+export function readEditorUndoManager(editor: Editor): { restore?: unknown } | null {
   try {
     const state = editor.state;
     const pluginState = yUndoPluginKey.getState(state) as
@@ -14,7 +15,10 @@ function readEditorUndoManager(editor: Editor): { restore?: unknown } | null {
       | null
       | undefined;
     return pluginState?.undoManager ?? null;
-  } catch {
+  } catch (err) {
+    mark('ok/cache/undo-manager-read-failed', {
+      message: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
@@ -214,11 +218,21 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
 }
 
 export function parkTiptapEditor(entry: TiptapCacheEntry): void {
+  const docName = entry.activeMountKey;
   if (!CACHE_ENABLED || entry.__uncached) {
+    if (docName) {
+      invalidateMountPromise(docName);
+    }
     const undoManager = readEditorUndoManager(entry.editor);
     try {
       entry.editor.destroy();
-    } catch {}
+    } catch (err) {
+      mark('ok/cache/park-destroy-failed', {
+        docName: docName ?? '',
+        kind: 'tiptap',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
     if (undoManager) {
       undoManager.restore = undefined;
     }
@@ -245,6 +259,7 @@ export function parkTiptapEditor(entry: TiptapCacheEntry): void {
 }
 
 export function evictTiptapEditor(docName: string): boolean {
+  invalidateMountPromise(docName);
   const entry = tiptapCache.get(docName);
   if (!entry) return false;
 
@@ -392,7 +407,13 @@ export function parkCmEditor(entry: CmCacheEntry): void {
   if (!CACHE_ENABLED || entry.__uncached) {
     try {
       entry.view.destroy();
-    } catch {}
+    } catch (err) {
+      mark('ok/cache/park-destroy-failed', {
+        docName: entry.activeMountKey ?? '',
+        kind: 'cm',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
     entry.activeMountKey = null;
     return;
   }
@@ -604,7 +625,7 @@ export function __getCacheOrder(kind: 'tiptap' | 'cm'): string[] {
   return kind === 'tiptap' ? [...tiptapLru] : [...cmLru];
 }
 
-export function __peekTiptap(docName: string): TiptapCacheEntry | undefined {
+export function peekTiptap(docName: string): TiptapCacheEntry | undefined {
   return tiptapCache.get(docName);
 }
 

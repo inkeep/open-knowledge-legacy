@@ -7,13 +7,12 @@
  * SCOPING: one instance per `<Activity>` inside `EditorActivityPool` — NOT
  * a single top-level boundary for the whole pool. A hidden Activity's cached
  * rejected syncPromise re-throws synchronously on every render; placing the
- * boundary outside Activity lets those throws bubble into the visible UI
- * (QA-023/024 regression trace). Scoping per-Activity confines the error
- * render output to the Activity subtree, where `<Activity mode="hidden">`
- * applies `display:none` — hidden errors stay invisible until their Activity
- * becomes visible again.
+ * boundary outside Activity lets those throws bubble into the visible UI.
+ * Scoping per-Activity confines the error render output to the Activity
+ * subtree, where `<Activity mode="hidden">` applies `display:none` — hidden
+ * errors stay invisible until their Activity becomes visible again.
  *
- * UX (SPEC §5 Failure/debug + §9):
+ * UX:
  *   - Document name + one-line error summary (per error kind).
  *   - Primary "Try again": recycles the pool entry (fresh provider) so the
  *     next render re-enters Suspense with a fresh `syncPromise`.
@@ -39,6 +38,7 @@ import { useEffect, useRef } from 'react';
 import { ErrorBoundary, type FallbackProps } from 'react-error-boundary';
 import { OkBlob } from '@/components/OkBlob';
 import { Button } from '@/components/ui/button';
+import { MountAbortError, MountTimeoutError } from '@/editor/mount-promise';
 import {
   BridgeSetupError,
   DocumentNotFoundError,
@@ -55,13 +55,15 @@ interface ErrorCopy {
 
 const BACK_NAV_RESET_SENTINEL = '__back-nav__' as const;
 
-function errorDocName(error: unknown): string | null {
+export function errorDocName(error: unknown): string | null {
   if (
     error instanceof SyncTimeoutError ||
     error instanceof PreSyncDisconnectError ||
     error instanceof DocumentNotFoundError ||
     error instanceof BridgeSetupError ||
-    error instanceof ServerCapabilityMismatchError
+    error instanceof ServerCapabilityMismatchError ||
+    error instanceof MountAbortError ||
+    error instanceof MountTimeoutError
   ) {
     return error.docName;
   }
@@ -97,6 +99,18 @@ export function errorCopy(error: unknown): ErrorCopy {
     return {
       title: "Server can't open documents",
       summary: `This project's running server doesn't support live editing. Restart Open Knowledge to fix.`,
+    };
+  }
+  if (error instanceof MountAbortError) {
+    return {
+      title: "Couldn't open document",
+      summary: `Loading "${error.docName}" was interrupted.`,
+    };
+  }
+  if (error instanceof MountTimeoutError) {
+    return {
+      title: "Couldn't load document",
+      summary: `"${error.docName}" took too long. Check your connection.`,
     };
   }
   const message =
@@ -209,8 +223,9 @@ export function DocumentErrorBoundary({
         }
       }}
       onError={(error) => {
-        console.warn(
+        console.error(
           `[DocumentErrorBoundary] rendered fallback for ${activeDocName}: ${errorCopy(error).title}`,
+          error,
         );
       }}
     >
