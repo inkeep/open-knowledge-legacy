@@ -202,6 +202,7 @@ describe('discoverProject — managed kind (ancestor walk)', () => {
     const result = await discoverProject(project, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('managed');
@@ -220,6 +221,7 @@ describe('discoverProject — managed kind (ancestor walk)', () => {
     const result = await discoverProject(sub, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('managed');
@@ -240,6 +242,7 @@ describe('discoverProject — managed kind (ancestor walk)', () => {
     const result = await discoverProject(sub, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('managed');
@@ -254,6 +257,7 @@ describe('discoverProject — managed kind (ancestor walk)', () => {
     const result = await discoverProject(fakeHome, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('fresh');
@@ -270,6 +274,7 @@ describe('discoverProject — managed kind (ancestor walk)', () => {
     const result = await discoverProject(api, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({ [api]: repo }),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('managed');
@@ -290,6 +295,7 @@ describe('discoverProject — fresh kind, git-root promotion (FR-2a)', () => {
     const result = await discoverProject(docs, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({ [docs]: repo }),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('fresh');
@@ -309,6 +315,7 @@ describe('discoverProject — fresh kind, git-root promotion (FR-2a)', () => {
     const result = await discoverProject(repo, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({ [repo]: repo }),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('fresh');
@@ -326,6 +333,7 @@ describe('discoverProject — fresh kind, git-root promotion (FR-2a)', () => {
     const result = await discoverProject(sub, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({ [sub]: fakeHome }),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('fresh');
@@ -343,6 +351,7 @@ describe('discoverProject — fresh kind, git-root promotion (FR-2a)', () => {
     const result = await discoverProject(sub, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({ [sub]: aboveHome }),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('fresh');
@@ -358,6 +367,7 @@ describe('discoverProject — fresh kind, git-root promotion (FR-2a)', () => {
     const result = await discoverProject(folder, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('fresh');
@@ -376,6 +386,7 @@ describe('discoverProject — gitState detection', () => {
     const result = await discoverProject(folder, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('fresh');
@@ -391,6 +402,7 @@ describe('discoverProject — gitState detection', () => {
     const result = await discoverProject(folder, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('fresh');
@@ -406,6 +418,7 @@ describe('discoverProject — gitState detection', () => {
     const result = await discoverProject(folder, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('fresh');
@@ -421,6 +434,7 @@ describe('discoverProject — rejected kind', () => {
     const result = await discoverProject(missing, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('rejected');
@@ -437,6 +451,7 @@ describe('discoverProject — rejected kind', () => {
     const result = await discoverProject(a, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('rejected');
@@ -456,6 +471,7 @@ describe('discoverProject — rejected kind', () => {
     const result = await discoverProject(sub, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('rejected');
@@ -475,6 +491,7 @@ describe('discoverProject — depth + boundary safety', () => {
     const result = await discoverProject(cursor, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('fresh');
@@ -492,6 +509,7 @@ describe('discoverProject — symlink resolution + canonical paths', () => {
     const result = await discoverProject(link, {
       homeDir: fakeHome,
       gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
     });
 
     expect(result.kind).toBe('managed');
@@ -513,7 +531,7 @@ describe('discoverProject — type surface', () => {
   });
 
   test('DiscoverProjectOptions and DiscoverProjectResult are import-able', () => {
-    const opts: DiscoverProjectOptions = { homeDir: HOME };
+    const opts: DiscoverProjectOptions = { homeDir: HOME, dirSizeProbe: null };
     const empty: ValidateFolderPickOptions = {};
     expect(opts.homeDir).toBe(HOME);
     expect(empty).toEqual({});
@@ -527,6 +545,104 @@ describe('discoverProject — type surface', () => {
   });
 });
 
+describe('discoverProject — ancestor-promote bounded by boot budget (regression: utility init timeout)', () => {
+  type DirSizeProbe = (dir: string) => Promise<{ readonly exceedsCap: boolean }>;
+
+  test('ancestor with content tree EXCEEDING boot budget MUST surface user-confirmation requirement', async () => {
+    const ancestor = resolve(fakeHome, 'ancestor');
+    const sub = resolve(ancestor, 'sub');
+    const picked = resolve(sub, 'picked');
+    mkdirSync(picked, { recursive: true });
+    writeOkConfig(ancestor);
+
+    let probedDir: string | undefined;
+    const dirSizeProbe: DirSizeProbe = async (dir) => {
+      probedDir = dir;
+      return { exceedsCap: true };
+    };
+
+    const opts: DiscoverProjectOptions = {
+      homeDir: fakeHome,
+      gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe,
+    };
+    const result = await discoverProject(picked, opts);
+
+    expect(probedDir).toBe(ancestor);
+
+    expect(result.kind).toBe('managed-requires-confirmation');
+    if (result.kind !== 'managed-requires-confirmation') return;
+    expect(result.projectDir).toBe(ancestor);
+    expect(result.pickedPath).toBe(picked);
+    expect(result.ancestorPromoted).toBe(true);
+  });
+
+  test('ancestor with content tree UNDER boot budget proceeds with silent managed-promote (no over-correction)', async () => {
+    const ancestor = resolve(fakeHome, 'ancestor');
+    const sub = resolve(ancestor, 'sub');
+    const picked = resolve(sub, 'picked');
+    mkdirSync(picked, { recursive: true });
+    writeOkConfig(ancestor);
+
+    const dirSizeProbe: DirSizeProbe = async () => ({ exceedsCap: false });
+
+    const opts: DiscoverProjectOptions = {
+      homeDir: fakeHome,
+      gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe,
+    };
+    const result = await discoverProject(picked, opts);
+
+    expect(result.kind).toBe('managed');
+    if (result.kind !== 'managed') return;
+    expect(result.projectDir).toBe(ancestor);
+    expect(result.ancestorPromoted).toBe(true);
+  });
+
+  test('explicit null opt-out preserves legacy silent ancestor-promote (no probe = no gate)', async () => {
+    const ancestor = resolve(fakeHome, 'ancestor');
+    const sub = resolve(ancestor, 'sub');
+    const picked = resolve(sub, 'picked');
+    mkdirSync(picked, { recursive: true });
+    writeOkConfig(ancestor);
+
+    const result = await discoverProject(picked, {
+      homeDir: fakeHome,
+      gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe: null,
+    });
+
+    expect(result.kind).toBe('managed');
+    if (result.kind !== 'managed') return;
+    expect(result.projectDir).toBe(ancestor);
+    expect(result.ancestorPromoted).toBe(true);
+  });
+
+  test('direct-pick (no walk-up) does NOT invoke the probe', async () => {
+    const projectRoot = resolve(fakeHome, 'projectRoot');
+    mkdirSync(projectRoot, { recursive: true });
+    writeOkConfig(projectRoot);
+
+    let probeCalled = false;
+    const dirSizeProbe: DirSizeProbe = async () => {
+      probeCalled = true;
+      return { exceedsCap: true };
+    };
+
+    const result = await discoverProject(projectRoot, {
+      homeDir: fakeHome,
+      gitTopLevel: stubGitTopLevel({}),
+      dirSizeProbe,
+    });
+
+    expect(probeCalled).toBe(false);
+    expect(result.kind).toBe('managed');
+    if (result.kind !== 'managed') return;
+    expect(result.projectDir).toBe(projectRoot);
+    expect(result.ancestorPromoted).toBe(false);
+  });
+});
+
 describe('discoverProject — integration with real git', () => {
   test('real git init + sub-folder pick → gitRootPromoted with relative defaultContentDir', async () => {
     const repo = resolve(fakeHome, 'integration-repo');
@@ -534,7 +650,7 @@ describe('discoverProject — integration with real git', () => {
     mkdirSync(docs, { recursive: true });
     await execFileAsync('git', ['init', '--initial-branch=main', repo]);
 
-    const result = await discoverProject(docs, { homeDir: fakeHome });
+    const result = await discoverProject(docs, { homeDir: fakeHome, dirSizeProbe: null });
 
     expect(result.kind).toBe('fresh');
     if (result.kind !== 'fresh') return;
@@ -549,7 +665,7 @@ describe('discoverProject — integration with real git', () => {
     mkdirSync(repo, { recursive: true });
     await execFileAsync('git', ['init', '--initial-branch=main', repo]);
 
-    const result = await discoverProject(repo, { homeDir: fakeHome });
+    const result = await discoverProject(repo, { homeDir: fakeHome, dirSizeProbe: null });
 
     expect(result.kind).toBe('fresh');
     if (result.kind !== 'fresh') return;
@@ -561,7 +677,7 @@ describe('discoverProject — integration with real git', () => {
     const folder = resolve(fakeHome, 'no-git-folder');
     mkdirSync(folder, { recursive: true });
 
-    const result = await discoverProject(folder, { homeDir: fakeHome });
+    const result = await discoverProject(folder, { homeDir: fakeHome, dirSizeProbe: null });
 
     expect(result.kind).toBe('fresh');
     if (result.kind !== 'fresh') return;

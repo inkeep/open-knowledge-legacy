@@ -150,6 +150,7 @@ describe('recordOnboardingFlow — span name + attribute shape', () => {
 
   const FLOW_KINDS = [
     'managed-promote',
+    'managed-promote-cancelled',
     'managed-direct',
     'fresh-silent',
     'fresh-default',
