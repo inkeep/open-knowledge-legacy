@@ -3,6 +3,7 @@ import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import type { PluginOptions } from 'babel-plugin-react-compiler';
 import { defineConfig } from 'vite';
 import { hocuspocusPlugin } from './src/server/hocuspocus-plugin';
+import { RENDERER_DEDUPE } from './vite.dedupe';
 
 const reactCompilerConfig: PluginOptions = {
   panicThreshold: 'all_errors',
@@ -25,35 +26,7 @@ export default defineConfig({
   ],
   resolve: {
     tsconfigPaths: true,
-    dedupe: [
-      'react',
-      'react-dom',
-      '@codemirror/state',
-      '@codemirror/view',
-      '@codemirror/language',
-      '@codemirror/commands',
-      '@codemirror/merge',
-      '@codemirror/lang-markdown',
-      'prosemirror-changeset',
-      'prosemirror-collab',
-      'prosemirror-commands',
-      'prosemirror-dropcursor',
-      'prosemirror-gapcursor',
-      'prosemirror-history',
-      'prosemirror-inputrules',
-      'prosemirror-keymap',
-      'prosemirror-markdown',
-      'prosemirror-menu',
-      'prosemirror-model',
-      'prosemirror-schema-basic',
-      'prosemirror-schema-list',
-      'prosemirror-state',
-      'prosemirror-tables',
-      'prosemirror-trailing-node',
-      'prosemirror-transform',
-      'prosemirror-view',
-      'yjs',
-    ],
+    dedupe: [...RENDERER_DEDUPE],
   },
   server: {
     port: vitePort ?? 5173,

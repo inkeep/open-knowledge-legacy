@@ -84,6 +84,7 @@ import {
   showItemInFolder as showItemInFolderImpl,
   spawnCursor as spawnCursorImpl,
 } from './ipc-handlers.ts';
+import { logIpcError } from './ipc-log.ts';
 import {
   type McpWiringCliSurface,
   type RunMcpWiringHandle,
@@ -764,7 +765,7 @@ function registerIpcHandlers() {
       callerWin && wm
         ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
         : undefined;
-    return spawnCursorImpl(
+    const outcome = await spawnCursorImpl(
       {
         platform: process.platform,
         projectPath: callerProjectPath,
@@ -787,6 +788,15 @@ function registerIpcHandlers() {
       },
       path,
     );
+    if (!outcome.ok) {
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:shell:spawn-cursor',
+        reason: outcome.reason,
+        handler: 'spawnCursor',
+      });
+    }
+    return outcome;
   });
 
   handle('ok:shell:record-handoff', async (_event, line) => {
@@ -808,9 +818,15 @@ function registerIpcHandlers() {
         ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
         : undefined;
     if (!callerProjectPath) {
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:shell:open-asset',
+        reason: 'path-escape',
+        handler: 'openAsset',
+      });
       return { ok: false, reason: 'path-escape' } as const;
     }
-    return openAssetSafely(
+    const outcome = await openAssetSafely(
       {
         projectPath: callerProjectPath,
         platform: process.platform,
@@ -818,6 +834,15 @@ function registerIpcHandlers() {
       },
       relPath,
     );
+    if (!outcome.ok) {
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:shell:open-asset',
+        reason: outcome.reason,
+        handler: 'openAsset',
+      });
+    }
+    return outcome;
   });
 
   handle('ok:shell:reveal-asset', async (event, relPath) => {
@@ -827,9 +852,15 @@ function registerIpcHandlers() {
         ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
         : undefined;
     if (!callerProjectPath) {
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:shell:reveal-asset',
+        reason: 'path-escape',
+        handler: 'revealAsset',
+      });
       return { ok: false, reason: 'path-escape' } as const;
     }
-    return revealAssetSafely(
+    const outcome = await revealAssetSafely(
       {
         projectPath: callerProjectPath,
         platform: process.platform,
@@ -837,6 +868,15 @@ function registerIpcHandlers() {
       },
       relPath,
     );
+    if (!outcome.ok) {
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:shell:reveal-asset',
+        reason: outcome.reason,
+        handler: 'revealAsset',
+      });
+    }
+    return outcome;
   });
 
   handle('ok:shell:show-asset-menu', async (event, params) => {
@@ -1007,17 +1047,53 @@ function registerIpcHandlers() {
       : undefined;
   };
   handle('ok:seed:plan', async (event, rootDir) => {
-    return handleSeedPlan({ resolveProjectRoot: () => resolveSeedProjectRoot(event) }, rootDir);
+    const result = await handleSeedPlan(
+      { resolveProjectRoot: () => resolveSeedProjectRoot(event) },
+      rootDir,
+    );
+    if (!result.ok) {
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:seed:plan',
+        reason: result.error.kind,
+        handler: 'handleSeedPlan',
+        cause: { message: result.error.message },
+      });
+    }
+    return result;
   });
   handle('ok:seed:apply', async (event, plan) => {
-    return handleSeedApply({ resolveProjectRoot: () => resolveSeedProjectRoot(event) }, plan);
+    const result = await handleSeedApply(
+      { resolveProjectRoot: () => resolveSeedProjectRoot(event) },
+      plan,
+    );
+    if (!result.ok) {
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:seed:apply',
+        reason: result.error.kind,
+        handler: 'handleSeedApply',
+        cause: { message: result.error.message },
+      });
+    }
+    return result;
   });
 
   handle('ok:skill:detect-claude-desktop', async () => {
     return handleDetectClaudeDesktop();
   });
   handle('ok:skill:build-and-open', async (_event, opts) => {
-    return handleBuildAndOpen({ app, shell, force: opts?.force });
+    const result = await handleBuildAndOpen({ app, shell, force: opts?.force });
+    if (!result.ok) {
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:skill:build-and-open',
+        reason: result.reason,
+        handler: 'handleBuildAndOpen',
+        cause: result.message !== undefined ? { message: result.message } : undefined,
+      });
+    }
+    return result;
   });
 
   const localOpDeps: LocalOpDeps = {
@@ -1030,14 +1106,32 @@ function registerIpcHandlers() {
     state: createLocalOpState(),
   };
   handle('ok:local-op:auth:start', async (event) => {
-    return handleAuthStart(localOpDeps, event.sender);
+    const result = handleAuthStart(localOpDeps, event.sender);
+    if (!result.ok) {
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:local-op:auth:start',
+        reason: result.error,
+        handler: 'handleAuthStart',
+      });
+    }
+    return result;
   });
   handle('ok:local-op:auth:cancel', async (_event, streamId) => {
     handleAuthCancel(localOpDeps, streamId);
     return undefined;
   });
   handle('ok:local-op:clone:start', async (event, request) => {
-    return handleCloneStart(localOpDeps, event.sender, request);
+    const result = handleCloneStart(localOpDeps, event.sender, request);
+    if (!result.ok) {
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:local-op:clone:start',
+        reason: result.error,
+        handler: 'handleCloneStart',
+      });
+    }
+    return result;
   });
   handle('ok:local-op:clone:cancel', async (_event, streamId) => {
     handleCloneCancel(localOpDeps, streamId);

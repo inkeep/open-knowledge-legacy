@@ -1,7 +1,10 @@
 import {
+  assertNeverUrnIpcLookup,
   buildCursorUrl,
   type HandoffOutcome,
   type HandoffPayload,
+  type IpcChannelReason,
+  lookupUrnInRegistry,
   ProblemDetailsSchema,
 } from '@inkeep/open-knowledge-core';
 import { type OpenExternalDeps, openExternal } from './open-external.ts';
@@ -9,9 +12,9 @@ import { type OpenExternalDeps, openExternal } from './open-external.ts';
 export const CURSOR_SETTLE_MS_WARM = 1000;
 export const CURSOR_SETTLE_MS_COLD = 1500;
 
-type SpawnCursorOutcome =
-  | { ok: true }
-  | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' };
+type SpawnCursorReason = IpcChannelReason<'ok:shell:spawn-cursor'>;
+
+type SpawnCursorOutcome = { ok: true } | { ok: false; reason: SpawnCursorReason };
 
 type SpawnCursor = (path: string) => Promise<SpawnCursorOutcome>;
 
@@ -59,23 +62,17 @@ function createFetchSpawnCursor(fetchImpl: typeof globalThis.fetch): SpawnCursor
   };
 }
 
-const CURSOR_PROBLEM_TYPE_TO_REASON: Record<
-  string,
-  'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error'
-> = {
-  'urn:ok:error:cursor-not-installed': 'not-installed',
-  'urn:ok:error:cursor-spawn-timeout': 'timeout',
-  'urn:ok:error:cursor-spawn-failed': 'spawn-error',
-  'urn:ok:error:invalid-request': 'invalid-path',
-  'urn:ok:error:path-escape': 'invalid-path',
-};
-
-function mapProblemTypeToReason(type: string): {
-  ok: false;
-  reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error';
-} {
-  const reason = CURSOR_PROBLEM_TYPE_TO_REASON[type] ?? 'spawn-error';
-  return { ok: false, reason };
+function mapProblemTypeToReason(type: string): { ok: false; reason: SpawnCursorReason } {
+  const lookup = lookupUrnInRegistry(type, 'ok:shell:spawn-cursor');
+  switch (lookup.kind) {
+    case 'mapped':
+      return { ok: false, reason: lookup.reason };
+    case 'http-only':
+    case 'unknown':
+      return { ok: false, reason: 'spawn-error' };
+    default:
+      return assertNeverUrnIpcLookup(lookup);
+  }
 }
 
 function resolveSpawnCursor(
@@ -113,9 +110,11 @@ export async function dispatchCursor(
   return openExternal(buildCursorUrl(payload), deps.openExternalDeps);
 }
 
-function mapSpawnFailure(
-  reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error',
-): HandoffOutcome {
+function assertNeverSpawnFailureReason(value: never): never {
+  throw new Error(`Unhandled cursor SpawnFailureReason: ${JSON.stringify(value)}`);
+}
+
+function mapSpawnFailure(reason: SpawnCursorReason): HandoffOutcome {
   switch (reason) {
     case 'not-installed':
       return { ok: false, reason: 'not-installed', detail: 'cursor binary not found' };
@@ -125,9 +124,7 @@ function mapSpawnFailure(
       return { ok: false, reason: 'dispatch-error', detail: 'cursor spawn: timeout' };
     case 'spawn-error':
       return { ok: false, reason: 'dispatch-error', detail: 'cursor spawn: spawn-error' };
-    default: {
-      const _exhaustive: never = reason;
-      return { ok: false, reason: 'dispatch-error', detail: `cursor spawn: ${String(reason)}` };
-    }
+    default:
+      return assertNeverSpawnFailureReason(reason);
   }
 }

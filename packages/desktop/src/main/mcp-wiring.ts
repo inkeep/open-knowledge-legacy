@@ -20,6 +20,7 @@ import type {
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
 import { wrapperPathInBundle } from './cli-install.ts';
+import { logIpcError } from './ipc-log.ts';
 
 export const SYMLINK_OK_PATH = '/usr/local/bin/ok';
 
@@ -325,6 +326,13 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
         capturedSenderId,
         gotSenderId: event.sender.id,
       });
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:mcp-wiring:confirm',
+        reason: 'sender-mismatch',
+        handler: 'mcpWiringConfirm',
+        cause: { capturedSenderId, gotSenderId: event.sender.id },
+      });
       return {
         ok: false,
         error: 'Consent must come from the window that displayed the dialog.',
@@ -369,6 +377,13 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error('writeUserMcpConfigs threw — marker not written', { message });
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:mcp-wiring:confirm',
+        reason: 'write-mcp-configs-threw',
+        handler: 'mcpWiringConfirm',
+        cause: err,
+      });
       handled = false;
       return { ok: false, error: message };
     }
@@ -384,6 +399,21 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     }
     if (failedResults.length > 0) {
       logger.info('partial failure — marker not written; dialog will re-fire next boot');
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:mcp-wiring:confirm',
+        reason: 'partial-write-failure',
+        handler: 'mcpWiringConfirm',
+        cause: {
+          failedCount: failedResults.length,
+          totalCount: results.length,
+          failures: failedResults.map((r) => ({
+            editor: r.editorId,
+            configPath: r.configPath,
+            error: r.error ?? null,
+          })),
+        },
+      });
       handled = false;
       return {
         ok: false,
@@ -405,6 +435,13 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error('marker write failed', { message });
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:mcp-wiring:confirm',
+        reason: 'marker-write-failed',
+        handler: 'mcpWiringConfirm',
+        cause: err,
+      });
       handled = false;
       return { ok: false, error: message };
     }
@@ -418,6 +455,13 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
       logger.warn('rejecting skip — sender is not the renderer that received show', {
         capturedSenderId,
         gotSenderId: event.sender.id,
+      });
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:mcp-wiring:skip',
+        reason: 'sender-mismatch',
+        handler: 'mcpWiringSkip',
+        cause: { capturedSenderId, gotSenderId: event.sender.id },
       });
       return {
         ok: false,
@@ -438,6 +482,13 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error('skip-marker write failed', { message });
+      logIpcError({
+        event: 'ipc.error',
+        channel: 'ok:mcp-wiring:skip',
+        reason: 'skip-marker-write-failed',
+        handler: 'mcpWiringSkip',
+        cause: err,
+      });
       handled = false;
       return {
         ok: false,

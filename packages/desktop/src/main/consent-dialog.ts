@@ -14,6 +14,7 @@ import type {
 } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { type SendableWebContents, sendToRenderer } from '../shared/ipc-send.ts';
+import { logIpcError } from './ipc-log.ts';
 
 export interface ConsentIpcMainLike extends Pick<IpcMain, 'handle' | 'removeHandler'> {}
 
@@ -141,6 +142,13 @@ export function requestUserConsent(
             capturedSenderId,
             gotSenderId: event.sender.id,
           });
+          logIpcError({
+            event: 'ipc.error',
+            channel: 'ok:onboarding:confirm',
+            reason: 'sender-mismatch',
+            handler: 'onboardingConfirm',
+            cause: { capturedSenderId, gotSenderId: event.sender.id },
+          });
           return {
             ok: false,
             error: 'Consent must come from the window that displayed the dialog.',
@@ -149,6 +157,13 @@ export function requestUserConsent(
         if (resolved) return { ok: true };
         const validated = validateConfirmRequest(request, payload);
         if (!validated.ok) {
+          logIpcError({
+            event: 'ipc.error',
+            channel: 'ok:onboarding:confirm',
+            reason: 'invalid-request',
+            handler: 'onboardingConfirm',
+            cause: { message: validated.error },
+          });
           return { ok: false, error: validated.error };
         }
         settle({ outcome: 'confirm', request: validated.value });
@@ -163,6 +178,13 @@ export function requestUserConsent(
           logger.warn('rejecting cancel — sender mismatch', {
             capturedSenderId,
             gotSenderId: event.sender.id,
+          });
+          logIpcError({
+            event: 'ipc.error',
+            channel: 'ok:onboarding:cancel',
+            reason: 'sender-mismatch',
+            handler: 'onboardingCancel',
+            cause: { capturedSenderId, gotSenderId: event.sender.id },
           });
           return {
             ok: false,
@@ -182,9 +204,25 @@ export function requestUserConsent(
         request: OnboardingProbeContentRequest,
       ): Promise<OnboardingProbeContentResult> => {
         if (!isSameSender(event)) {
+          logIpcError({
+            event: 'ipc.error',
+            channel: 'ok:onboarding:probe-content',
+            reason: 'sender-mismatch',
+            handler: 'onboardingProbeContent',
+            cause: { capturedSenderId, gotSenderId: event.sender.id },
+          });
           return { ok: false, error: 'Probe must come from the dialog window.' };
         }
-        return runProbe(previewContent, payload.projectDir, request);
+        const result = await runProbe(previewContent, payload.projectDir, request);
+        if (!result.ok) {
+          logIpcError({
+            event: 'ipc.error',
+            channel: 'ok:onboarding:probe-content',
+            reason: result.error,
+            handler: 'onboardingProbeContent',
+          });
+        }
+        return result;
       },
     );
 

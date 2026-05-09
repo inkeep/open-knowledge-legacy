@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
 import { EditorState, type Plugin, type Transaction } from '@tiptap/pm/state';
-import { ySyncPluginKey } from 'y-prosemirror';
+import { ySyncPluginKey } from '@tiptap/y-tiptap';
 import { sharedExtensions } from './shared';
 import { SourceDirtyObserver, sourceDirtyPluginKey } from './source-dirty-observer';
 

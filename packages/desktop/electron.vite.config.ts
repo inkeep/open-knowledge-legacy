@@ -3,6 +3,7 @@ import babel from '@rolldown/plugin-babel';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import type { PluginOptions } from 'babel-plugin-react-compiler';
 import { defineConfig } from 'electron-vite';
+import { RENDERER_DEDUPE } from '../app/vite.dedupe';
 
 const reactCompilerConfig: PluginOptions = {
   panicThreshold: 'all_errors',
@@ -54,35 +55,7 @@ export default defineConfig({
       alias: {
         '@': resolve(appRoot, 'src'),
       },
-      dedupe: [
-        'react',
-        'react-dom',
-        '@codemirror/state',
-        '@codemirror/view',
-        '@codemirror/language',
-        '@codemirror/commands',
-        '@codemirror/merge',
-        '@codemirror/lang-markdown',
-        'prosemirror-changeset',
-        'prosemirror-collab',
-        'prosemirror-commands',
-        'prosemirror-dropcursor',
-        'prosemirror-gapcursor',
-        'prosemirror-history',
-        'prosemirror-inputrules',
-        'prosemirror-keymap',
-        'prosemirror-markdown',
-        'prosemirror-menu',
-        'prosemirror-model',
-        'prosemirror-schema-basic',
-        'prosemirror-schema-list',
-        'prosemirror-state',
-        'prosemirror-tables',
-        'prosemirror-trailing-node',
-        'prosemirror-transform',
-        'prosemirror-view',
-        'yjs',
-      ],
+      dedupe: [...RENDERER_DEDUPE],
     },
     build: {
       outDir: resolve(__dirname, 'out/renderer'),
