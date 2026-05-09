@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir as osHomedir, hostname as osHostname } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   ALL_EDITOR_IDS,
   detectInstalledEditors,
@@ -57,7 +57,7 @@ import {
   uninstallCli,
   wrapperPathInBundle,
 } from './cli-install.ts';
-import { requestUserConsent } from './consent-dialog.ts';
+import { requestUserConsent, walkExceedsCap } from './consent-dialog.ts';
 import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
 import { promptForExistingFolder, promptForFolder } from './dialog-helpers.ts';
 import {
@@ -345,6 +345,8 @@ function logAiIntegrationOutcomes(result: ProjectAiIntegrationsResult): number {
   return interesting.filter((o) => o.outcome === 'failed').length;
 }
 
+const BOOT_BUDGET_FILE_CAP = 10_000;
+
 async function openProject(
   projectPath: string,
   entryPoint: EntryPoint,
@@ -353,7 +355,17 @@ async function openProject(
   ensureWindowManager();
 
   const validation = validateFolderPick(projectPath);
-  const discovery = await discoverProject(projectPath);
+  const discovery = await discoverProject(projectPath, {
+    dirSizeProbe: async (dir) => {
+      try {
+        const exceedsCap = await walkExceedsCap(dir, BOOT_BUDGET_FILE_CAP);
+        return { exceedsCap };
+      } catch (err) {
+        console.warn('[openProject] dirSizeProbe failed, failsafe to exceedsCap:true', err);
+        return { exceedsCap: true };
+      }
+    },
+  });
 
   if (discovery.kind === 'rejected') {
     dialog.showErrorBox(
@@ -375,7 +387,33 @@ async function openProject(
     | { kind: 'git-root-promote'; gitRoot: string; contentDir: string }
     | null = null;
 
-  if (discovery.kind === 'managed') {
+  if (discovery.kind === 'managed-requires-confirmation') {
+    const ancestorName = basename(discovery.projectDir);
+    const pickedName = basename(discovery.pickedPath);
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['Cancel', `Open ${ancestorName}`],
+      cancelId: 0,
+      defaultId: 0,
+      title: 'Open existing project?',
+      message: `Open Knowledge wants to open the existing project at ${discovery.projectDir} (because it contains an .ok/ config). The folder you picked, ${pickedName}, is inside that project. Open ${ancestorName}?`,
+    });
+    if (response === 0) {
+      recordOnboardingFlow({
+        flowKind: 'managed-promote-cancelled',
+        entryPoint,
+        gitInitRequested: false,
+        contentDirChanged: false,
+        warningsCount,
+      });
+      openNavigator();
+      return;
+    }
+    flowKind = 'managed-promote';
+    if (entryPoint !== 'recents') {
+      toastPayload = { kind: 'ancestor-promote', ancestorPath: discovery.projectDir };
+    }
+  } else if (discovery.kind === 'managed') {
     flowKind = discovery.ancestorPromoted ? 'managed-promote' : 'managed-direct';
     if (discovery.ancestorPromoted && entryPoint !== 'recents') {
       toastPayload = { kind: 'ancestor-promote', ancestorPath: discovery.projectDir };

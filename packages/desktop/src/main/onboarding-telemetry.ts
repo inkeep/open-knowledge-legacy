@@ -3,6 +3,7 @@ import type { EntryPoint } from '../shared/entry-point.ts';
 
 export type OnboardingFlowKind =
   | 'managed-promote'
+  | 'managed-promote-cancelled'
   | 'managed-direct'
   | 'fresh-silent'
   | 'fresh-default'

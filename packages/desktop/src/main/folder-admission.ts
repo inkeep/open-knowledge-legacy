@@ -93,6 +93,12 @@ export type DiscoverProjectResult =
       readonly ancestorPromoted: boolean;
     }
   | {
+      readonly kind: 'managed-requires-confirmation';
+      readonly pickedPath: string;
+      readonly projectDir: string;
+      readonly ancestorPromoted: true;
+    }
+  | {
       readonly kind: 'fresh';
       readonly pickedPath: string;
       readonly projectDir: string;
@@ -112,6 +118,7 @@ export interface DiscoverProjectOptions {
    * stub. Returns `null` when the cwd is not inside a git working tree (or
    * when `git` itself is unavailable). */
   gitTopLevel?: (cwd: string) => Promise<string | null>;
+  dirSizeProbe: ((dir: string) => Promise<{ readonly exceedsCap: boolean }>) | null;
 }
 
 const ANCESTOR_WALK_DEPTH_LIMIT = 30;
@@ -122,10 +129,11 @@ const OK_CONFIG_MARKER = '.ok/config.yml';
 
 export async function discoverProject(
   pickedPath: string,
-  opts: DiscoverProjectOptions = {},
+  opts: DiscoverProjectOptions,
 ): Promise<DiscoverProjectResult> {
   const home = opts.homeDir ?? nodeHomedir();
   const gitTopLevel = opts.gitTopLevel ?? defaultGitTopLevel;
+  const dirSizeProbe = opts.dirSizeProbe;
   const absPicked = resolve(pickedPath);
 
   let realPicked: string;
@@ -150,11 +158,23 @@ export async function discoverProject(
   while (depth < ANCESTOR_WALK_DEPTH_LIMIT) {
     if (cursor === home || cursor === '/' || cursor === '') break;
     if (existsSync(resolve(cursor, OK_CONFIG_MARKER))) {
+      const ancestorPromoted = cursor !== realPicked;
+      if (ancestorPromoted && dirSizeProbe !== null) {
+        const { exceedsCap } = await dirSizeProbe(cursor);
+        if (exceedsCap) {
+          return {
+            kind: 'managed-requires-confirmation',
+            pickedPath: realPicked,
+            projectDir: cursor,
+            ancestorPromoted: true,
+          };
+        }
+      }
       return {
         kind: 'managed',
         pickedPath: realPicked,
         projectDir: cursor,
-        ancestorPromoted: cursor !== realPicked,
+        ancestorPromoted,
       };
     }
     const next = dirname(cursor);
