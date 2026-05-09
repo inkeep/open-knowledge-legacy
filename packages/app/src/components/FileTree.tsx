@@ -317,7 +317,7 @@ function asDirectoryHandle(
   return item as FileTreeDirectoryHandle;
 }
 
-function _selectOnlyTreeItem(
+function selectOnlyTreeItem(
   model: PierreFileTreeModel,
   item: NonNullable<ReturnType<PierreFileTreeModel['getItem']>>,
 ): void {
@@ -1029,7 +1029,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     const item = model.getItem(activeTreePath);
     if (!item) return;
     suppressSelectionRef.current = true;
-    item.select();
+    selectOnlyTreeItem(model, item);
     item.focus();
     queueMicrotask(() => {
       suppressSelectionRef.current = false;
