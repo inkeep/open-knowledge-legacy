@@ -170,9 +170,15 @@ export {
   rewriteMarkdownLinksForDocumentRename,
   rewriteWikiLinksForDocumentRename,
 } from './managed-rename-rewrite.ts';
-export { type AgentIdentity, MCP_CONNECTION_ID_HEADER } from './mcp/agent-identity.ts';
+export {
+  type AgentIdentity,
+  MCP_CONNECTION_ID_HEADER,
+  sanitizeClientName,
+} from './mcp/agent-identity.ts';
+export { buildInstructions } from './mcp/instructions.ts';
 export { getCurrentMcpLogger, McpLogger, runWithMcpLogger } from './mcp/logger.ts';
 export { buildExecResult, type ExecStructuredResult } from './mcp/tools/exec.ts';
+export { registerAllTools } from './mcp/tools/index.ts';
 export { buildReadResult } from './mcp/tools/read-document.ts';
 export {
   createMcpHttpHandler,
