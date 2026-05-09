@@ -42,6 +42,37 @@ export const AUDIO_EXTENSIONS: ReadonlySet<string> = new Set([
   'opus',
 ]);
 
+export const FILE_ATTACHMENT_EXTENSIONS: ReadonlySet<string> = new Set([
+  'pdf',
+  'docx',
+  'xlsx',
+  'pptx',
+  'doc',
+  'xls',
+  'ppt',
+  'zip',
+  '7z',
+  'tar',
+  'gz',
+  'rar',
+  'csv',
+  'tsv',
+  'rtf',
+  'json',
+  'yaml',
+  'yml',
+  'xml',
+  'txt',
+  'pages',
+  'numbers',
+  'key',
+  'odt',
+  'ods',
+  'odp',
+  'epub',
+  'mobi',
+]);
+
 export const EXECUTABLE_BLOCKLIST_EXTENSIONS: ReadonlySet<string> = new Set([
   'exe',
   'bat',
@@ -204,6 +235,33 @@ export const WIKI_EMBED_EXTENSIONS: ReadonlySet<string> = new Set([
   'flac',
   'aac',
   'opus',
+  'docx',
+  'xlsx',
+  'pptx',
+  'doc',
+  'xls',
+  'ppt',
+  'zip',
+  '7z',
+  'tar',
+  'gz',
+  'rar',
+  'csv',
+  'tsv',
+  'rtf',
+  'json',
+  'yaml',
+  'yml',
+  'xml',
+  'txt',
+  'pages',
+  'numbers',
+  'key',
+  'odt',
+  'ods',
+  'odp',
+  'epub',
+  'mobi',
 ]);
 
 export type InlineAssetMediaKind = 'image' | 'video';
@@ -225,6 +283,7 @@ function assertSubset(
 
 assertSubset('SIDEBAR_IMAGE_ASSET_EXTENSIONS', SIDEBAR_IMAGE_EXTENSIONS, IMAGE_EXTENSIONS);
 assertSubset('SIDEBAR_VIDEO_ASSET_EXTENSIONS', SIDEBAR_VIDEO_EXTENSIONS, VIDEO_EXTENSIONS);
+assertSubset('FILE_ATTACHMENT_EXTENSIONS', [...FILE_ATTACHMENT_EXTENSIONS], WIKI_EMBED_EXTENSIONS);
 
 export const SIDEBAR_IMAGE_ASSET_EXTENSIONS: ReadonlySet<string> = new Set(
   SIDEBAR_IMAGE_EXTENSIONS,

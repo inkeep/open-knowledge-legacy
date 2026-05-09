@@ -396,6 +396,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     if (!e.currentTarget.contains(target)) return;
     if (target.closest('.jsx-component-chrome')) return;
     if (target.closest('.jsx-add-child-pill, .jsx-empty-child-placeholder')) return;
+    if (target.closest('a[href]')) return;
     if (typeof pos !== 'number') return;
     const curNode = editor.state.doc.nodeAt(pos);
     if (!curNode) return;

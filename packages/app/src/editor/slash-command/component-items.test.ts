@@ -1,13 +1,22 @@
 import { describe, expect, test } from 'bun:test';
 import { createChildNode, getComponentItems, getInlineComponentItems } from './component-items';
 
-describe('getComponentItems (descriptor-driven slash menu)', () => {
-  test('returns exactly the canonical descriptors (5-pack + Math + Mermaid + Pdf)', () => {
+describe('getComponentItems (slash menu)', () => {
+  test('returns descriptor-driven canonicals + the custom File entry', () => {
     const items = getComponentItems();
     const labels = items.map((i) => i.label).sort();
     expect(labels).toEqual(
-      ['Accordion', 'Audio', 'Callout', 'Image', 'Math', 'Mermaid', 'PDF', 'Video'].sort(),
+      ['Accordion', 'Audio', 'Callout', 'File', 'Image', 'Math', 'Mermaid', 'PDF', 'Video'].sort(),
     );
+  });
+
+  test('File entry is the custom upload-picker variant, NOT the descriptor JSX-insert', () => {
+    const items = getComponentItems();
+    const file = items.find((i) => i.label === 'File');
+    expect(file).toBeDefined();
+    expect(file?.name).toBe('component-File');
+    expect(file?.icon).toBeDefined();
+    expect(file?.command).toBeFunction();
   });
 
   test('every entry exposes the SlashCommandItem contract', () => {

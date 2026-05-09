@@ -94,6 +94,7 @@ interface MarkdownManagerOptions {
 
 interface ParseContext {
   resolveEmbed?: (target: string, sourcePath: string) => string | null;
+  resolveSize?: (target: string, sourcePath: string) => number | null;
   sourcePath?: string;
 }
 
@@ -308,8 +309,8 @@ function extractTextFromMdastNodes(nodes: MdastNodes[]): string {
 
 import {
   AUDIO_EXTENSIONS,
+  FILE_ATTACHMENT_EXTENSIONS,
   IMAGE_EXTENSIONS,
-  PDF_EXTENSIONS,
   VIDEO_EXTENSIONS,
   WIKI_EMBED_EXTENSIONS,
 } from '../constants/upload.ts';
@@ -317,6 +318,7 @@ import {
 const WIKI_EMBED_IMAGE_EXTS = IMAGE_EXTENSIONS;
 
 import { extensionOf } from '../utils/extension.ts';
+import { formatFileSize } from '../utils/file-size.ts';
 
 function buildMdastToPmHandlers(
   schema: Schema,
@@ -785,17 +787,21 @@ function buildMdastToPmHandlers(
       }
       if (
         isBlockContext &&
-        PDF_EXTENSIONS.has(ext) &&
+        FILE_ATTACHMENT_EXTENSIONS.has(ext) &&
         n.jsxComponent &&
-        registry.has('WikiEmbedPdf')
+        registry.has('WikiEmbedFile')
       ) {
+        const { resolveSize } = parseCtx.current;
+        const sizeBytes =
+          resolveSize && sourcePath ? (resolveSize(target, sourcePath) ?? null) : null;
+        const size = sizeBytes !== null ? formatFileSize(sizeBytes) : null;
         return n.jsxComponent.createAndFill({
-          componentName: 'WikiEmbedPdf',
+          componentName: 'WikiEmbedFile',
           kind: 'element',
           attributes: [],
           sourceRaw: '',
           sourceDirty: false,
-          props: { src: srcOrTarget, title: alias ?? target, target, anchor, alias },
+          props: { src: srcOrTarget, target, anchor, alias, size },
         });
       }
 

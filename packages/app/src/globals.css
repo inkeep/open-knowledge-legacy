@@ -2384,6 +2384,143 @@ button:active:not(:disabled) {
   color: var(--destructive, #c33);
 }
 
+/* 7e. File (DIY renderer for the `File` canonical, 2026-05).
+ *
+ * Notion-style inline row — small file-up icon + bold name + dim size,
+ * stacked vertically when consecutive (each File is its own block from
+ * the JsxComponentView wrapper). No card background / border / padded
+ * box: the row reads as part of doc flow rather than as a callout-
+ * shaped block competing with prose for visual weight. Hover paints a
+ * subtle muted background and underlines the name to signal
+ * clickability.
+ *
+ * Why this differs from the Pdf card: Pdf renders a full pdfjs viewer
+ * (toolbar + canvas list — necessarily card-shaped). File never
+ * previews — it's the catch-all for types we deliberately don't try to
+ * render inline (.zip / .docx / .xlsx / unknown extensions). Stacks of
+ * Files read as a "files attached" list rather than a series of cards.
+ */
+/* Descendant base rules — declared before the anchor's hover/focus rules
+ * so the cascade reads in ascending-specificity order (Biome
+ * `noDescendingSpecificity` rule). The anchor selector uses
+ * `.ProseMirror a.ok-file-attachment` (1 class + 1 element + 1 class) so
+ * it beats Tailwind v4 typography's `.prose a` rule (1 class + 1
+ * element) on specificity — without `.ProseMirror`, the blue prose-link
+ * color + underline defaults bleed through and the row reads as a
+ * generic markdown link rather than a file attachment row.
+ *
+ * No negative margin / padding overhang: the hover background must NOT
+ * extend past the parent column's edge (which would clip in the
+ * `.ProseMirror` overflow box and make the row look truncated on the
+ * left). Internal padding gives the hover background breathing room
+ * around the content without poking outside the column. */
+.ok-file-icon {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  /* Baseline alignment hack — lucide icons render with their bounding
+   * box centered, but a paperclip glyph optically sits high relative
+   * to the text x-height. Nudge down 0.18em so the icon's visual
+   * center aligns with the lowercase letters of the name. */
+  position: relative;
+  top: 0.18em;
+  color: var(--foreground);
+}
+
+.ok-file-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60ch;
+}
+
+.ok-file-size {
+  font-size: 0.85em;
+  color: var(--muted-foreground);
+}
+
+/* File wrapper takes the full column width (chrome bar sits at the
+ * column's right edge, away from the row content). The wrapper-level
+ * selection halo (`.jsx-component-wrapper[data-selected="true"]::after`,
+ * `inset: -4px`) is hidden for File-type wrappers because painting a
+ * 4px border around the full prose column when only the row is the
+ * "selected thing" reads as a wide rectangle outline floating in
+ * empty space. The selection feedback paints on the inner row instead
+ * (a rule further below scoped to `[data-selected="true"] a.ok-file-attachment`)
+ * so the highlight tracks the visible content.
+ *
+ * Both source-form variants — canonical `[data-component-type="file"]`
+ * (hand-authored `<File>` JSX) and compat
+ * `[data-component-type="wikiembedfile"]` (drop / `![[]]` form) — get
+ * the same treatment so selection looks identical regardless of how
+ * the row was authored.
+ *
+ * Rule ordering: the base `.ProseMirror a.ok-file-attachment` rule is
+ * declared FIRST so that the more-specific selection-state rules below
+ * cascade over it in source order (Biome `noDescendingSpecificity`). */
+.ProseMirror a.ok-file-attachment {
+  /* Full-width row (block-level flex) so the hover/selection background
+   * spans the whole prose column — matches Notion's "file attached"
+   * row visual where the row reads as a structural element of the
+   * doc, not a content-width pill. */
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.375rem;
+  text-decoration: none;
+  color: var(--foreground);
+  font-size: inherit;
+  line-height: 1.5;
+  transition: background-color 120ms ease;
+}
+
+.ProseMirror a.ok-file-attachment:hover {
+  background-color: var(--muted);
+}
+
+.ProseMirror a.ok-file-attachment:focus-visible {
+  outline: 2px solid var(--ring, currentColor);
+  outline-offset: 2px;
+}
+
+.ProseMirror a.ok-file-attachment:hover .ok-file-name {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.ProseMirror a.ok-file-attachment:hover .ok-file-size {
+  /* Override the prose typography hover-underline that would otherwise
+   * cascade through the `<a>` and paint a single underline beneath the
+   * size span too — only the name should pick up the hover-underline,
+   * the size stays muted gray. */
+  text-decoration: none;
+}
+
+/* Suppress wrapper-level selection halo for File rows — see the comment
+ * block above. The inner-row outline below is the selection feedback. */
+.ProseMirror .jsx-component-wrapper[data-component-type="file"][data-selected="true"]::after,
+.ProseMirror
+  .jsx-component-wrapper[data-component-type="wikiembedfile"][data-selected="true"]::after {
+  --selection-halo-opacity: 0;
+}
+
+.ProseMirror
+  .jsx-component-wrapper[data-component-type="file"][data-selected="true"]
+  a.ok-file-attachment,
+.ProseMirror
+  .jsx-component-wrapper[data-component-type="wikiembedfile"][data-selected="true"]
+  a.ok-file-attachment {
+  /* Selection feedback is the muted background only — no outline ring.
+   * The full-width row + bg tint reads clearly as "this row is the
+   * thing you've selected" without painting a hard rectangle. The
+   * chrome bar's appearance + bubble-menu mode-swap (download button)
+   * provide the additional UI signals. */
+  background-color: var(--muted);
+}
+
 /* 7d. Accordion (5-pack DIY renderer, US-009 — standalone HTML5 <details>).
  *
  * Standalone <details>/<summary> styled with OK shadcn tokens per D-MF14 +

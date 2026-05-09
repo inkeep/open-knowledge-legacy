@@ -26,8 +26,10 @@ export function applyDiskContentToDoc(
   content: string,
   resolveEmbed?: (basename: string, sourcePath: string) => string | null,
   sourcePath?: string,
+  resolveSize?: (basename: string, sourcePath: string) => number | null,
 ): void {
-  const embedResolver = resolveEmbed && sourcePath ? { resolveEmbed, sourcePath } : undefined;
+  const embedResolver =
+    resolveEmbed && sourcePath ? { resolveEmbed, resolveSize, sourcePath } : undefined;
   composeAndWriteRawBody(document, content, embedResolver);
 }
 
@@ -36,6 +38,7 @@ export function applyExternalChange(
   docName: string,
   content: string,
   resolveEmbed?: (basename: string, sourcePath: string) => string | null,
+  resolveSize?: (basename: string, sourcePath: string) => number | null,
 ): void {
   if (isSystemDoc(docName) || isConfigDoc(docName)) return;
   const document = hocuspocus.documents.get(docName);
@@ -46,7 +49,7 @@ export function applyExternalChange(
 
   try {
     document.transact(() => {
-      applyDiskContentToDoc(document, content, resolveEmbed, docName);
+      applyDiskContentToDoc(document, content, resolveEmbed, docName, resolveSize);
     }, FILE_WATCHER_ORIGIN);
   } catch (err) {
     setReconciledBase(docName, document.getText('source').toString());
@@ -71,10 +74,11 @@ export function applyExternalChange(
 export function createExternalChangeHandler(
   hocuspocus: Hocuspocus,
   resolveEmbed?: (basename: string, sourcePath: string) => string | null,
+  resolveSize?: (basename: string, sourcePath: string) => number | null,
 ): (docName: string, content: string) => Promise<void> {
   return async (docName: string, content: string): Promise<void> => {
     try {
-      applyExternalChange(hocuspocus, docName, content, resolveEmbed);
+      applyExternalChange(hocuspocus, docName, content, resolveEmbed, resolveSize);
       console.log(`[file-watcher] Applied external change: ${docName}`);
     } catch (err) {
       if (

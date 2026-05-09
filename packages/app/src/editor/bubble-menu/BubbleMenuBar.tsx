@@ -6,6 +6,7 @@ import { BubbleMenu } from '@tiptap/react/menus';
 import { useRef, useState } from 'react';
 import { Separator } from '@/components/ui/separator';
 import { BlockTypeSelector } from './BlockTypeSelector';
+import { FileBubbleButtons, isFileNodeSelected } from './FileBubbleButtons';
 import { ImageAlignButtons, isImageNodeSelected } from './ImageAlignButtons';
 import { InlineFormatButtons } from './InlineFormatButtons';
 import { LinkEditPopover } from './LinkEditPopover';
@@ -13,6 +14,7 @@ import { LinkEditPopover } from './LinkEditPopover';
 function shouldShowBubbleMenu({ editor }: { editor: Editor }): boolean {
   if (editor.isActive('codeBlock')) return false;
   if (isImageNodeSelected(editor)) return true;
+  if (isFileNodeSelected(editor)) return true;
   if (editor.state.selection.empty) return false;
   const { from, to } = editor.state.selection;
   const text = editor.state.doc.textBetween(from, to, ' ');
@@ -28,6 +30,10 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
   const isImageMode = useEditorState({
     editor,
     selector: (ctx) => isImageNodeSelected(ctx.editor),
+  });
+  const isFileMode = useEditorState({
+    editor,
+    selector: (ctx) => isFileNodeSelected(ctx.editor),
   });
 
   const virtualEl = {
@@ -81,6 +87,8 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
     >
       {isImageMode ? (
         <ImageAlignButtons key={`${tooltipKey}-img-align`} editor={editor} />
+      ) : isFileMode ? (
+        <FileBubbleButtons key={`${tooltipKey}-file`} editor={editor} />
       ) : (
         <>
           <BlockTypeSelector editor={editor} />

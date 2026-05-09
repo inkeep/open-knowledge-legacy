@@ -67,6 +67,7 @@ export interface SetupServerObserversOpts {
   getBranch?: BranchAccessor;
   contentRoot?: string;
   resolveEmbed?: (basename: string, sourcePath: string) => string | null;
+  resolveSize?: (basename: string, sourcePath: string) => number | null;
   onDispatch?: ObserverDispatchHook;
 }
 
@@ -263,7 +264,11 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
       const parseOpts =
         opts.resolveEmbed && opts.docName
-          ? { resolveEmbed: opts.resolveEmbed, sourcePath: opts.docName }
+          ? {
+              resolveEmbed: opts.resolveEmbed,
+              resolveSize: opts.resolveSize,
+              sourcePath: opts.docName,
+            }
           : undefined;
       const parsedJson = mdManager.parseWithFallback(body, parseOpts);
 

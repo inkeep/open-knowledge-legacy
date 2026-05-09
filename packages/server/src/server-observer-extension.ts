@@ -14,6 +14,7 @@ export interface ServerObserverExtensionOptions {
   getCurrentBranch?: () => string | null;
   contentRoot?: string;
   resolveEmbed?: (basename: string, sourcePath: string) => string | null;
+  resolveSize?: (basename: string, sourcePath: string) => number | null;
 }
 
 export function createServerObserverExtension(opts: ServerObserverExtensionOptions): Extension {
@@ -44,6 +45,7 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
               : undefined,
             contentRoot: opts.contentRoot,
             resolveEmbed: opts.resolveEmbed,
+            resolveSize: opts.resolveSize,
           });
           cleanups.set(documentName, unsubscribe);
           return true;

@@ -6,11 +6,12 @@ import { assertAcrossSeeds, mdManager, mdRoundTrip, normalize, PBT_TIMEOUT_MS } 
 const stem = fc.stringMatching(/^[a-z][a-z0-9_-]{0,12}$/).filter((s) => s.length > 0);
 
 const imageExt = fc.constantFrom('png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg');
-const nonImageExt = fc.constantFrom('pdf', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a');
-const opaqueExt = fc.constantFrom('zip', 'docx', 'xyz', 'csv');
+const nonImageExt = fc.constantFrom('mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a');
+const fileAttachmentExt = fc.constantFrom('pdf', 'zip', 'docx', 'csv');
+const opaqueExt = fc.constantFrom('xyz', 'qux', 'wat');
 
-const renderableExt = fc.oneof(imageExt, nonImageExt);
-const allExts = fc.oneof(imageExt, nonImageExt, opaqueExt);
+const renderableExt = fc.oneof(imageExt, nonImageExt, fileAttachmentExt);
+const allExts = fc.oneof(imageExt, nonImageExt, fileAttachmentExt, opaqueExt);
 
 const anchor = fc.option(fc.stringMatching(/^[a-zA-Z0-9_=-]{1,12}$/), { nil: null });
 const alias = fc.option(fc.stringMatching(/^[a-zA-Z0-9_-]{1,12}$/), { nil: null });
@@ -57,9 +58,9 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
     PBT_TIMEOUT_MS,
   );
 
-  test('opaque wikiembed round-trip normalizes to plain markdown link', () => {
-    expect(normalize(mdRoundTrip('![[archive.zip]]'))).toBe('[archive.zip](archive.zip)');
-    expect(normalize(mdRoundTrip('![[archive.zip|Download]]'))).toBe('[Download](archive.zip)');
+  test('truly-opaque wikiembed round-trip normalizes to plain markdown link', () => {
+    expect(normalize(mdRoundTrip('![[archive.xyz]]'))).toBe('[archive.xyz](archive.xyz)');
+    expect(normalize(mdRoundTrip('![[archive.xyz|Download]]'))).toBe('[Download](archive.xyz)');
   });
 
   test('block-context image-extension embed dispatches to jsxComponent(WikiEmbedImage)', () => {
@@ -74,26 +75,26 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
     expect(props?.alias).toBeNull();
   });
 
-  test('PDF wikiembed dispatches to WikiEmbedPdf descriptor', () => {
+  test('PDF wikiembed dispatches to WikiEmbedFile descriptor (unified attachment chrome)', () => {
     const json = mdManager.parse('![[draft.pdf#page=3|Draft]]');
     const node = json.content?.[0];
     expect(node?.type).toBe('jsxComponent');
-    expect(node?.attrs?.componentName).toBe('WikiEmbedPdf');
+    expect(node?.attrs?.componentName).toBe('WikiEmbedFile');
     const props = node?.attrs?.props as Record<string, unknown> | undefined;
     expect(props?.target).toBe('draft.pdf');
     expect(props?.anchor).toBe('page=3');
     expect(props?.alias).toBe('Draft');
   });
 
-  test('US-013 — opaque extensions dispatch to plain link (no sourceForm)', () => {
-    const json = mdManager.parse('![[archive.zip]]');
+  test('US-013 — truly-opaque extensions dispatch to plain link (no sourceForm)', () => {
+    const json = mdManager.parse('![[archive.xyz]]');
     const para = json.content?.[0];
     const text = para?.content?.[0];
     expect(text?.type).toBe('text');
     const linkMark = text?.marks?.find((mk) => mk.type === 'link');
     expect(linkMark).toBeDefined();
     expect(linkMark?.attrs?.sourceForm).toBeNull();
-    expect(linkMark?.attrs?.href).toBe('archive.zip');
+    expect(linkMark?.attrs?.href).toBe('archive.xyz');
   });
 
   test('US-013 — resolveEmbed callback overrides the literal target for src/href', () => {
@@ -114,7 +115,7 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
     });
     const pdfNode = resolvedPdf.content?.[0];
     expect(pdfNode?.type).toBe('jsxComponent');
-    expect(pdfNode?.attrs?.componentName).toBe('WikiEmbedPdf');
+    expect(pdfNode?.attrs?.componentName).toBe('WikiEmbedFile');
     const pdfProps = pdfNode?.attrs?.props as Record<string, unknown> | undefined;
     expect(pdfProps?.src).toBe('/attachments/draft.pdf');
     expect(pdfProps?.target).toBe('draft.pdf');

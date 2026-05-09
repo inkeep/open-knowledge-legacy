@@ -5,6 +5,7 @@ import { mdManager, schema } from './md-manager.ts';
 
 interface EmbedResolverContext {
   resolveEmbed: (basename: string, sourcePath: string) => string | null;
+  resolveSize?: (basename: string, sourcePath: string) => number | null;
   sourcePath: string;
 }
 
@@ -19,7 +20,11 @@ export function composeAndWriteRawBody(
 
   const { body } = stripFrontmatter(rawContent);
   const parseOpts = embedResolver
-    ? { resolveEmbed: embedResolver.resolveEmbed, sourcePath: embedResolver.sourcePath }
+    ? {
+        resolveEmbed: embedResolver.resolveEmbed,
+        resolveSize: embedResolver.resolveSize,
+        sourcePath: embedResolver.sourcePath,
+      }
     : undefined;
   const parsedJson = mdManager.parseWithFallback(body, parseOpts);
   const pmNode = schema.nodeFromJSON(parsedJson);

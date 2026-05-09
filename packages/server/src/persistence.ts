@@ -127,6 +127,7 @@ export interface PersistenceOptions {
   backlinkIndex?: BacklinkIndex;
   getCurrentBranch?: () => string | null;
   resolveEmbed?: (basename: string, sourcePath: string) => string | null;
+  resolveSize?: (basename: string, sourcePath: string) => number | null;
   getPrincipal?: () => Principal | null;
   onAgentCommit?: () => void;
   onDiskFlush?: (docName: string, sv: Uint8Array) => void;
@@ -533,7 +534,11 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     try {
       const xmlFragment = document.getXmlFragment('default');
       const parseOpts = options?.resolveEmbed
-        ? { resolveEmbed: options.resolveEmbed, sourcePath: documentName }
+        ? {
+            resolveEmbed: options.resolveEmbed,
+            resolveSize: options?.resolveSize,
+            sourcePath: documentName,
+          }
         : undefined;
       const parsedJson = mdManager.parseWithFallback(body, parseOpts);
       const pmNode = schema.nodeFromJSON(parsedJson);
@@ -964,7 +969,13 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
           if (xmlFragment.length === 0) {
             document.transact(() => {
-              applyDiskContentToDoc(document, raw, options?.resolveEmbed, documentName);
+              applyDiskContentToDoc(
+                document,
+                raw,
+                options?.resolveEmbed,
+                documentName,
+                options?.resolveSize,
+              );
             }, FILE_WATCHER_ORIGIN);
             log.info(
               { filePath, children: xmlFragment.length },

@@ -3,6 +3,8 @@ import {
   DEFAULT_DEDUP_UI,
   DEFAULT_EMIT_FORMAT,
   extensionOf,
+  FILE_ATTACHMENT_EXTENSIONS,
+  formatFileSize,
   IMAGE_EXTENSIONS,
   ProblemDetailsSchema,
   type UploadAssetSuccess,
@@ -136,7 +138,14 @@ function docNameFromEditor(editor: Editor): string | null {
 }
 
 interface InsertShape {
-  kind: 'wikiembed' | 'jsx-img' | 'jsx-video' | 'jsx-audio' | 'markdown-link' | 'wiki-link';
+  kind:
+    | 'wikiembed'
+    | 'jsx-img'
+    | 'jsx-video'
+    | 'jsx-audio'
+    | 'jsx-file'
+    | 'markdown-link'
+    | 'wiki-link';
   ext: string;
 }
 
@@ -183,6 +192,9 @@ export function pickInsertShape(filename: string): InsertShape {
   }
   if (AUDIO_EXTENSIONS.has(ext)) {
     return { kind: 'jsx-audio', ext };
+  }
+  if (FILE_ATTACHMENT_EXTENSIONS.has(ext)) {
+    return { kind: 'jsx-file', ext };
   }
   if (WIKI_EMBED_EXTENSIONS.has(ext)) {
     if (DEFAULT_EMIT_FORMAT === 'wikiembed') return { kind: 'wikiembed', ext };
@@ -291,6 +303,51 @@ export async function uploadAndInsert(
   const relPath = shortestImageRef(assetContentPath, parentDocName);
 
   const resolvedSrc = `/${assetContentPath}`;
+
+  if (shape.kind === 'jsx-file') {
+    const jsxNode = state.schema.nodes.jsxComponent;
+    if (!jsxNode) {
+      console.error('[uploadAndInsert] jsxComponent node missing from schema');
+      showError(editor, uploadId);
+      return;
+    }
+    const fileNodeData = {
+      type: 'jsxComponent' as const,
+      attrs: {
+        componentName: 'WikiEmbedFile',
+        kind: 'element' as const,
+        attributes: [],
+        sourceRaw: '',
+        sourceDirty: true,
+        props: {
+          src: resolvedSrc,
+          target: src,
+          alias: null,
+          anchor: null,
+          size: formatFileSize(file.size),
+        },
+      },
+    };
+    editor
+      .chain()
+      .command(({ tr: chainTr }) => {
+        chainTr.setMeta(uploadPluginKey, { type: 'remove', id: uploadId });
+        return true;
+      })
+      .focus()
+      .insertContentAt(mappedPos, fileNodeData)
+      .command(({ tr: chainTr, dispatch }) => {
+        if (!dispatch) return true;
+        const realPos = chainTr.mapping.map(mappedPos);
+        const inserted = chainTr.doc.nodeAt(realPos);
+        if (inserted?.type.name === 'jsxComponent') {
+          chainTr.setSelection(NodeSelection.create(chainTr.doc, realPos));
+        }
+        return true;
+      })
+      .run();
+    return;
+  }
 
   if (shape.kind === 'jsx-img' || shape.kind === 'jsx-video' || shape.kind === 'jsx-audio') {
     const jsxNode = state.schema.nodes.jsxComponent;
