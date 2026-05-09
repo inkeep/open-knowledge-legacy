@@ -5,7 +5,11 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { validateAgentId } from './agent-id.ts';
 import type { Config } from './config/schema.ts';
 import { MCP_SERVER_NAME } from './constants.ts';
-import { type AgentIdentity, MCP_CONNECTION_ID_HEADER } from './mcp/agent-identity.ts';
+import {
+  type AgentIdentity,
+  MCP_CONNECTION_ID_HEADER,
+  sanitizeClientName,
+} from './mcp/agent-identity.ts';
 import { buildInstructions } from './mcp/instructions.ts';
 import { registerAllTools } from './mcp/tools/index.ts';
 import { resolveWithinRoot } from './mcp/tools/path-safety.ts';
@@ -45,18 +49,6 @@ function writePlain(res: ServerResponse, statusCode: number, message: string): v
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.end(message);
-}
-
-function sanitizeClientName(name: string | undefined, fallback: string): string {
-  const clean = Array.from(name ?? '')
-    .map((char) => {
-      const code = char.charCodeAt(0);
-      return code <= 0x1f || code === 0x7f ? ' ' : char;
-    })
-    .join('')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return clean ? clean.slice(0, 128) : fallback;
 }
 
 function createSessionServer(

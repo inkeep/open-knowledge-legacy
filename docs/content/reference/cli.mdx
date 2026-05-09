@@ -77,7 +77,11 @@ Run the MCP server. Editors invoke this command for you — you rarely run it yo
 ok mcp [--port <port>]
 ```
 
-If no server is running, `ok mcp` starts one automatically. Set `OK_MCP_AUTOSTART=0` to opt out.
+By default, `ok mcp` starts an inline stdio MCP server that routes per tool call to whatever Open Knowledge project the caller's `cwd` argument resolves into. One stdio process can serve any number of OK projects on the host: each call walks up from `cwd` to the nearest `.ok/` directory and proxies HTTP traffic to that project's running `ok start`. This makes the binary safe to register **once globally** in MCP hosts (Claude Code, Cursor, Codex) — one registration covers every project on the machine. If no backend is running for a resolved project, `ok mcp` starts one automatically; set `OK_MCP_AUTOSTART=0` to opt out.
+
+Tool calls against the global server **must pass an absolute `cwd`** argument inside the target OK project; the server has no fixed root and throws a clear error when `cwd` is omitted. Modern MCP-aware agents read the per-tool `cwd` description and pass it automatically.
+
+`--port <port>` opts into legacy single-backend mode: a thin stdio→HTTP shim that proxies frames to one specific running `ok start` HTTP MCP endpoint (no per-call routing, no auto-spawn). Use this when you want to pin to one backend explicitly.
 
 ## `install-skill`
 
