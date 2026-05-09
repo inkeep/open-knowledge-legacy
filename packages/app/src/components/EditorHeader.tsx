@@ -42,7 +42,7 @@ export function EditorHeader({
   const assetFileName = assetSlash === -1 ? assetPath : assetPath.slice(assetSlash + 1);
 
   return (
-    <header className="flex h-12 shrink-0 items-center border-b">
+    <header className="flex h-12 shrink-0 items-center bg-muted/20 shadow-[inset_0_-1px_0_var(--border)]">
       <div className="flex min-w-0 flex-1 items-center gap-1 px-3">
         <Tooltip>
           <TooltipTrigger asChild>

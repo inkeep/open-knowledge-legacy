@@ -1330,6 +1330,43 @@ button:active:not(:disabled) {
   @apply scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/30 dark:scrollbar-thumb-muted-foreground/50;
 }
 
+/* Chrome-style outward-curving "flares" at an element's bottom corners.
+   Two pseudo-elements sit just outside the bottom-left/right corners,
+   filled with var(--background), with a quarter-circle cut-out adjacent
+   to the host element. The cut-out lets the surrounding bg show through,
+   producing the visual outward curve. Host needs `position: relative`
+   (and `overflow: visible` to not clip the flares). */
+.tab-bottom-flares::before,
+.tab-bottom-flares::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  width: 0.5rem;
+  height: 0.5rem;
+  pointer-events: none;
+  z-index: 1;
+}
+.tab-bottom-flares::before {
+  left: -0.5rem;
+  background: radial-gradient(
+    circle 0.5rem at top left,
+    var(--background) calc(0.5rem - 1px),
+    var(--border) calc(0.5rem - 1px),
+    var(--border) 0.5rem,
+    transparent 0.5rem
+  );
+}
+.tab-bottom-flares::after {
+  right: -0.5rem;
+  background: radial-gradient(
+    circle 0.5rem at top right,
+    var(--background) calc(0.5rem - 1px),
+    var(--border) calc(0.5rem - 1px),
+    var(--border) 0.5rem,
+    transparent 0.5rem
+  );
+}
+
 /* Subtle top + bottom fade for scrollable regions — masks the first and last
    ~1rem of content so it fades into the surrounding bg as a "more above/below"
    affordance. Used by DialogBody and any other scrollable surface that wants
@@ -1362,6 +1399,18 @@ button:active:not(:disabled) {
   inherits: false;
 }
 
+@property --scroll-fade-left {
+  syntax: "<number>";
+  initial-value: 1;
+  inherits: false;
+}
+
+@property --scroll-fade-right {
+  syntax: "<number>";
+  initial-value: 1;
+  inherits: false;
+}
+
 @keyframes scroll-fade-top-in {
   from {
     --scroll-fade-top: 1;
@@ -1380,6 +1429,24 @@ button:active:not(:disabled) {
   }
 }
 
+@keyframes scroll-fade-left-in {
+  from {
+    --scroll-fade-left: 1;
+  }
+  to {
+    --scroll-fade-left: 0;
+  }
+}
+
+@keyframes scroll-fade-right-out {
+  from {
+    --scroll-fade-right: 0;
+  }
+  to {
+    --scroll-fade-right: 1;
+  }
+}
+
 .scroll-fade-mask {
   -webkit-mask-image: linear-gradient(
     to bottom,
@@ -1390,6 +1457,23 @@ button:active:not(:disabled) {
   );
   mask-image: linear-gradient(
     to bottom,
+    transparent 0,
+    black 1rem,
+    black calc(100% - 1rem),
+    transparent 100%
+  );
+}
+
+.scroll-fade-mask-x {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black 1rem,
+    black calc(100% - 1rem),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
     transparent 0,
     black 1rem,
     black calc(100% - 1rem),
@@ -1418,6 +1502,31 @@ button:active:not(:disabled) {
     animation-timing-function: linear;
     animation-fill-mode: both;
     animation-timeline: scroll(self);
+    animation-range:
+      0 1rem,
+      calc(100% - 1rem) 100%;
+  }
+
+  .scroll-fade-mask-x {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      rgba(0, 0, 0, var(--scroll-fade-left)) 0,
+      black 1rem,
+      black calc(100% - 1rem),
+      rgba(0, 0, 0, var(--scroll-fade-right)) 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      rgba(0, 0, 0, var(--scroll-fade-left)) 0,
+      black 1rem,
+      black calc(100% - 1rem),
+      rgba(0, 0, 0, var(--scroll-fade-right)) 100%
+    );
+    animation-name: scroll-fade-left-in, scroll-fade-right-out;
+    animation-duration: auto;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+    animation-timeline: scroll(self inline);
     animation-range:
       0 1rem,
       calc(100% - 1rem) 100%;

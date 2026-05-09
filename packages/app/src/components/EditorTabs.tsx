@@ -22,8 +22,6 @@ import { cn } from '@/lib/utils';
 import { usePageList } from './PageListContext';
 
 const TAB_RENAME_EXTENSIONS = ['.md', '.mdx'] as const;
-const ACTIVE_TAB_CLASS =
-  'border-primary/50 bg-primary/10 text-foreground shadow-[inset_0_-2px_0_var(--primary)] dark:border-primary/70 dark:bg-primary/15';
 
 function tabParts(
   docName: string,
@@ -268,7 +266,7 @@ export function EditorTabs() {
   return (
     <div
       ref={tabListRef}
-      className="ml-2 flex h-8 min-w-0 touch-manipulation flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain subtle-scrollbar"
+      className="ml-2 flex h-12 min-w-0 touch-manipulation flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-fade-mask-x [scrollbar-width:none]"
       onWheel={scrollTabListOnWheel}
     >
       {openTabs.map((tabId) => {
@@ -283,9 +281,9 @@ export function EditorTabs() {
               role="presentation"
               data-active-tab={isActive ? 'true' : undefined}
               className={cn(
-                'group flex h-7 min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-md border',
+                'group flex min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-lg border border-b-transparent py-1.5 relative',
                 isActive
-                  ? ACTIVE_TAB_CLASS
+                  ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
                   : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
               )}
               onAuxClick={(event) => {
@@ -305,7 +303,11 @@ export function EditorTabs() {
               >
                 <FolderOpen aria-hidden="true" className="size-3.5 shrink-0" />
                 {prefix ? (
-                  <span className="min-w-0 flex-1 truncate text-muted-foreground/60">{prefix}</span>
+                  <span
+                    className={cn('min-w-0 flex-1 truncate', isActive && 'text-muted-foreground')}
+                  >
+                    {prefix}
+                  </span>
                 ) : null}
                 <span
                   className={cn(
@@ -328,6 +330,9 @@ export function EditorTabs() {
               >
                 <XIcon aria-hidden="true" className="size-3.5" />
               </button>
+              {isActive ? (
+                <div className="z-0 h-2 w-[calc(100%+16px)] absolute -left-[8px] -bottom-[2px] bg-background pointer-events-none" />
+              ) : null}
             </div>
           );
         }
@@ -344,9 +349,9 @@ export function EditorTabs() {
             role="presentation"
             data-active-tab={isActive ? 'true' : undefined}
             className={cn(
-              'group flex h-7 min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-md border',
+              'group flex min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-lg border border-b-transparent py-1.5 relative',
               isActive
-                ? ACTIVE_TAB_CLASS
+                ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
                 : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
               isRenaming && renameError && 'border-destructive',
             )}
@@ -414,7 +419,12 @@ export function EditorTabs() {
                   }}
                 >
                   {prefix ? (
-                    <span className="min-w-0 flex-1 truncate text-muted-foreground/60">
+                    <span
+                      className={cn(
+                        'min-w-0 flex-1 truncate text-muted-foreground/60',
+                        isActive && 'text-muted-foreground',
+                      )}
+                    >
                       {prefix}
                     </span>
                   ) : null}
@@ -441,6 +451,9 @@ export function EditorTabs() {
                 </button>
               </>
             )}
+            {isActive ? (
+              <div className="z-0 h-2 w-[calc(100%+16px)] absolute -left-[8px] -bottom-[2px] bg-background pointer-events-none" />
+            ) : null}
           </div>
         );
       })}
