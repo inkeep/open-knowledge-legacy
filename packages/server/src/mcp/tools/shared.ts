@@ -5,7 +5,7 @@ import type { Config } from '../../config/schema.ts';
 export type ServerInstance = McpServer;
 export type ConfigOrResolver = Config | ((cwd?: string) => Promise<Config>);
 export const ROUTED_CWD_DESCRIPTION =
-  'Absolute host path inside the target Open Knowledge project. Required when the MCP server is registered globally (e.g. `npx @inkeep/open-knowledge mcp` once at the host level, routing per call). Optional when the server is anchored to a single project (the per-project HTTP MCP server defaults to its configured project root).';
+  'Absolute host path inside the target Open Knowledge project. Required when the MCP server is registered globally (e.g. `npx @inkeep/open-knowledge mcp` once at the host level, routing per call), unless the MCP client advertises exactly one root via the `roots` capability — that single root is then used as the implicit `cwd`. Optional when the server is anchored to a single project (the per-project HTTP MCP server defaults to its configured project root).';
 
 const SUMMARY_TRANSPORT_CAP = 200;
 
