@@ -1,13 +1,3 @@
-/**
- * `initWebVitals()` — subscribe to INP / LCP / CLS / FCP via the `web-vitals`
- * library (v5+ attribution build; D10 LOCKED) and emit each as an
- * `ok/vitals/<lower>` mark.
- *
- * Dev-only init. Guard at the call site in `main.tsx` with
- * `if (import.meta.env.DEV) initWebVitals()`. The library itself is a
- * devDependency; it won't appear in production bundles.
- */
-
 import { recordVital } from './collector';
 import { mark } from './mark';
 import type { WebVitalName, WebVitalsMark } from './types';

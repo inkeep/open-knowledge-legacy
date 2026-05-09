@@ -1,21 +1,3 @@
-/**
- * C6: Mode-switch mid-debounce — WYSIWYG → source transition timing.
- *
- * Validates that a client switching from WYSIWYG mode (XmlFragment writes) to
- * source mode (Y.Text writes) while the server has pending observer debounces
- * does not produce races or content loss. Under the server-authoritative bridge,
- * the server observer handles all cross-CRDT writes: Observer A (XmlFragment →
- * Y.Text) debounces at 50ms, and Observer B (Y.Text → XmlFragment) debounces
- * at 50ms with typing-defer at 300ms.
- *
- * The key timing interaction: a WYSIWYG edit fires server Observer A's debounce.
- * If the client then immediately writes to Y.Text (source mode), the debounced
- * Observer A fires after the source write is already in Y.Text. The server must
- * produce a final state containing contributions from both modes.
- *
- * Per-test docName isolation. Client lifecycle in try/finally per R8a.
- */
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import * as Y from 'yjs';

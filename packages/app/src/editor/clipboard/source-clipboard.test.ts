@@ -1,28 +1,3 @@
-/**
- * Co-located unit tests for the source-mode `text/html` wrapper and the
- * `handleCopyOrCut` empty-selection branch.
- *
- * Coverage:
- *   - `buildSourceModeHtml` produces a single
- *     `<pre class="mdx-component"><code>{markdown}</code></pre>` wrapper.
- *   - `code.textContent = markdown` produces a textNode child rather than
- *     parsed HTML, so HTML-significant bytes (`<`, `>`, `&`) auto-escape on
- *     serialization while quote characters (`"`, `'`) survive verbatim
- *     because they're not special inside textNode content. The markdown
- *     source lands in the destination clipboard without HTML-injection
- *     risk. Multiline markdown with backticks survives.
- *   - `handleCopyOrCut` empty-selection branch sets neither `text/plain`
- *     nor `text/html` on the DataTransfer (clipboard unchanged).
- *   - `handleCopyOrCut` non-empty branch writes both MIMEs.
- *
- * bun-test has no DOM, so we inject a minimal `globalThis.document` fake
- * that replicates the textContent escape semantics needed by the wrapper
- * (escapes `&`, `<`, `>` to entity references on assignment). The fake is
- * sufficient for the wrapper-shape and escape-survival assertions; full
- * cross-browser DOM behavior is exercised by Playwright in the
- * sanitizer-proxy fixture tests and the e2e copy tests.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { buildSourceModeHtml, handleCopyOrCut } from './source-clipboard.ts';
 

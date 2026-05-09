@@ -1,33 +1,3 @@
-/**
- * `mountMcpAndApi` — single canonical wiring for `/mcp` + `/api/*` + WS upgrade.
- *
- * Three consumers compose the same four ingredients on top of an `http.Server`:
- *   1. `bootServer()` (CLI `ok start`, Electron utility, Vite dev plugin via the
- *      shared boot path).
- *   2. The integration test harness's `createTestServer()`.
- *   3. The integration test harness's `createRestartableServer()` (no `/mcp` —
- *      passes `mcpHttpHandler: undefined`).
- *
- * Before this extraction every consumer reimplemented the request handler, the
- * `WebSocketServer({ noServer: true })`, the `/collab/keepalive` short-circuit,
- * the keepalive-grace timer map, and the per-`connectionId` cleanup cascade
- * (`closeAllForAgent` + `clearFocus` + `clearPresence`). The duplication had
- * already drifted: `boot.ts` validated `connectionId` via `validateAgentId` to
- * defend against log-injection / `clearPresence` cross-eviction; the harness
- * accepted any `connectionId` query param. Centralizing in one helper closes
- * that drift class permanently — every consumer gets the production-grade
- * validation path.
- *
- * The helper attaches both `'request'` and `'upgrade'` listeners to the
- * supplied `httpServer`. Callers therefore MUST `createHttpServer()` with no
- * constructor callback — passing a `(req, res) => {…}` arg would install a
- * second `'request'` listener and double-handle every inbound HTTP request.
- *
- * `shutdown()` cancels pending grace timers + awaits in-flight cleanups so
- * caller `destroy()` paths do not race a still-firing grace callback into
- * a torn-down `sessionManager` / broadcaster.
- */
-
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Hocuspocus } from '@hocuspocus/server';

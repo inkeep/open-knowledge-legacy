@@ -47,10 +47,6 @@ import {
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
-/**
- * Capture the settlement dispatcher's decisions for a single test.
- * Returned `dispatches` accumulates in the order the settlement handler fires.
- */
 function createDispatchRecorder() {
   const dispatches: ObserverDispatchKind[] = [];
   const onDispatch = (kind: ObserverDispatchKind): void => {

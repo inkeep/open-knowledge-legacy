@@ -1,22 +1,3 @@
-/**
- * Reusable frontmatter-row primitives — extracted from `PropertyPanel.tsx`
- * so file frontmatter (PropertyPanel, CRDT-bound) and folder frontmatter
- * (FolderDefaultsCard, HTTP-bound) share the same row chrome.
- *
- * Affordances are opt-in:
- *   - `sortableId` enables `@dnd-kit` drag-handle for reorder
- *   - `rename` enables the click-to-rename UX
- *   - `isDuplicate` renders the duplicate-name warning marker
- *   - `onRemove` renders the delete-icon
- *   - `badge` renders an extra inline label after the key (e.g. "inherited")
- *
- * PropertyPanel passes every affordance. FolderDefaultsCard skips
- * `sortableId` (cascade is order-independent) but takes the rest. Each
- * card decides its commit transport — PropertyPanel routes through
- * `bindFrontmatterDoc.patch()` (CRDT); FolderDefaultsCard fires
- * `saveFolderConfig` (HTTP). The row component is transport-agnostic.
- */
-
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { FrontmatterType, FrontmatterValue } from '@inkeep/open-knowledge-core';

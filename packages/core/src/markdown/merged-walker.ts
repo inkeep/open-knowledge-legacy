@@ -36,6 +36,27 @@ export function mergedPostParseWalkerPlugin() {
       }
 
       applyPositionSliceToNode(node as Nodes, source, debug);
+
+      if (
+        node.type === 'heading' &&
+        parent !== undefined &&
+        typeof index === 'number' &&
+        (node as Nodes & { data?: { sourceStyle?: string } }).data?.sourceStyle === 'setext'
+      ) {
+        const headingEnd = node.position?.end?.line;
+        const next = (parent as Parent).children[index + 1] as Nodes | undefined;
+        const nextStart = next?.position?.start?.line;
+        if (
+          next?.type === 'paragraph' &&
+          typeof headingEnd === 'number' &&
+          typeof nextStart === 'number' &&
+          nextStart === headingEnd + 1
+        ) {
+          const heading = node as Nodes & { data?: { sourceContiguousNext?: boolean } };
+          heading.data ??= {};
+          heading.data.sourceContiguousNext = true;
+        }
+      }
     });
   };
 }

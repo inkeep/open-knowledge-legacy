@@ -1,27 +1,3 @@
-/**
- * Hybrid line-level diff3 + character-level DMP three-way merge.
- *
- * Replaces the DMP-only `applyUserDelta` approach for Observer A's Path B
- * (XmlFragment→Y.Text when Y.Text has diverged from the baseline).
- *
- * Algorithm (spec §4a):
- *   Phase 1: Line-level diff3 — structural merge + conflict detection.
- *            diff3's excludeFalseConflicts deduplicates identical edits (D8/T3).
- *   Phase 2: Per-region resolution — clean regions pass through; conflict
- *            regions go through character-level DMP merge (safe on short strings).
- *
- * Why hybrid:
- *   - diff3 alone loses sub-line edits (T6) — line-level granularity
- *   - DMP alone duplicates identical edits (T3) and corrupts delete/edit (T7)
- *   - OT duplicates D8 and corrupts delete/edit
- *   - Hybrid handles all 7 experimentally-validated scenarios correctly
- *
- * Performance: line-level diff3 is 11ms p50 on 69K-char docs; character-level
- * DMP within conflict regions adds <1ms (regions are typically <200 chars).
- *
- * @see specs/2026-04-15-lossless-bridge-merge/SPEC.md §4
- * @see specs/2026-04-15-lossless-bridge-merge/evidence/algorithm-comparison-experiment.md
- */
 import DiffMatchPatch from 'diff-match-patch';
 import { diff3Merge } from 'node-diff3';
 import { fnv1aDigest } from './hash-util.ts';
@@ -156,6 +132,17 @@ function findReorderedSegment(result: string, segments: string[]): string | null
   return null;
 }
 
+/**
+ * Invariant (c) + order side-check: every maximal-unique-substring of
+ * `(userText \ baseline)` and `(agentText \ baseline)` appears in `result`,
+ * and each side's segments appear in result in the same relative order
+ * they appear in their source. Throws `BridgeMergeContentLossError`
+ * on the first violation; callers decide environment policy.
+ *
+ * Complexity: O(n log n) for DMP diff per side + O(k · m) for substring
+ * checks (k = segment count, m = result length) + O(k) for order check.
+ * Empirically sub-millisecond on ~10 KB markdown with k ≤ ~10 segments.
+ */
 export function assertContentPreservation(
   baseline: string,
   userText: string,

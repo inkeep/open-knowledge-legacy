@@ -1,18 +1,3 @@
-/**
- * Rename log — durable index of per-rename `(from, to)` mappings.
- *
- * Persisted as JSONL at `<shadowDir>/renames.jsonl`. Each line is one
- * `RenameLogEntry`. Atomic append uses `tracedAppendFileSync` with `flag: 'a'`
- * (POSIX O_APPEND) — the OK server lock at `<contentDir>/.ok/server.lock`
- * provides single-writer guarantee. Boot-time loader is fail-open: malformed
- * lines log a warning and are skipped, partial trailing line is dropped.
- *
- * In-memory index shape: `Map<to, RenameLogEntry>` for O(1) per-step chain
- * lookup. Forward-compatible reverse accessor: `Map<from, RenameLogEntry[]>`
- * built from the same source — a single rename can be the predecessor of
- * multiple later renames if a name is reused after a rename and renamed again.
- */
-
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';

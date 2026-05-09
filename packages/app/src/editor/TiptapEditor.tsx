@@ -44,12 +44,6 @@ import { markUserTyping } from './observers';
 import { TableControlsMenu } from './table-controls/TableControlsMenu';
 import { getEditorView } from './utils/get-editor-view';
 
-/**
- * Custom cursor renderer. Agents do not publish per-doc awareness, so this
- * renderer only ever sees humans. `AwarenessUser.type` narrows to `'human'`
- * statically; an explicit `user.type === 'agent'` short-circuit would be
- * unreachable.
- */
 function renderCursor(user: Record<string, string>): HTMLElement {
   const cursor = document.createElement('span');
   cursor.classList.add('collaboration-cursor__caret');

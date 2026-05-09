@@ -1,33 +1,3 @@
-/**
- * US-013 / FR-13: Server-authoritative bridge stress test.
- *
- * 5 clients x 30s of randomized mixed WYSIWYG + source edits against a real
- * Hocuspocus server. Measures end-to-end convergence timing after edit bursts
- * rather than instrumenting internal observer debounce callbacks.
- *
- * G7 budget rationale:
- *   The convergence budget is generous because 5 concurrent clients produce
- *   significant cross-client CRDT merge load. Observer A debounce is 50ms,
- *   Observer B typing-defer is 300ms, CRDT WebSocket propagation is <50ms per
- *   hop. With 5 clients the full propagation chain is:
- *     edit → local observer → WebSocket → server merge → broadcast → 4 peers
- *       → each peer observer → settle
- *   Under load, this chain takes 1-3s typical. The 25s final convergence gate
- *   accounts for macOS scheduler jitter and accumulated edit volume.
- *
- * Design:
- *   - Each client makes a random edit (WYSIWYG paragraph append or Y.Text
- *     insert) every 200-500ms for 30s total
- *   - After edits stop, convergence is measured with a generous timeout
- *   - Final assertions: all clients converged, no duplicate markers, bridge
- *     invariant holds on all clients
- *   - skipInvariantWatcher: true (stress tests drive transient divergence)
- *
- * Deterministic enough to pass reliably: edits are append-only (no conflicting
- * overwrites), convergence is measured only after ALL edits stop (no mid-burst
- * measurement that races with in-flight ops).
- */
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import * as Y from 'yjs';

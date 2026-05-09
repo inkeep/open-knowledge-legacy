@@ -1,27 +1,3 @@
-/**
- * Highlight (`==text==` and `<mark>` JSX) precision tests — flanking-rule
- * acceptance, delimiter-edge rejection, JSX promotion, code-span + math
- * protection, and round-trip stability.
- *
- * Companion to `highlight-promoter.ts`. Mirrors the structure of
- * `math-block-guard.precision.test.ts` (the closest precedent — both
- * are heuristic walkers over `text` mdast nodes producing inline marks).
- *
- * Coverage tiers:
- *
- *   1. Acceptance    — basic shapes that MUST highlight.
- *   2. Rejection     — shapes that MUST stay prose (delimiter ambiguity,
- *                      flanking rule violations, escape carve-out).
- *   3. Multi-match   — multiple highlights on one line, mixed prose.
- *   4. Mark interop  — bold/italic/code/strikethrough inside / around.
- *   5. JSX           — `<mark>…</mark>` MDX promotion, attribute drop,
- *                      capitalized `<Mark>` stays as raw JSX.
- *   6. Protection    — code spans, inline math, block math, wikilinks
- *                      cannot have `==…==` claimed inside them.
- *   7. Round-trip    — parse + serialize byte-stable for canonical
- *                      `==…==` form; `<mark>` collapses to `==…==`.
- */
-
 import { describe, expect, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import { sharedExtensions } from '../extensions/shared.ts';

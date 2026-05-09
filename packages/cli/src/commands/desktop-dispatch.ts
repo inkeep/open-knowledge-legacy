@@ -1,15 +1,3 @@
-/**
- * `ok` (no args) → desktop-app dispatch helpers.
- *
- * Pure-function detection + launch for the macOS desktop Electron app
- * (`@inkeep/open-knowledge-desktop`). When the desktop is detected as
- * available + interactive, the CLI hands off to it via `open -b
- * com.inkeep.open-knowledge` (LaunchServices by bundle ID — fires Apple
- * Events, respects `requestSingleInstanceLock()`, preserves Gatekeeper
- * paths). Otherwise the dispatch returns false with a specific reason
- * and the caller falls through to the existing `ok start` flow.
- */
-
 import type { spawn as NativeSpawn, SpawnOptions } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -62,6 +50,23 @@ export function createRealDetectDeps(): DetectDeps {
   };
 }
 
+/**
+ * Resolve the desktop bundle path, or `null` if no source produced a
+ * usable path. Used both as the detection signal and as input to error
+ * messages.
+ *
+ * Probes (in order):
+ *   (a) Bundled-CLI introspection — when `ELECTRON_RUN_AS_NODE === '1'`
+ *       AND `execPath` matches `/.app/Contents/MacOS/`, walk up to the
+ *       `.app` ancestor.
+ *   (b) `/Applications/Open Knowledge.app/Contents/MacOS/Open Knowledge`
+ *   (c) `~/Applications/Open Knowledge.app/Contents/MacOS/Open Knowledge`
+ *
+ * Note: We probe the executable file inside the bundle, not just the
+ * `.app` directory — a directory named `Open Knowledge.app` could exist
+ * without a real bundle. Verifying the executable rules out false
+ * positives.
+ */
 function resolveBundlePath(deps: DetectDeps): string | null {
   if (deps.env.ELECTRON_RUN_AS_NODE === '1') {
     const m = /(.+?\.app)\/Contents\/MacOS\//.exec(deps.execPath);

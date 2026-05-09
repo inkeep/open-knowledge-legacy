@@ -2,8 +2,11 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
+import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import {
+  BridgeInvariantViolationError,
   type ConfigValidationError,
+  fnv1aDigest,
   normalizeBridge,
   type Principal,
   prependFrontmatter,
@@ -39,6 +42,7 @@ import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
 import {
+  incrementDeferredStoreFailures,
   incrementGitAutoSaveFailure,
   incrementGitWriterCommitFailure,
   incrementPersistenceDiskWrite,
@@ -116,6 +120,47 @@ export function resolveWriterFromOrigin(
   return null;
 }
 
+const DEFERRED_STORE_ERROR_CLASSES = [
+  'disk-write',
+  'serialize',
+  'reconcile',
+  'parse-fallback',
+  'traced-rename',
+  'unknown',
+] as const;
+type DeferredStoreErrorClass = (typeof DEFERRED_STORE_ERROR_CLASSES)[number];
+
+const ERRNO_FS_CODES = new Set([
+  'EACCES',
+  'EBADF',
+  'EBUSY',
+  'EEXIST',
+  'EISDIR',
+  'ELOOP',
+  'EMFILE',
+  'ENFILE',
+  'ENOENT',
+  'ENOSPC',
+  'ENOTDIR',
+  'EPERM',
+  'EROFS',
+  'ETXTBSY',
+  'EXDEV',
+]);
+
+export function classifyDeferredStoreError(err: unknown): DeferredStoreErrorClass {
+  if (err === null || typeof err !== 'object') return 'unknown';
+  const e = err as { code?: unknown; message?: unknown };
+  const message = typeof e.message === 'string' ? e.message : '';
+  if (message.startsWith('symlink-escape:')) return 'disk-write';
+  if (typeof e.code === 'string' && ERRNO_FS_CODES.has(e.code)) {
+    if (message.includes('rename')) return 'traced-rename';
+    return 'disk-write';
+  }
+  if (err instanceof BridgeInvariantViolationError) return 'serialize';
+  return 'unknown';
+}
+
 export interface PersistenceOptions {
   contentDir: string;
   projectDir: string;
@@ -134,6 +179,7 @@ export interface PersistenceOptions {
   applyDiskContentToDoc?: (document: Y.Doc, content: string) => void;
   configHomedirOverride?: string;
   onConfigRejected?: (docName: string, error: ConfigValidationError) => void;
+  mdManager?: MarkdownManager;
 }
 
 export function captureDocSnapshotForPersistence(document: Y.Doc): {
@@ -226,6 +272,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const getPrincipal = options?.getPrincipal;
   const onAgentCommit = options?.onAgentCommit;
   const onDiskFlush = options?.onDiskFlush;
+  const mgr = options?.mdManager ?? mdManager;
 
   const configLkgCache = new Map<string, string>();
   const configPersistenceCtx: ConfigPersistenceCtx = {
@@ -637,7 +684,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
         let normalizeEqual: boolean;
         try {
-          const fragmentBody = mdManager.serialize(json);
+          const fragmentBody = mgr.serialize(json);
           const fragmentMarkdown = prependFrontmatter(frontmatter, fragmentBody);
           normalizeEqual = assertBridgeInvariant(markdown, fragmentMarkdown, {
             site: 'persistence',
@@ -903,6 +950,44 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
                 lastTransactionOrigin: entry.lastTransactionOrigin,
               });
             } catch (err) {
+              const verbose = process.env.OK_TELEMETRY_VERBOSE === '1';
+              let rawMessage = '';
+              try {
+                rawMessage = String((err as { message?: unknown } | null)?.message ?? '');
+              } catch {
+                rawMessage = '';
+              }
+              const errorMessageHash = fnv1aDigest(rawMessage);
+              let errorClass: DeferredStoreErrorClass;
+              try {
+                errorClass = classifyDeferredStoreError(err);
+              } catch (classifyErr) {
+                const rawClassifyMessage = String(
+                  (classifyErr as { message?: unknown } | null)?.message ?? '',
+                );
+                console.warn(
+                  JSON.stringify({
+                    event: 'deferred-store-classifier-failed',
+                    'doc.name': documentName,
+                    classifyErrorHash: fnv1aDigest(rawClassifyMessage),
+                    errorMessageHash,
+                    ...(verbose ? { classifyErrorMessage: rawClassifyMessage } : {}),
+                    timestamp: new Date().toISOString(),
+                  }),
+                );
+                errorClass = 'unknown';
+              }
+              incrementDeferredStoreFailures();
+              console.warn(
+                JSON.stringify({
+                  event: 'deferred-store-failed',
+                  'doc.name': documentName,
+                  errorClass,
+                  errorMessageHash,
+                  ...(verbose ? { errorMessage: rawMessage } : {}),
+                  timestamp: new Date().toISOString(),
+                }),
+              );
               log.error(
                 { err, documentName },
                 `[persistence] Deferred store failed for ${documentName}`,

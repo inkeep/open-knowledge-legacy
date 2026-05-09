@@ -1,39 +1,3 @@
-/**
- * MathInlineView — React NodeView for the `mathInline` PM atom (Phase 3
- * of `specs/2026-04-29-math-canonical-and-syntax/`, lifts NG-M11).
- *
- * Renders the formula attr inline-flow via KaTeX (lazy-imported on first
- * mount). Atom node, so PM treats the rendered output as a single
- * indivisible cursor unit — selection lands on the math, Backspace
- * deletes the whole node.
- *
- * ## Editing UX (feature parity with block descriptors)
- *
- * Clicking the rendered atom selects it and opens an inline editor
- * popover anchored to the math span. The popover reuses the same
- * `<PropPanel>` component the block components use (Callout, Math,
- * Mermaid, etc.) — driven by a synthetic `JsxComponentDescriptor` that
- * exposes the `formula` prop. PropPanel's `onChange` writes back to the
- * atom's flat attrs via `tr.setNodeMarkup` (mirroring the block path's
- * "target by position, not selection" pattern that survives focus moves
- * to the portal input).
- *
- * Slash-menu insertion auto-opens the popover via the shared
- * `setPendingAutoOpen` / `consumeAutoOpen` queue used by the
- * descriptor-driven slash entries — same auto-focus sequence as
- * `<Math>` slash-insert.
- *
- * Block math (`<MathView>` in `editor/components/Math.tsx`) and inline
- * math share the same KaTeX dependency — KaTeX JS is lazy and singleton-
- * cached after first import; KaTeX CSS is eager from `main.tsx` so
- * inline-flow rendering doesn't pay per-instance flash-of-unstyled-math.
- *
- * `displayMode: false` is the inline-flow rendering mode (KaTeX wraps
- * output in `<span class="katex">`). `throwOnError: false` keeps
- * malformed LaTeX from crashing the editor — KaTeX renders the error
- * inline with its own red-underline styling.
- */
-
 import { incrementJsxRenderFailure } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeSelection } from '@tiptap/pm/state';

@@ -5,7 +5,7 @@ import remarkParse from 'remark-parse';
 import { unified } from 'unified';
 import { visit } from 'unist-util-visit';
 import { VFile } from 'vfile';
-import { positionSlicePlugin } from './position-slice.ts';
+import { positionSlicePlugin, splitGfmCellSegments } from './position-slice.ts';
 
 type AnyNode = Nodes & { data?: Record<string, unknown> };
 
@@ -790,5 +790,72 @@ describe('position-slice: definition source-form recovery (FR-24)', () => {
     const def = findNode(tree, 'definition');
     expect(def?.data?.sourceLayout).toBe('multiline');
     expect(def?.data?.sourceTitleMarker).toBe('double');
+  });
+});
+
+describe('splitGfmCellSegments — GFM cell tokenizer edge cases', () => {
+  test('splits canonical pipe-surround row into N+2 segments (leading + trailing empties)', () => {
+    expect(splitGfmCellSegments('| a | b | c |')).toEqual(['', ' a ', ' b ', ' c ', '']);
+  });
+
+  test('splits no-leading-pipe row into N+1 segments (trailing empty only)', () => {
+    expect(splitGfmCellSegments('a | b | c')).toEqual(['a ', ' b ', ' c']);
+  });
+
+  test('escaped pipe `\\|` stays inside the current cell segment', () => {
+    expect(splitGfmCellSegments('| a \\| b | c |')).toEqual(['', ' a \\| b ', ' c ', '']);
+  });
+
+  test('multiple escaped pipes in one cell all survive', () => {
+    expect(splitGfmCellSegments('| a \\| b \\| c | d |')).toEqual([
+      '',
+      ' a \\| b \\| c ',
+      ' d ',
+      '',
+    ]);
+  });
+
+  test('asymmetric padding preserved per-cell — left-only, right-only, both-sides, none', () => {
+    expect(splitGfmCellSegments('|left| right|both | none|')).toEqual([
+      '',
+      'left',
+      ' right',
+      'both ',
+      ' none',
+      '',
+    ]);
+  });
+
+  test('no-padding cells (no surrounding whitespace) survive verbatim', () => {
+    expect(splitGfmCellSegments('|a|b|c|')).toEqual(['', 'a', 'b', 'c', '']);
+  });
+
+  test('empty cell (`||`) emits an empty-string segment', () => {
+    expect(splitGfmCellSegments('|a||c|')).toEqual(['', 'a', '', 'c', '']);
+  });
+
+  test('whitespace-only cell preserves the whitespace verbatim', () => {
+    expect(splitGfmCellSegments('|a|   |c|')).toEqual(['', 'a', '   ', 'c', '']);
+  });
+
+  test('row with no pipes returns a single-element array containing the input', () => {
+    expect(splitGfmCellSegments('plain text')).toEqual(['plain text']);
+  });
+
+  test('lone backslash at end-of-row is not an escape (no following pipe)', () => {
+    expect(splitGfmCellSegments('| a \\| b |')).toEqual(['', ' a \\| b ', '']);
+    expect(splitGfmCellSegments('| a \\')).toEqual(['', ' a \\']);
+  });
+
+  test('backslash followed by NON-pipe is not an escape — passes through then re-tokenizes on next pipe', () => {
+    expect(splitGfmCellSegments('| a\\b | c |')).toEqual(['', ' a\\b ', ' c ', '']);
+  });
+
+  test('double-escape `\\\\|` — the backslash escapes the backslash, leaving `|` as a separator', () => {
+    expect(splitGfmCellSegments('| a \\\\| b |')).toEqual(['', ' a \\\\| b ', '']);
+  });
+
+  test('empty input returns [""] — single empty segment', () => {
+    expect(splitGfmCellSegments('')).toEqual(['']);
   });
 });

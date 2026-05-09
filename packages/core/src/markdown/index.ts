@@ -1,17 +1,3 @@
-/**
- * MarkdownManager — wraps the unified + remark pipeline with a stable
- * parse/serialize API (`parse(markdown) → JSONContent`, `serialize(json) → string`).
- *
- * Constructed with `{ extensions }`, the TipTap extension list used to derive
- * the target ProseMirror schema.
- *
- * Handler organization:
- *   - Tier A passthrough + Tier B basic coverage: this file.
- *   - Position-slice walker for source-form recovery: `position-slice.ts`.
- *   - Full PM↔mdast handler table: `handlers.ts`.
- *   - Serialize-side fidelity overrides: `to-markdown-handlers.ts`.
- */
-
 import {
   type FromProseMirrorOptions,
   fromPmMark,
@@ -391,7 +377,8 @@ function buildMdastToPmHandlers(
               : null;
           const align = alignArray[colIdx] ?? null;
           const cellType = rowIdx === 0 && n.tableHeader ? n.tableHeader : n.tableCell;
-          const cellNode = cellType.createAndFill({ align }, wrapped);
+          const sourcePadding = cellMdast.data?.sourcePadding ?? null;
+          const cellNode = cellType.createAndFill({ align, sourcePadding }, wrapped);
           if (cellNode) pmCells.push(cellNode);
         }
         const rowNode = n.tableRow.createAndFill(null, pmCells.length > 0 ? pmCells : null);
@@ -440,20 +427,46 @@ function buildMdastToPmHandlers(
       }
       const escapedChars: Array<{ offset: number; char: string }> | undefined =
         node.data?.escapedChars;
-      if (!escapedChars?.length) {
+      const entityRefSpans: Array<{ offset: number; length: number; raw: string }> | undefined =
+        node.data?.entityRefSpans;
+      if (!escapedChars?.length && !entityRefSpans?.length) {
         return schema.text(value.replaceAll('\u00A0', ' '));
       }
+      type Marker =
+        | { kind: 'escape'; offset: number; length: number }
+        | { kind: 'entity'; offset: number; length: number; raw: string };
+      const markers: Marker[] = [
+        ...(escapedChars ?? []).map(
+          (e) => ({ kind: 'escape', offset: e.offset, length: 1 }) as const,
+        ),
+        ...(entityRefSpans ?? []).map(
+          (e) => ({ kind: 'entity', offset: e.offset, length: e.length, raw: e.raw }) as const,
+        ),
+      ];
+      markers.sort((a, b) => a.offset - b.offset);
       const fragments: PmNode[] = [];
       let lastIdx = 0;
-      for (const { offset } of escapedChars) {
-        if (offset > lastIdx) {
-          const segment = value.slice(lastIdx, offset).replaceAll('\u00A0', ' ');
+      for (const marker of markers) {
+        if (marker.offset > lastIdx) {
+          const segment = value.slice(lastIdx, marker.offset).replaceAll('\u00A0', ' ');
           if (segment) fragments.push(schema.text(segment));
         }
-        if (offset < value.length) {
-          const escapedChar = value[offset].replaceAll('\u00A0', ' ');
-          fragments.push(schema.text(escapedChar, [m.escapeMark.create()]));
-          lastIdx = offset + 1;
+        if (marker.offset < value.length) {
+          const segmentText = value
+            .slice(marker.offset, marker.offset + marker.length)
+            .replaceAll('\u00A0', ' ');
+          if (segmentText) {
+            if (marker.kind === 'escape') {
+              fragments.push(schema.text(segmentText, [m.escapeMark.create()]));
+            } else if (m.sourceLiteral) {
+              fragments.push(
+                schema.text(segmentText, [m.sourceLiteral.create({ sourceRaw: marker.raw })]),
+              );
+            } else {
+              fragments.push(schema.text(segmentText));
+            }
+          }
+          lastIdx = marker.offset + marker.length;
         }
       }
       if (lastIdx < value.length) {
@@ -511,6 +524,7 @@ function buildMdastToPmHandlers(
       headingStyle: node.data?.sourceStyle ?? 'atx',
       sourceTrailingHashes: node.data?.sourceTrailingHashes ?? null,
       sourceUnderlineLength: node.data?.sourceUnderlineLength ?? null,
+      sourceContiguousNext: node.data?.sourceContiguousNext ?? false,
     }));
   }
 
@@ -956,6 +970,7 @@ function buildPmToMdastHandlers(schema: Schema): {
         sourceStyle: pmNode.attrs.headingStyle,
         sourceTrailingHashes: pmNode.attrs.sourceTrailingHashes ?? undefined,
         sourceUnderlineLength: pmNode.attrs.sourceUnderlineLength ?? undefined,
+        sourceContiguousNext: pmNode.attrs.sourceContiguousNext === true ? true : undefined,
       },
     }));
   }
@@ -1049,8 +1064,21 @@ function buildPmToMdastHandlers(schema: Schema): {
     };
   }
   if (n.tableRow) nodeHandlers.tableRow = fromPmNode('tableRow');
-  if (n.tableCell) nodeHandlers.tableCell = fromPmNode('tableCell');
-  if (n.tableHeader) nodeHandlers.tableHeader = fromPmNode('tableCell');
+  const cellToMdast = (pmNode: PmNode) => {
+    const padding = pmNode.attrs.sourcePadding;
+    const data: { sourcePadding?: { left: number; right: number } } = {};
+    if (
+      padding !== null &&
+      typeof padding === 'object' &&
+      typeof (padding as { left?: unknown }).left === 'number' &&
+      typeof (padding as { right?: unknown }).right === 'number'
+    ) {
+      data.sourcePadding = padding as { left: number; right: number };
+    }
+    return Object.keys(data).length > 0 ? { data } : {};
+  };
+  if (n.tableCell) nodeHandlers.tableCell = fromPmNode('tableCell', cellToMdast);
+  if (n.tableHeader) nodeHandlers.tableHeader = fromPmNode('tableCell', cellToMdast);
 
   if (n.image) {
     nodeHandlers.image = (pmNode: PmNode) => ({

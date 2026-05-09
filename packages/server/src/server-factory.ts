@@ -12,6 +12,7 @@ import {
   CONFIG_DOC_NAMES,
   createBasenameIndex,
   humanFormat,
+  type MarkdownManager,
   type Principal,
   prependFrontmatter,
   stripFrontmatter,
@@ -129,6 +130,7 @@ export interface ServerOptions {
   lockKind?: 'interactive' | 'mcp-spawned';
   skipStateManifestCheck?: boolean;
   configHomedirOverride?: string;
+  mdManager?: MarkdownManager;
 }
 
 export interface ServerInstance {
@@ -349,6 +351,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       onDiskFlush: (docName, sv) => cc1Broadcaster?.emitDiskAck(docName, sv),
       onConfigRejected: (docName, error) =>
         cc1Broadcaster?.emitConfigValidationRejected(docName, error),
+      mdManager: options.mdManager,
     };
 
     persistence = createPersistenceExtension(persistenceOpts);

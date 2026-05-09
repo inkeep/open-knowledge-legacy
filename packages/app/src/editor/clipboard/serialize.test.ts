@@ -1,20 +1,3 @@
-/**
- * Unit tests for the WYSIWYG clipboard serializers.
- *
- * The HTML serializer's DOM-traversal happy path requires a real DOM
- * (DOMParser + document.createDocumentFragment) which bun-test does not
- * provide; that path is covered by the paste-fidelity E2E suite
- * (`packages/app/tests/stress/paste-fidelity.e2e.ts`, CB-CONTRACT-1..11).
- *
- * Here we cover what bun-test CAN reach without DOM:
- *   - text serializer happy path + failure-fallthrough;
- *   - HTML serializer's walker→markdown tier dispatch logic — the
- *     decision to enter walker, the catch-and-fallthrough on walker
- *     throw, and the markdown tier's no-schema short-circuit. This pins
- *     the regression class "catch block removed in a refactor"
- *     mechanically rather than relying on E2E to surface it.
- */
-
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import type { Fragment } from '@tiptap/pm/model';

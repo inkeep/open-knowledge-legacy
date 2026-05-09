@@ -1,20 +1,3 @@
-/**
- * T2 — Multi-client fast restart.
- *
- * Extends T1 (single-client fast restart repro in provider-pool-reconnect.test.ts)
- * with a second connected pool, simulating two browser tabs open against the same
- * doc when the server restarts.
- *
- * Bug-class arithmetic: with N clients holding Y.Docs before the restart, the
- * post-restart sync union contains each client's clientID PLUS the server's
- * freshly-generated clientID. For N=2, the expected merged clientID set size is 3
- * (two client clientIDs + one server clientID). Content from the fresh-server-
- * clientID items duplicates the on-disk markdown.
- *
- * Expected: PASS post-fix. Regression guard for the pre-PR-#311 bug class
- * — marker counts at baseline and clientID-drift assertion holds. Any
- * reintroduction of the multi-client restart duplication trips this red.
- */
 import './idb-preload';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';

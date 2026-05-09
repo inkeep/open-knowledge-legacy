@@ -140,6 +140,7 @@ describe("'ok:shell:detect-protocol' round-trips install state", () => {
           getApplicationInfoForProtocol: async () => {
             throw new Error('no handler registered');
           },
+          runMacOsProbe: async () => false,
         },
         scheme,
       );

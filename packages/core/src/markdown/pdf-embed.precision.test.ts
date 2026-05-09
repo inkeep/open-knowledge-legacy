@@ -1,15 +1,3 @@
-/**
- * PDF embed (`![[file.pdf]]`) precision tests.
- *
- * Pins the PDF dispatch branch in `handlers.wikiLinkEmbed` and the
- * anchor parser in `Pdf.tsx`. Coverage tiers:
- *   1. Basic round-trip — no anchor, page-only, height-only, combined.
- *   2. Parse correctness — PM jsxComponent shape, descriptor name,
- *      target/anchor/alias on the props bag.
- *   3. Anchor parser — page/height extraction, unknown-key passthrough,
- *      malformed value, empty anchor.
- */
-
 import { describe, expect, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import { sharedExtensions } from '../extensions/shared.ts';

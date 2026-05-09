@@ -182,13 +182,6 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     return `${key} ${idx}`;
   }
 
-  /**
-   * Drop handler — translates @dnd-kit's `(activeId, overId)` into the
-   * permuted key list and commits via `binding.reorder()`. The binding's
-   * commit recomputes the FM region byte range INSIDE its transact (D12
-   * STOP_IF), so a peer body edit between mouseup and commit can't corrupt
-   * the FM region.
-   */
   function handleDragEnd(event: DragEndEvent): void {
     if (!binding) return;
     const activeId = String(event.active.id);

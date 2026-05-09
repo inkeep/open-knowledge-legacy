@@ -1,31 +1,3 @@
-/**
- * Chokidar single-file watcher for `.ok/config.yml` paths.
- *
- * Watches a single absolute path. On `add` or `change`, reads the file and
- * fires `onChange(content)`. The caller wires `onChange` to
- * `applyExternalConfigChange` in `config-persistence.ts`, which validates +
- * mutates Y.Text under `CONFIG_FILE_WATCHER_ORIGIN`.
- *
- * `awaitWriteFinish: { stabilityThreshold: 100 }` debounces atomic-rename
- * writes (write tmp → rename) into a single change event — chokidar would
- * otherwise emit unlink + add for the rename, which we'd have to coalesce
- * ourselves.
- *
- * Self-write feedback loop is broken by the persistence layer's LKG cache:
- * `applyExternalConfigChange` short-circuits when the read content matches
- * the LKG entry (i.e., we just wrote it ourselves). The chokidar event
- * still fires, but the handler returns early before mutating Y.Text.
- *
- * Defense-in-depth: the watcher also keeps an internal `lastContent` cache
- * inside `handlePath`. Identical-content events (most relevant for the
- * post-`ready` fallback poll, which would otherwise re-fire `onChange` on
- * every tick) short-circuit before reaching the consumer. The seed read
- * after `ready` keeps that guard consistent with `ignoreInitial: true` for
- * files that already exist when the watcher starts.
- *
- * @see packages/server/src/config-persistence.ts `applyExternalConfigChange`
- */
-
 import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { tracedMkdirSync } from './fs-traced.ts';

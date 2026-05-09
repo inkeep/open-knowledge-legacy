@@ -1,17 +1,3 @@
-/**
- * Session-level test for `createMcpHttpHandler` config plumbing (US-006 / IS-4).
- *
- * Historically booted a real HTTP MCP server with a synthetic `Config` whose
- * `mcp.tools.grep.maxResults` (formerly `mcp.tools.search.maxResults`) was
- * set to a non-default value, opened a real MCP session over HTTP, called
- * the `grep` tool, and asserted the response reflected the configured
- * ceiling. The cap is now a hardcoded constant (`GREP_MAX_RESULTS`), so the
- * "configured value reaches the tool" tests no longer apply — surface tests
- * here cover session lifecycle (cap, TTL, etc.) only.
- *
- * Co-located with `mcp-http.ts`; the `packages/app/tests/integration/mcp-http.test.ts`
- * sibling covers the basic init+tools/list flow.
- */
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';

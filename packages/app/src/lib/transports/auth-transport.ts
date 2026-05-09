@@ -1,19 +1,3 @@
-/**
- * Transport abstraction for the GitHub device-flow auth UI.
- *
- * Two implementations:
- *   - `httpAuthTransport` — wraps `fetch('/api/local-op/auth/login')` +
- *     `consumeAuthEventStream` (the existing path). Default for editor
- *     windows + web distribution.
- *   - `ipcAuthTransport` — wraps `bridge.localOp.auth.start()`. Used by
- *     the Project Navigator window where there is no backing API server
- *     (apiOrigin is empty).
- *
- * The `AuthModal` component accepts a `transport` prop; the default is
- * the HTTP transport so existing editor callers don't change. Navigator
- * passes the IPC transport explicitly.
- */
-
 import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { consumeAuthEventStream } from '@/components/auth-event-stream';
 import type { OkDesktopBridge, OkLocalOpAuthEvent } from '@/lib/desktop-bridge-types';

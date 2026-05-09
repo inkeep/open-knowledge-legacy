@@ -1,6 +1,6 @@
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
-import { TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
+import { TableRow } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
 import { BlockquoteFidelity } from './blockquote-fidelity.ts';
 import { CodeBlockFidelity } from './code-block-fidelity.ts';
@@ -23,7 +23,7 @@ import { List, ListItem } from './list.ts';
 import { MathInline } from './math-inline.ts';
 import { RawMdxFallback } from './raw-mdx-fallback.ts';
 import { SourceLiteralMark } from './source-literal-mark.ts';
-import { TableFidelity } from './table-fidelity.ts';
+import { TableCellFidelity, TableFidelity, TableHeaderFidelity } from './table-fidelity.ts';
 import { Tag } from './tag.ts';
 import { ThematicBreakFidelity } from './thematic-break-fidelity.ts';
 import { WikiLink } from './wiki-link.ts';
@@ -75,8 +75,8 @@ export const sharedExtensions = [
     resizable: true,
   }),
   TableRow,
-  TableHeader,
-  TableCell,
+  TableHeaderFidelity,
+  TableCellFidelity,
   Image.configure({ inline: true }),
   ImageReferenceFidelity,
   Highlight,

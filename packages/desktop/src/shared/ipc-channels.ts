@@ -1,19 +1,3 @@
-/**
- * Typed IPC request channel map (renderer → main, request/response pattern).
- *
- * Hand-rolled discriminated union (not tRPC/tipc): every channel name is a
- * top-level key in `RequestChannels`; each key maps to
- * `{ args: [...]; result: T }`. The preload-side `invoke<K>()` helper (see
- * `./ipc-invoke.ts`) uses these types for full autocomplete + compile-time
- * safety. Grep-able channel names are the primary observability — a
- * channel name tells you exactly where the handler lives in main and where
- * the caller lives in renderer without touching a debugger.
- *
- * Scale-match trigger: at >20 channels, migrate baseline to
- * `@electron-toolkit/typed-ipc` or `@egoist/tipc`. Currently 42 — well past
- * the trigger; migrate before adding another batch.
- */
-
 import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
 import type { BuildAndOpenResult } from '../main/ipc/install-skill.ts';
 import type { SeedApplyResult, SeedPlanResult } from '../main/ipc/seed.ts';

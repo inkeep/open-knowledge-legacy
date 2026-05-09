@@ -1,9 +1,3 @@
-/**
- * Unit tests for agent-activity.ts
- *
- * Tests the pure diff-synthesis functions and listAgentActivity using
- * real Y.Doc / Y.UndoManager instances (no mocks of internal CRDT state).
- */
 import { describe, expect, test } from 'bun:test';
 import * as Y from 'yjs';
 import {

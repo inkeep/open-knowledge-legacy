@@ -1,14 +1,6 @@
 import { useEffect, useState } from 'react';
 import { parseApiError } from '@/lib/parse-api-error';
 
-/**
- * Folder cascade + templates data subscriptions.
- *
- * Imperative writes live in `@/lib/folder-config-api` — these hooks are
- * read-only, refresh-aware data sources. Call `refresh()` after a successful
- * write so the UI re-fetches.
- */
-
 interface FolderConfig {
   path: string;
   type: 'directory';

@@ -1,21 +1,3 @@
-/**
- * BridgeIdPlugin unit tests — covers the load-bearing pieces SelectionStatePlugin
- * depends on: stable IDs at init, no-doc-change pos-remap branch, and the
- * uniqueness invariant.
- *
- * Notes on scope:
- *   - These tests run against pure PM `EditorState` without y-prosemirror
- *     binding (the plugin's `findYElementForPos` returns null). That's the
- *     exact path taken at editor init before y-prosemirror has mapped the
- *     fragment, so the no-binding behavior IS production behavior for the
- *     first frames after mount.
- *   - The Y.XmlElement-identity-stable-across-Observer-B-reparse property
- *     requires a real Y.Doc + y-prosemirror harness — covered by the
- *     `assertBridgeIdInvariant` calls in the integration suite. This file
- *     covers the no-binding code paths because that's what's testable
- *     without spinning up a Hocuspocus client.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { Schema } from '@tiptap/pm/model';
 import { EditorState, NodeSelection, TextSelection } from '@tiptap/pm/state';

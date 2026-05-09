@@ -1,31 +1,3 @@
-/**
- * TimelinePanel — document edit history content for the DocPanel timeline tab.
- *
- * Fetches GET /api/history on mount, polls every 10s while mounted.
- * Checkpoint entries are always visible; WIP entries between checkpoints
- * are collapsed behind a "Show N auto-saves" expander.
- * Current (pre-checkpoint) WIP entries are expanded by default at top.
- *
- * Per-row UX (shape parity with AgentActivityPanel's burst rows):
- *   - Click anywhere on a row except the Restore icon → toggle inline expand.
- *     Expanded rows render <ActivityPanelDiffView> below the header showing
- *     the diff between that commit and the live Y.Text. Multi-expand is
- *     supported; the displayed diff is a snapshot at expand time. Expansion
- *     state is lifted to TimelineContent (Set<sha>), so a successful restore
- *     can collapse every row in one place — no per-row signal counter, no
- *     late-mount no-op effects.
- *   - The per-row Restore icon (lucide Undo2, ghost variant, hover-destructive
- *     on the icon) sits in the row header and is always visible — both
- *     collapsed and expanded states. Click → shadcn Dialog confirmation →
- *     POST /api/rollback. Cancel aborts the in-flight fetch via
- *     AbortController so a mid-confirm cancel is honored. On success the row
- *     collapses and any other expanded rows from this mount also collapse —
- *     their cached `current` baseline is now stale.
- *   - The diff renderer is loaded lazily under React.Suspense so the
- *     react-diff-view bundle + CSS only land in the editor route once a user
- *     actually expands a Timeline entry — matching the AgentActivityPanel
- *     burst-row precedent.
- */
 import {
   AGENT_ICON_COLORS,
   AGENT_ICON_COLORS_DARK,
@@ -267,15 +239,6 @@ function formatBytes(n: number): string {
   return `${Math.round(n / 104857.6) / 10} MB`;
 }
 
-/**
- * Classify an entry for Restore-affordance copy.
- *
- * `version` — a Save Version checkpoint (user-triggered named snapshot).
- * `auto-save` — bridge-merge or external-change rescue checkpoints.
- * `wip` — per-writer mid-burst commits between checkpoints; restoring lands
- *   the doc on an unnamed intermediate state, which deserves more explicit
- *   tooltip + dialog wording than a Save Version row.
- */
 type RestoreSemantic = 'version' | 'auto-save' | 'wip';
 
 function restoreSemantic(entry: TimelineEntry): RestoreSemantic {

@@ -1,17 +1,3 @@
-/**
- * Unit tests for the live-DOM clipboard walker pure helpers.
- *
- * The walker's full DOM behavior (cloneNode parallel walk, view.nodeDOM
- * lookup, fallback palette firing on Activity-hidden subtrees) requires a
- * real browser and is exercised in Playwright. Here we test the pure
- * transformation helpers + the static surface (allowlist / blocklist
- * contents) that live in this file.
- *
- * The cross-app re-emit sanitization helpers (URL classification,
- * embedded-URL substitution, event-handler / style-payload filters) live
- * in `clipboard-sanitize.ts` and are tested in `clipboard-sanitize.test.ts`.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { Schema } from '@tiptap/pm/model';
 import {

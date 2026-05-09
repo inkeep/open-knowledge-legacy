@@ -16,13 +16,6 @@ interface ManagedRenameRewriteSummary {
   rewrites: number;
 }
 
-/**
- * Thrown by `buildRenameMap` when two affected-doc entries would produce the
- * same destination. Caller surfaces as HTTP 409 with the colliding paths.
- *
- * Wire field names (`existing`/`incoming`/`to`) are stable and surfaced through
- * the MCP tool's structured error response.
- */
 export class ManagedRenameCollisionError extends Error {
   readonly colliding: ReadonlyArray<{
     readonly existing: string;

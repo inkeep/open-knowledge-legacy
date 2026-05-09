@@ -1,11 +1,3 @@
-/**
- * HTTP API extension for Hocuspocus — agent write, file ops, and test reset endpoints.
- *
- * Implemented as a Hocuspocus onRequest extension so it works with both
- * the production Server (assembled by `createServer()` in `server-factory.ts`)
- * and the Vite dev plugin.
- */
-
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -44,7 +36,6 @@ import {
   AgentWriteRequestSchema,
   AgentWriteSuccessSchema,
   ASSET_EXTENSIONS,
-  applyFastDiff,
   BacklinkCountsSuccessSchema,
   BacklinksSuccessSchema,
   CONFIG_DOC_NAME_OKIGNORE,
@@ -152,7 +143,6 @@ import {
   formatRenameSubject,
   formatRollbackSubject,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
-import { updateYFragment } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromFile } from 'file-type';
@@ -239,6 +229,7 @@ import {
   type GraphNode as IndexedGraphNode,
   isOrphanMode,
 } from './backlink-index.ts';
+import { composeAndWriteRawBody, replaceRawBody } from './bridge-intake.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
 import type { ContentFilter } from './content-filter.ts';
@@ -286,7 +277,6 @@ import {
   type ManagedRenameSnapshot,
   withManagedRenameRecovery,
 } from './managed-rename-journal.ts';
-import { mdManager, schema } from './md-manager.ts';
 import {
   getMetrics,
   incrementAgentPatchFindMismatches,
@@ -470,12 +460,6 @@ export function resolveUploadDestDir(
   return resolve(resolvedContentDir, trimmed);
 }
 
-/**
- * Read at most `n` bytes from the start of `path`. Used by the SVG sniff
- * fallback — `fileTypeFromFile` can't detect text-based SVG, so we open
- * the tempfile, read its head, and check for `<svg` / `<?xml ... <svg`
- * without ever materializing the whole file.
- */
 function readTempFileHead(path: string, n: number): Buffer {
   const fd = openSync(path, 'r');
   try {
@@ -1133,18 +1117,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Return the number of live connections to the `__system__` Y.Doc — the
-   * shared awareness channel every editor tab subscribes to. Zero means no
-   * editor is attached to this server anywhere; non-zero means at least one
-   * tab is watching (and will follow agent writes via `AgentFocusBroadcaster`).
-   *
-   * This is the correct signal for the once-per-session preview-attach hint:
-   * the per-doc count flips on every new doc even when the user's tab is open
-   * and following, which would produce spurious "attach" hints.
-   *
-   * Never throws.
-   */
   function getSystemSubscriberCount(): number {
     try {
       const doc = hocuspocus.documents.get(SYSTEM_DOC_NAME);
@@ -1361,25 +1333,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     let result: ManagedRenameRewriteSummary = { markdown: '', rewrites: 0 };
     document.transact(() => {
-      const xmlFragment = document.getXmlFragment('default');
       const ytext = document.getText('source');
-      const currentText = ytext.toString();
-      result = applyRenameMap(currentText, docName, renameMap);
+      result = applyRenameMap(ytext.toString(), docName, renameMap);
       if (result.rewrites === 0) {
         return;
       }
-
-      const { body } = stripFrontmatter(result.markdown);
-      const parseOpts = options.resolveEmbed
-        ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
-        : undefined;
-      const parsedJson = mdManager.parseWithFallback(body, parseOpts);
-      const pmNode = schema.nodeFromJSON(parsedJson);
-      applyFastDiff(ytext, currentText, result.markdown);
-      updateYFragment(document, xmlFragment, pmNode, {
-        mapping: new Map(),
-        isOMark: new Map(),
-      });
+      composeAndWriteRawBody(document, result.markdown, false);
     }, MANAGED_RENAME_ORIGIN);
     return result;
   }
@@ -3798,24 +3757,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           return;
         }
 
-        const { body: mdBody } = stripFrontmatter(markdown);
-        const rollbackParseOpts = options.resolveEmbed
+        const rollbackEmbedResolver = options.resolveEmbed
           ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
           : undefined;
-        const parsedJson = mdManager.parseWithFallback(mdBody, rollbackParseOpts);
-        const pmNode = schema.nodeFromJSON(parsedJson);
-        const xmlFragment = document.getXmlFragment('default');
-
         document.transact(() => {
-          const meta = { mapping: new Map(), isOMark: new Map() };
-          updateYFragment(document, xmlFragment, pmNode, meta);
-
-          const ytext = document.getText('source');
-          const currentText = ytext.toString();
-          if (currentText !== markdown) {
-            ytext.delete(0, currentText.length);
-            ytext.insert(0, markdown);
-          }
+          replaceRawBody(document, markdown, rollbackEmbedResolver);
         }, ROLLBACK_ORIGIN);
 
         let summaryResponse: SummaryResponse | undefined;

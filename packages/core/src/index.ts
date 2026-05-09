@@ -36,6 +36,7 @@ export {
   type FrontmatterBindingUnsubscribe,
   type FrontmatterDocProvider,
   type FrontmatterSnapshot,
+  fnv1aDigest,
   type InvariantViolation,
   MAX_FM_REGION_BYTES,
   mergeThreeWay,

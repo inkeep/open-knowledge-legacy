@@ -1,15 +1,3 @@
-/**
- * C2: Concurrent source mode (Y.Text) edits — multi-client convergence.
- *
- * Validates that 2-3 clients writing to Y.Text (simulating CodeMirror input)
- * concurrently converge correctly under the server-authoritative observer
- * bridge. Server Observer B parses the merged Y.Text and applies to
- * XmlFragment via updateYFragment under OBSERVER_SYNC_ORIGIN.
- *
- * Per-test docName isolation via createTestClients(port, { count }) default.
- * Client lifecycle in try/finally (not afterEach) per R8a.
- */
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import {

@@ -1,28 +1,3 @@
-/**
- * Position-slice walker: source-form recovery + escapeMark tagging.
- *
- * Runs as a unified transformer AFTER all syntax extensions produce their
- * mdast (so positions are final) and BEFORE remarkProseMirror (so handlers
- * can read node.data.*).
- *
- * Recovery matrix (§19.2):
- *   emphasis   → data.sourceDelimiter ('*' | '_')
- *   strong     → data.sourceDelimiter ('**' | '__')
- *   heading    → data.sourceStyle ('atx' | 'setext')
- *   list       → data.bulletMarker ('-' | '*' | '+')
- *                 OR data.listMarkerDelimiter ('.' | ')')
- *   code       → data.sourceFenceChar ('`' | '~') + data.sourceFenceLength
- *   thematicBreak → data.sourceRaw (verbatim string)
- *   break      → data.sourceStyle ('backslash' | 'spaces')
- *   link       → uses native linkReference.referenceType (no slicing needed)
- *
- * escapeMark tagging (D20):
- *   For text nodes whose source range contained backslash-escaped
- *   structurally-ambiguous chars (CommonMark §2.4), mark the text run
- *   with data.escapedChars — an array of { offset, char } where offset
- *   is relative to the text node value.
- */
-
 import type { Nodes, Root } from 'mdast';
 import { visit } from 'unist-util-visit';
 import type { VFile } from 'vfile';
@@ -32,6 +7,27 @@ const ESCAPABLE_CHARS = new Set('!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'.split(''));
 interface EscapedChar {
   offset: number;
   char: string;
+}
+
+export function splitGfmCellSegments(rowSrc: string): string[] {
+  const segments: string[] = [];
+  let cur = '';
+  for (let i = 0; i < rowSrc.length; i++) {
+    const c = rowSrc[i];
+    if (c === '\\' && i + 1 < rowSrc.length && rowSrc[i + 1] === '|') {
+      cur += `${c}|`;
+      i++;
+      continue;
+    }
+    if (c === '|') {
+      segments.push(cur);
+      cur = '';
+      continue;
+    }
+    cur += c;
+  }
+  segments.push(cur);
+  return segments;
 }
 
 export function applyPositionSliceToNode(
@@ -247,6 +243,40 @@ export function applyPositionSliceToNode(
       }
       if (dashCounts.length > 0 && dashCounts.some((c) => c > 0)) {
         node.data.sourceDashCounts = dashCounts;
+      }
+
+      for (const row of node.children ?? []) {
+        if (row.type !== 'tableRow' || !row.position) continue;
+        const rowStart = row.position.start.offset;
+        const rowEnd = row.position.end.offset;
+        if (typeof rowStart !== 'number' || typeof rowEnd !== 'number') continue;
+        let rowSrc = source.slice(rowStart, rowEnd);
+        const lineBreak = rowSrc.indexOf('\n');
+        if (lineBreak !== -1) rowSrc = rowSrc.slice(0, lineBreak);
+
+        const segments = splitGfmCellSegments(rowSrc);
+        if (segments.length > 0 && segments[0] === '' && rowSrc.startsWith('|')) {
+          segments.shift();
+        }
+        if (segments.length > 0 && segments[segments.length - 1] === '' && rowSrc.endsWith('|')) {
+          segments.pop();
+        }
+
+        const rowCells = row.children ?? [];
+        const limit = Math.min(rowCells.length, segments.length);
+        for (let i = 0; i < limit; i++) {
+          const cell = rowCells[i];
+          if (cell.type !== 'tableCell') continue;
+          const seg = segments[i];
+          let leftPad = 0;
+          while (leftPad < seg.length && seg[leftPad] === ' ') leftPad++;
+          let rightPad = 0;
+          while (rightPad < seg.length - leftPad && seg[seg.length - 1 - rightPad] === ' ') {
+            rightPad++;
+          }
+          if (!cell.data) cell.data = {};
+          cell.data.sourcePadding = { left: leftPad, right: rightPad };
+        }
       }
       break;
     }

@@ -9,6 +9,7 @@ export const HeadingFidelity = Heading.extend({
       headingStyle: { default: 'atx' },
       sourceTrailingHashes: { default: null },
       sourceUnderlineLength: { default: null },
+      sourceContiguousNext: { default: false },
     };
   },
 });

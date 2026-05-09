@@ -140,6 +140,10 @@
           "hasDefault": true,
           "default": 1
         },
+        "sourceContiguousNext": {
+          "hasDefault": true,
+          "default": false
+        },
         "sourceTrailingHashes": {
           "hasDefault": true,
           "default": null
@@ -443,6 +447,10 @@
         "rowspan": {
           "hasDefault": true,
           "default": 1
+        },
+        "sourcePadding": {
+          "hasDefault": true,
+          "default": null
         }
       },
       "content": "block+",
@@ -470,6 +478,10 @@
         "rowspan": {
           "hasDefault": true,
           "default": 1
+        },
+        "sourcePadding": {
+          "hasDefault": true,
+          "default": null
         }
       },
       "content": "block+",
@@ -779,6 +791,16 @@
     },
     {
       "name": "restore-from-mdx",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "restore-entity-refs",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "restore-backslash-escapes",
       "version": null,
       "hasOptions": false
     },

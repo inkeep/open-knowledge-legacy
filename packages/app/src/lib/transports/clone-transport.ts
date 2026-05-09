@@ -1,16 +1,3 @@
-/**
- * Transport abstraction for the git-clone UI.
- *
- * Two implementations:
- *   - `httpCloneTransport` — wraps `fetch('/api/local-op/clone')` (the
- *     existing path). The HTTP relay chains clone → server-start →
- *     emits `{type:'complete', port, dir}`. Default for editor windows
- *     and web distribution.
- *   - `ipcCloneTransport` — wraps `bridge.localOp.clone.start()`. The
- *     IPC path emits `{type:'complete', dir}` (no port — Electron main
- *     spawns a new editor window directly at `dir`).
- */
-
 import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import type { OkDesktopBridge, OkLocalOpCloneEvent } from '@/lib/desktop-bridge-types';
 import { createBufferedAsyncStream } from './buffered-async-stream';
