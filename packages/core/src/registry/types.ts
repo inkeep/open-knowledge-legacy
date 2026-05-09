@@ -60,6 +60,8 @@ interface JsxComponentMetaBase {
   isSelfClosing?: boolean;
   props: PropDef[];
   icon?: string;
+  /** Slash menu grouping category. Precedent #9 keeps this add-only —
+   *  extending with new members is free; narrowing is permanent lock-in. */
   category?: 'content' | 'media';
   displayName?: string;
   description?: string;

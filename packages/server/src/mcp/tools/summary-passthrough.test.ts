@@ -37,6 +37,9 @@ function createCaptureServer() {
   const tools: Array<{
     name: string;
     description: string;
+    /** Raw Zod schema object captured at register() time — exposed so
+     *  transport-safety tests can exercise the real Zod runtime guard
+     *  rather than a passthrough. */
     schema: Record<string, z.ZodTypeAny>;
     handler: Handler;
   }> = [];

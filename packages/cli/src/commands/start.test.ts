@@ -388,10 +388,13 @@ describe('bootStartServer (integration)', () => {
     });
     const res = await fetchText(booted.port, '/');
     expect(res.status).toBe(404);
-    expect(res.headers['content-type']).toContain('application/json');
+    expect(res.headers['content-type']).toContain('application/problem+json');
     const body = JSON.parse(res.body);
-    expect(body.error).toContain('React UI is served by `ok ui`');
-    expect(body.path).toBe('/');
+    expect(body.type).toBe('urn:ok:error:not-found');
+    expect(body.title).toBe('Not found.');
+    expect(body.status).toBe(404);
+    expect(body.detail).toContain('React UI is served by `ok ui`');
+    expect(body.detail).toContain('/');
   });
 
   test('GET /assets/anything also returns the same pointer (no static fallthrough)', async () => {
@@ -405,8 +408,10 @@ describe('bootStartServer (integration)', () => {
     const res = await fetchText(booted.port, '/assets/main-abcdef.js');
     expect(res.status).toBe(404);
     const body = JSON.parse(res.body);
-    expect(body.error).toContain('React UI is served by `ok ui`');
-    expect(body.path).toBe('/assets/main-abcdef.js');
+    expect(body.type).toBe('urn:ok:error:not-found');
+    expect(body.title).toBe('Not found.');
+    expect(body.detail).toContain('React UI is served by `ok ui`');
+    expect(body.detail).toContain('/assets/main-abcdef.js');
   });
 
   test('GET /api/document is routed through Hocuspocus onRequest (not the SPA pointer)', async () => {
@@ -449,8 +454,11 @@ describe('bootStartServer (integration)', () => {
     const res = await fetchText(booted.port, '/api/totally-nonexistent-xyz');
     expect(res.status).toBe(404);
     const body = JSON.parse(res.body);
-    expect(body.error).toBe('API route not found');
-    expect(body.path).toBe('/api/totally-nonexistent-xyz');
+    expect(body.type).toBe('urn:ok:error:not-found');
+    expect(body.title).toBe('API endpoint not found.');
+    expect(body.status).toBe(404);
+    expect(typeof body.instance).toBe('string');
+    expect(body.detail).toContain('/api/totally-nonexistent-xyz');
   });
 
   test('auto-spawn ok ui when ui.lock absent — invokes spawn with correct args', async () => {

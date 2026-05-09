@@ -1,5 +1,5 @@
 import { unlinkSync } from 'node:fs';
-import { type Config, resolveContentDir, resolveLockDir } from '@inkeep/open-knowledge-server';
+import { type Config, resolveLockDir } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { inspectLock, type LockState } from './lock-state.ts';
 
@@ -78,8 +78,8 @@ export function cleanCommand(getConfig: () => Config): Command {
   return new Command('clean')
     .description('Prune stale / corrupt open-knowledge lock files (never touches live locks)')
     .action(() => {
-      const config = getConfig();
-      const lockDir = resolveLockDir(resolveContentDir(config, process.cwd()));
+      getConfig();
+      const lockDir = resolveLockDir(process.cwd());
       const outcome = runClean({ lockDir });
       if (outcome.failed.length > 0) {
         process.exitCode = 1;

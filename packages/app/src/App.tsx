@@ -1,5 +1,5 @@
 import { mediaKindForSidebarAssetExtension } from '@inkeep/open-knowledge-core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { ConnectingBanner } from '@/components/ConnectingBanner';
 import { EditorPane } from '@/components/EditorPane';
@@ -27,10 +27,48 @@ function isAuxiliaryDialogHash(hash: string): boolean {
   return hash === SETTINGS_OPEN_HASH || hash === INSTALL_DIALOG_HASH;
 }
 
+function knownTargetsSignature(
+  pages: ReadonlySet<string>,
+  folderPaths: ReadonlySet<string>,
+): string {
+  return `${[...pages].sort().join('\u0000')}\u0001${[...folderPaths].sort().join('\u0000')}`;
+}
+
+/** Hash is the source of truth for navigation; all navigation sets the hash;
+ *  this handler is the single place that resolves the active navigation target
+ *  and calls openTargetTransition(). The transition wrapper keeps a previously-
+ *  revealed doc visible while the next entry suspends on syncPromise (fast/warm
+ *  path, SPEC G2); on cold paths `openTargetTransition` drops the transition
+ *  and lets `<Suspense fallback={<EditorSkeleton />}>` paint immediately. Agent-
+ *  driven nav via SystemDocSubscriber flows through `window.location.hash`, so
+ *  it inherits the same UX without a separate code path (SPEC §F7). Target
+ *  resolution (doc / folder-index / folder / missing) lives in
+ *  resolveNavigationTarget (PR #175). */
 function NavigationHandler() {
-  const { clearTarget } = useDocumentContext();
+  const { clearTarget, syncOpenTabsWithKnownTargets, tabSessionLoaded } = useDocumentContext();
   const { openTargetTransition } = useDocumentTransition();
   const { folderPaths, loading, pages } = usePageList();
+  const lastSyncedTargetsSignatureRef = useRef<string | null>(null);
+  const targetsSignature = knownTargetsSignature(pages, folderPaths);
+
+  useEffect(() => {
+    if (
+      loading ||
+      !tabSessionLoaded ||
+      lastSyncedTargetsSignatureRef.current === targetsSignature
+    ) {
+      return;
+    }
+    lastSyncedTargetsSignatureRef.current = targetsSignature;
+    syncOpenTabsWithKnownTargets({ pages, folderPaths });
+  }, [
+    folderPaths,
+    loading,
+    pages,
+    syncOpenTabsWithKnownTargets,
+    tabSessionLoaded,
+    targetsSignature,
+  ]);
 
   useEffect(() => {
     onHashChange();
@@ -66,6 +104,10 @@ function NavigationHandler() {
         pages,
         folderPaths,
       });
+      if (target.kind === 'missing' && /\/+$/.test(docName.trim())) {
+        mark('ok/nav/hash-change', { docName, kind: 'deferred-missing-folder' });
+        return;
+      }
       mark('ok/nav/hash-change', { docName, kind: target.kind });
       openTargetTransition(target);
     }

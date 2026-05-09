@@ -1,8 +1,8 @@
-import { XIcon } from 'lucide-react';
+import { RenamePathSuccessSchema } from '@inkeep/open-knowledge-core';
+import { FolderOpen, XIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type WheelEvent } from 'react';
 import {
   buildRenamedNodePath,
-  isRenamePathResponse,
   isValidNodeName,
   normalizeRenameValue,
   remapActiveDocName,
@@ -14,12 +14,16 @@ import {
   InputGroupText,
 } from '@/components/ui/input-group';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { hashFromDocName } from '@/lib/doc-hash';
+import { docTabId, parseEditorTabId, tabIdForNavigationTarget } from '@/editor/editor-tabs';
+import { hashFromDocName, hashFromFolderPath } from '@/lib/doc-hash';
 import { emitDocumentsChanged } from '@/lib/documents-events';
+import { parseServerResponse, parseSuccessOrWarn } from '@/lib/parse-server-response';
 import { cn } from '@/lib/utils';
 import { usePageList } from './PageListContext';
 
 const TAB_RENAME_EXTENSIONS = ['.md', '.mdx'] as const;
+const ACTIVE_TAB_CLASS =
+  'border-primary/50 bg-primary/10 text-foreground shadow-[inset_0_-2px_0_var(--primary)] dark:border-primary/70 dark:bg-primary/15';
 
 function tabParts(
   docName: string,
@@ -48,6 +52,22 @@ function navigateToDoc(docName: string) {
   }
 }
 
+function navigateToFolder(folderPath: string) {
+  const nextHash = hashFromFolderPath(folderPath);
+  if (window.location.hash !== nextHash) {
+    window.location.hash = nextHash;
+  }
+}
+
+function navigateToTab(tabId: string) {
+  const tab = parseEditorTabId(tabId);
+  if (tab.kind === 'doc') {
+    navigateToDoc(tab.docName);
+  } else {
+    navigateToFolder(tab.folderPath);
+  }
+}
+
 function scrollTabListOnWheel(event: WheelEvent<HTMLDivElement>) {
   if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
   if (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth) return;
@@ -67,8 +87,14 @@ function stripRenameExtensionSuffix(value: string, docExt: string): string {
 }
 
 export function EditorTabs() {
-  const { activeDocName, closeAndClearForRename, closeTab, openTabs, remapTabsForRename } =
-    useDocumentContext();
+  const {
+    activeDocName,
+    activeTarget,
+    closeAndClearForRename,
+    closeTab,
+    openTabs,
+    remapTabsForRename,
+  } = useDocumentContext();
   const { pageMeta } = usePageList();
   const tabListRef = useRef<HTMLDivElement>(null);
   const [renamingDocName, setRenamingDocName] = useState<string | null>(null);
@@ -80,9 +106,12 @@ export function EditorTabs() {
   const cancelRequestedRef = useRef(false);
   const lastFailedValueRef = useRef<string | null>(null);
   const activeDocNameRef = useRef(activeDocName);
-  const activeTabScrollKey = activeDocName
-    ? `${activeDocName}\u0000${openTabs.join('\u0000')}`
-    : '';
+  const activeTabId = activeTarget
+    ? tabIdForNavigationTarget(activeTarget)
+    : activeDocName
+      ? docTabId(activeDocName)
+      : null;
+  const activeTabScrollKey = activeTabId ? `${activeTabId}\u0000${openTabs.join('\u0000')}` : '';
 
   useEffect(() => {
     activeDocNameRef.current = activeDocName;
@@ -101,7 +130,7 @@ export function EditorTabs() {
   }, [renamingDocName]);
 
   useEffect(() => {
-    if (!renamingDocName || openTabs.includes(renamingDocName)) return;
+    if (!renamingDocName || openTabs.includes(docTabId(renamingDocName))) return;
     cancelRequestedRef.current = true;
     lastFailedValueRef.current = null;
     setRenamingDocName(null);
@@ -186,17 +215,10 @@ export function EditorTabs() {
         return;
       }
 
-      let raw: unknown;
-      try {
-        raw = await res.json();
-      } catch (parseErr) {
-        console.warn('[EditorTabs] rename response JSON parse failed', {
-          parseErr,
-          status: res.status,
-          docName,
-          newDocName,
-        });
-        setRenameError(`Server error (HTTP ${res.status})`);
+      const parsed = await parseServerResponse(res, `Server error (HTTP ${res.status})`);
+
+      if (!parsed.ok) {
+        setRenameError(parsed.title);
         setIsRenameLoading(false);
         commitInProgressRef.current = false;
         lastFailedValueRef.current = normalized;
@@ -204,30 +226,10 @@ export function EditorTabs() {
         return;
       }
 
-      if (!isRenamePathResponse(raw)) {
-        console.warn('[EditorTabs] rename failed', {
-          status: res.status,
-          docName,
-          newDocName,
-        });
-        setRenameError(`Server error (HTTP ${res.status})`);
-        setIsRenameLoading(false);
-        commitInProgressRef.current = false;
-        lastFailedValueRef.current = normalized;
-        renameInputRef.current?.focus();
-        return;
-      }
-
-      if (!res.ok || !raw.ok) {
-        setRenameError(raw.ok ? `Server error (HTTP ${res.status})` : raw.error);
-        setIsRenameLoading(false);
-        commitInProgressRef.current = false;
-        lastFailedValueRef.current = normalized;
-        renameInputRef.current?.focus();
-        return;
-      }
-
-      const renamed = raw.renamed;
+      const success = parseSuccessOrWarn(RenamePathSuccessSchema, parsed.body, 'rename-path:tab', {
+        renamed: [],
+      });
+      const renamed = success.renamed;
       const currentActiveDocName = activeDocNameRef.current;
       const nextActiveDocName = remapActiveDocName(currentActiveDocName, renamed);
 
@@ -269,8 +271,68 @@ export function EditorTabs() {
       className="ml-2 flex h-8 min-w-0 touch-manipulation flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain subtle-scrollbar"
       onWheel={scrollTabListOnWheel}
     >
-      {openTabs.map((docName) => {
-        const isActive = docName === activeDocName;
+      {openTabs.map((tabId) => {
+        const tab = parseEditorTabId(tabId);
+        const isActive = tabId === activeTabId;
+        if (tab.kind === 'folder') {
+          const { baseName, label, prefix } = tabParts(tab.folderPath, '/');
+          const accessibleLabel = `${prefix}${label}`;
+          return (
+            <div
+              key={tabId}
+              role="presentation"
+              data-active-tab={isActive ? 'true' : undefined}
+              className={cn(
+                'group flex h-7 min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-md border',
+                isActive
+                  ? ACTIVE_TAB_CLASS
+                  : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+              )}
+              onAuxClick={(event) => {
+                if (event.button !== 1) return;
+                event.preventDefault();
+                closeTab(tabId);
+              }}
+            >
+              <button
+                type="button"
+                aria-label={accessibleLabel}
+                title={accessibleLabel}
+                className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                onClick={() => {
+                  navigateToTab(tabId);
+                }}
+              >
+                <FolderOpen aria-hidden="true" className="size-3.5 shrink-0" />
+                {prefix ? (
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground/60">{prefix}</span>
+                ) : null}
+                <span
+                  className={cn(
+                    'flex min-w-0 items-center font-medium',
+                    prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
+                  )}
+                >
+                  <span className="min-w-0 truncate">{baseName}</span>
+                  <span className="shrink-0">/</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                aria-label={`Close ${accessibleLabel}`}
+                className="mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-70 outline-none transition hover:bg-muted hover:text-foreground hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  closeTab(tabId);
+                }}
+              >
+                <XIcon aria-hidden="true" className="size-3.5" />
+              </button>
+            </div>
+          );
+        }
+
+        const docName = tab.docName;
         const docExt = pageMeta.get(docName)?.docExt ?? '.md';
         const { baseName, extension, label, prefix } = tabParts(docName, docExt);
         const accessibleLabel = `${prefix}${label}`;
@@ -278,20 +340,20 @@ export function EditorTabs() {
         const renameErrorId = `editor-tab-rename-error-${tabDomIdPart(docName)}`;
         return (
           <div
-            key={docName}
+            key={tabId}
             role="presentation"
             data-active-tab={isActive ? 'true' : undefined}
             className={cn(
               'group flex h-7 min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-md border',
               isActive
-                ? 'border-border bg-background text-foreground'
+                ? ACTIVE_TAB_CLASS
                 : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
               isRenaming && renameError && 'border-destructive',
             )}
             onAuxClick={(event) => {
               if (event.button !== 1) return;
               event.preventDefault();
-              closeTab(docName);
+              closeTab(tabId);
             }}
           >
             {isRenaming ? (
@@ -372,7 +434,7 @@ export function EditorTabs() {
                   className="mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-70 outline-none transition hover:bg-muted hover:text-foreground hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100"
                   onClick={(event) => {
                     event.stopPropagation();
-                    closeTab(docName);
+                    closeTab(tabId);
                   }}
                 >
                   <XIcon aria-hidden="true" className="size-3.5" />

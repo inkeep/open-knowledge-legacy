@@ -29,8 +29,8 @@ const TAG_VALID_RE = /^[a-zA-Z][\w/-]*$/;
 export async function fetchTags(): Promise<TagSummaryEntry[]> {
   const r = await fetch('/api/tags');
   if (!r.ok) throw new Error(`/api/tags responded with ${r.status}`);
-  const data: { ok?: boolean; tags?: TagSummaryEntry[] } = await r.json();
-  return data.ok && Array.isArray(data.tags) ? data.tags : [];
+  const data: { tags?: TagSummaryEntry[] } = await r.json();
+  return Array.isArray(data.tags) ? data.tags : [];
 }
 
 export function rankTagsByQuery(

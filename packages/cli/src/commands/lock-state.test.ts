@@ -32,7 +32,7 @@ describe('inspectLock', () => {
     expect(result.status).toBe('corrupt');
   });
 
-  test('foreign host', () => {
+  test('foreign host with locally-live PID classifies foreign-host', () => {
     const dir = freshLockDir();
     writeFileSync(
       join(dir, 'server.lock'),
@@ -45,10 +45,34 @@ describe('inspectLock', () => {
       }),
       'utf-8',
     );
-    const result = inspectLock(dir, 'server', { host: 'this-box' });
+    const result = inspectLock(dir, 'server', { host: 'this-box', isAlive: () => true });
     expect(result.status).toBe('foreign-host');
     if (result.status === 'foreign-host') {
       expect(result.lock.hostname).toBe('other-box');
+    }
+  });
+
+  test('foreign host with dead PID classifies dead-pid (hostname drift cleanup)', () => {
+    const dir = freshLockDir();
+    writeFileSync(
+      join(dir, 'server.lock'),
+      JSON.stringify({
+        pid: 999999,
+        hostname: 'previous-hostname',
+        port: 3000,
+        startedAt: '2026-04-16T00:00:00Z',
+        worktreeRoot: '/x',
+      }),
+      'utf-8',
+    );
+    const result = inspectLock(dir, 'server', {
+      host: 'current-hostname',
+      isAlive: () => false,
+    });
+    expect(result.status).toBe('dead-pid');
+    if (result.status === 'dead-pid') {
+      expect(result.lock.pid).toBe(999999);
+      expect(result.lock.hostname).toBe('previous-hostname');
     }
   });
 

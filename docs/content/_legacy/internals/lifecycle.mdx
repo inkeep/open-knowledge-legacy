@@ -90,8 +90,8 @@ An earlier research report (`reports/zero-config-bunx-cli-packaging/REPORT.md` �
 | Command     | Role                                                                                                                                                                             |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ok status` | Print the state of both locks: `{pid, port, alive, startedAt, host, state}`. Always exits 0. `--json` for machine-readable output. Foreign-host locks report `alive: 'unknown'`. |
-| `ok stop`   | SIGTERM live `ok start` + `ok ui` processes. Leaves stale, corrupt, or foreign-host locks alone — those belong to `ok clean`. Exits 1 only on EPERM kill failure.                |
-| `ok clean`  | Prune stale (dead-pid or corrupt JSON) lockfiles. Leaves live and foreign-host locks alone.                                                                                      |
+| `ok stop`   | SIGTERM live `ok start` + `ok ui` processes. Also targets `foreign-host` entries whose PID is locally live (macOS hostname drift across DHCP/VPN/sleep). Leaves stale, corrupt, and truly-cross-host locks alone — those belong to `ok clean`. Exits 1 only on EPERM kill failure. |
+| `ok clean`  | Prune stale (dead-pid, regardless of hostname) or corrupt-JSON lockfiles. Leaves live and `foreign-host`-with-live-PID locks alone.                                              |
 
 The three commands share an `inspectLock` peek helper that, unlike `readProcessLock`, does **not** auto-unlink dead-pid locks — the peek must be non-destructive so `status` and `clean` agree on what the ground truth is.
 

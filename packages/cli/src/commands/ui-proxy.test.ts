@@ -7,6 +7,8 @@ import {
 } from 'node:http';
 import { type ProxyServerHandle, startProxyServer } from './ui-proxy.ts';
 
+/** Send a request with arbitrary Host / Origin headers. We can't use `fetch`
+ * because some runtimes silently rewrite Host. */
 async function rawRequest(opts: {
   port: number;
   path: string;
@@ -187,7 +189,10 @@ describe('startProxyServer', () => {
 
     const response = await fetch(`http://localhost:${proxy.port}/whatever`);
     expect(response.status).toBe(502);
-    expect(await response.text()).toBe('Bad Gateway');
+    expect(response.headers.get('content-type')).toBe('application/problem+json');
+    const body = (await response.json()) as { type: string; title: string; status: number };
+    expect(body.type).toBe('urn:ok:error:collab-server-not-running');
+    expect(body.status).toBe(502);
   });
 
   test('close() shuts down the listener', async () => {
@@ -225,8 +230,9 @@ describe('startProxyServer', () => {
       host: 'attacker.com:1234',
     });
     expect(res.status).toBe(403);
-    const body = JSON.parse(res.body) as { ok: boolean; error: string };
-    expect(body.error).toBe('host-header-not-allowed');
+    const body = JSON.parse(res.body) as { type: string; title: string; status: number };
+    expect(body.type).toBe('urn:ok:error:host-not-allowed');
+    expect(body.status).toBe(403);
     expect(upstreamHits).toBe(0);
   });
 
@@ -249,8 +255,9 @@ describe('startProxyServer', () => {
       origin: 'http://attacker.com',
     });
     expect(res.status).toBe(403);
-    const body = JSON.parse(res.body) as { ok: boolean; error: string };
-    expect(body.error).toBe('origin-not-allowed');
+    const body = JSON.parse(res.body) as { type: string; title: string; status: number };
+    expect(body.type).toBe('urn:ok:error:invalid-origin');
+    expect(body.status).toBe(403);
     expect(upstreamHits).toBe(0);
   });
 

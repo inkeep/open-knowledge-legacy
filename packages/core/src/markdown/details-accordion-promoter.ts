@@ -11,6 +11,9 @@ const OPENER_RE = /^<details(\s[^>]*)?>(?:\s*<summary>([\s\S]*?)<\/summary>)?[\s
 
 const CLOSER_RE = /^\s*<\/details>\s*$/;
 
+/** Attr tokenizer for the opener tag's attr string. Very small: handles
+ * boolean shorthand, double-quoted, and single-quoted forms. Sufficient
+ * for the attrs Accordion honors (`open`, `name`, `id`). */
 function parseDetailsAttrs(rawAttrs: string | undefined): {
   defaultOpen: boolean;
   name: string | null;

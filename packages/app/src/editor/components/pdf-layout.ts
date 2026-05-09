@@ -1,5 +1,11 @@
+/** Layout presets — single source of truth for the string set the
+ *  toolbar dropdown ranges over. `Pdf.tsx` re-exports this as a local
+ *  `LayoutMode` alias so the component file stays self-documenting,
+ *  but every dispatch site reads through this declaration. */
 export type PdfLayoutMode = 'fit-width' | 'fit-height' | 'single' | 'two-odd' | 'two-even';
 
+/** Per-page natural dimensions (scale=1 viewport). Computed once at load
+ *  time; doesn't depend on layout mode or zoom. */
 export interface PdfPageInfo {
   naturalWidth: number;
   naturalHeight: number;

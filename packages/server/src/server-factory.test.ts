@@ -432,13 +432,13 @@ describe('createServer() degraded signal', () => {
   });
 
   test('shadow-repo init failure — degraded includes "shadow-repo"', async () => {
-    const fileAsDir = resolve(testProjectDir, 'not-a-dir');
-    writeFileSync(fileAsDir, 'I am a file, not a directory');
+    mkdirSync(resolve(testProjectDir, '.git'));
+    writeFileSync(resolve(testProjectDir, '.git', 'ok'), 'I am a file, not a directory');
 
     const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
     const srv = createServer({
       contentDir,
-      projectDir: fileAsDir,
+      projectDir: testProjectDir,
       quiet: true,
     });
 

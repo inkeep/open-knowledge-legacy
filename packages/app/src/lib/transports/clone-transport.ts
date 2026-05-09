@@ -1,3 +1,17 @@
+/**
+ * Transport abstraction for the git-clone UI.
+ *
+ * Two implementations:
+ *   - `httpCloneTransport` — wraps `fetch('/api/local-op/clone')` (the
+ *     existing path). The HTTP relay chains clone → server-start →
+ *     emits `{type:'complete', port, dir}`. Default for editor windows
+ *     and web distribution.
+ *   - `ipcCloneTransport` — wraps `bridge.localOp.clone.start()`. The
+ *     IPC path emits `{type:'complete', dir}` (no port — Electron main
+ *     spawns a new editor window directly at `dir`).
+ */
+
+import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import type { OkDesktopBridge, OkLocalOpCloneEvent } from '@/lib/desktop-bridge-types';
 import { createBufferedAsyncStream } from './buffered-async-stream';
 
@@ -26,8 +40,18 @@ export function httpCloneTransport(): CloneTransport {
               body: JSON.stringify({ url: request.url, dir: request.dir || undefined }),
               signal,
             });
-            if (!res.ok || !res.body) {
-              push({ type: 'error', message: 'Clone failed — check the URL and try again' });
+            if (!res.ok) {
+              let message = `Clone failed — check the URL and try again (${res.status})`;
+              try {
+                const body = (await res.json()) as unknown;
+                const result = ProblemDetailsSchema.safeParse(body);
+                if (result.success) message = `Clone failed: ${result.data.title}`;
+              } catch {}
+              push({ type: 'error', message });
+              return;
+            }
+            if (!res.body) {
+              push({ type: 'error', message: 'Clone failed — empty response body' });
               return;
             }
             const reader = res.body.getReader();
@@ -41,9 +65,27 @@ export function httpCloneTransport(): CloneTransport {
               leftover = lines.pop() ?? '';
               for (const line of lines) {
                 if (!line.trim()) continue;
+                let parsed: unknown;
                 try {
-                  push(JSON.parse(line) as CloneEvent);
-                } catch {}
+                  parsed = JSON.parse(line);
+                } catch {
+                  console.warn(
+                    '[clone-transport] Dropped unparseable NDJSON line:',
+                    line.slice(0, 100),
+                  );
+                  continue; // malformed NDJSON line
+                }
+                if (
+                  parsed &&
+                  typeof parsed === 'object' &&
+                  (parsed as { type?: unknown }).type === 'error' &&
+                  'problem' in parsed
+                ) {
+                  const p = (parsed as { problem: { title?: string; detail?: string } }).problem;
+                  push({ type: 'error', message: p?.detail || p?.title || 'Unknown error' });
+                  break;
+                }
+                push(parsed as CloneEvent);
               }
               if (signal.aborted) break;
             }

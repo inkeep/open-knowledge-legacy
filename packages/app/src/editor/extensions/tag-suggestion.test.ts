@@ -130,6 +130,8 @@ describe('buildTagSuggestionItems — filter + rank', () => {
 });
 
 describe('tagMatcher — boundary semantics', () => {
+  /** Stub satisfying the subset of ResolvedPos used by tagMatcher.
+   *  Mirrors the wiki-link-suggestion test pattern. */
   function stubPosition(textBefore: string, blockStart: number) {
     const cursorPos = blockStart + textBefore.length;
     return {

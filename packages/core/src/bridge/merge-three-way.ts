@@ -24,6 +24,7 @@
  */
 import DiffMatchPatch from 'diff-match-patch';
 import { diff3Merge } from 'node-diff3';
+import { fnv1aDigest } from './hash-util.ts';
 
 const dmp = new DiffMatchPatch();
 dmp.Match_Threshold = 0.5;
@@ -89,15 +90,6 @@ export interface BridgeMergeContentLossLogPayload {
   resultLen: number;
   lostSubstrings: RedactedLostSubstring[] | string[];
   redacted: boolean;
-}
-
-function fnv1aDigest(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, '0');
 }
 
 function redactLostSubstrings(lost: string[]): RedactedLostSubstring[] {

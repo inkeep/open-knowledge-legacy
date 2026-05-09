@@ -11,6 +11,18 @@ import {
   waitForActiveProviderSynced,
 } from './_helpers';
 
+/** Open the PropPanel for the (only) component block on the page by
+ *  clicking its settings gear. Returns the panel locator scoped to the
+ *  Radix portal under document.body.
+ *
+ *  Chrome opacity is 0 by default and only goes to 1 on `:hover` or when
+ *  the wrapper has `data-selected="true"` (`globals.css`). For img blocks,
+ *  the inner `<span data-rmiz>` (medium-zoom wrapper) intercepts pointer
+ *  events on the image content itself — so we hover the wrapper to surface
+ *  the chrome, then click the gear with `force: true` to bypass the
+ *  pointer-events-intercept check (Playwright's actionability gate). The
+ *  gear button is positioned at top:-11px above the wrapper, OUTSIDE the
+ *  medium-zoom span's bounding box, so the click lands cleanly on it. */
 async function openPropPanel(page: Page): Promise<ReturnType<Page['locator']>> {
   const wrapper = page.locator('[data-jsx-component]').first();
   await wrapper.waitFor({ state: 'visible', timeout: 5000 });
@@ -23,6 +35,9 @@ async function openPropPanel(page: Page): Promise<ReturnType<Page['locator']>> {
   return panel;
 }
 
+/** Read the current `src` value of the (single) media element on the page.
+ *  Works for `<img>`, `<video>`, `<audio>` — each renders with an `src`
+ *  attribute on the tag itself or on a child source element. */
 async function readSrc(page: Page, tag: 'img' | 'video' | 'audio'): Promise<string> {
   return page.evaluate((sel) => {
     const el = document.querySelector(sel) as HTMLMediaElement | HTMLImageElement | null;
@@ -31,6 +46,9 @@ async function readSrc(page: Page, tag: 'img' | 'video' | 'audio'): Promise<stri
   }, tag);
 }
 
+/** Wait for the media element's `src` attribute to differ from the prior
+ *  value. Polls via the page's MutationObserver-equivalent (Playwright's
+ *  `waitForFunction`). */
 async function waitForSrcChange(
   page: Page,
   tag: 'img' | 'video' | 'audio',
@@ -54,6 +72,8 @@ interface UploadCase {
   endpoint: '/api/upload';
   initialMarkdown: string;
   initialSrc: string;
+  /** Two distinct payloads — the test uploads both in sequence to exercise
+   *  initial replace AND second replace through the same wiring. */
   payloads: Array<{ name: string; mimeType: string; buffer: Buffer }>;
 }
 

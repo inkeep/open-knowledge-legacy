@@ -1,4 +1,4 @@
-import { expect, test } from './_helpers';
+import { expect, test, waitForActiveProviderSynced as waitForProvider } from './_helpers';
 
 function agentId(label: string): string {
   return `${label}-${crypto.randomUUID().slice(0, 8)}`;
@@ -19,6 +19,7 @@ test.describe('Activity mode (DocPanel) — avatar drill-in, back-arrow exit', (
     ]);
 
     await page.goto(`/#/${docView}`);
+    await waitForProvider(page);
 
     const claude = agentId('claude-t1');
     await api.writeAsAgent(docA, '# Claude wrote to A', {
@@ -71,6 +72,7 @@ test.describe('Activity mode (DocPanel) — avatar drill-in, back-arrow exit', (
       { name: docAgent, markdown: '# body' },
     ]);
     await page.goto(`/#/${docView}`);
+    await waitForProvider(page);
 
     const claude = agentId('claude-t2');
     await api.writeAsAgent(docAgent, '# Claude', {
@@ -108,6 +110,7 @@ test.describe('Activity mode (DocPanel) — avatar drill-in, back-arrow exit', (
       { name: docAgent, markdown: '# body' },
     ]);
     await page.goto(`/#/${docView}`);
+    await waitForProvider(page);
 
     const claude = agentId('claude-t3');
     await api.writeAsAgent(docAgent, '# Claude', {
@@ -144,6 +147,7 @@ test.describe('Activity mode (DocPanel) — avatar drill-in, back-arrow exit', (
       { name: docTarget, markdown: '# target body' },
     ]);
     await page.goto(`/#/${docView}`);
+    await waitForProvider(page);
 
     const claude = agentId('claude-t6');
     await api.writeAsAgent(docTarget, '# Claude wrote target', {
@@ -188,6 +192,7 @@ test.describe('Activity mode (DocPanel) — avatar drill-in, back-arrow exit', (
       { name: docAgent, markdown: '# agent body' },
     ]);
     await page.goto(`/#/${docView}`);
+    await waitForProvider(page);
 
     const claude = agentId('claude-t7');
     await api.writeAsAgent(docAgent, '# Claude wrote burst 1', {

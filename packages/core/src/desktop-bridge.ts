@@ -32,12 +32,16 @@ interface RecentProjectEntry {
 interface ProjectSessionState {
   openTabs: string[];
   activeDocName: string | null;
+  activeTabId: string | null;
   updatedAt: string | null;
 }
+
+type OkProjectEntryPoint = 'start-fresh' | 'pick-existing' | 'recents' | 'deep-link' | 'drag-drop';
 
 interface OkProjectOpenRequest {
   path: string;
   target: 'new-window';
+  entryPoint: OkProjectEntryPoint;
 }
 
 interface OkUpdateDownloadedInfo {
@@ -73,7 +77,7 @@ interface OkStateSnapshot {
   } | null;
 }
 
-type OkMcpWiringEditorId = 'claude' | 'claude-desktop' | 'cursor' | 'vscode' | 'windsurf' | 'codex';
+type OkMcpWiringEditorId = 'claude' | 'claude-desktop' | 'cursor' | 'codex';
 
 interface OkMcpWiringShowPayload {
   readonly detectedEditors: readonly {
@@ -85,6 +89,53 @@ interface OkMcpWiringShowPayload {
 }
 
 type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
+
+type OkOnboardingWarningKind =
+  | 'root'
+  | 'home'
+  | 'home-documents'
+  | 'home-desktop'
+  | 'home-downloads'
+  | 'volumes-mount'
+  | 'drive-root';
+
+type OkOnboardingGitState = 'present' | 'absent' | 'shell-only';
+
+interface OkOnboardingShowPayload {
+  readonly pickedPath: string;
+  readonly projectDir: string;
+  readonly defaultContentDir: string;
+  readonly gitState: OkOnboardingGitState;
+  readonly gitRootPromoted: boolean;
+  readonly warnings: readonly { readonly kind: OkOnboardingWarningKind }[];
+  readonly editorOptions: readonly {
+    readonly id: OkMcpWiringEditorId;
+    readonly label: string;
+    readonly hasProjectConfig: boolean;
+  }[];
+}
+
+interface OkOnboardingConfirmRequest {
+  readonly initGit: boolean;
+  readonly contentDir: string;
+  readonly additionalIgnores: string;
+  readonly editorIds: readonly OkMcpWiringEditorId[];
+}
+
+type OkOnboardingResult = { ok: true } | { ok: false; error: string };
+
+interface OkOnboardingProbeContentRequest {
+  readonly contentDir: string;
+}
+
+type OkOnboardingProbeContentResult =
+  | {
+      readonly ok: true;
+      readonly count: number;
+      readonly sample: readonly string[];
+      readonly truncated: boolean;
+    }
+  | { readonly ok: false; readonly error: string };
 
 interface OkKeyringSmokeResult {
   ok: boolean;
@@ -181,7 +232,9 @@ export interface OkDesktopBridge {
   onDeepLink(cb: (evt: { doc: string }) => void): OkUnsubscribe;
 
   dialog: {
-    openFolder(): Promise<string | null>;
+    /** `dialog.showOpenDialog({ properties: ['openDirectory'] })`. Resolves to the selected path or `null` on cancel.
+     *  `defaultPath` seeds the initial directory shown to the user. */
+    openFolder(opts?: { defaultPath?: string }): Promise<string | null>;
     createFolder(): Promise<string | null>;
   };
 
@@ -277,6 +330,25 @@ export interface OkDesktopBridge {
     signalReady(): void;
     confirm(editorIds: readonly OkMcpWiringEditorId[]): Promise<OkMcpWiringResult>;
     skip(): Promise<OkMcpWiringResult>;
+  };
+
+  onboarding: {
+    onShow(cb: (payload: OkOnboardingShowPayload) => void): OkUnsubscribe;
+    signalReady(): void;
+    confirm(request: OkOnboardingConfirmRequest): Promise<OkOnboardingResult>;
+    cancel(): Promise<OkOnboardingResult>;
+    probeContent(request: OkOnboardingProbeContentRequest): Promise<OkOnboardingProbeContentResult>;
+    onToast(
+      cb: (
+        payload:
+          | { readonly kind: 'ancestor-promote'; readonly ancestorPath: string }
+          | {
+              readonly kind: 'git-root-promote';
+              readonly gitRoot: string;
+              readonly contentDir: string;
+            },
+      ) => void,
+    ): OkUnsubscribe;
   };
 
   localOp: {

@@ -105,7 +105,6 @@ describe('fetchWorkspaceSearchEntries', () => {
       requestBody = JSON.parse(String(init?.body));
       return new Response(
         JSON.stringify({
-          ok: true,
           results: [
             {
               kind: 'page',

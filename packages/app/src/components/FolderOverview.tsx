@@ -1,3 +1,4 @@
+import { CreatePageSuccessSchema, ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import {
   ArrowDown,
   ArrowUp,
@@ -182,17 +183,15 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),
       });
-      const payload = (await res.json().catch(() => null)) as {
-        ok?: boolean;
-        docName?: string;
-        error?: string;
-      } | null;
-      if (!res.ok || !payload?.ok) {
-        setCreateError(payload?.error ?? `Server error (HTTP ${res.status})`);
+      const body = (await res.json().catch(() => null)) as unknown;
+      if (!res.ok) {
+        const problem = ProblemDetailsSchema.safeParse(body);
+        setCreateError(problem.success ? problem.data.title : `Server error (HTTP ${res.status})`);
         setCreatingIndex(false);
         return;
       }
-      const docName = payload.docName ?? `${folderPath}/index`;
+      const success = CreatePageSuccessSchema.safeParse(body);
+      const docName = success.success ? success.data.docName : `${folderPath}/index`;
       addPage(docName);
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
       window.location.hash = hashFromDocName(docName);

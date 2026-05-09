@@ -152,6 +152,43 @@ export function normalizeDocName(
   return { ok: true, docName: raw };
 }
 
+function normalizeResponse(res: Response, body: unknown): { ok: boolean; [key: string]: unknown } {
+  if (res.ok) {
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return { ok: true, data: body };
+    }
+    const { ok: _ok, ...rest } = body as Record<string, unknown>;
+    return { ok: true, ...rest };
+  }
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return {
+      ok: false,
+      error: `Server returned HTTP ${res.status} with non-object body`,
+    };
+  }
+  const record = body as Record<string, unknown>;
+  if (typeof record.type === 'string' && typeof record.title === 'string') {
+    const { type, title, status, instance, detail, ...extensions } = record;
+    return {
+      ...extensions,
+      ok: false,
+      error: title,
+      type,
+      ...(typeof status === 'number' ? { status } : {}),
+      ...(typeof instance === 'string' ? { instance } : {}),
+      ...(typeof detail === 'string' ? { detail } : {}),
+    };
+  }
+  const { ok: _ok, error: bodyError, ...rest } = record;
+  const fallbackError =
+    typeof bodyError === 'string'
+      ? bodyError
+      : typeof record.message === 'string'
+        ? record.message
+        : `Server returned HTTP ${res.status}`;
+  return { ...rest, ok: false, error: fallbackError };
+}
+
 export async function httpGet(
   baseUrl: string,
   path: string,
@@ -162,11 +199,23 @@ export async function httpGet(
   } catch (err) {
     return { ok: false, error: `Server unreachable: ${err instanceof Error ? err.message : err}` };
   }
+  let body: unknown;
   try {
-    return (await res.json()) as { ok: boolean; [key: string]: unknown };
-  } catch {
-    return { ok: false, error: `Server returned HTTP ${res.status} with non-JSON body` };
+    body = await res.json();
+  } catch (parseErr) {
+    const detail = parseErr instanceof Error ? parseErr.message : String(parseErr);
+    if (res.ok) {
+      return {
+        ok: false,
+        error: `Server returned 2xx response with non-JSON body: ${detail}`,
+      };
+    }
+    return {
+      ok: false,
+      error: `Server returned HTTP ${res.status} with non-JSON body: ${detail}`,
+    };
   }
+  return normalizeResponse(res, body);
 }
 
 export async function httpPost(
@@ -174,22 +223,45 @@ export async function httpPost(
   path: string,
   body?: Record<string, unknown>,
 ): Promise<{ ok: boolean; [key: string]: unknown }> {
+  let serializedBody: string | undefined;
+  if (body !== undefined) {
+    try {
+      serializedBody = JSON.stringify(body);
+    } catch (stringifyErr) {
+      return {
+        ok: false,
+        error: `Request body is not JSON-serializable: ${stringifyErr instanceof Error ? stringifyErr.message : String(stringifyErr)}`,
+      };
+    }
+  }
   let res: Response;
   try {
     res = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
+      body: serializedBody,
       signal: AbortSignal.timeout(30_000),
     });
   } catch (err) {
     return { ok: false, error: `Server unreachable: ${err instanceof Error ? err.message : err}` };
   }
+  let parsed: unknown;
   try {
-    return (await res.json()) as { ok: boolean; [key: string]: unknown };
-  } catch {
-    return { ok: false, error: `Server returned HTTP ${res.status} with non-JSON body` };
+    parsed = await res.json();
+  } catch (parseErr) {
+    const detail = parseErr instanceof Error ? parseErr.message : String(parseErr);
+    if (res.ok) {
+      return {
+        ok: false,
+        error: `Server returned 2xx response with non-JSON body: ${detail}`,
+      };
+    }
+    return {
+      ok: false,
+      error: `Server returned HTTP ${res.status} with non-JSON body: ${detail}`,
+    };
   }
+  return normalizeResponse(res, parsed);
 }
 
 export interface RenameCollisionPair {

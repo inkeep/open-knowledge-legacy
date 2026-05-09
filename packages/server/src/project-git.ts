@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -16,6 +16,7 @@ export class ProjectGitInitError extends Error {
 
 export interface EnsureProjectGitResult {
   didInit: boolean;
+  repaired?: boolean;
 }
 
 async function isInsideExistingWorkTree(cwd: string): Promise<boolean> {
@@ -32,12 +33,19 @@ async function isInsideExistingWorkTree(cwd: string): Promise<boolean> {
 export async function ensureProjectGit(projectRoot: string): Promise<EnsureProjectGitResult> {
   const abs = resolve(projectRoot);
   const gitPath = resolve(abs, '.git');
+  const headPath = resolve(gitPath, 'HEAD');
 
+  let needsRepair = false;
   if (existsSync(gitPath)) {
-    return { didInit: false };
-  }
-
-  if (await isInsideExistingWorkTree(abs)) {
+    if (!statSync(gitPath).isDirectory()) {
+      return { didInit: false };
+    }
+    if (existsSync(headPath)) {
+      return { didInit: false };
+    }
+    console.log('[project-git] detected partial .git/ — running git init to repair');
+    needsRepair = true;
+  } else if (await isInsideExistingWorkTree(abs)) {
     return { didInit: false };
   }
 
@@ -56,11 +64,16 @@ export async function ensureProjectGit(projectRoot: string): Promise<EnsureProje
     });
   }
 
-  if (!existsSync(resolve(gitPath, 'HEAD'))) {
+  if (!existsSync(headPath)) {
     throw new ProjectGitInitError(
       `git init reported success but ${gitPath}/HEAD is missing (partial init detected)`,
       stderr,
     );
+  }
+
+  if (needsRepair) {
+    console.log(`[project-git] backfilled missing .git/HEAD at ${abs}`);
+    return { didInit: true, repaired: true };
   }
 
   console.log(`[project-git] initialized .git/ at ${abs} (branch: main)`);

@@ -1,6 +1,5 @@
 import type { OkDesktopBridge } from '@/lib/desktop-bridge-types';
 
-export const TOAST_A_BODY = 'Update ready';
 export const TOAST_A_ACTION = 'Relaunch';
 export const TOAST_B_ACTION = 'Release notes';
 export const TOAST_C_BODY = 'Updates paused';
@@ -21,8 +20,12 @@ export function appendErrorDetail(base: string, err: unknown): string {
   return detail ? `${base}: ${detail}` : base;
 }
 
+export function toastABody(version: string): string {
+  return `Version ${version} ready to install`;
+}
+
 export function toastBBody(version: string): string {
-  return `Updated to v${version}`;
+  return `Updated to Version ${version}`;
 }
 
 export function toastDBody(currentVersion: string, targetVersion: string): string {
@@ -65,7 +68,7 @@ export function attachUpdateSubscribers(
       const noticeId = `update-downloaded-${version}`;
       addNotice({
         id: noticeId,
-        body: TOAST_A_BODY,
+        body: toastABody(version),
         priority: PRIORITY_UPDATE_DOWNLOADED,
         action: {
           label: TOAST_A_ACTION,

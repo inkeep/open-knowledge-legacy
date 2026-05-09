@@ -1,9 +1,12 @@
 import type { OkDesktopBridge } from '@/lib/desktop-bridge-types';
+import { parseApiError } from '../parse-api-error.ts';
 
 export type SkillInstallResult =
   | { ok: true; path?: string; handoffWarning?: string }
   | { ok: false; reason: string; message?: string };
 
+/** Per-call options. `force: true` bypasses the install-state gate and
+ * always rebuilds — the FR12 "Reinstall skill" affordance. */
 interface SkillInstallOptions {
   force?: boolean;
 }
@@ -71,10 +74,8 @@ export function httpSkillInstaller(opts: HttpSkillInstallerOptions = {}): SkillI
       if (!response.ok) {
         let message = `HTTP ${response.status}`;
         try {
-          const errBody = (await response.json()) as {
-            error?: string | { message?: string };
-          };
-          const detail = typeof errBody.error === 'string' ? errBody.error : errBody.error?.message;
+          const errBody = (await response.json()) as unknown;
+          const detail = parseApiError(errBody);
           if (detail) message = detail;
         } catch {}
         return { ok: false, reason: 'http-error', message };

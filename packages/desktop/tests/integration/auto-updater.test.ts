@@ -181,7 +181,7 @@ function makeRig(
     clock: makeFakeClock(),
     captured: primaryCaptured,
     windows: [primaryCaptured],
-    state: { ...emptyState(), ...stateOverrides },
+    state: { ...emptyState(), lastSeenVersion: appVersion, ...stateOverrides },
     dispatches: [],
     now: new Date('2026-04-21T12:00:00.000Z'),
     logger: {
@@ -858,7 +858,7 @@ describe('stuck-hint logic (AC17, D12)', () => {
   });
 });
 
-describe('first-launch post-update (Toast B — AC7, D9)', () => {
+describe('first-launch version notice (Toast B — AC7, D9)', () => {
   test('lastSeenVersion differs from current → dispatch whats-new + update state', () => {
     const { rig } = makeRig({ lastSeenVersion: '0.3.0', appVersion: '0.3.1' });
     const whatsNew = rig.captured.filter((c) => c.channel === 'ok:update:whats-new');
@@ -878,10 +878,14 @@ describe('first-launch post-update (Toast B — AC7, D9)', () => {
     expect(rig.state.lastSeenVersion).toBe('0.3.1');
   });
 
-  test('lastSeenVersion is null (fresh install) → NO dispatch, but state advances', () => {
+  test('lastSeenVersion is null (first launch) → dispatch whats-new + state advances', () => {
     const { rig } = makeRig({ lastSeenVersion: null, appVersion: '0.3.1' });
     const whatsNew = rig.captured.filter((c) => c.channel === 'ok:update:whats-new');
-    expect(whatsNew).toHaveLength(0);
+    expect(whatsNew).toHaveLength(1);
+    expect(whatsNew[0]?.payload).toEqual({
+      version: '0.3.1',
+      releaseUrl: releaseUrlFor('0.3.1'),
+    });
     expect(rig.state.lastSeenVersion).toBe('0.3.1');
   });
 

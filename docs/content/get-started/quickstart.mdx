@@ -20,11 +20,11 @@ Or clone a fresh one:
 npx @inkeep/open-knowledge clone https://github.com/owner/repo
 ```
 
-`init` scaffolds an `.ok/` directory, registers the MCP server with every supported editor it detects, and installs a skill that teaches the agent how to call the MCP tools. Safe to re-run. Claude Desktop's Chat and Cowork modes need a separate install; see [Claude Desktop](/integrations/claude-desktop).
+`init` scaffolds an `.ok/` directory, registers the MCP server with every supported editor it detects, and installs a skill that teaches the agent how to call the MCP tools. Safe to re-run. Claude Desktop's Chat and Cowork modes need a separate install; see [Claude Desktop](/docs/integrations/claude-desktop).
 
 ## 2. Open the project in your AI tool
 
-Open the project in [Claude Code](/integrations/claude-code), [Cursor](/integrations/cursor), [Codex](/integrations/codex), or [Claude Desktop](/integrations/claude-desktop).
+Open the project in [Claude Code](/docs/integrations/claude-code), [Cursor](/docs/integrations/cursor), [Codex](/docs/integrations/codex), or [Claude Desktop](/docs/integrations/claude-desktop).
 
 If your tool prompts you to approve a new MCP server (Cursor does this), approve `open-knowledge`.
 
@@ -38,7 +38,7 @@ Try one of these:
 
 > List the recent changes to the docs folder.
 
-The agent calls Open Knowledge's MCP tools (`write_document`, `search`, `list_documents`, and friends — see the [MCP reference](/reference/mcp) for the full list). On the first write, the editor opens in your browser and the change streams in live.
+The agent calls Open Knowledge's MCP tools (`write_document`, `search`, `list_documents`, and friends — see the [MCP reference](/docs/reference/mcp) for the full list). On the first write, the editor opens in your browser and the change streams in live.
 
 ## 4. Look around
 
@@ -49,11 +49,11 @@ The editor's sidebar shows every doc in your knowledge base. Each doc has:
 - A timeline of recent edits with per-burst diffs and selective rollback
 - Backlinks to other docs that reference it
 
-The full feature tour is under [Features](/features/editor).
+The full feature tour is under [Features](/docs/features/editor).
 
 ## What's next
 
-- Per-editor setup details: [Integrations](/integrations/claude-code)
-- Tools the agent has access to: [MCP](/reference/mcp)
-- `.ok/config.yml` schema: [Configuration](/reference/configuration)
-- Every CLI command and flag: [CLI](/reference/cli)
+- Per-editor setup details: [Integrations](/docs/integrations/claude-code)
+- Tools the agent has access to: [MCP](/docs/reference/mcp)
+- `.ok/config.yml` schema: [Configuration](/docs/reference/configuration)
+- Every CLI command and flag: [CLI](/docs/reference/cli)

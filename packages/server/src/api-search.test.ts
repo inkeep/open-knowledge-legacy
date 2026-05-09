@@ -63,6 +63,7 @@ async function callSearch(contentDir: string, url: string, method = 'GET', body 
     hocuspocus: {} as unknown as Parameters<typeof createApiExtension>[0]['hocuspocus'],
     sessionManager: {} as unknown as Parameters<typeof createApiExtension>[0]['sessionManager'],
     contentDir,
+    serverInstanceId: 'test-server',
     getFileIndex: () => fileIndex,
   });
   const req = makeReq(method, url, body);
@@ -86,11 +87,9 @@ describe('GET /api/search', () => {
       const result = await callSearch(dir, '/api/search?query=arch&intent=omnibar');
       expect(result.status).toBe(200);
       const body = JSON.parse(result.body) as {
-        ok?: boolean;
         results?: Array<{ kind: string; path: string }>;
       };
 
-      expect(body.ok).toBe(true);
       expect(body.results?.map((row) => `${row.kind}:${row.path}`)).toEqual([
         'folder:architecture',
         'page:architecture/overview',
@@ -156,7 +155,8 @@ describe('GET /api/search', () => {
       const result = await callSearch(dir, '/api/search', 'POST', '{not json');
 
       expect(result.status).toBe(400);
-      expect(JSON.parse(result.body)).toEqual({ ok: false, error: 'Invalid JSON body' });
+      const body = JSON.parse(result.body) as { type: string };
+      expect(body.type).toBe('urn:ok:error:invalid-request');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -168,7 +168,8 @@ describe('GET /api/search', () => {
       const result = await callSearch(dir, '/api/search', 'POST', 'x'.repeat(1_048_577));
 
       expect(result.status).toBe(413);
-      expect(JSON.parse(result.body)).toEqual({ ok: false, error: 'Payload too large' });
+      const body = JSON.parse(result.body) as { type: string };
+      expect(body.type).toBe('urn:ok:error:payload-too-large');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

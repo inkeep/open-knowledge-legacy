@@ -31,6 +31,7 @@ import {
   AGENT_ICON_COLORS_DARK,
   colorFromSeed,
   iconFromClientName,
+  ProblemDetailsSchema,
   type TimelineEntry,
 } from '@inkeep/open-knowledge-core';
 import type { LucideProps } from 'lucide-react';
@@ -478,8 +479,8 @@ function EntryRow({
     } else {
       let detail = `HTTP ${res.status}`;
       try {
-        const body = (await res.json()) as { error?: string };
-        if (body.error) detail = body.error;
+        const problem = ProblemDetailsSchema.safeParse(await res.json());
+        if (problem.success) detail = problem.data.title;
       } catch {}
       console.error('[timeline] rollback failed', {
         docName,

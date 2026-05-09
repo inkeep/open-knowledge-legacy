@@ -120,6 +120,9 @@ interface BuildIdleShutdownHandlerInput {
   };
 }
 
+/** 10s grace before SIGKILL escalation — long enough for a healthy UI to
+ * release its lock + close sockets; short enough that a wedged UI (GC
+ * pause, downstream fetch hang) doesn't stall idle-shutdown indefinitely. */
 const DEFAULT_SIGTERM_GRACE_MS = 10_000;
 const DEFAULT_SIGTERM_POLL_MS = 200;
 
@@ -335,8 +338,9 @@ export async function runStartCommand(config: Config, opts: StartCommandOptions)
   const { dim, error, warning } = await import('../ui/colors.ts');
 
   const cwd = process.cwd();
+  const activeConfig = config;
 
-  const host = resolveHost(opts, process.env);
+  const host = resolveHost(opts, process.env as { HOST?: string | undefined });
   const portFromCli = opts.port !== undefined ? Number(opts.port) : undefined;
   const portFromEnv = process.env.PORT ? Number(process.env.PORT) : undefined;
   const port = portFromCli ?? portFromEnv;
@@ -344,7 +348,7 @@ export async function runStartCommand(config: Config, opts: StartCommandOptions)
   let booted: BootedStartServer;
   try {
     booted = await bootStartServer({
-      config,
+      config: activeConfig,
       cwd,
       host,
       port,

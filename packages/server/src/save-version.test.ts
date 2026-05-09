@@ -92,7 +92,6 @@ describe('save-version graceful availability (US-021, D45)', () => {
       ).onRequest({ request: req, response: res });
 
       expect(captured.status).toBe(200);
-      expect(captured.parsed.ok).toBe(true);
       expect(typeof captured.parsed.checkpointRef).toBe('string');
       expect(captured.parsed.versionTag).toBeUndefined();
 
@@ -142,7 +141,6 @@ describe('save-version graceful availability (US-021, D45)', () => {
       ).onRequest({ request: req, response: res });
 
       expect(captured.status).toBe(200);
-      expect(captured.parsed.ok).toBe(true);
       expect(typeof captured.parsed.checkpointRef).toBe('string');
       expect(captured.parsed.versionTag).toBe('ok/v1');
 
@@ -252,7 +250,7 @@ describe('save-version graceful availability (US-021, D45)', () => {
       ).onRequest({ request: req1, response: res1 });
 
       expect(captured1.status).toBe(200);
-      expect(captured1.parsed.ok).toBe(true);
+      expect(typeof captured1.parsed.checkpointRef).toBe('string');
       expect(captured1.parsed.versionTag).toBeUndefined();
 
       const git = simpleGit(projectDir);
@@ -271,7 +269,7 @@ describe('save-version graceful availability (US-021, D45)', () => {
       ).onRequest({ request: req2, response: res2 });
 
       expect(captured2.status).toBe(200);
-      expect(captured2.parsed.ok).toBe(true);
+      expect(typeof captured2.parsed.checkpointRef).toBe('string');
       expect(captured2.parsed.versionTag).toBe('ok/v1');
     } finally {
       await sessionManager.closeAll();

@@ -60,7 +60,11 @@ interface RowAffordance {
   readonly url: string;
 }
 
+/** Submenu payload for a disabled row. `null` while install state is `null`
+ *  (initial probe in flight) — disabled-but-no-submenu per AC8. */
 interface DisabledTooltip {
+  /** Main message — describes why the row is disabled (used for the short
+   *  hint text rendered inline on the trigger row). */
   readonly message: string;
   readonly installAction: RowAffordance;
   readonly webFallback?: RowAffordance;
@@ -68,6 +72,9 @@ interface DisabledTooltip {
 
 interface RowState {
   readonly enabled: boolean;
+  /** When non-null, render a submenu with install + (Claude only) web-fallback
+   *  affordances instead of a plain disabled item. The `message` field doubles
+   *  as the short right-aligned status hint for the trigger row. */
   readonly tooltip: DisabledTooltip | null;
 }
 
@@ -144,9 +151,16 @@ interface OpenInAgentMenuItemProps {
   readonly installState: InstallState;
   readonly isElectronHost: boolean;
   readonly prompt: string;
+  /** Fired only when the row is enabled and the user selects it. The hook
+   *  layer (`useHandoffDispatch`) handles toast + telemetry. */
   readonly onSelect: () => void;
   readonly openExternal?: typeof defaultOpenExternal;
+  /** Test seam — fires after a successful web-fallback click so the caller can
+   *  surface a toast. Defaults to a no-op; production callers will wire sonner. */
   readonly onWebFallbackSuccess?: (target: TargetData) => void;
+  /** Test seam — fires after a failed web-fallback click (popup-blocker,
+   *  exotic browser, DOM-less environment). Parallel to onWebFallbackSuccess
+   *  so the caller can surface a sonner error toast. Defaults to a no-op. */
   readonly onWebFallbackError?: (target: TargetData, reason: string) => void;
 }
 

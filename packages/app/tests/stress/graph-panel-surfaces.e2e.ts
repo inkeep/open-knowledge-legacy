@@ -62,7 +62,6 @@ async function seedGraphFixtures(api: ApiHelpers, baseURL: string): Promise<Grap
       async () => {
         const response = await fetch(`${baseURL}/api/orphans?mode=both`);
         const data = (await response.json()) as {
-          ok: boolean;
           orphans?: Array<{ docName: string }>;
         };
         const orphans = data.orphans?.map((entry) => entry.docName) ?? [];
@@ -82,7 +81,6 @@ async function seedGraphFixtures(api: ApiHelpers, baseURL: string): Promise<Grap
       async () => {
         const response = await fetch(`${baseURL}/api/hubs?limit=50`);
         const data = (await response.json()) as {
-          ok: boolean;
           hubs?: Array<{ docName: string; count: number }>;
         };
         const betaHub = data.hubs?.find((h) => h.docName === fixtures.beta);

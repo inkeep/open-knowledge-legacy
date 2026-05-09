@@ -100,4 +100,16 @@ describe('Switch Project affordance (source-level guards)', () => {
     expect(switchProjectIdx).toBeGreaterThan(0);
     expect(switchProjectIdx).toBeGreaterThan(openFolderIdx);
   });
+
+  test('Recents row click tags the open call with entryPoint: "recents"', () => {
+    expect(src).toMatch(
+      /openProject\s*=[\s\S]*?bridge\.project\.open\(\{[^}]*entryPoint:\s*'recents'/,
+    );
+  });
+
+  test('Open Folder click tags the open call with entryPoint: "pick-existing"', () => {
+    expect(src).toMatch(
+      /onOpenFolder\s*=[\s\S]*?bridge\.project\.open\(\{[^}]*entryPoint:\s*'pick-existing'/,
+    );
+  });
 });

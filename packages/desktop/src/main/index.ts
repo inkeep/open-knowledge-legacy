@@ -12,10 +12,19 @@ import {
   ALL_EDITOR_IDS,
   detectInstalledEditors,
   EDITOR_TARGETS,
+  initContent,
+  type ProjectAiIntegrationsResult,
+  previewContent,
   readExistingMcpEntry,
+  writeProjectAiIntegrations,
   writeUserMcpConfigs,
 } from '@inkeep/open-knowledge';
-import { installUserSkill, isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
+import {
+  ensureProjectGit,
+  installUserSkill,
+  isProcessAlive,
+  readServerLock,
+} from '@inkeep/open-knowledge-server';
 import {
   app,
   BrowserWindow,
@@ -28,9 +37,15 @@ import {
   shell,
   utilityProcess,
 } from 'electron';
-import type { RecentProject } from '../shared/ipc-channels.ts';
+import { type EntryPoint, isEntryPoint } from '../shared/entry-point.ts';
+import type {
+  McpWiringEditorId,
+  OnboardingShowPayload,
+  RecentProject,
+} from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
+import { appendOkIgnoreSync } from './append-okignore.ts';
 import { openAssetSafely, revealAssetSafely } from './asset-allowlist.ts';
 import { popAssetMenu } from './asset-menu.ts';
 import { attachAssetSafetyNet } from './asset-safety-net.ts';
@@ -42,13 +57,15 @@ import {
   uninstallCli,
   wrapperPathInBundle,
 } from './cli-install.ts';
+import { requestUserConsent } from './consent-dialog.ts';
 import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
-import { promptForFolder } from './dialog-helpers.ts';
+import { promptForExistingFolder, promptForFolder } from './dialog-helpers.ts';
 import {
   type DriverUtilityLike,
   isDriverBootSmokeMode,
   runDriverBootSmoke,
 } from './driver-boot-smoke.ts';
+import { discoverProject, validateFolderPick } from './folder-admission.ts';
 import { handleBuildAndOpen, handleDetectClaudeDesktop } from './ipc/install-skill.ts';
 import {
   createLocalOpState,
@@ -74,6 +91,7 @@ import {
 } from './mcp-wiring.ts';
 import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow, tryCloseNavigator } from './navigator-window.ts';
+import { type OnboardingFlowKind, recordOnboardingFlow } from './onboarding-telemetry.ts';
 import { handleShellOpenExternal } from './shell-allowlist.ts';
 import {
   type AppState,
@@ -309,9 +327,189 @@ function openNavigator() {
   });
 }
 
-async function openProject(projectPath: string, pendingDeepLinkDoc?: string) {
+function logAiIntegrationOutcomes(result: ProjectAiIntegrationsResult): number {
+  const interesting = result.editorOutcomes.filter(
+    (o) => o.outcome !== 'written' && o.outcome !== 'skipped-no-project-surface',
+  );
+  if (interesting.length === 0) return 0;
+  console.warn(
+    JSON.stringify({
+      event: 'ai-integration-outcomes',
+      outcomes: interesting.map((o) => ({
+        editorId: o.editorId,
+        outcome: o.outcome,
+        ...(o.error !== undefined ? { error: o.error } : {}),
+      })),
+    }),
+  );
+  return interesting.filter((o) => o.outcome === 'failed').length;
+}
+
+async function openProject(
+  projectPath: string,
+  entryPoint: EntryPoint,
+  pendingDeepLinkDoc?: string,
+) {
   ensureWindowManager();
-  const ctx = await wm.createProjectWindow({ projectPath, pendingDeepLinkDoc });
+
+  const validation = validateFolderPick(projectPath);
+  const discovery = await discoverProject(projectPath);
+
+  if (discovery.kind === 'rejected') {
+    dialog.showErrorBox(
+      'Cannot open this folder',
+      `${projectPath}\n\nReason: ${discovery.reason === 'symlink-escape' ? 'Symlink resolves outside its parent directory.' : 'Folder is unreadable or does not exist.'}`,
+    );
+    openNavigator();
+    return;
+  }
+
+  const warningsCount = validation.warnings.length;
+  const resolvedProjectDir = discovery.projectDir;
+  let didEnsureGit = false;
+  let flowKind: OnboardingFlowKind;
+  let contentDirChanged = false;
+  let aiIntegrationsFailedCount = 0;
+  let toastPayload:
+    | { kind: 'ancestor-promote'; ancestorPath: string }
+    | { kind: 'git-root-promote'; gitRoot: string; contentDir: string }
+    | null = null;
+
+  if (discovery.kind === 'managed') {
+    flowKind = discovery.ancestorPromoted ? 'managed-promote' : 'managed-direct';
+    if (discovery.ancestorPromoted && entryPoint !== 'recents') {
+      toastPayload = { kind: 'ancestor-promote', ancestorPath: discovery.projectDir };
+    }
+  } else {
+    const isSilent = entryPoint === 'start-fresh';
+    if (isSilent) {
+      flowKind = 'fresh-silent';
+      if (discovery.gitState === 'absent' || discovery.gitState === 'shell-only') {
+        await ensureProjectGit(discovery.projectDir);
+        didEnsureGit = true;
+      }
+      await initContent(discovery.projectDir, {
+        contentDir: discovery.defaultContentDir !== '.' ? discovery.defaultContentDir : undefined,
+      });
+      aiIntegrationsFailedCount = logAiIntegrationOutcomes(
+        writeProjectAiIntegrations(discovery.projectDir, [...ALL_EDITOR_IDS]),
+      );
+      if (discovery.gitRootPromoted) {
+        toastPayload = {
+          kind: 'git-root-promote',
+          gitRoot: discovery.projectDir,
+          contentDir: discovery.defaultContentDir,
+        };
+      }
+    } else {
+      let navigator = navigatorWindow;
+      if (!navigator) {
+        openNavigator();
+        navigator = navigatorWindow;
+        if (!navigator) {
+          dialog.showErrorBox(
+            'Cannot open this folder',
+            `${projectPath}\n\nFailed to open the Project Navigator.`,
+          );
+          return;
+        }
+        const navigatorWebContents = (navigator as unknown as { webContents: Electron.WebContents })
+          .webContents;
+        if (navigatorWebContents.isLoading()) {
+          await new Promise<void>((resolve, reject) => {
+            const onLoad = () => {
+              navigatorWebContents.removeListener('destroyed', onDestroyed);
+              resolve();
+            };
+            const onDestroyed = () => {
+              navigatorWebContents.removeListener('did-finish-load', onLoad);
+              reject(new Error('Navigator destroyed during load'));
+            };
+            navigatorWebContents.once('did-finish-load', onLoad);
+            navigatorWebContents.once('destroyed', onDestroyed);
+          });
+        }
+      }
+      const showPayload: OnboardingShowPayload = {
+        pickedPath: discovery.pickedPath,
+        projectDir: discovery.projectDir,
+        defaultContentDir: discovery.defaultContentDir,
+        gitState: discovery.gitState,
+        gitRootPromoted: discovery.gitRootPromoted,
+        warnings: validation.warnings.map((w) => ({ kind: w.kind })),
+        editorOptions: ALL_EDITOR_IDS.map((id) => ({
+          id: id as McpWiringEditorId,
+          label: EDITOR_TARGETS[id].label,
+          hasProjectConfig: EDITOR_TARGETS[id].projectConfigPath !== undefined,
+        })),
+      };
+      const decision = await requestUserConsent(
+        {
+          ipcMain,
+          navigator: (navigator as unknown as { webContents: Electron.WebContents }).webContents,
+          previewContent,
+        },
+        showPayload,
+      );
+      if (decision.outcome === 'cancel') {
+        recordOnboardingFlow({
+          flowKind: 'cancel',
+          entryPoint,
+          gitInitRequested: false,
+          contentDirChanged: false,
+          warningsCount,
+        });
+        return;
+      }
+      const { request } = decision;
+      contentDirChanged = request.contentDir !== discovery.defaultContentDir;
+      flowKind =
+        contentDirChanged ||
+        request.additionalIgnores.trim().length > 0 ||
+        request.editorIds.length !== ALL_EDITOR_IDS.length
+          ? 'fresh-customized'
+          : 'fresh-default';
+      if (
+        request.initGit &&
+        (discovery.gitState === 'absent' || discovery.gitState === 'shell-only')
+      ) {
+        await ensureProjectGit(discovery.projectDir);
+        didEnsureGit = true;
+      }
+      await initContent(discovery.projectDir, {
+        contentDir: request.contentDir !== '.' ? request.contentDir : undefined,
+      });
+      if (request.additionalIgnores.trim().length > 0) {
+        appendOkIgnoreSync(discovery.projectDir, request.additionalIgnores);
+      }
+      aiIntegrationsFailedCount = logAiIntegrationOutcomes(
+        writeProjectAiIntegrations(discovery.projectDir, [...request.editorIds]),
+      );
+      if (discovery.gitRootPromoted) {
+        toastPayload = {
+          kind: 'git-root-promote',
+          gitRoot: discovery.projectDir,
+          contentDir: request.contentDir,
+        };
+      }
+    }
+  }
+
+  recordOnboardingFlow({
+    flowKind,
+    entryPoint,
+    gitInitRequested: didEnsureGit,
+    contentDirChanged,
+    warningsCount,
+    failedCount: aiIntegrationsFailedCount,
+  });
+
+  const ctx = await wm.createProjectWindow({
+    projectPath: resolvedProjectDir,
+    pendingDeepLinkDoc,
+    didEnsureGit,
+    consentVersion: 1,
+  });
   attachAssetSafetyNet(ctx.window.webContents, {
     editorOrigin: ctx.apiOrigin,
     openAsset: (relPath) =>
@@ -327,15 +525,26 @@ async function openProject(projectPath: string, pendingDeepLinkDoc?: string) {
       openExternal: (url) => shell.openExternal(url),
     }),
   });
+  if (toastPayload !== null) {
+    const payload = toastPayload;
+    ctx.window.webContents.once('did-finish-load', () => {
+      sendToRenderer(ctx.window.webContents, 'ok:onboarding:toast', payload);
+    });
+  }
+
   tryCloseNavigator(navigatorWindow, { projectPath });
-  appState = addRecentProject(appState, ctx.projectPath, ctx.projectName);
+  appState = addRecentProject(appState, resolvedProjectDir, ctx.projectName);
   saveAppState(appState);
   refreshApplicationMenu();
 }
 
-async function openProjectOrFallbackToNavigator(projectPath: string, pendingDeepLinkDoc?: string) {
+async function openProjectOrFallbackToNavigator(
+  projectPath: string,
+  entryPoint: EntryPoint,
+  pendingDeepLinkDoc?: string,
+) {
   try {
-    await openProject(projectPath, pendingDeepLinkDoc);
+    await openProject(projectPath, entryPoint, pendingDeepLinkDoc);
   } catch (err) {
     const errorMessage = (err as Error).message;
     const kind = (err as Error & { kind?: string }).kind;
@@ -368,7 +577,7 @@ function refreshApplicationMenu() {
     appName: app.name,
     dialog,
     openNavigator,
-    openProject: openProjectOrFallbackToNavigator,
+    openProject: (path, entryPoint) => openProjectOrFallbackToNavigator(path, entryPoint),
     getRecentProjects: () => appState.recentProjects,
     clearRecentProjects: () => {
       appState = { ...appState, recentProjects: [] };
@@ -485,9 +694,8 @@ function maybeOfferBrokenSymlinkRepair(): Promise<void> {
 function registerIpcHandlers() {
   const handle = createHandler(ipcMain);
 
-  handle('ok:dialog:open-folder', async () => {
-    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+  handle('ok:dialog:open-folder', async (_event, opts) => {
+    return promptForExistingFolder(dialog, opts);
   });
 
   handle('ok:dialog:create-folder', async () => {
@@ -683,9 +891,10 @@ function registerIpcHandlers() {
 
   handle('ok:project:get-session-state', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || !wm) return { openTabs: [], activeDocName: null, updatedAt: null };
+    if (!win || !wm)
+      return { openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null };
     const ctx = wm.getContextForBrowserWindow(win as unknown as BrowserWindowLike);
-    if (!ctx) return { openTabs: [], activeDocName: null, updatedAt: null };
+    if (!ctx) return { openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null };
     return getProjectSessionState(appState, ctx.projectPath);
   });
 
@@ -700,7 +909,12 @@ function registerIpcHandlers() {
   });
 
   handle('ok:project:open', async (_event, request) => {
-    await openProjectOrFallbackToNavigator(request.path);
+    if (!isEntryPoint(request.entryPoint)) {
+      throw new Error(
+        `ok:project:open rejected: invalid entryPoint '${String(request.entryPoint)}'`,
+      );
+    }
+    await openProjectOrFallbackToNavigator(request.path, request.entryPoint);
     return undefined;
   });
 
@@ -877,7 +1091,7 @@ function bootPrimaryInstance(): void {
       return wm.focusWindowForProject(projectPath) as unknown as object | null;
     },
     openProject: async (projectPath, opts) => {
-      await openProjectOrFallbackToNavigator(projectPath, opts?.pendingDeepLinkDoc);
+      await openProjectOrFallbackToNavigator(projectPath, 'deep-link', opts?.pendingDeepLinkDoc);
       const ctx = wm?.getWindowFor(projectPath);
       if (!ctx) {
         return null;
@@ -925,7 +1139,7 @@ function bootPrimaryInstance(): void {
 
     const optionHeld = process.argv.includes('--navigator');
     if (appState.lastOpenedProject && !optionHeld && existsSync(appState.lastOpenedProject)) {
-      void openProjectOrFallbackToNavigator(appState.lastOpenedProject);
+      void openProjectOrFallbackToNavigator(appState.lastOpenedProject, 'recents');
     } else {
       openNavigator();
     }
@@ -936,7 +1150,11 @@ function bootPrimaryInstance(): void {
         info: (data, message) => console.info(message, data),
       },
       surface: 'desktop-direct',
-    }).catch(() => {});
+    }).catch(() => {
+      /* installUserSkill is documented as never-throws; this is defense
+         against a future regression that would otherwise crash the main
+         process during the floating microtask. */
+    });
 
     autoUpdaterHandle = await bootAutoUpdater(() => import('electron-updater'), {
       ipcMain,

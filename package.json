@@ -14,6 +14,7 @@
   "scripts": {
     "knip": "turbo run build --filter=@inkeep/open-knowledge-server --filter=@inkeep/open-knowledge-core --output-logs=errors-only && knip",
     "notices": "bun scripts/generate-third-party-notices.mjs",
+    "schema:dump": "bun packages/core/scripts/dump-schema.ts",
     "build": "turbo run build",
     "build:desktop": "turbo run build:desktop",
     "build:desktop:dir": "turbo run build:desktop:dir",
@@ -23,7 +24,7 @@
     "lint": "biome check packages docs *.json *.jsonc *.ts --error-on-warnings",
     "format": "bun run lint --write --unsafe",
     "check": "bun run lint && turbo run typecheck test",
-    "check:full:parallel": "bash scripts/check-husky-prepare-guard.sh && bash scripts/check-knip-clean.sh && bash scripts/check-notices-clean.sh && bun run lint && turbo run typecheck test test:integration test:conversion test:fidelity test:perf:regression:unit test:health:unit test:health test:e2e test:visual test:perf test:a11y --concurrency=100% --output-logs=errors-only",
+    "check:full:parallel": "bash scripts/check-husky-prepare-guard.sh && bash scripts/check-knip-clean.sh && bash scripts/check-notices-clean.sh && bash scripts/check-schema-snapshot-clean.sh && bun run lint && turbo run typecheck test test:integration test:conversion test:fidelity test:perf:regression:unit test:health:unit test:health test:e2e test:visual test:perf test:a11y --concurrency=100% --output-logs=errors-only",
     "tier1": "bun run check",
     "tier2": "bun run tier1 && turbo run test:perf:regression:unit test:health:unit test:health test:e2e",
     "tier3": "STRESS_FIDELITY=1 bun run tier2",

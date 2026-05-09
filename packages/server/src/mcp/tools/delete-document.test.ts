@@ -211,7 +211,7 @@ describe('delete_document MCP tool', () => {
     });
   });
 
-  test('falls back to "Delete failed" when error response omits the error field', async () => {
+  test('canonicalizer synthesizes generic HTTP-status `error` when body has neither `error` nor `message`', async () => {
     const { server, registrations } = createCapturingServer();
 
     globalThis.fetch = (async () =>
@@ -226,8 +226,11 @@ describe('delete_document MCP tool', () => {
     const result = await tool.handler({ docName: 'page' });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toBe('Error: Delete failed');
-    expect(result.structuredContent).toEqual({ ok: false, error: 'Delete failed' });
+    expect(result.content[0]?.text).toBe('Error: Server returned HTTP 500');
+    expect(result.structuredContent).toEqual({
+      ok: false,
+      error: 'Server returned HTTP 500',
+    });
   });
 
   test('uses the shared Hocuspocus-not-running error when no server URL is available', async () => {

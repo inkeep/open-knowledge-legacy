@@ -6,6 +6,7 @@ import {
   type WorkspaceSearchDocument,
   workspaceSearchBasename,
 } from '@inkeep/open-knowledge-core';
+import { parseApiError } from '@/lib/parse-api-error';
 import type { PageMeta } from './PageListContext';
 
 export interface WorkspaceEntry {
@@ -179,8 +180,6 @@ export function splitTextByQueryMatches(text: string, query: string): HighlightS
 }
 
 interface WorkspaceSearchApiResponse {
-  ok?: boolean;
-  error?: string;
   results?: Array<{
     kind?: string;
     path?: string;
@@ -224,13 +223,11 @@ export async function fetchWorkspaceSearchEntries(
     signal: options.signal,
   });
   if (!response.ok) {
-    throw new Error(`Search failed with status ${response.status}`);
+    const body = (await response.json().catch(() => null)) as unknown;
+    throw new Error(parseApiError(body) ?? `Search failed with status ${response.status}`);
   }
 
   const payload = (await response.json()) as WorkspaceSearchApiResponse;
-  if (payload.ok !== true) {
-    throw new Error(payload.error ?? 'Search failed');
-  }
 
   return (payload.results ?? []).map(toWorkspaceSearchEntry).filter((entry) => !!entry);
 }

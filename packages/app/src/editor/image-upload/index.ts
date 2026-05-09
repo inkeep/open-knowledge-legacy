@@ -4,6 +4,9 @@ import {
   DEFAULT_EMIT_FORMAT,
   extensionOf,
   IMAGE_EXTENSIONS,
+  ProblemDetailsSchema,
+  type UploadAssetSuccess,
+  UploadAssetSuccessSchema,
   VIDEO_EXTENSIONS,
   WIKI_EMBED_EXTENSIONS,
 } from '@inkeep/open-knowledge-core';
@@ -13,6 +16,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { toast } from 'sonner';
 import { getEditorDocName } from '../extensions/doc-context.ts';
 import { buildUnresolvedWikiLinkAttrs } from '../extensions/wiki-link-helpers.ts';
+import { HttpResponseParseError } from '../http-client.ts';
 
 const uploadPluginKey = new PluginKey<UploadPluginState>('imageUpload');
 
@@ -187,15 +191,6 @@ export function pickInsertShape(filename: string): InsertShape {
   return { kind: 'markdown-link', ext };
 }
 
-interface UploadResponseBody {
-  ok?: boolean;
-  src?: string;
-  path?: string;
-  deduped?: boolean;
-  error?: string;
-  message?: string;
-}
-
 export async function uploadAndInsert(
   file: File,
   editor: Editor,
@@ -232,24 +227,45 @@ export async function uploadAndInsert(
     return;
   }
 
-  let body: UploadResponseBody = {};
+  let rawBody: unknown;
   try {
-    body = (await res.json()) as UploadResponseBody;
-  } catch {}
-
-  if (!res.ok) {
-    const message = body.message ?? body.error ?? `Upload failed (${res.status})`;
-    console.error('[uploadAndInsert] Server error:', message);
-    showError(editor, uploadId, message);
-    return;
-  }
-
-  if (typeof body.src !== 'string') {
-    console.error('[uploadAndInsert] Response missing src:', body);
+    rawBody = await res.json();
+  } catch (parseError) {
+    console.error('[uploadAndInsert] Response is not JSON:', parseError);
     showError(editor, uploadId);
     return;
   }
 
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(rawBody);
+    if (!problem.success) {
+      const cause = new HttpResponseParseError('Upload response did not match ProblemDetails.', {
+        cause: problem.error,
+        status: res.status,
+      });
+      console.error('[uploadAndInsert] Server error (unparseable):', cause);
+      showError(editor, uploadId);
+      return;
+    }
+    console.error('[uploadAndInsert] Server error:', problem.data);
+    showError(editor, uploadId, problem.data.title);
+    return;
+  }
+
+  const success = UploadAssetSuccessSchema.safeParse(rawBody);
+  if (!success.success) {
+    const cause = new HttpResponseParseError(
+      'Upload success response did not match UploadAssetSuccess.',
+      {
+        cause: success.error,
+        status: res.status,
+      },
+    );
+    console.error('[uploadAndInsert] Response missing src:', cause);
+    showError(editor, uploadId);
+    return;
+  }
+  const body: UploadAssetSuccess = success.data;
   const src = body.src;
   const deduped = body.deduped === true;
   const parentDocDir = parentDir(parentDocName);

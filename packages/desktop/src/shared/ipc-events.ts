@@ -5,7 +5,7 @@ import type {
   OkMenuAction,
   OkUpdateChannel,
 } from './bridge-contract.ts';
-import type { McpWiringEditorDetection } from './ipc-channels.ts';
+import type { McpWiringEditorDetection, OnboardingShowPayload } from './ipc-channels.ts';
 
 export interface EventChannels {
   'ok:project:switching': { payload: { projectPath: string } };
@@ -23,6 +23,18 @@ export interface EventChannels {
   'ok:deep-link': { payload: { doc: string } };
   'ok:mcp-wiring:show': {
     payload: { detectedEditors: readonly McpWiringEditorDetection[] };
+  };
+  'ok:onboarding:show': {
+    payload: OnboardingShowPayload;
+  };
+  'ok:onboarding:toast': {
+    payload:
+      | { readonly kind: 'ancestor-promote'; readonly ancestorPath: string }
+      | {
+          readonly kind: 'git-root-promote';
+          readonly gitRoot: string;
+          readonly contentDir: string;
+        };
   };
 
   'ok:local-op:auth:event': {

@@ -42,7 +42,7 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
   const openProject = (path: string) => {
     setOpen(false);
     void runWithToast(
-      () => bridge.project.open({ path, target: 'new-window' }),
+      () => bridge.project.open({ path, target: 'new-window', entryPoint: 'recents' }),
       'Failed to open project.',
     );
   };
@@ -52,7 +52,7 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
     void runWithToast(async () => {
       const path = await bridge.dialog.openFolder();
       if (!path) return;
-      await bridge.project.open({ path, target: 'new-window' });
+      await bridge.project.open({ path, target: 'new-window', entryPoint: 'pick-existing' });
     }, 'Failed to open folder.');
   };
 

@@ -44,9 +44,14 @@ export function applyExternalChange(
   const priorFm = stripFrontmatter(document.getText('source').toString()).frontmatter;
   const { frontmatter: nextFm } = stripFrontmatter(content);
 
-  document.transact(() => {
-    applyDiskContentToDoc(document, content, resolveEmbed, docName);
-  }, FILE_WATCHER_ORIGIN);
+  try {
+    document.transact(() => {
+      applyDiskContentToDoc(document, content, resolveEmbed, docName);
+    }, FILE_WATCHER_ORIGIN);
+  } catch (err) {
+    setReconciledBase(docName, document.getText('source').toString());
+    throw err;
+  }
 
   if (priorFm !== nextFm) {
     recordFrontmatterEditSurface('file-watcher');

@@ -215,7 +215,7 @@ describe('M1 smoke', () => {
     expect(coreMembers.size).toBeGreaterThan(0);
     expect(appMembers.size).toBeGreaterThan(0);
 
-    expect(cliMembers.size).toBe(6);
+    expect(cliMembers.size).toBe(4);
 
     const diff = (a: Set<string>, b: Set<string>) => Array.from(a).filter((x) => !b.has(x));
     const failures: string[] = [];

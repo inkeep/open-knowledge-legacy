@@ -99,7 +99,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       );
       expect(response.status).toBe(200);
       const parsed = JSON.parse(response.body);
-      expect(parsed.ok).toBe(true);
+      expect(parsed.timestamp).toBeDefined();
       expect(parsed.summary).toBeUndefined();
       const m = getMetrics();
       expect(m.agentWriteCalls).toBe(1);
@@ -193,7 +193,10 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
         },
       );
       expect(response.status).toBe(400);
-      expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
+      const parsed = JSON.parse(response.body);
+      expect(parsed.type).toBe('urn:ok:error:invalid-request');
+      expect(parsed.status).toBe(400);
+      expect(parsed.title).toBeDefined();
       const m = getMetrics();
       expect(m.agentWriteCalls).toBe(0);
       expect(m.summariesProvided).toBe(0);
@@ -284,7 +287,9 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
         },
       );
       expect(response.status).toBe(400);
-      expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
+      const parsed = JSON.parse(response.body);
+      expect(parsed.type).toBe('urn:ok:error:invalid-request');
+      expect(parsed.status).toBe(400);
       const m = getMetrics();
       expect(m.agentWriteCalls).toBe(0);
       expect(m.summariesProvided).toBe(0);

@@ -6,7 +6,6 @@ import { type ConflictEntry, ConflictStore } from './conflict-storage.ts';
 
 let tmpDir = '';
 let projectDir = '';
-let contentDir = '';
 let storePath = '';
 
 beforeEach(() => {
@@ -14,11 +13,9 @@ beforeEach(() => {
   const { tmpdir } = require('node:os');
   tmpDir = mkdtempSync(join(tmpdir(), 'conflict-store-test-'));
   projectDir = join(tmpDir, 'project');
-  contentDir = join(tmpDir, 'content');
-  storePath = join(contentDir, '.ok', LOCAL_DIR, 'conflicts.json');
+  storePath = join(projectDir, '.ok', LOCAL_DIR, 'conflicts.json');
   mkdirSync(projectDir, { recursive: true });
-  mkdirSync(contentDir, { recursive: true });
-  mkdirSync(join(contentDir, '.ok', LOCAL_DIR), { recursive: true });
+  mkdirSync(join(projectDir, '.ok', LOCAL_DIR), { recursive: true });
 });
 
 afterEach(() => {
@@ -39,14 +36,14 @@ function readStore(): { version: number; branch: string; conflicts: ConflictEntr
 
 describe('ConflictStore CRUD', () => {
   test('starts empty when no conflicts.json exists', () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     expect(store.count()).toBe(0);
     expect(store.hasConflicts()).toBe(false);
     expect(store.list()).toEqual([]);
   });
 
   test('addConflict() persists entry to disk', () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     const entry = makeEntry('README.md');
     store.addConflict(entry);
 
@@ -61,7 +58,7 @@ describe('ConflictStore CRUD', () => {
   });
 
   test('addConflict() is idempotent — updates existing entry', () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     store.addConflict(makeEntry('a.md', { oursSha: 'sha1' }));
     store.addConflict(makeEntry('a.md', { oursSha: 'sha2' }));
 
@@ -70,7 +67,7 @@ describe('ConflictStore CRUD', () => {
   });
 
   test('addConflict() accumulates multiple distinct entries', () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     store.addConflict(makeEntry('a.md'));
     store.addConflict(makeEntry('b.md'));
     store.addConflict(makeEntry('docs/c.md'));
@@ -80,7 +77,7 @@ describe('ConflictStore CRUD', () => {
   });
 
   test('removeConflict() removes by file path', () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     store.addConflict(makeEntry('a.md'));
     store.addConflict(makeEntry('b.md'));
 
@@ -92,14 +89,14 @@ describe('ConflictStore CRUD', () => {
   });
 
   test('removeConflict() is a no-op for unknown file', () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     store.addConflict(makeEntry('a.md'));
     store.removeConflict('nonexistent.md');
     expect(store.count()).toBe(1);
   });
 
   test('clear() removes all conflicts', () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     store.addConflict(makeEntry('a.md'));
     store.addConflict(makeEntry('b.md'));
     store.clear();
@@ -116,7 +113,7 @@ describe('ConflictStore CRUD', () => {
     };
     writeFileSync(storePath, JSON.stringify(data), 'utf-8');
 
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     expect(store.count()).toBe(1);
     expect(store.list()[0].file).toBe('notes.md');
     expect(store.list()[0].oursSha).toBe('abc');
@@ -124,18 +121,18 @@ describe('ConflictStore CRUD', () => {
 
   test('load() handles corrupt JSON gracefully — starts empty', () => {
     writeFileSync(storePath, 'NOT JSON', 'utf-8');
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     expect(store.count()).toBe(0);
   });
 
   test('load() handles unknown schema version — starts empty', () => {
     writeFileSync(storePath, JSON.stringify({ version: 99, branch: 'x', conflicts: [] }));
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     expect(store.count()).toBe(0);
   });
 
   test('setBranch() updates the stored branch on next save', () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     store.addConflict(makeEntry('a.md'));
     store.setBranch('feat/new-branch');
     store.addConflict(makeEntry('b.md')); // triggers save
@@ -146,14 +143,14 @@ describe('ConflictStore CRUD', () => {
 
 describe('ConflictStore resolveConflict()', () => {
   test('throws when file is not tracked as a conflict', async () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     await expect(store.resolveConflict('unknown.md', 'mine')).rejects.toThrow(
       'no conflict tracked for file: unknown.md',
     );
   });
 
   test("strategy 'mine'/'theirs': removes conflict from store when git succeeds", async () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     store.addConflict(makeEntry('a.md'));
 
     store.removeConflict('a.md');
@@ -166,7 +163,7 @@ describe('ConflictStore resolveConflict()', () => {
     const absPath = join(projectDir, testFile);
     writeFileSync(absPath, '<<<<<<< HEAD\nmy version\n=======\ntheir version\n>>>>>>>\n', 'utf-8');
 
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     store.addConflict(makeEntry(testFile));
 
     const resolvedContent = '# Resolved\n\nManually merged content.\n';
@@ -182,7 +179,7 @@ describe('ConflictStore resolveConflict()', () => {
   });
 
   test("strategy 'content' without content throws", async () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     store.addConflict(makeEntry('a.md'));
 
     await expect(store.resolveConflict('a.md', 'content', undefined)).rejects.toThrow(
@@ -191,7 +188,7 @@ describe('ConflictStore resolveConflict()', () => {
   });
 
   test('hasConflicts() returns false after all are removed', () => {
-    const store = new ConflictStore(contentDir, projectDir, 'main');
+    const store = new ConflictStore(projectDir, 'main');
     store.addConflict(makeEntry('a.md'));
     store.addConflict(makeEntry('b.md'));
 

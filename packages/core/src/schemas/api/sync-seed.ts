@@ -1,0 +1,166 @@
+import type { StandardSchemaV1 } from '@standard-schema/spec';
+import { z } from 'zod';
+
+export const SyncStateSchema = z.enum([
+  'dormant',
+  'idle',
+  'fetching',
+  'pulling',
+  'pushing',
+  'conflict',
+  'offline',
+  'auth-error',
+  'disabled',
+]) satisfies StandardSchemaV1;
+export type SyncStateWire = z.infer<typeof SyncStateSchema>;
+
+export const SyncStatusSchema = z
+  .object({
+    state: SyncStateSchema,
+    lastSyncUtc: z.string().nullable(),
+    lastFetchUtc: z.string().nullable(),
+    lastPushedSha: z.string().nullable(),
+    ahead: z.number().int().min(0),
+    behind: z.number().int().min(0),
+    consecutiveFailures: z.number().int().min(0),
+    conflictCount: z.number().int().min(0),
+    hasRemote: z.boolean(),
+    syncEnabled: z.boolean(),
+    identityUnresolved: z.boolean(),
+    error: z.string().optional(),
+    pausedReason: z.string().optional(),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SyncStatusWire = z.infer<typeof SyncStatusSchema>;
+
+export const SyncTriggerRequestSchema = z
+  .object({
+    op: z.enum(['sync', 'push', 'pull']).optional(),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SyncTriggerRequest = z.infer<typeof SyncTriggerRequestSchema>;
+
+export const SyncTriggerSuccessSchema = z
+  .object({
+    op: z.enum(['sync', 'push', 'pull']),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SyncTriggerSuccess = z.infer<typeof SyncTriggerSuccessSchema>;
+
+export const ConflictEntrySchema = z
+  .object({
+    file: z.string().min(1),
+    detectedAt: z.string().min(1),
+    oursSha: z.string().optional(),
+    theirsSha: z.string().optional(),
+    baseSha: z.string().optional(),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type ConflictEntryWire = z.infer<typeof ConflictEntrySchema>;
+
+export const SyncConflictsSuccessSchema = z
+  .object({
+    conflicts: z.array(ConflictEntrySchema),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SyncConflictsSuccess = z.infer<typeof SyncConflictsSuccessSchema>;
+
+export const SyncResolveConflictRequestSchema = z
+  .object({
+    file: z.string().min(1),
+    strategy: z.enum(['mine', 'theirs', 'content']),
+    content: z.string().optional(),
+  })
+  .loose()
+  .refine((d) => d.strategy !== 'content' || d.content !== undefined, {
+    message: "content is required when strategy is 'content'",
+    path: ['content'],
+  }) satisfies StandardSchemaV1;
+export type SyncResolveConflictRequest = z.infer<typeof SyncResolveConflictRequestSchema>;
+
+export const SyncResolveConflictSuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
+export type SyncResolveConflictSuccess = z.infer<typeof SyncResolveConflictSuccessSchema>;
+
+export const SyncConflictContentSuccessSchema = z
+  .object({
+    file: z.string().min(1),
+    base: z.string(),
+    ours: z.string(),
+    theirs: z.string(),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SyncConflictContentSuccess = z.infer<typeof SyncConflictContentSuccessSchema>;
+
+export const SyncAbortMergeSuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
+export type SyncAbortMergeSuccess = z.infer<typeof SyncAbortMergeSuccessSchema>;
+
+export const SeedPlanSuccessSchema = z
+  .object({
+    plan: z.custom<unknown>((v) => v !== undefined, { message: 'plan is required' }),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SeedPlanSuccess = z.infer<typeof SeedPlanSuccessSchema>;
+
+export const SeedApplyRequestSchema = z
+  .object({
+    plan: z.custom<unknown>((v) => v !== undefined, { message: 'plan is required' }),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SeedApplyRequest = z.infer<typeof SeedApplyRequestSchema>;
+
+export const SeedApplySuccessSchema = z
+  .object({
+    result: z.custom<unknown>((v) => v !== undefined, { message: 'result is required' }),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SeedApplySuccess = z.infer<typeof SeedApplySuccessSchema>;
+
+export const InstallSkillRequestSchema = z
+  .object({
+    noOpen: z.boolean().optional(),
+    out: z.string().min(1).optional(),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type InstallSkillRequest = z.infer<typeof InstallSkillRequestSchema>;
+
+const InstallSkillHandoffErrorSchema = z
+  .object({
+    reason: z.enum(['unsupported-platform', 'spawn-error']),
+    message: z.string(),
+  })
+  .loose();
+export const InstallSkillSuccessSchema = z.discriminatedUnion('status', [
+  z
+    .object({
+      status: z.literal('installed'),
+      outputPath: z.string(),
+      size: z.number().int().nonnegative(),
+      sha256: z.string(),
+      skillVersion: z.string(),
+    })
+    .loose(),
+  z
+    .object({
+      status: z.literal('built'),
+      outputPath: z.string(),
+      size: z.number().int().nonnegative(),
+      sha256: z.string(),
+      skillVersion: z.string(),
+      handoffError: InstallSkillHandoffErrorSchema.optional(),
+    })
+    .loose(),
+  z
+    .object({
+      status: z.literal('failed'),
+      buildError: z.string(),
+    })
+    .loose(),
+  z
+    .object({
+      status: z.literal('skip-current'),
+      skillVersion: z.string(),
+      recordedAt: z.string().optional(),
+    })
+    .loose(),
+]) satisfies StandardSchemaV1;
+export type InstallSkillSuccess = z.infer<typeof InstallSkillSuccessSchema>;

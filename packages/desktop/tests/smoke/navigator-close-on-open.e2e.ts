@@ -151,7 +151,7 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       expect(await countWindowsByMode(app, 'editor')).toBe(0);
 
       await navigator.evaluate(async (path) => {
-        await window.okDesktop?.project.open({ path, target: 'new-window' });
+        await window.okDesktop?.project.open({ path, target: 'new-window', entryPoint: 'recents' });
       }, projectDir);
 
       await expect
@@ -204,7 +204,7 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       const navigator = await findFirstWindowByMode(app, 'navigator');
 
       await navigator.evaluate(async (path) => {
-        await window.okDesktop?.project.open({ path, target: 'new-window' });
+        await window.okDesktop?.project.open({ path, target: 'new-window', entryPoint: 'recents' });
       }, projectBPath);
 
       await expect
@@ -261,7 +261,7 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       });
 
       await navigator.evaluate(async (path) => {
-        await window.okDesktop?.project.open({ path, target: 'new-window' });
+        await window.okDesktop?.project.open({ path, target: 'new-window', entryPoint: 'recents' });
       }, bogusProjectPath);
 
       await expect

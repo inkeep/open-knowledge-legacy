@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
+import { resolveLockDir } from '../../config/paths.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
@@ -94,7 +94,7 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-      const lockDir = resolveLockDir(resolveContentDir(config, cwd));
+      const lockDir = resolveLockDir(cwd);
       const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;

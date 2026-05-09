@@ -5,20 +5,79 @@ import {
   type BridgeToleranceClass,
   detectAppliedToleranceClasses,
   normalizeBridge,
+  toBridgeInvariantLog,
 } from '@inkeep/open-knowledge-core';
 import {
   incrementBridgeInvariantViolations,
   incrementBridgeInvariantViolationsSuppressed,
   incrementBridgeToleranceApplied,
+  incrementObserverAPathBFiresSuppressed,
 } from './metrics.ts';
 
 const DEFAULT_DEBOUNCE_S = 60;
 
+/** Map<rateKey, last-emit-Unix-ms>. rateKey = `${site}::${docName ?? '__nodoc__'}`.
+ *  Bounded by lazy pruning (see `MAX_VIOLATION_RATE_TUPLES`) — without it the
+ *  map would grow indefinitely as docs are renamed/deleted/created over a
+ *  long-lived server: every (site, docName) tuple that ever emitted a
+ *  violation leaves a permanent entry. The leak only manifests in pathological
+ *  cases (the exact regime the watchdog targets), so growth must be bounded
+ *  even though steady-state target is ~0 violations.
+ *
+ *  WARN: module-level state. Today this is correct because exactly one server
+ *  runs per `contentDir` per process (enforced by `server.lock`). If multi-
+ *  server-per-process is ever adopted (multi-vault desktop, cloud multi-
+ *  tenant), this map would conflate (site, docName) tuples across servers —
+ *  Server A's violation rate-limit window would suppress Server B's
+ *  violation event for the same docName within the same window, degrading
+ *  the per-tenant signal. The fix at that point is closure-scoping per
+ *  server (compare `persistence.ts:configLkgCache`), threading the cache
+ *  through `assertBridgeInvariant` instead of capturing it at module scope.
+ *  Tracking here so the future-fix is discoverable. */
 const lastEmitMs = new Map<string, number>();
 
+/** Lazy-pruning threshold for `lastEmitMs`. When the map exceeds this, the
+ *  next `shouldEmitBridgeInvariantViolation` walks past-window entries
+ *  (older than `debounceMs`) and deletes them — those entries already permit
+ *  emission so dropping them is functionally identical to keeping them.
+ *
+ *  Conditional bound: pruning reclaims keys whose last-emit is past the
+ *  debounce window. Under a truly sustained burst (>1024 distinct (site, doc)
+ *  tuples ALL emitting within the same window), every entry is within-window,
+ *  the prune walk deletes nothing, and the map continues to grow until the
+ *  burst cools. Acceptable because (a) repeat violations on the same key do
+ *  NOT add new entries (rate-limiter overwrites), so pathological growth
+ *  requires N distinct doc names violating concurrently within one window —
+ *  rare in practice; (b) once any subset cools below the window, the next
+ *  emission reclaims them. 1024 keeps the audit signal (recent doc names
+ *  emitting violations) intact across short wall windows. */
 const MAX_VIOLATION_RATE_TUPLES = 1024;
 
+/** Map<rateKey, last-emit-Unix-ms> for the bridge-tolerance-applied event.
+ *  rateKey = `${site}::${class}`. Bounded cardinality: 8 classes × 3 sites =
+ *  24 entries max globally. Per-(site, class) windows let operators see how
+ *  often each site relies on each tolerance class — observer-b CRLF rates
+ *  vs persistence CRLF rates surface separately.
+ *
+ *  WARN: same module-level state caveat as `lastEmitMs` above. The 24-entry
+ *  bound is global; under multi-server-per-process, a single server's
+ *  tolerance event would suppress another server's same-class event in
+ *  the same window. Less concerning than the violation rate-limiter
+ *  because tolerance events are informational (they're documented
+ *  tolerated bytes), not signals of regression. */
 const lastToleranceEmitMs = new Map<string, number>();
+
+/** Map<docName, last-emit-Unix-ms> for the observer-a-path-b-fired event.
+ *  Per-doc keying so a single chatty doc cannot suppress events from other
+ *  docs. The counter (`observerAPathBFires`) increments only on emit,
+ *  matching the bridge-invariant-violation pattern; the suppressed counter
+ *  is bumped when this gate closes. Each Path B fire bumps exactly one of
+ *  the two, so the documented identity `actual_rate = fires + suppressed`
+ *  holds. Sentinel `__nodoc__` covers the rare path where a Y.Doc has no
+ *  docName attribution.
+ *
+ *  WARN: same module-level state caveat as `lastEmitMs` above. */
+const lastPathBEmitMs = new Map<string, number>();
 
 function toleranceRateKey(site: BridgeInvariantSite, cls: BridgeToleranceClass): string {
   return `${site}::${cls}`;
@@ -67,9 +126,35 @@ export function shouldEmitBridgeToleranceApplied(
   return true;
 }
 
+export function shouldEmitObserverAPathBFired(
+  docName: string | undefined,
+  nowMs: number = Date.now(),
+): boolean {
+  const key = docName ?? '__nodoc__';
+  const last = lastPathBEmitMs.get(key);
+  const debounceMs = readDebounceMs();
+  if (last !== undefined && nowMs - last < debounceMs) return false;
+  if (lastPathBEmitMs.size >= MAX_VIOLATION_RATE_TUPLES) {
+    for (const [k, lastMs] of lastPathBEmitMs) {
+      if (nowMs - lastMs >= debounceMs) lastPathBEmitMs.delete(k);
+    }
+  }
+  lastPathBEmitMs.set(key, nowMs);
+  return true;
+}
+
+export function emitObserverAPathBFired(docName: string | undefined, nowMs?: number): boolean {
+  const shouldEmit = shouldEmitObserverAPathBFired(docName, nowMs);
+  if (!shouldEmit) {
+    incrementObserverAPathBFiresSuppressed();
+  }
+  return shouldEmit;
+}
+
 export function __resetBridgeWatchdogForTests(): void {
   lastEmitMs.clear();
   lastToleranceEmitMs.clear();
+  lastPathBEmitMs.clear();
 }
 
 export function __getViolationRateTupleCountForTests(): number {
@@ -136,18 +221,7 @@ export function assertBridgeInvariant(
     return false;
   }
   incrementBridgeInvariantViolations();
-  console.warn(
-    JSON.stringify({
-      event: 'bridge-invariant-violation',
-      site: opts.site,
-      'doc.name': opts.docName ?? null,
-      'tolerance-class-attempted': 'untracked',
-      'normalize-equal-modulo-tolerance': false,
-      ytextLen: ytextSnapshot.length,
-      fragmentLen: fragmentMdSnapshot.length,
-      diff: violation.unifiedDiff,
-      timestamp: new Date().toISOString(),
-    }),
-  );
+  const verbose = process.env.OK_TELEMETRY_VERBOSE === '1';
+  console.warn(JSON.stringify(toBridgeInvariantLog(violation, { verbose })));
   return false;
 }

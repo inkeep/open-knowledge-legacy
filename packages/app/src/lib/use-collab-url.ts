@@ -39,6 +39,8 @@ type CollabUrlError =
 interface UseCollabUrlState {
   collabUrl: string | null;
   attempts: number;
+  /** When true, automatic retries have stopped — consumer should render the
+   * terminal banner with a manual-retry affordance. */
   terminal: boolean;
   lastError: CollabUrlError | null;
   retry: () => void;

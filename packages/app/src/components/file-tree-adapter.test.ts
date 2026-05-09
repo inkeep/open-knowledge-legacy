@@ -19,7 +19,7 @@ import {
 import type { DocEntry } from './file-tree-utils';
 
 function doc(docName: string): DocEntry {
-  return { docName, size: 100, modified: '2026-01-01T00:00:00Z' };
+  return { kind: 'document', docName, size: 100, modified: '2026-01-01T00:00:00Z' };
 }
 
 function menuItem(path: string, kind: ContextMenuItem['kind']): ContextMenuItem {
@@ -63,9 +63,10 @@ describe('file-tree-adapter', () => {
       collectTreeFolderPathsFromDocuments([
         doc('docs/guide'),
         doc('docs/nested/page'),
+        { kind: 'folder', path: 'empty/child', size: 0, modified: '2026-01-01T00:00:00Z' },
         doc('README'),
       ]),
-    ).toEqual(['docs/', 'docs/nested/']);
+    ).toEqual(['docs/', 'docs/nested/', 'empty/', 'empty/child/']);
   });
 
   test('computes active ancestor paths using Trees directory slash convention', () => {
@@ -79,8 +80,8 @@ describe('file-tree-adapter', () => {
       addPath: 'docs/Untitled 2.md',
       renamePath: 'docs/Untitled 2.md',
     });
-    expect(createTreePlaceholder('folder', '', ['New Folder/index.md'])).toEqual({
-      addPath: 'New Folder 2/index.md',
+    expect(createTreePlaceholder('folder', '', ['New Folder/'])).toEqual({
+      addPath: 'New Folder 2/',
       renamePath: 'New Folder 2/',
     });
   });
@@ -163,8 +164,9 @@ describe('file-tree-adapter', () => {
         { kind: 'document', docName: 'README', size: 0, modified: '' },
         { kind: 'document', docName: 'docs/guide', docExt: '.mdx', size: 0, modified: '' },
         { kind: 'document', docName: 'docs/legacy', docExt: '.md', size: 0, modified: '' },
+        { kind: 'folder', path: 'empty', size: 0, modified: '' },
       ]),
-    ).toEqual(['README.md', 'docs/guide.mdx', 'docs/legacy.md']);
+    ).toEqual(['README.md', 'docs/guide.mdx', 'docs/legacy.md', 'empty/']);
   });
 
   test('fileEntryToTreePath preserves referenced asset paths', () => {

@@ -30,12 +30,16 @@ interface RenameFolderSuccess {
   rewrittenDocs: RenameFolderRewrittenDoc[];
   previewUrls: Record<string, string>;
   previewUrlSource?: PreviewUrlSource;
+  /** Stored summary echo (same applied to every affected-doc contributor entry).
+   *  Absent when no summary was supplied. */
   summary?: { value: string; truncatedFrom?: number; hint?: string };
 }
 
 interface RenameFolderError {
   ok: false;
   error: string;
+  /** Server-supplied structured collision list when 409 is a rename-map collision.
+   *  Empty/absent for other 4xx error classes (validation, missing source, etc.). */
   colliding?: RenameCollisionPair[];
 }
 
@@ -140,7 +144,7 @@ export function register(server: ServerInstance, deps: RenameFolderDeps): void {
       });
 
       if (!result.ok) {
-        const error = typeof result.error === 'string' ? result.error : 'Folder rename failed';
+        const error = result.error as string;
         const colliding = parseRenameCollidingPairs(result.colliding);
         const structured: RenameFolderError = {
           ok: false,

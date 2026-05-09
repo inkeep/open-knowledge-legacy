@@ -92,7 +92,7 @@ describe('buildMenuTemplate', () => {
     expect(sub?.[11]?.label).toBe('Clear Menu');
   });
 
-  test('recent-row click dispatches deps.openProject(path)', () => {
+  test('recent-row click dispatches deps.openProject(path, "recents")', () => {
     const openProject = mock(() => Promise.resolve());
     const deps = makeDeps({
       getRecentProjects: () => [{ path: '/tmp/foo', name: 'foo' }],
@@ -103,7 +103,23 @@ describe('buildMenuTemplate', () => {
     const sub = openRecent?.submenu as MenuItemConstructorOptions[] | undefined;
     const row = sub?.[0];
     (row?.click as (() => void) | undefined)?.();
-    expect(openProject).toHaveBeenCalledWith('/tmp/foo');
+    expect(openProject).toHaveBeenCalledWith('/tmp/foo', 'recents');
+  });
+
+  test('File → Open Folder click dispatches deps.openProject(path, "pick-existing")', async () => {
+    const openProject = mock(() => Promise.resolve());
+    const showOpenDialog = mock(() =>
+      Promise.resolve({ canceled: false, filePaths: ['/tmp/picked'] }),
+    );
+    const deps = makeDeps({
+      openProject,
+      dialog: { showOpenDialog } as unknown as MenuDeps['dialog'],
+    });
+    const template = buildMenuTemplate(deps);
+    const openFolder = findByLabel(template, 'Open Folder…');
+    expect(openFolder).toBeDefined();
+    await (openFolder?.click as (() => Promise<void>) | undefined)?.();
+    expect(openProject).toHaveBeenCalledWith('/tmp/picked', 'pick-existing');
   });
 
   test('Clear Menu click dispatches deps.clearRecentProjects()', () => {

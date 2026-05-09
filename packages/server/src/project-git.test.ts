@@ -20,14 +20,48 @@ afterEach(async () => {
 });
 
 describe('ensureProjectGit', () => {
-  test('returns { didInit: false } when .git/ already exists', async () => {
+  test('returns { didInit: false } when .git/HEAD already exists (idempotent)', async () => {
     const projectRoot = resolve(tmpDir, 'has-git');
     mkdirSync(projectRoot, { recursive: true });
     mkdirSync(resolve(projectRoot, '.git'));
+    writeFileSync(resolve(projectRoot, '.git/HEAD'), 'ref: refs/heads/main\n');
 
     const result = await ensureProjectGit(projectRoot);
 
     expect(result.didInit).toBe(false);
+    expect(result.repaired).toBeUndefined();
+  });
+
+  test('auto-repairs partial .git/ (directory without HEAD) preserving .git/ok/ subtree', async () => {
+    const projectRoot = resolve(tmpDir, 'shell-git');
+    mkdirSync(projectRoot, { recursive: true });
+    mkdirSync(resolve(projectRoot, '.git/ok/refs'), { recursive: true });
+
+    writeFileSync(resolve(projectRoot, '.git/ok/HEAD'), 'ref: refs/heads/main\n');
+    writeFileSync(
+      resolve(projectRoot, '.git/ok/config'),
+      '[core]\n\trepositoryformatversion = 0\n',
+    );
+    writeFileSync(resolve(projectRoot, '.git/ok/refs/marker'), 'shadow-marker\n');
+
+    expect(existsSync(resolve(projectRoot, '.git/HEAD'))).toBe(false);
+    expect(existsSync(resolve(projectRoot, '.git/ok/HEAD'))).toBe(true);
+
+    const result = await ensureProjectGit(projectRoot);
+
+    expect(result.didInit).toBe(true);
+    expect(result.repaired).toBe(true);
+    expect(existsSync(resolve(projectRoot, '.git/HEAD'))).toBe(true);
+
+    expect(readFileSync(resolve(projectRoot, '.git/ok/HEAD'), 'utf-8')).toBe(
+      'ref: refs/heads/main\n',
+    );
+    expect(readFileSync(resolve(projectRoot, '.git/ok/config'), 'utf-8')).toBe(
+      '[core]\n\trepositoryformatversion = 0\n',
+    );
+    expect(readFileSync(resolve(projectRoot, '.git/ok/refs/marker'), 'utf-8')).toBe(
+      'shadow-marker\n',
+    );
   });
 
   test('returns { didInit: false } when .git is a file (worktree-style pointer — D6 match-any)', async () => {

@@ -32,6 +32,11 @@ interface RenameDocumentSuccess {
   previewUrl: string | null;
   previewUrlSource?: PreviewUrlSource;
   previousPreviewUrl?: string;
+  /** Stored summary + original length when truncation fired + truncation hint.
+   *  Absent when no agent-provided or default summary was recorded (e.g., UI-driven path).
+   *  `truncatedFrom` + `hint` are only present when the agent-provided summary
+   *  was truncated — server-generated defaults that overflow the cap suppress
+   *  both fields so the response does not misattribute truncation to the caller. */
   summary?: { value: string; truncatedFrom?: number; hint?: string };
 }
 
@@ -87,6 +92,9 @@ export interface RenameDocumentDeps {
   serverUrl: ServerUrlOrResolver;
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
+  /** Same identity passthrough pattern as write-document (D15). Without this,
+   *  MCP-driven renames post no agentId → the server-side D22 guard skips
+   *  attribution, so summaries would have no contributor entry to live on. */
   identityRef?: { current: AgentIdentity };
 }
 
@@ -134,7 +142,7 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
       });
 
       if (!result.ok) {
-        const error = typeof result.error === 'string' ? result.error : 'Rename failed';
+        const error = result.error as string;
         const colliding = parseRenameCollidingPairs(result.colliding);
         const structured: RenameDocumentError = {
           ok: false,

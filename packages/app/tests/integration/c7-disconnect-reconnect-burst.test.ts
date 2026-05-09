@@ -1,3 +1,15 @@
+/**
+ * C7: Disconnect-reconnect burst — paused sync clients rejoin simultaneously.
+ *
+ * Validates that multiple clients who pause inbound CRDT sync (simulating
+ * network disconnection), make local edits while paused, and then resume
+ * simultaneously, converge correctly. The server-authoritative observer bridge
+ * handles the merged result under OBSERVER_SYNC_ORIGIN.
+ *
+ * Uses ControllableWebSocket via `syncControl: true` for pause/resume.
+ * Per-test docName isolation. Client lifecycle in try/finally per R8a.
+ */
+
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import * as Y from 'yjs';
@@ -31,6 +43,8 @@ function appendParagraph(client: TestClient, text: string): void {
   client.fragment.push([paragraph]);
 }
 
+/** Assert convergence: polls until all markers appear in BOTH Y.Text and
+ *  XmlFragment on all clients, then verifies bridge invariant and consistency. */
 async function assertConverged(clients: TestClient[], markers: string[]): Promise<void> {
   for (const marker of markers) {
     for (let i = 0; i < clients.length; i++) {

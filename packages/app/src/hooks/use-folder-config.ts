@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { parseApiError } from '@/lib/parse-api-error';
 
 /**
  * Folder cascade + templates data subscriptions.
@@ -39,17 +40,19 @@ export interface TemplateMenuEntry {
   description?: string;
   path: string;
   source_folder: string;
-  scope: 'local' | 'inherited';
+  scope: 'local' | 'inherited' | 'user';
 }
 
 export interface TemplateDetail {
   name: string;
   folder: string;
-  scope: 'local' | 'inherited';
+  scope: 'local' | 'inherited' | 'user';
   path: string;
   frontmatter: Record<string, unknown>;
   body: string;
 }
+
+export type TemplateTarget = 'project' | 'user';
 
 export type AsyncState<T> =
   | { status: 'idle' }
@@ -78,21 +81,19 @@ export function useFolderConfig(folderPath: string | null): FolderConfigHandle {
     fetch(`/api/folder-config${qs}`)
       .then(async (r) => {
         if (!r.ok) {
-          const text = await r.text().catch(() => '');
-          throw new Error(`HTTP ${r.status}${text ? `: ${text.slice(0, 200)}` : ''}`);
+          const body = (await r.json().catch(() => null)) as unknown;
+          throw new Error(parseApiError(body) ?? `HTTP ${r.status}`);
         }
         return r.json() as Promise<{
-          ok: boolean;
-          folder?: FolderConfig;
+          folder: FolderConfig;
           frontmatter_local?: Record<string, unknown> | null;
           frontmatter_sources?: Record<string, string>;
-          error?: string;
         }>;
       })
       .then((payload) => {
         if (cancelled) return;
-        if (!payload.ok || !payload.folder) {
-          setState({ status: 'error', message: payload.error ?? 'Unknown error' });
+        if (!payload || typeof payload !== 'object' || !payload.folder) {
+          setState({ status: 'error', message: 'Server returned an incomplete folder response.' });
           return;
         }
         setState({
@@ -122,29 +123,39 @@ export function useFolderConfig(folderPath: string | null): FolderConfigHandle {
 export function useTemplate(
   folder: string | null,
   name: string | null,
+  target?: TemplateTarget,
 ): AsyncState<TemplateDetail> {
   const [state, setState] = useState<AsyncState<TemplateDetail>>({ status: 'idle' });
 
   useEffect(() => {
-    if (folder === null || !name) {
+    if (!name) {
+      setState({ status: 'idle' });
+      return;
+    }
+    if (target !== 'user' && folder === null) {
       setState({ status: 'idle' });
       return;
     }
     let cancelled = false;
     setState({ status: 'loading' });
-    const qs = `?folder=${encodeURIComponent(folder)}&name=${encodeURIComponent(name)}`;
+    const folderParam = target === 'user' ? '' : (folder ?? '');
+    let qs = `?folder=${encodeURIComponent(folderParam)}&name=${encodeURIComponent(name)}`;
+    if (target !== undefined) qs += `&target=${encodeURIComponent(target)}`;
     fetch(`/api/template${qs}`)
       .then(async (r) => {
         if (!r.ok) {
-          const text = await r.text().catch(() => '');
-          throw new Error(`HTTP ${r.status}${text ? `: ${text.slice(0, 200)}` : ''}`);
+          const body = (await r.json().catch(() => null)) as unknown;
+          throw new Error(parseApiError(body) ?? `HTTP ${r.status}`);
         }
-        return r.json() as Promise<{ ok: boolean; template?: TemplateDetail; error?: string }>;
+        return r.json() as Promise<{ template: TemplateDetail }>;
       })
       .then((payload) => {
         if (cancelled) return;
-        if (!payload.ok || !payload.template) {
-          setState({ status: 'error', message: payload.error ?? 'Unknown error' });
+        if (!payload || typeof payload !== 'object' || !payload.template) {
+          setState({
+            status: 'error',
+            message: 'Server returned an incomplete template response.',
+          });
           return;
         }
         setState({ status: 'ready', data: payload.template });
@@ -156,7 +167,7 @@ export function useTemplate(
     return () => {
       cancelled = true;
     };
-  }, [folder, name]);
+  }, [folder, name, target]);
 
   return state;
 }

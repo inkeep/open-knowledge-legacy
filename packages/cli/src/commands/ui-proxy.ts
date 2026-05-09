@@ -10,6 +10,7 @@ import {
   isAllowedWorkspaceHostHeader,
   isLoopbackAddress,
 } from '@inkeep/open-knowledge-server';
+import { emitProblem } from './ui-problem.ts';
 
 export interface ProxyServerHandle {
   httpServer: HttpServer;
@@ -22,38 +23,52 @@ interface StartProxyOptions {
   host: string;
   upstreamHost: string;
   upstreamPort: number;
+  /** Per-request upstream timeout in milliseconds. Default 10_000. Upstream
+   * hang past this deadline produces a 504 Gateway Timeout. Set to 0 to
+   * disable (not recommended — Node's default is no timeout). */
   upstreamTimeoutMs?: number;
 }
 
+/** Default: 10s. Long enough for legitimate slow loads, short enough that a
+ * hung upstream doesn't keep browser connections open indefinitely. */
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 10_000;
 
 export function rejectIfNotLoopbackApi(req: IncomingMessage, res: ServerResponse): boolean {
   const peerAddress = req.socket?.remoteAddress;
   if (peerAddress !== undefined && !isLoopbackAddress(peerAddress)) {
-    sendGate403(res, 'loopback-required');
+    emitProblem(
+      res,
+      403,
+      'urn:ok:error:loopback-required',
+      'Request must originate from a loopback address.',
+    );
     return true;
   }
   if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
-    sendGate403(res, 'host-header-not-allowed');
+    emitProblem(
+      res,
+      403,
+      'urn:ok:error:host-not-allowed',
+      'Host header is not in the loopback allowlist.',
+    );
     return true;
   }
   const origin = req.headers.origin;
   if (origin !== undefined && !isAllowedApiOrigin(origin)) {
-    sendGate403(res, 'origin-not-allowed');
+    emitProblem(
+      res,
+      403,
+      'urn:ok:error:invalid-origin',
+      'Origin header is not in the loopback allowlist.',
+    );
     return true;
   }
   return false;
 }
 
-function sendGate403(res: ServerResponse, error: string): void {
-  res.writeHead(403, {
-    'Content-Type': 'application/json',
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff',
-  });
-  res.end(JSON.stringify({ ok: false, error }));
-}
-
+/** Per-request client-side deadline — prevents a malicious/local slow-loris peer
+ * from pinning the proxy socket indefinitely. 30s leaves ample margin over the
+ * upstream timeout above so we never time out a healthy request. */
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 const HOP_BY_HOP_HEADERS: readonly string[] = [
@@ -134,8 +149,13 @@ function forwardRequest(
   req.setTimeout(DEFAULT_REQUEST_TIMEOUT_MS, () => {
     if (!res.headersSent) {
       try {
-        res.writeHead(408, { 'Content-Type': 'text/plain' });
-        res.end('Request Timeout');
+        emitProblem(
+          res,
+          408,
+          'urn:ok:error:request-timeout',
+          'Proxy request exceeded the per-request deadline.',
+          `Slow-loris-class: client did not finish within ${DEFAULT_REQUEST_TIMEOUT_MS / 1000}s.`,
+        );
       } catch {}
     } else {
       try {
@@ -173,8 +193,13 @@ function forwardRequest(
   if (upstreamTimeoutMs > 0) {
     upstreamReq.setTimeout(upstreamTimeoutMs, () => {
       if (!res.headersSent) {
-        res.writeHead(504, { 'Content-Type': 'text/plain' });
-        res.end('Gateway Timeout');
+        emitProblem(
+          res,
+          504,
+          'urn:ok:error:gateway-timeout',
+          'Upstream did not respond before the gateway deadline.',
+          `Upstream timeout: ${upstreamTimeoutMs / 1000}s elapsed without a response.`,
+        );
       } else {
         try {
           res.end();
@@ -186,8 +211,13 @@ function forwardRequest(
 
   upstreamReq.on('error', () => {
     if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'text/plain' });
-      res.end('Bad Gateway');
+      emitProblem(
+        res,
+        502,
+        'urn:ok:error:collab-server-not-running',
+        'Collab server is unreachable.',
+        'Upstream connection failed or dropped before a response was received.',
+      );
     } else {
       try {
         res.end();

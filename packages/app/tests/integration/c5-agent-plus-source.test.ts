@@ -1,3 +1,17 @@
+/**
+ * C5: Agent write + concurrent source mode (Y.Text) edits.
+ *
+ * Symmetric to C4 but validates the Y.Text write surface. Agent writes via
+ * the HTTP API use applyAgentMarkdownWrite (XmlFragment-authoritative,
+ * precedent #12) which mirrors to Y.Text via applyByPrefixSuffix. Client
+ * source-mode edits write directly to Y.Text. The server observer (Observer B
+ * under OBSERVER_SYNC_ORIGIN) parses the merged Y.Text and applies to
+ * XmlFragment via updateYFragment.
+ *
+ * Per-test docName isolation via createTestClient/createTestClients.
+ * Client lifecycle in try/finally (not afterEach) per R8a.
+ */
+
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import {
@@ -22,6 +36,8 @@ afterAll(async () => {
   await server.cleanup();
 });
 
+/** Assert convergence: polls until all markers appear in BOTH Y.Text and
+ *  XmlFragment on all clients, then verifies bridge invariant and consistency. */
 async function assertConverged(clients: TestClient[], markers: string[]): Promise<void> {
   for (const marker of markers) {
     for (let i = 0; i < clients.length; i++) {

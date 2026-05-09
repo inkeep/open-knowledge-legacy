@@ -206,7 +206,7 @@ export function register(server: ServerInstance, deps: SearchDeps): void {
 
         const result = (await httpPost(url, '/api/search', body)) as SearchApiResponse;
         if (!result.ok) {
-          return textResult(`Error: ${result.error ?? 'Search failed'}`, true);
+          return textResult(`Error: ${result.error}`, true);
         }
 
         const { resolve, ui } = await buildListResolver(

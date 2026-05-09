@@ -41,6 +41,6 @@ export const fetchTagsList = fetchTags;
 export async function fetchDocsForTag(name: string): Promise<TagDocEntry[]> {
   const r = await fetch(`/api/tags/${encodeURIComponent(name)}`);
   if (!r.ok) throw new Error(`/api/tags/${name} responded with ${r.status}`);
-  const data: { ok?: boolean; docs?: TagDocEntry[] } = await r.json();
-  return data.ok && Array.isArray(data.docs) ? data.docs : [];
+  const data: { docs?: TagDocEntry[] } = await r.json();
+  return Array.isArray(data.docs) ? data.docs : [];
 }

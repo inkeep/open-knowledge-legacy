@@ -287,7 +287,9 @@ describe('handleRollback — actor identity routing (D22-A, FR7b, D-A10)', () =>
       () => fixturePrincipal,
     );
     expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
+    const parsed = JSON.parse(response.body) as Record<string, unknown>;
+    expect(parsed.type).toBe('urn:ok:error:invalid-request');
+    expect(typeof parsed.title).toBe('string');
     expect(formatContributors()).toBe('');
   });
 });

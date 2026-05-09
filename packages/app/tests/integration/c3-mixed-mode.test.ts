@@ -1,3 +1,16 @@
+/**
+ * C3: Mixed-mode concurrent edits — WYSIWYG + source mode convergence.
+ *
+ * Validates that Client A editing in WYSIWYG (XmlFragment writes) and
+ * Client B editing in source mode (Y.Text writes) converge correctly
+ * under the server-authoritative observer bridge. The server observer
+ * handles all cross-CRDT writes under OBSERVER_SYNC_ORIGIN — client
+ * observers no longer perform cross-representation writes.
+ *
+ * Per-test docName isolation via createTestClients(port, { count }) default.
+ * Client lifecycle in try/finally (not afterEach) per R8a.
+ */
+
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import * as Y from 'yjs';
@@ -30,6 +43,8 @@ function appendParagraph(client: TestClient, text: string): void {
   client.fragment.push([paragraph]);
 }
 
+/** Assert convergence: polls until all markers appear in BOTH Y.Text and
+ *  XmlFragment on all clients, then verifies bridge invariant and consistency. */
 async function assertConverged(clients: TestClient[], markers: string[]): Promise<void> {
   for (const marker of markers) {
     for (let i = 0; i < clients.length; i++) {

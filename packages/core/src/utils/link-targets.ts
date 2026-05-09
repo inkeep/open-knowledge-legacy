@@ -26,6 +26,10 @@ export type ClassifiedLinkTarget =
   | AnchorLinkTarget
   | AssetLinkTarget;
 
+export function assertNeverLinkTarget(value: never): never {
+  throw new Error(`Unhandled ClassifiedLinkTarget variant: ${JSON.stringify(value as unknown)}`);
+}
+
 const URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+\-.]*:/;
 
 export function extractAssetExtension(href: string): string | null {

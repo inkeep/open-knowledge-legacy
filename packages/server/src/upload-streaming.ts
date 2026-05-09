@@ -34,12 +34,12 @@ export class HashingPassThrough extends Transform {
   }
 }
 
-export function tmpUploadDir(contentDir: string): string {
-  return resolve(getLocalDir(contentDir), 'tmp');
+export function tmpUploadDir(projectDir: string): string {
+  return resolve(getLocalDir(projectDir), 'tmp');
 }
 
-export function mintTempUploadPath(contentDir: string): string {
-  const dir = tmpUploadDir(contentDir);
+export function mintTempUploadPath(projectDir: string): string {
+  const dir = tmpUploadDir(projectDir);
   tracedMkdirSync(dir, { recursive: true });
   return resolve(dir, `upload-${randomUUID()}`);
 }
@@ -70,26 +70,26 @@ export function linkTempToFinalWithCollisionRetry(
       } catch {}
 
       if (code === 'ENOSPC' || code === 'EDQUOT') {
-        throw new UploadWriteError('storage-full', err);
+        throw new UploadWriteError('urn:ok:error:storage-full', err);
       }
       if (code === 'EROFS' || code === 'EACCES' || code === 'EPERM') {
-        throw new UploadWriteError('storage-readonly', err);
+        throw new UploadWriteError('urn:ok:error:storage-readonly', err);
       }
-      throw new UploadWriteError('storage-error', err);
+      throw new UploadWriteError('urn:ok:error:storage-error', err);
     }
   }
 
   try {
     tracedUnlinkSync(tempPath);
   } catch {}
-  throw new UploadWriteError('collision-exhaustion');
+  throw new UploadWriteError('urn:ok:error:collision-exhaustion');
 }
 
 export function cleanupOrphanUploadTempfiles(
-  contentDir: string,
+  projectDir: string,
   { ageMs = 24 * 60 * 60 * 1000 }: { ageMs?: number } = {},
 ): { scanned: number; deleted: number; errors: number } {
-  const dir = tmpUploadDir(contentDir);
+  const dir = tmpUploadDir(projectDir);
   const result = { scanned: 0, deleted: 0, errors: 0 };
 
   if (!existsSync(dir)) {

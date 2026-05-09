@@ -1,5 +1,5 @@
 import type { ContextMenuItem, FileTreeDropTarget } from '@pierre/trees';
-import { type FileEntry, isAssetEntry } from '@/components/file-tree-utils';
+import { type FileEntry, isAssetEntry, isFolderEntry } from '@/components/file-tree-utils';
 
 const DEFAULT_TREE_EXTENSION = '.md';
 const TREE_EXTENSION_PATTERN = /\.(md|mdx)$/i;
@@ -16,6 +16,7 @@ export function treeFilePathToDocName(treePath: string): string {
 }
 
 export function fileEntryToTreePath(entry: FileEntry): string {
+  if (isFolderEntry(entry)) return folderPathToTreeDirectoryPath(entry.path);
   return isAssetEntry(entry) ? entry.path : docNameToTreePath(entry.docName, entry.docExt);
 }
 
@@ -54,9 +55,18 @@ export function documentsTreePathSignature(documents: readonly FileEntry[]): str
 export function collectTreeFolderPathsFromDocuments(documents: readonly FileEntry[]): string[] {
   const folderPaths = new Set<string>();
   for (const entry of documents) {
-    const path = isAssetEntry(entry) ? entry.path : entry.docName;
+    if (isFolderEntry(entry)) {
+      const folderPath = folderPathToTreeDirectoryPath(entry.path);
+      if (folderPath) folderPaths.add(folderPath);
+    }
+    const path = isFolderEntry(entry)
+      ? entry.path
+      : isAssetEntry(entry)
+        ? entry.path
+        : entry.docName;
     const segments = path.split('/').filter(Boolean);
-    for (let i = 1; i < segments.length; i++) {
+    const folderSegmentLimit = isFolderEntry(entry) ? segments.length : segments.length - 1;
+    for (let i = 1; i <= folderSegmentLimit; i++) {
       folderPaths.add(`${segments.slice(0, i).join('/')}/`);
     }
   }
@@ -121,9 +131,8 @@ export function createTreePlaceholder(
     }
 
     const directory = `${parent}New Folder${suffix}/`;
-    const indexFile = `${directory}index${DEFAULT_TREE_EXTENSION}`;
-    if (!existing.has(indexFile) && !existing.has(directory)) {
-      return { addPath: indexFile, renamePath: directory };
+    if (!existing.has(directory)) {
+      return { addPath: directory, renamePath: directory };
     }
   }
 

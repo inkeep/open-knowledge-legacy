@@ -34,7 +34,9 @@ ok                     # equivalent
 | `--open` | Open the editor in your default browser |
 | `--mode <browser\|app>` | Force dispatch mode. `app` hands off to the desktop bundle when installed |
 
-The content directory comes from `content.dir` in `.ok/config.yml` (see [Configuration](/reference/configuration)).
+`ok start` operates against the current working directory and does not scaffold. If `.ok/` is missing it exits with a clean error pointing you at [`init`](#init) — `init` is the only command that writes project state.
+
+The content directory comes from `content.dir` in `.ok/config.yml` (see [Configuration](/docs/reference/configuration)).
 
 ## `init`
 
@@ -49,7 +51,9 @@ ok init [options]
 | `--scope <user\|project\|both>` | Where to write MCP config (default: both) |
 | `--no-mcp` | Skip writing editor MCP config |
 
-See [Integrations](/integrations/claude-code) for the per-editor config paths `init` writes to. Safe to re-run.
+When invoked from a sub-folder of a git repo with no ancestor `.ok/`, `init` writes `.ok/` at the git working-tree root and `content.dir` is scoped to the relative sub-path. One `.ok/` per git repo.
+
+See [Integrations](/docs/integrations/claude-code) for the per-editor config paths `init` writes to. Safe to re-run.
 
 ## `clone`
 
@@ -89,7 +93,7 @@ ok install-skill [options]
 | `--no-open` | Build the file without launching Claude Desktop |
 | `--force` | Rebuild even if the skill is already up to date |
 
-Full walkthrough: [Claude Desktop](/integrations/claude-desktop).
+Full walkthrough: [Claude Desktop](/docs/integrations/claude-desktop).
 
 ## `seed`
 
@@ -119,7 +123,7 @@ ok ui [--port <port>] [--host <host>]
 
 ```bash
 ok status [--json]   # Show running server + editor (add --json for structured output)
-ok ps [--all] [--json] # List running servers; --all includes stale/foreign entries
+ok ps [--all] [--json] # List running servers; --all also includes stale (dead-pid) entries
 ok stop              # Stop the server and editor
 ok clean             # Clean up after a crashed run
 ```
@@ -165,7 +169,7 @@ ok config migrate --scope project    # one scope
 
 ## `auth`
 
-Manage GitHub authentication for [GitHub sync](/features/github-sync).
+Manage GitHub authentication for [GitHub sync](/docs/features/github-sync).
 
 ```bash
 ok auth login              # Sign in to GitHub

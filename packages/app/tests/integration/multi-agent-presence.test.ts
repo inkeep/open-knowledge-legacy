@@ -147,13 +147,14 @@ describe('multi-agent presence — Tier 1 regression gate (FR-8)', () => {
     expect(body.presence[key].currentDoc).toBe(doc);
   });
 
-  test('GET /api/metrics/agent-presence rejects DNS-rebinding Host with 403', async () => {
+  test('GET /api/metrics/agent-presence rejects DNS-rebinding Host with 403 (RFC 9457)', async () => {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/metrics/agent-presence`, {
       headers: { Host: 'attacker.example.com' },
     });
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toBe('host-header-not-allowed');
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:host-not-allowed');
+    expect(body.status).toBe(403);
   });
 });

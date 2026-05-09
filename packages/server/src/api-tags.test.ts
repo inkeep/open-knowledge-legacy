@@ -69,7 +69,7 @@ describe('tag endpoints', () => {
       const result = await callRoute(dir, '/api/tags', new Map());
       expect(result.status).toBe(503);
       const body = JSON.parse(result.body);
-      expect(body.ok).toBe(false);
+      expect(body.type).toBe('urn:ok:error:tag-index-not-configured');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -86,10 +86,8 @@ describe('tag endpoints', () => {
       const result = await callRoute(dir, '/api/tags', new Map(), idx);
       expect(result.status).toBe(200);
       const body = JSON.parse(result.body) as {
-        ok: boolean;
         tags: Array<{ name: string; count: number; isLeaf: boolean }>;
       };
-      expect(body.ok).toBe(true);
       const byName = new Map(body.tags.map((t) => [t.name, t]));
       expect(byName.get('proj')).toEqual({ name: 'proj', count: 2, isLeaf: false });
       expect(byName.get('proj/team')).toEqual({ name: 'proj/team', count: 1, isLeaf: true });
@@ -116,7 +114,6 @@ describe('tag endpoints', () => {
       const result = await callRoute(dir, '/api/tags/proj', new Map(), idx);
       expect(result.status).toBe(200);
       const body = JSON.parse(result.body) as {
-        ok: boolean;
         name: string;
         docs: Array<{
           docName: string;
@@ -125,7 +122,6 @@ describe('tag endpoints', () => {
           matchingTags: string[];
         }>;
       };
-      expect(body.ok).toBe(true);
       expect(body.name).toBe('proj');
       expect(body.docs.map((d) => d.docName).sort()).toEqual(['alpha', 'beta']);
       expect(body.docs.every((d) => d.snippet === null)).toBe(true);
@@ -146,7 +142,7 @@ describe('tag endpoints', () => {
 
       const result = await callRoute(dir, '/api/tags/proj%2Fteam', new Map(), idx);
       expect(result.status).toBe(200);
-      const body = JSON.parse(result.body) as { ok: boolean; name: string; docs: unknown[] };
+      const body = JSON.parse(result.body) as { name: string; docs: unknown[] };
       expect(body.name).toBe('proj/team');
       expect(body.docs).toHaveLength(1);
     } finally {
@@ -162,8 +158,7 @@ describe('tag endpoints', () => {
 
       const result = await callRoute(dir, '/api/tags/nope', new Map(), idx);
       expect(result.status).toBe(200);
-      const body = JSON.parse(result.body) as { ok: boolean; docs: unknown[] };
-      expect(body.ok).toBe(true);
+      const body = JSON.parse(result.body) as { docs: unknown[] };
       expect(body.docs).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });

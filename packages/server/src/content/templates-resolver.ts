@@ -1,8 +1,14 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { getUserTemplatesDir, USER_TEMPLATES_SOURCE_LABEL } from './user-home.ts';
 
-type TemplateScope = 'local' | 'inherited';
+type TemplateScope = 'local' | 'inherited' | 'user';
+
+export {
+  __resetUserHomeProviderForTest,
+  __setUserHomeProviderForTest,
+} from './user-home.ts';
 
 export interface TemplateEntry {
   name: string;
@@ -38,7 +44,54 @@ export function resolveTemplatesAvailable(
     collectFromFolder(projectDir, '', 'inherited', seen, out);
   }
 
+  collectUserTemplates(seen, out);
+
   return out;
+}
+
+function collectUserTemplates(seen: Set<string>, out: TemplateEntry[]): void {
+  const templatesDir = getUserTemplatesDir();
+  if (!templatesDir) return;
+  if (!existsSync(templatesDir)) return;
+
+  let entries: string[];
+  try {
+    entries = readdirSync(templatesDir);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[ok-templates] failed to read user templates directory at ${templatesDir}: ${reason}`,
+    );
+    return;
+  }
+
+  for (const entryName of entries) {
+    if (!entryName.endsWith('.md')) continue;
+    const name = entryName.slice(0, -3);
+    if (seen.has(name)) continue;
+
+    const absPath = join(templatesDir, entryName);
+    let s: ReturnType<typeof statSync>;
+    try {
+      s = statSync(absPath);
+    } catch {
+      continue;
+    }
+    if (!s.isFile()) continue;
+
+    const meta = readTemplateMeta(absPath);
+    const tplEntry: TemplateEntry = {
+      name,
+      path: absPath.split(/\\/g).join('/'),
+      source_folder: USER_TEMPLATES_SOURCE_LABEL,
+      scope: 'user',
+    };
+    if (meta.title !== undefined) tplEntry.title = meta.title;
+    if (meta.description !== undefined) tplEntry.description = meta.description;
+
+    seen.add(name);
+    out.push(tplEntry);
+  }
 }
 
 function collectFromFolder(

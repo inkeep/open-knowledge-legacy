@@ -15,6 +15,8 @@ import {
 interface DeleteDocumentSuccess {
   ok: true;
   deletedDocNames: string[];
+  /** Preview URL that used to resolve to the now-deleted doc. Lets agents
+   *  close the stale preview tab. Mirrors `rename_document.previousPreviewUrl`. */
   previousPreviewUrl?: string;
 }
 
@@ -44,6 +46,10 @@ export interface DeleteDocumentDeps {
   serverUrl: ServerUrlOrResolver;
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
+  /** Identity passthrough for attribution threading (FR-5, D42). The
+   *  server-side handler calls `extractAgentIdentity(body)` even though it
+   *  does not currently surface the agent in the response — keep the field
+   *  so future timeline/audit work picks up MCP-driven deletes correctly. */
   identityRef?: { current: AgentIdentity };
 }
 
@@ -88,7 +94,7 @@ export function register(server: ServerInstance, deps: DeleteDocumentDeps): void
       });
 
       if (!result.ok) {
-        const error = typeof result.error === 'string' ? result.error : 'Delete failed';
+        const error = result.error as string;
         const structured: DeleteDocumentError = { ok: false, error };
         return textPlusStructured(`Error: ${error}`, structured, true);
       }

@@ -72,24 +72,94 @@ describe('dispatchCursor — web host fetch fallback', () => {
     expect(result.reason).toBe('dispatch-error');
   });
 
-  test('fetch returns {ok:false, reason:not-installed} body → not-installed', async () => {
+  test('fetch 422 cursor-not-installed problem+json → not-installed', async () => {
     const fetchMock = (async () =>
-      new Response(JSON.stringify({ ok: false, reason: 'not-installed' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })) as unknown as typeof globalThis.fetch;
+      new Response(
+        JSON.stringify({
+          type: 'urn:ok:error:cursor-not-installed',
+          title: 'Cursor CLI not found.',
+          status: 422,
+        }),
+        { status: 422, headers: { 'Content-Type': 'application/problem+json' } },
+      )) as unknown as typeof globalThis.fetch;
     const result = await dispatchCursor(PAYLOAD, { fetch: fetchMock, sleep: async () => {} });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe('not-installed');
   });
 
-  test('fetch returns malformed body → spawn-error → dispatch-error', async () => {
+  test('fetch 504 cursor-spawn-timeout problem+json → dispatch-error (timeout)', async () => {
+    const fetchMock = (async () =>
+      new Response(
+        JSON.stringify({
+          type: 'urn:ok:error:cursor-spawn-timeout',
+          title: 'Cursor spawn timeout.',
+          status: 504,
+        }),
+        { status: 504, headers: { 'Content-Type': 'application/problem+json' } },
+      )) as unknown as typeof globalThis.fetch;
+    const result = await dispatchCursor(PAYLOAD, { fetch: fetchMock, sleep: async () => {} });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('dispatch-error');
+    expect(result.detail ?? '').toContain('cursor spawn: timeout');
+  });
+
+  test('fetch 502 cursor-spawn-failed problem+json → dispatch-error (spawn-error)', async () => {
+    const fetchMock = (async () =>
+      new Response(
+        JSON.stringify({
+          type: 'urn:ok:error:cursor-spawn-failed',
+          title: 'Cursor spawn failed.',
+          status: 502,
+        }),
+        { status: 502, headers: { 'Content-Type': 'application/problem+json' } },
+      )) as unknown as typeof globalThis.fetch;
+    const result = await dispatchCursor(PAYLOAD, { fetch: fetchMock, sleep: async () => {} });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('dispatch-error');
+    expect(result.detail ?? '').toContain('cursor spawn: spawn-error');
+  });
+
+  test('fetch 403 path-escape problem+json → invalid-payload', async () => {
+    const fetchMock = (async () =>
+      new Response(
+        JSON.stringify({
+          type: 'urn:ok:error:path-escape',
+          title: 'Path escape.',
+          status: 403,
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/problem+json' } },
+      )) as unknown as typeof globalThis.fetch;
+    const result = await dispatchCursor(PAYLOAD, { fetch: fetchMock, sleep: async () => {} });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('invalid-payload');
+  });
+
+  test('fetch returns malformed body → dispatch-error', async () => {
     const fetchMock = (async () =>
       new Response('not-json', {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
+        status: 500,
+        headers: { 'Content-Type': 'application/problem+json' },
       })) as unknown as typeof globalThis.fetch;
+    const result = await dispatchCursor(PAYLOAD, { fetch: fetchMock, sleep: async () => {} });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('dispatch-error');
+  });
+
+  test('fetch returns problem+json with unknown URN → dispatch-error (default fallback)', async () => {
+    const fetchMock = (async () =>
+      new Response(
+        JSON.stringify({
+          type: 'urn:ok:error:internal-server-error',
+          title: 'Internal error.',
+          status: 500,
+        }),
+        { status: 500, headers: { 'Content-Type': 'application/problem+json' } },
+      )) as unknown as typeof globalThis.fetch;
     const result = await dispatchCursor(PAYLOAD, { fetch: fetchMock, sleep: async () => {} });
     expect(result.ok).toBe(false);
     if (result.ok) return;

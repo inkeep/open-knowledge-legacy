@@ -668,6 +668,7 @@ describe('file-watcher ContentFilter refcount hooks', () => {
       contentDir,
       filter,
       new Map(),
+      new Map(),
       async (e) => {
         collected.push(e);
       },
@@ -681,6 +682,55 @@ describe('file-watcher ContentFilter refcount hooks', () => {
       expect(asset.relativePath).toBe('fresh/pic.png');
     }
     expect(filter.isExcluded('fresh/pic.png')).toBe(false);
+  });
+
+  test('folder create/delete events update the folder index', async () => {
+    const folderIndex = new Map();
+    const collected: DiskEvent[] = [];
+    const notesDir = resolve(contentDir, 'notes');
+    const nestedDir = resolve(notesDir, 'nested');
+    mkdirSync(nestedDir, { recursive: true });
+
+    await handleRawEvents(
+      [
+        { type: 'create', path: notesDir },
+        { type: 'create', path: nestedDir },
+      ],
+      contentDir,
+      undefined,
+      new Map(),
+      folderIndex,
+      async (e) => {
+        collected.push(e);
+      },
+    );
+
+    expect(folderIndex.has('notes')).toBe(true);
+    expect(folderIndex.has('notes/nested')).toBe(true);
+    expect(collected).toContainEqual(
+      expect.objectContaining({ kind: 'folder-create', relativePath: 'notes' }),
+    );
+    expect(collected).toContainEqual(
+      expect.objectContaining({ kind: 'folder-create', relativePath: 'notes/nested' }),
+    );
+
+    await rm(notesDir, { recursive: true, force: true });
+    await handleRawEvents(
+      [{ type: 'delete', path: notesDir }],
+      contentDir,
+      undefined,
+      new Map(),
+      folderIndex,
+      async (e) => {
+        collected.push(e);
+      },
+    );
+
+    expect(folderIndex.has('notes')).toBe(false);
+    expect(folderIndex.has('notes/nested')).toBe(false);
+    expect(collected).toContainEqual(
+      expect.objectContaining({ kind: 'folder-delete', relativePath: 'notes' }),
+    );
   });
 });
 
@@ -774,6 +824,7 @@ describe('startWatcher symlink handling', () => {
       contentDir,
       undefined,
       new Map(),
+      new Map(),
       async (e) => {
         collected.push(e);
       },
@@ -797,6 +848,7 @@ describe('startWatcher symlink handling', () => {
       contentDir,
       undefined,
       new Map(),
+      new Map(),
       async (e) => {
         collected.push(e);
       },
@@ -817,6 +869,7 @@ describe('startWatcher symlink handling', () => {
       [{ type: 'create', path: aliasPath }],
       contentDir,
       undefined,
+      new Map(),
       new Map(),
       async (e) => {
         collected.push(e);

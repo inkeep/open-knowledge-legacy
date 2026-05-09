@@ -3,16 +3,9 @@ import { basename, dirname, join, posix, resolve, sep, win32 } from 'node:path';
 import { MCP_SERVER_NAME } from '@inkeep/open-knowledge-server';
 import { isObject } from '../utils/is-object.ts';
 
-export type EditorId = 'claude' | 'claude-desktop' | 'cursor' | 'vscode' | 'windsurf' | 'codex';
+export type EditorId = 'claude' | 'claude-desktop' | 'cursor' | 'codex';
 
-export const ALL_EDITOR_IDS: EditorId[] = [
-  'claude',
-  'claude-desktop',
-  'cursor',
-  'vscode',
-  'windsurf',
-  'codex',
-];
+export const ALL_EDITOR_IDS: EditorId[] = ['claude', 'claude-desktop', 'cursor', 'codex'];
 
 const PUBLISHED_MCP_SERVER_COMMAND = 'npx';
 const PUBLISHED_MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
@@ -139,22 +132,6 @@ export function resolveCursorConfigPath(options: AppSupportOptions = {}): string
   return pathApiForPlatform(platformName).join(home, '.cursor', 'mcp.json');
 }
 
-export function resolveVsCodeConfigPath(options: AppSupportOptions = {}): string {
-  const platformName = options.platformName ?? process.platform;
-  return pathApiForPlatform(platformName).join(
-    resolveAppSupportPath(options),
-    'Code',
-    'User',
-    'mcp.json',
-  );
-}
-
-export function resolveWindsurfConfigPath(options: AppSupportOptions = {}): string {
-  const platformName = options.platformName ?? process.platform;
-  const home = options.home ?? homedir();
-  return pathApiForPlatform(platformName).join(home, '.codeium', 'windsurf', 'mcp_config.json');
-}
-
 function resolveCodexHomePath(options: AppSupportOptions = {}): string {
   const platformName = options.platformName ?? process.platform;
   const home = options.home ?? homedir();
@@ -276,29 +253,6 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     detectPath: (_cwd, home) => dirname(resolveCursorConfigPath({ home })),
     projectConfigPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
     projectSkillPath: (cwd) => join(cwd, '.cursor', 'skills', 'open-knowledge', 'SKILL.md'),
-  }),
-  vscode: createEditorTarget({
-    id: 'vscode',
-    label: 'VS Code',
-    configPath: (_cwd, home) => resolveVsCodeConfigPath({ home }),
-    format: 'json',
-    topLevelKey: 'servers',
-    serverName: () => MCP_SERVER_NAME,
-    buildEntry: (_cwd, options) => ({ type: 'stdio', ...buildManagedServerEntry(options) }),
-    scope: 'global',
-    detectPath: (_cwd, home) => dirname(resolveVsCodeConfigPath({ home })),
-    projectConfigPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
-  }),
-  windsurf: createEditorTarget({
-    id: 'windsurf',
-    label: 'Windsurf',
-    configPath: (_cwd, home) => resolveWindsurfConfigPath({ home }),
-    format: 'json',
-    topLevelKey: 'mcpServers',
-    serverName: () => MCP_SERVER_NAME,
-    buildEntry: (_cwd, options) => buildManagedServerEntry(options),
-    scope: 'global',
-    detectPath: (_cwd, home) => dirname(resolveWindsurfConfigPath({ home })),
   }),
   codex: createEditorTarget({
     id: 'codex',

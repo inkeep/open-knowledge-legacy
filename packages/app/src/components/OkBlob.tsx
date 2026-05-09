@@ -25,8 +25,13 @@ const MAX_HEAD_ROTATION = 16;
 
 const HEAD_DIST_SCALE = 380;
 
+/** Eye parallax in viewBox units per degree of head rotation — eyes drift
+    opposite to head tilt to sell the "looking at you" effect. */
 const EYE_PARALLAX_FACTOR = 0.025;
 
+/** Per-frame interpolation factors. Eyes lerp faster than the head so they
+    appear to lead and the head follows — same trick that makes the cursor-
+    tracking demo feel alive. */
 const HEAD_LERP = 0.1;
 const EYE_LERP = 0.18;
 
@@ -47,6 +52,9 @@ function happyEyeArc(cx: number, level: ActiveClickLevel): string {
   return `M${cx - halfWidth} ${EYE_CY + 0.3} Q${cx} ${EYE_CY - apexLift}, ${cx + halfWidth} ${EYE_CY + 0.3}`;
 }
 
+/** Closed-eyelid arc — a deeper U so the eyes read as "shut" rather than
+    "smiling." Endpoints lift slightly above the baseline so the sides of the
+    U curl up. */
 function sleepingEyeArc(cx: number): string {
   const halfWidth = 1.5;
   const dip = 1.4;
@@ -54,6 +62,9 @@ function sleepingEyeArc(cx: number): string {
   return `M${cx - halfWidth} ${EYE_CY - endpointLift} Q${cx} ${EYE_CY + dip}, ${cx + halfWidth} ${EYE_CY - endpointLift}`;
 }
 
+/** Blob's geometric center in SVG viewBox units — each particle spawns on a ring
+    around this point so the burst emerges from the body's silhouette rather than
+    from a single point on the forehead. */
 const FIREWORK_CENTER_X = 15;
 const FIREWORK_CENTER_Y = 15;
 

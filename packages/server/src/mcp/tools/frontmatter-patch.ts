@@ -1,6 +1,6 @@
 import { FRONTMATTER_TYPES, FrontmatterValueSchema } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
-import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
+import { resolveLockDir } from '../../config/paths.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
@@ -95,8 +95,7 @@ export function register(server: ServerInstance, deps: FrontmatterPatchDeps): vo
           : {}),
       });
       if (!result.ok) {
-        const errorText =
-          typeof result.error === 'string' ? result.error : 'Unknown frontmatter-patch error';
+        const errorText = result.error as string;
         const fieldErrors =
           result.fieldErrors && typeof result.fieldErrors === 'object'
             ? (result.fieldErrors as Record<string, string>)
@@ -108,7 +107,7 @@ export function register(server: ServerInstance, deps: FrontmatterPatchDeps): vo
         return textResult(`Error: ${errorText}`, true);
       }
 
-      const lockDir = resolveLockDir(resolveContentDir(config, cwd));
+      const lockDir = resolveLockDir(cwd);
       const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;

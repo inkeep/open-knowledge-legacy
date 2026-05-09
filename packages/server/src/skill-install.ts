@@ -264,6 +264,8 @@ const SKILL_FILENAME = 'openknowledge.skill';
 export interface BuildAndOpenSkillOptions {
   out?: string;
   noOpen?: boolean;
+  /** Bypass the per-target `claude-cowork` install-state gate. Used by the
+   * "Reinstall skill" affordance (FR12) and by the CLI's `--force` flag. */
   force?: boolean;
   spawnFn?: SpawnLike;
   platformName?: NodeJS.Platform;

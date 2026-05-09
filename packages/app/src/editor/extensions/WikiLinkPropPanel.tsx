@@ -19,15 +19,16 @@ import {
 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
+import { toast } from 'sonner';
 import { InteractionPropPanel } from '../../components/InteractionPropPanel';
 import {
   folderIndexCreateSeed,
   resolveLinkTargetIntent,
 } from '../../components/link-target-intent';
-import { NewItemDialog } from '../../components/NewItemDialog';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { type CreatePageSeed, createPageFromSeedAndUpdate } from '../../lib/create-page';
 import { hashFromAssetPath } from '../../lib/doc-hash';
 import { cn } from '../../lib/utils';
 import { openInternalHashHrefInNewTab } from '../internal-link-helpers';
@@ -215,7 +216,7 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
   const anchor = normalizeNullableString(node?.attrs.anchor);
   const label = getWikiLinkText({ target, alias, anchor });
 
-  const { assetPaths, folderPaths, pages, pagesBySlug, loading } = usePageList();
+  const { addPage, assetPaths, folderPaths, pages, pagesBySlug, loading } = usePageList();
   const classifiedTarget = classifyWikiLinkTarget(target, anchor);
   const externalTarget = classifiedTarget?.kind === 'external' ? classifiedTarget : null;
   const assetPath =
@@ -232,7 +233,7 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
       });
 
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [createDialogMode, setCreateDialogMode] = useState<'missing' | 'folder-index' | null>(null);
+  const [creatingMode, setCreatingMode] = useState<'missing' | 'folder-index' | null>(null);
   const folderCreateSeed = linkIntent ? folderIndexCreateSeed(linkIntent) : null;
 
   if (!node) {
@@ -261,6 +262,51 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
     onClose();
   }
 
+  function updateMissingLinkTarget(docName: string) {
+    if (docName !== target) {
+      const livePos = getPos();
+      if (livePos == null) return;
+      editor.view.dispatch(
+        editor.state.tr.setNodeMarkup(livePos, undefined, {
+          ...editor.state.doc.nodeAt(livePos)?.attrs,
+          target: docName,
+          alias: alias ?? label,
+        }),
+      );
+    }
+  }
+
+  function createSeedForMode(mode: 'missing' | 'folder-index'): CreatePageSeed | null {
+    if (mode === 'folder-index') return folderCreateSeed;
+    if (linkIntent?.kind !== 'create') return null;
+    return {
+      initialDir: linkIntent.initialDir,
+      suggestedName: linkIntent.suggestedName,
+    };
+  }
+
+  async function handleCreatePage(mode: 'missing' | 'folder-index') {
+    const seed = createSeedForMode(mode);
+    if (!seed || creatingMode) return;
+    setCreatingMode(mode);
+    try {
+      await createPageFromSeedAndUpdate(seed, {
+        addPage,
+        onCreated(docName) {
+          if (mode === 'missing') {
+            updateMissingLinkTarget(docName);
+          }
+          window.location.hash = `#/${docName}`;
+          onClose();
+        },
+      });
+      setCreatingMode(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create page');
+      setCreatingMode(null);
+    }
+  }
+
   function handleNavigate(opts: { newTab?: boolean }) {
     if (externalTarget) {
       if (isSafeNavigationUrl(externalTarget.url)) {
@@ -282,7 +328,7 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
     }
     if (!linkIntent) return;
     if (linkIntent.kind === 'create') {
-      setCreateDialogMode('missing');
+      void handleCreatePage('missing');
       return;
     }
     const docName = linkIntent.hashDocName;
@@ -303,20 +349,6 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
       return;
     }
     window.location.hash = `#/${docName}`;
-  }
-
-  function handleCreated(docName: string) {
-    if (createDialogMode === 'missing' && docName !== target) {
-      const livePos = getPos();
-      if (livePos == null) return;
-      editor.view.dispatch(
-        editor.state.tr.setNodeMarkup(livePos, undefined, {
-          ...editor.state.doc.nodeAt(livePos)?.attrs,
-          target: docName,
-          alias: alias ?? label,
-        }),
-      );
-    }
   }
 
   const isAsset = !externalTarget && !loading && assetPath !== null;
@@ -431,14 +463,24 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
             </Button>
           ) : null}
           {isUnresolved ? (
-            <Button size="sm" variant="default" onClick={() => setCreateDialogMode('missing')}>
-              Create page
+            <Button
+              size="sm"
+              variant="default"
+              disabled={creatingMode !== null}
+              onClick={() => void handleCreatePage('missing')}
+            >
+              {creatingMode === 'missing' ? 'Creating…' : 'Create page'}
             </Button>
           ) : null}
           {isFolder && folderCreateSeed ? (
-            <Button size="sm" variant="outline" onClick={() => setCreateDialogMode('folder-index')}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={creatingMode !== null}
+              onClick={() => void handleCreatePage('folder-index')}
+            >
               <FilePlus2 className="size-3.5" aria-hidden="true" />
-              Create index
+              {creatingMode === 'folder-index' ? 'Creating…' : 'Create index'}
             </Button>
           ) : null}
           {/* Spacer pushes Edit + Remove to the right, separating
@@ -459,41 +501,6 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
           </Button>
         </div>
       </InteractionPropPanel>
-
-      <NewItemDialog
-        open={createDialogMode !== null}
-        onOpenChange={(open) => {
-          if (!open) setCreateDialogMode(null);
-        }}
-        kind="file"
-        initialDir={
-          createDialogMode === 'folder-index' && folderCreateSeed
-            ? folderCreateSeed.initialDir
-            : linkIntent?.kind === 'create'
-              ? linkIntent.initialDir
-              : ''
-        }
-        suggestedName={
-          createDialogMode === 'folder-index' && folderCreateSeed
-            ? folderCreateSeed.suggestedName
-            : linkIntent?.kind === 'create'
-              ? linkIntent.suggestedName
-              : undefined
-        }
-        description={
-          createDialogMode === 'folder-index' && folderCreateSeed ? (
-            <>
-              Create an index note for{' '}
-              <span className="font-medium text-foreground">{folderCreateSeed.initialDir}/</span>
-            </>
-          ) : (
-            <>
-              Create a page for <span className="font-medium text-foreground">{target}</span>
-            </>
-          )
-        }
-        onCreated={handleCreated}
-      />
 
       <EditWikiLinkDialog
         open={editDialogOpen}

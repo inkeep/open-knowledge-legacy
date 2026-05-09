@@ -1,4 +1,4 @@
-import { FolderOpen, Save } from 'lucide-react';
+import { Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
@@ -34,9 +34,7 @@ export function EditorHeader({
   const { state: sidebarState } = useSidebar();
   const workspace = useWorkspace();
   const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
-  const isFolderTarget = activeTarget?.kind === 'folder';
   const isAssetTarget = activeTarget?.kind === 'asset';
-  const displayName = isFolderTarget ? `${activeTarget.folderPath}/` : '';
 
   const assetPath = isAssetTarget ? activeTarget.assetPath : '';
   const assetSlash = assetPath.lastIndexOf('/');
@@ -55,12 +53,7 @@ export function EditorHeader({
           </TooltipContent>
         </Tooltip>
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
-        {isFolderTarget ? (
-          <span className="inline-flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
-            <FolderOpen className="size-4 shrink-0" />
-            <span className="truncate">{displayName}</span>
-          </span>
-        ) : isAssetTarget ? (
+        {isAssetTarget ? (
           <div className="flex min-w-0 items-center gap-2 overflow-hidden text-sm">
             <span className="flex min-w-0 items-center overflow-hidden">
               {assetPrefix && (
@@ -72,9 +65,7 @@ export function EditorHeader({
               <span className="shrink-0 font-medium text-foreground">{assetFileName}</span>
             </span>
           </div>
-        ) : activeDocName ? null : (
-          <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
-        )}
+        ) : null}
         <EditorTabs />
       </div>
 

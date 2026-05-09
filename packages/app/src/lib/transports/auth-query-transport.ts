@@ -1,8 +1,18 @@
+import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import type {
   OkDesktopBridge,
   OkLocalOpAuthReposResponse,
   OkLocalOpAuthStatusResponse,
 } from '@/lib/desktop-bridge-types';
+
+async function extractProblemTitle(res: Response): Promise<string | undefined> {
+  try {
+    const body = (await res.json()) as unknown;
+    const result = ProblemDetailsSchema.safeParse(body);
+    if (result.success) return result.data.title;
+  } catch {}
+  return undefined;
+}
 
 export interface AuthQueryTransport {
   status(request?: { host?: string }): Promise<OkLocalOpAuthStatusResponse>;
@@ -35,7 +45,10 @@ export function httpAuthQueryTransport(): AuthQueryTransport {
     async status(request) {
       const host = request?.host ?? 'github.com';
       const res = await postJson('/api/local-op/auth/status', request);
-      if (!res.ok) return { authenticated: false, host };
+      if (!res.ok) {
+        const error = await extractProblemTitle(res);
+        return { authenticated: false, host, error };
+      }
       const data = (await res.json()) as Record<string, unknown>;
       const h = typeof data.host === 'string' ? data.host : host;
       if (data.authenticated === true && typeof data.login === 'string') {
@@ -56,8 +69,15 @@ export function httpAuthQueryTransport(): AuthQueryTransport {
     async repos(request) {
       const host = request?.host ?? 'github.com';
       const res = await postJson('/api/local-op/auth/repos', request);
-      if (!res.ok) return { ok: false, error: 'Failed to fetch repositories' };
+      if (!res.ok) {
+        const title = await extractProblemTitle(res);
+        return { ok: false, error: title ?? 'Failed to fetch repositories' };
+      }
       const data = lastJsonLine(await res.text());
+      if (data && data.type === 'error' && data.problem && typeof data.problem === 'object') {
+        const p = data.problem as { title?: string; detail?: string };
+        return { ok: false, error: p.detail || p.title || 'Failed to fetch repositories' };
+      }
       if (!data || !Array.isArray(data.repos)) {
         return { ok: false, error: 'Failed to fetch repositories' };
       }

@@ -31,6 +31,8 @@ import { bridgeIdPluginKey } from '../../editor/extensions/bridge-id-plugin.ts';
 import type { BlockChainEntry } from '../../editor/extensions/selection-state-plugin.ts';
 import { computeVisibleEntries, resolveLivePos } from './Breadcrumb.tsx';
 
+/** Fixture factory — every field is distinct so assertions can identify
+ *  which entry survived truncation. */
 function entry(n: number): BlockChainEntry {
   return {
     bridgeId: `b${n}`,
@@ -108,6 +110,14 @@ const schema = new Schema({
   },
 });
 
+/** Build an EditorState with `bridgeIdPluginKey` registered and a specific
+ *  `posToId` map. If `posToId` is null, the plugin isn't registered —
+ *  simulating a harness/test env that doesn't include bridge-id-plugin.
+ *
+ *  Returns something that type-checks as `Editor` through the narrow API
+ *  `resolveLivePos` uses (`editor.state`). Avoids spinning up TipTap proper
+ *  — unit tests for pure helpers should not require a browser-only
+ *  rendering stack. */
 function buildEditor(posToId: Map<number, string> | null): Editor {
   const plugins: Plugin[] = [];
   if (posToId !== null) {

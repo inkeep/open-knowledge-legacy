@@ -1,3 +1,5 @@
+import { parseApiError } from './parse-api-error.ts';
+
 type FolderFrontmatterPatch = Record<string, unknown>;
 
 interface TemplateFrontmatterFields {
@@ -6,16 +8,11 @@ interface TemplateFrontmatterFields {
   tags?: string[];
 }
 
-interface ServerErrorEnvelope {
-  ok?: boolean;
-  error?: string | { code: string; message: string };
-}
+export type TemplateTarget = 'project' | 'user';
 
-function extractError(payload: ServerErrorEnvelope | null, status: number): string {
-  const err = payload?.error;
-  if (typeof err === 'string') return err;
-  if (err && typeof err === 'object') return err.message;
-  return `HTTP ${status}`;
+async function readErrorBody(res: Response): Promise<string> {
+  const body = (await res.json().catch(() => null)) as unknown;
+  return parseApiError(body) ?? `HTTP ${res.status}`;
 }
 
 export async function saveFolderConfig(
@@ -28,9 +25,8 @@ export async function saveFolderConfig(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, frontmatter }),
     });
-    const payload = (await res.json().catch(() => null)) as ServerErrorEnvelope | null;
-    if (!res.ok || !payload?.ok) {
-      return { ok: false, error: extractError(payload, res.status) };
+    if (!res.ok) {
+      return { ok: false, error: await readErrorBody(res) };
     }
     return { ok: true };
   } catch (err) {
@@ -43,6 +39,7 @@ export async function saveTemplate(input: {
   name: string;
   frontmatter: TemplateFrontmatterFields;
   body: string;
+  target?: TemplateTarget;
 }): Promise<{ ok: true; created: boolean; warnings: string[] } | { ok: false; error: string }> {
   try {
     const res = await fetch('/api/template', {
@@ -50,13 +47,18 @@ export async function saveTemplate(input: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     });
-    const payload = (await res.json().catch(() => null)) as
-      | (ServerErrorEnvelope & { created?: boolean; warnings?: string[] })
-      | null;
-    if (!res.ok || !payload?.ok) {
-      return { ok: false, error: extractError(payload, res.status) };
+    if (!res.ok) {
+      return { ok: false, error: await readErrorBody(res) };
     }
-    return { ok: true, created: payload.created ?? false, warnings: payload.warnings ?? [] };
+    const payload = (await res.json().catch(() => null)) as {
+      created?: boolean;
+      warnings?: string[];
+    } | null;
+    return {
+      ok: true,
+      created: payload?.created ?? false,
+      warnings: payload?.warnings ?? [],
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -65,17 +67,17 @@ export async function saveTemplate(input: {
 export async function deleteTemplate(
   folder: string,
   name: string,
+  target?: TemplateTarget,
 ): Promise<{ ok: true; existed: boolean } | { ok: false; error: string }> {
   try {
-    const qs = `?folder=${encodeURIComponent(folder)}&name=${encodeURIComponent(name)}`;
+    let qs = `?folder=${encodeURIComponent(folder)}&name=${encodeURIComponent(name)}`;
+    if (target !== undefined) qs += `&target=${encodeURIComponent(target)}`;
     const res = await fetch(`/api/template${qs}`, { method: 'DELETE' });
-    const payload = (await res.json().catch(() => null)) as
-      | (ServerErrorEnvelope & { existed?: boolean })
-      | null;
-    if (!res.ok || !payload?.ok) {
-      return { ok: false, error: extractError(payload, res.status) };
+    if (!res.ok) {
+      return { ok: false, error: await readErrorBody(res) };
     }
-    return { ok: true, existed: payload.existed ?? false };
+    const payload = (await res.json().catch(() => null)) as { existed?: boolean } | null;
+    return { ok: true, existed: payload?.existed ?? false };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

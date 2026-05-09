@@ -196,8 +196,14 @@ export interface McpWiringCliSurface {
       error?: string;
     }>
   >;
+  /** Look up an editor's existing MCP entry (format-aware). `null` when the
+   *  config file is absent or has no entry for this editor. The editorId
+   *  surface avoids a cross-package `EditorMcpTarget` type in this module. */
   readExistingMcpEntry(editorId: McpWiringEditorId, home: string): Record<string, unknown> | null;
   allEditorIds: readonly McpWiringEditorId[];
+  /** `EDITOR_TARGETS[id]` keyed by editor. Imported directly from
+   *  `@inkeep/open-knowledge` so drift with the CLI's authoritative
+   *  `EditorMcpTarget` shape is a compile error, not a runtime surprise. */
   editorTargets: Record<McpWiringEditorId, EditorMcpTarget>;
 }
 

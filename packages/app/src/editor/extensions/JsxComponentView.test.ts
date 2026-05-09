@@ -4,6 +4,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractPrimitiveProps, stableHash } from './JsxComponentView.tsx';
 
+/** Test helper: build a `ReadonlySet<string>` of reactnode-typed prop names.
+ *  (In production the descriptor registry pre-computes this once at build
+ *  time — see `packages/app/src/editor/registry/index.ts`.) */
 function reactNodes(...names: string[]): ReadonlySet<string> {
   return new Set(names);
 }

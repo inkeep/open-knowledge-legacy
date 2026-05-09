@@ -8,6 +8,9 @@ import { bridgeIdPluginKey } from './bridge-id-plugin.ts';
 type SelectionOrigin = 'keyboard' | 'pointer' | 'programmatic';
 
 export interface BlockChainEntry {
+  /** Stable bridgeId for the jsxComponent wrapper, or a position-derived
+   *  fallback when y-prosemirror binding hasn't published a mapping yet
+   *  (briefly true at editor init — not in steady state). */
   readonly bridgeId: string;
   readonly componentName: string;
   readonly pos: number;
@@ -20,8 +23,24 @@ export interface BlockSelection {
   readonly isDragging: boolean;
 }
 
+/** PM transaction meta key — consumers that want to override origin
+ *  classification set `tr.setMeta(SELECTION_ORIGIN_META_KEY, 'programmatic')`.
+ *  The plugin's `apply` checks this before consulting the DOM-event-derived
+ *  `pendingOrigin`. Used by agent writes and imperative `setNodeSelection`
+ *  in the test harness.
+ *
+ *  Note on Precedent #1: that precedent governs Y.Doc transaction origins
+ *  (typed `LocalTransactionOrigin` objects, identity-matched). PM tr-meta
+ *  keys are a different surface — PM's `tr.getMeta(key)` API takes string
+ *  or PluginKey instances. We use a unique namespaced string here, in line
+ *  with PM convention. */
 export const SELECTION_ORIGIN_META_KEY = 'selectionStatePlugin/origin';
 
+/** PM transaction meta key for the plugin's own meta-only refresh
+ *  transactions (dragstart / dragend / drop → re-run apply with new
+ *  isDragging). Tagged so `apply` can distinguish "we dispatched this
+ *  to surface a runtime change" from "the user did something" and not
+ *  consume `pendingOrigin` on these passes. */
 const SELECTION_REFRESH_META_KEY = 'selectionStatePlugin/refresh';
 
 export const selectionStatePluginKey = new PluginKey<BlockSelection>('selectionState');
@@ -33,6 +52,14 @@ const EMPTY_SELECTION: BlockSelection = {
   isDragging: false,
 };
 
+/** Imperative read — returns the current plugin state or a safe empty value
+ *  if the plugin is not registered (e.g. in a harness without this extension).
+ *
+ *  For React subscription, use `useBlockSelection(editor)` from
+ *  `../hooks/use-block-selection.ts` — it wires TipTap's `transaction` +
+ *  `selectionUpdate` events, matching the BubbleMenu / SideMenu pattern.
+ *  Non-React callers that need change notification should listen to those
+ *  events directly and call `getBlockSelection(editor)` inside the handler. */
 export function getBlockSelection(editor: Editor): BlockSelection {
   const state = selectionStatePluginKey.getState(editor.state);
   return state ?? EMPTY_SELECTION;
@@ -208,6 +235,12 @@ export const SelectionStatePlugin = Extension.create({
   },
 });
 
+/** Exported pure helper — exported so `selection-state-plugin.test.ts` can
+ *  assert the full key list without exercising the keydown handler. The
+ *  branching here determines which keys tag the pending origin as
+ *  `'keyboard'`; a future refactor that drops e.g. PageUp/PageDown would
+ *  regress origin classification silently, and the E2E test only exercises
+ *  ArrowDown. */
 export function isBlockNavigationKey(key: string): boolean {
   return (
     key === 'ArrowUp' ||

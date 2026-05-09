@@ -3,6 +3,8 @@ import type { Page } from '@playwright/test';
 import type { ApiHelpers } from './_helpers';
 import { expect, test } from './_helpers';
 
+/** Per-test fixture setup: create an isolated doc, seed markdown, navigate.
+ *  Each test owns its own docName so parallel workers don't collide. */
 async function setupDoc(page: Page, api: ApiHelpers, markdown: string): Promise<string> {
   const docName = `test-sel-${randomUUID().slice(0, 8)}`;
   await api.createPage(`${docName}.md`);
@@ -16,6 +18,8 @@ async function setupDoc(page: Page, api: ApiHelpers, markdown: string): Promise<
   return docName;
 }
 
+/** Programmatically NodeSelect a jsxComponent by componentName (first match).
+ *  Uses window.__activeEditor — exposed by TiptapEditor for E2E observability. */
 async function selectFirstJsxComponent(page: Page, componentName: string) {
   await page.waitForFunction(() => Boolean(window.__activeEditor), null, { timeout: 5_000 });
   return await page.evaluate((name) => {

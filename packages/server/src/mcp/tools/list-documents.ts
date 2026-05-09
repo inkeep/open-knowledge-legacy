@@ -28,7 +28,7 @@ export const DESCRIPTION = [
 ].join('\n');
 
 interface DocumentsPayload {
-  documents?: Array<Record<string, unknown> & { docName?: string }>;
+  documents?: Array<Record<string, unknown> & { docName?: string; kind?: string }>;
 }
 
 interface ListDocumentsDeps extends PreviewUrlDeps {
@@ -76,15 +76,17 @@ export function register(server: ServerInstance, deps: ListDocumentsDeps): void 
       const { ok: _ok, ...rest } = result;
       const data = rest as DocumentsPayload;
       const { resolve, ui } = await buildListResolver(deps, cwd);
-      const documents = (data.documents ?? []).map((row) => {
-        const docName = typeof row.docName === 'string' ? row.docName : null;
-        const resolved = docName ? resolve(docName) : null;
-        return {
-          ...row,
-          previewUrl: resolved?.url ?? null,
-          ...(resolved ? { previewUrlSource: resolved.source } : {}),
-        };
-      });
+      const documents = (data.documents ?? [])
+        .filter((row) => row.kind !== 'folder')
+        .map((row) => {
+          const docName = typeof row.docName === 'string' ? row.docName : null;
+          const resolved = docName ? resolve(docName) : null;
+          return {
+            ...row,
+            previewUrl: resolved?.url ?? null,
+            ...(resolved ? { previewUrlSource: resolved.source } : {}),
+          };
+        });
 
       let folder: DirectoryMeta | undefined;
       if (containedDir !== null) {

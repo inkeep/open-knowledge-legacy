@@ -24,6 +24,10 @@ const EMPTY: BlockSelection = {
   isDragging: false,
 };
 
+/** Minimal stub plugin mirroring the real plugin's state derivation —
+ *  tests the pure `deriveBlockSelection` function without React/DOM.
+ *  Origin classification via DOM events is out of scope here (covered by
+ *  E2E in US-010); tr-meta overrides work via SELECTION_ORIGIN_META_KEY. */
 function makeStubPlugin() {
   return new Plugin<BlockSelection>({
     key: selectionStatePluginKey,
@@ -39,11 +43,15 @@ function makeStubPlugin() {
   });
 }
 
+/** Convert a synced Y.XmlFragment into an EditorState with the selection
+ *  plugin installed. Useful for imperative tests — no TipTap/React needed. */
 function fragmentToEditorState(fragment: import('yjs').XmlFragment): EditorState {
   const doc = yXmlFragmentToProseMirrorRootNode(fragment, schema);
   return EditorState.create({ doc, plugins: [makeStubPlugin()] });
 }
 
+/** Find the PM position of the first jsxComponent with the given
+ *  componentName. Returns -1 if not found. */
 function findJsxComponentPos(state: EditorState, componentName: string): number {
   let found = -1;
   state.doc.descendants((node, pos) => {

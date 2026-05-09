@@ -2,6 +2,8 @@ import type { BlockChainEntry } from '../extensions/selection-state-plugin.ts';
 import { getDescriptor } from '../registry/index.ts';
 
 interface EntryLabelOptions {
+  /** Append ` (unregistered)` when the descriptor resolves to the wildcard
+   *  `'*'`. Default `false` (visual surfaces); `true` for AT announcements. */
   unregisteredSuffix?: boolean;
 }
 

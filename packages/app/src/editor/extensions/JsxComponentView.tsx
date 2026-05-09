@@ -84,9 +84,23 @@ import { sanitizeComponentProps } from '../utils/sanitize-url.ts';
 
 interface ComponentErrorBoundaryProps {
   children: ReactNode;
+  /** Flips when we want to force a retry (prop change, node-name change,
+   *  post-auto-convert reset). Threaded into `resetKeys`. */
   resetKey: string;
+  /** Escalates errored state out to the NodeView so the chrome can react
+   *  (show "failed to render" hint, offer copy-source / delete affordances
+   *  via the stuck-state UI). */
   onError: (error: Error) => void;
+  /** Registered descriptor name ('Callout', 'img', 'video', 'audio',
+   *  'Accordion', or 'wildcard'). Low-cardinality label — safe for
+   *  telemetry aggregation. */
   descriptorName: string;
+  /** Raw user-authored component name; may be arbitrary MDX text. Kept in
+   *  a separate field (not a label) so telemetry aggregation does not
+   *  explode cardinality across tenants. Capped at 200 chars inside the
+   *  onError handler before emission (MDX permits arbitrarily-long
+   *  dotted-namespace tags that would otherwise produce multi-KB log
+   *  entries per error). */
   rawComponentName: string;
 }
 

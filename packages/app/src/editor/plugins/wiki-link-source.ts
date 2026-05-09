@@ -63,6 +63,8 @@ const wikiLinkBrokenMark = Decoration.mark({
   class: 'cm-wiki-link cm-wiki-link-broken',
 });
 
+/** Build a lowercase Set of known page names (docName + title) for O(1) lookup.
+ * Exported for unit tests — the plugin uses it internally. */
 export function buildPageNameSet(pages: PageItem[]): Set<string> {
   const s = new Set<string>();
   for (const p of pages) {
@@ -93,6 +95,10 @@ export function buildKnownWikilinkTargetSet(pages: PageItem[]): Set<string> {
   return s;
 }
 
+/** Extract the target page name from a wikilink's inner text (the part between
+ * `[[` and `]]`). Strips optional `#anchor` and `|alias`, normalizes to lowercase.
+ * Returns the empty string for empty or whitespace-only inner text.
+ * Exported for unit tests. */
 export function extractWikilinkTarget(inner: string): string {
   return inner.split(/[#|]/)[0].trim().toLowerCase();
 }

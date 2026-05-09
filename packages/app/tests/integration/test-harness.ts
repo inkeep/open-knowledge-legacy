@@ -35,7 +35,7 @@ import {
   MarkdownManager,
   normalizeBridge,
   prependFrontmatter,
-  ServerInfoResponseSchema,
+  ServerInfoSuccessSchema,
   sharedExtensions,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
@@ -90,11 +90,20 @@ export interface TestServer {
 export interface CreateTestServerOptions {
   debounce?: ServerOptions['debounce'];
   maxDebounce?: ServerOptions['maxDebounce'];
+  /** Reuse an existing content directory (for server-restart tests that need
+   *  persistence to load canonical state written by a prior test-server instance).
+   *  When provided, the caller owns directory lifecycle — cleanup() will not
+   *  rm the directory. Pair with `keepContentDir: true` across all servers
+   *  sharing this directory. */
   contentDir?: string;
+  /** When true, `cleanup()` skips the `rmSync(contentDir)` so the directory
+   *  survives for a subsequent test-server instance. Defaults to false
+   *  (random-tmpdir behavior preserved). */
   keepContentDir?: boolean;
   keepaliveGraceMs?: number;
   gitEnabled?: boolean;
   commitDebounceMs?: number;
+  localOpCliArgs?: string[];
 }
 
 export async function createTestServer(options: CreateTestServerOptions = {}): Promise<TestServer> {
@@ -118,6 +127,7 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     commitDebounceMs: options.commitDebounceMs ?? 200,
     contentRoot: options.gitEnabled === true ? '.' : undefined,
     enableTestRoutes: true,
+    localOpCliArgs: options.localOpCliArgs,
     skipStateManifestCheck: true,
   });
 
@@ -175,6 +185,8 @@ export interface TestClient {
 }
 
 export interface CreateTestClientOptions {
+  /** Skip attaching the bridge invariant watcher. Use for tests that
+   *  deliberately drive divergence (e.g., Bug-D skip-guarded test). */
   skipInvariantWatcher?: boolean;
   syncControl?: boolean;
 }
@@ -393,6 +405,9 @@ export function stripTrailingWhitespace(s: string): string {
     .replace(/\n+$/, '');
 }
 
+/** Assert bridge invariant: normalized Y.Text === serialized XmlFragment.
+ * Normalization includes NG1: blank-line count between blocks may normalize
+ * (ProseMirror schema limitation). Collapse 3+ consecutive newlines to 2. */
 export function assertBridgeInvariant(ytext: Y.Text, fragment: Y.XmlFragment): void {
   const textNorm = normalizeBridge(ytext.toString());
   const fragNorm = normalizeBridge(serializeFragment(fragment));
@@ -444,6 +459,14 @@ export async function agentWriteMd(
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
 }
 
+/** POST to agent-patch endpoint (find-and-replace).
+ *
+ * Post-D22 the wire shape is RFC 9457 Problem Details on errors — read
+ * `body.title` for the human-readable string. The helper preserves the
+ * `error` field name on its return shape so existing callers stay
+ * source-stable; the value is sourced from `body.title` (RFC 9457) with
+ * a legacy `body.error` fallback for any not-yet-migrated handler.
+ */
 export async function agentPatch(
   port: number,
   find: string,
@@ -456,8 +479,8 @@ export async function agentPatch(
     body: JSON.stringify({ find, replace, docName }),
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    return { ok: false, status: res.status, error: body.error ?? 'unknown' };
+    const body = (await res.json().catch(() => ({}))) as { title?: string; error?: string };
+    return { ok: false, status: res.status, error: body.title ?? body.error ?? 'unknown' };
   }
   return { ok: true };
 }
@@ -515,9 +538,9 @@ export async function awaitFileWatcherIndexed(
     });
     if (res?.ok) {
       lastStatus = res.status;
-      const data = (await res.json()) as { ok: boolean; documents?: Array<{ docName: string }> };
+      const data = (await res.json()) as { documents?: Array<{ docName: string }> };
       lastBodyPreview = `ok, docs=${data.documents?.length ?? 0}`;
-      if (data.ok && data.documents?.some((d) => d.docName === docPath)) {
+      if (data.documents?.some((d) => d.docName === docPath)) {
         return;
       }
     } else if (res) {
@@ -548,10 +571,9 @@ export async function awaitBacklinkIndexed(
     if (res?.ok) {
       lastStatus = res.status;
       const data = (await res.json()) as {
-        ok: boolean;
         backlinks?: Array<{ source: string }>;
       };
-      if (data.ok && data.backlinks?.some((b) => b.source === sourceDocName)) return;
+      if (data.backlinks?.some((b) => b.source === sourceDocName)) return;
     } else if (res) {
       lastStatus = res.status;
     }
@@ -614,6 +636,9 @@ export function attachBridgeInvariantWatcher(
   doc: Y.Doc,
   opts: {
     onViolation?: (info: InvariantViolation) => void;
+    /** Extra non-paired origins to enforce on in addition to the defaults.
+     *  Paired origins (context.paired === true) are always covered by the
+     *  structural isPairedWriteOrigin check and do not need to be listed. */
     enforcingOrigins?: Set<unknown>;
   } = {},
 ): () => void {
@@ -670,7 +695,18 @@ export interface ItemOriginProbe {
   assertCaptureIntact(label?: string): void;
   capturedContent(): string;
   undoStackLength(): number;
+  /** Origins observed at capture time via `'stack-item-added'` events.
+   *  Returns the set of distinct tx.origin values the UM has tracked.
+   *  Empty if no items have been captured yet. */
   getCapturedOrigins(): ReadonlySet<unknown>;
+  /** Assert that every captured origin is in the `trackedOrigins` set
+   *  provided at construction. Throws if a stray origin appears — which
+   *  would indicate origin-laundering (a non-tracked origin's Items ended
+   *  up in the UM stack, e.g., user content under a different session's origin).
+   *
+   *  Safe to call when no items have been captured (silently returns).
+   *  Call AFTER convergence, not mid-sequence — the UM may legitimately
+   *  capture items from a tracked origin that hasn't fully settled yet. */
   assertOnlyTrackedOrigins(): void;
   cleanup(): void;
 }
@@ -1128,7 +1164,7 @@ export async function seedPoolServerInstanceId(
   if (!res.ok) {
     throw new Error(`seedPoolServerInstanceId: /api/server-info returned ${res.status}`);
   }
-  const body = ServerInfoResponseSchema.parse(await res.json());
+  const body = ServerInfoSuccessSchema.parse(await res.json());
   pool.setExpectedServerInstanceId(body.serverInstanceId);
   return body.serverInstanceId;
 }

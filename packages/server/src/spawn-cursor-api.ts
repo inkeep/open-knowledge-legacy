@@ -3,10 +3,20 @@ import { access, constants as fsConstants } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { posix as pathPosix, win32 as pathWin32 } from 'node:path';
+import { SpawnCursorSuccessSchema } from '@inkeep/open-knowledge-core';
+import { errorResponse } from './http/error-response.ts';
+import { PayloadTooLargeError, RequestBodyTimeoutError } from './http/request-validation.ts';
+import { successResponse } from './http/success-response.ts';
 
 const SPAWN_CURSOR_WHICH_TIMEOUT_MS = 500;
 const SPAWN_CURSOR_SPAWN_TIMEOUT_MS = 2000;
 const SPAWN_CURSOR_MAX_BODY_BYTES = 4 * 1024;
+const SPAWN_CURSOR_BODY_READ_TIMEOUT_MS = 5_000;
+const HANDLER = 'spawn-cursor';
+
+function assertNeverSpawnReason(_reason: never): never {
+  throw new Error(`Unhandled spawn-cursor outcome.reason: ${String(_reason)}`);
+}
 
 export type SpawnCursorOutcome =
   | { ok: true }
@@ -29,48 +39,116 @@ export async function handleSpawnCursor(
   deps: HandleSpawnCursorDeps,
 ): Promise<void> {
   if (req.method !== 'POST') {
-    writeJson(res, 405, { ok: false, reason: 'method-not-allowed' });
+    errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+      handler: HANDLER,
+      extraHeaders: { Allow: 'POST' },
+    });
     return;
   }
 
   let body: Buffer;
   try {
     body = await readBoundedJsonBody(req);
-  } catch {
-    writeJson(res, 413, { ok: false, reason: 'spawn-error' });
+  } catch (err) {
+    if (err instanceof PayloadTooLargeError) {
+      errorResponse(res, 413, 'urn:ok:error:payload-too-large', 'Payload too large.', {
+        handler: HANDLER,
+        cause: err,
+      });
+      return;
+    }
+    if (err instanceof RequestBodyTimeoutError) {
+      errorResponse(res, 408, 'urn:ok:error:request-timeout', 'Request body read timed out.', {
+        handler: HANDLER,
+        cause: err,
+      });
+      return;
+    }
+    errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to read request body.', {
+      handler: HANDLER,
+      cause: err,
+    });
     return;
   }
 
   let parsed: { path?: unknown };
   try {
     parsed = JSON.parse(body.toString('utf-8')) as { path?: unknown };
-  } catch {
-    writeJson(res, 400, { ok: false, reason: 'invalid-path' });
+  } catch (err) {
+    errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Malformed JSON body.', {
+      handler: HANDLER,
+      cause: err,
+    });
     return;
   }
 
   const userPath = typeof parsed.path === 'string' ? parsed.path : '';
   if (!userPath) {
-    writeJson(res, 400, { ok: false, reason: 'invalid-path' });
+    errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Missing or empty `path` field.', {
+      handler: HANDLER,
+    });
     return;
   }
 
   if (!isPathWithinDir(userPath, deps.contentDir, deps.platform)) {
-    writeJson(res, 403, { ok: false, reason: 'invalid-path' });
+    errorResponse(res, 403, 'urn:ok:error:path-escape', 'Path escapes the content directory.', {
+      handler: HANDLER,
+    });
     return;
   }
 
   const resolveCursorBinary = deps.resolveCursorBinary ?? resolveCursorBinaryDefault;
   const exec = await resolveCursorBinary(SPAWN_CURSOR_WHICH_TIMEOUT_MS);
   if (!exec) {
-    writeJson(res, 200, { ok: false, reason: 'not-installed' });
+    errorResponse(
+      res,
+      422,
+      'urn:ok:error:cursor-not-installed',
+      'Cursor CLI not found on this machine.',
+      { handler: HANDLER },
+    );
     return;
   }
 
   const invocation = resolveCursorSpawnInvocation(exec, userPath, deps.platform);
   const spawn = deps.spawnDetached ?? spawnDetachedReal;
   const outcome = await spawn(invocation.exec, invocation.args, SPAWN_CURSOR_SPAWN_TIMEOUT_MS);
-  writeJson(res, 200, outcome);
+  if (outcome.ok) {
+    successResponse(res, 200, SpawnCursorSuccessSchema, {}, { handler: HANDLER });
+    return;
+  }
+  switch (outcome.reason) {
+    case 'not-installed':
+      errorResponse(
+        res,
+        422,
+        'urn:ok:error:cursor-not-installed',
+        'Cursor CLI not found on this machine.',
+        { handler: HANDLER },
+      );
+      return;
+    case 'timeout':
+      errorResponse(
+        res,
+        504,
+        'urn:ok:error:cursor-spawn-timeout',
+        'Cursor spawn exceeded the deadline.',
+        { handler: HANDLER },
+      );
+      return;
+    case 'spawn-error':
+      errorResponse(res, 502, 'urn:ok:error:cursor-spawn-failed', 'Cursor spawn failed.', {
+        handler: HANDLER,
+      });
+      return;
+    case 'invalid-path':
+      errorResponse(res, 403, 'urn:ok:error:path-escape', 'Path escapes the content directory.', {
+        handler: HANDLER,
+      });
+      return;
+    default:
+      return assertNeverSpawnReason(outcome.reason);
+  }
 }
 
 export const CURSOR_BUNDLE_PATHS_BY_PLATFORM: Partial<
@@ -95,7 +173,16 @@ export async function resolveCursorBinaryDefault(timeoutMs: number): Promise<str
       try {
         await access(candidate, fsConstants.X_OK);
         return candidate;
-      } catch {}
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException | undefined)?.code;
+        if (code !== 'ENOENT' && code !== 'EACCES' && code !== 'EPERM') {
+          console.warn(
+            '[spawn-cursor] unexpected fs.access error on bundle probe:',
+            code,
+            candidate,
+          );
+        }
+      }
     }
   }
   return new Promise((resolve) => {
@@ -146,7 +233,8 @@ function spawnDetachedReal(
         clearTimeout(timer);
         settle({ ok: true });
       });
-    } catch {
+    } catch (err) {
+      console.warn('[spawn-cursor] synchronous spawn throw:', err);
       clearTimeout(timer);
       settle({ ok: false, reason: 'spawn-error' });
     }
@@ -168,22 +256,21 @@ export function resolveCursorSpawnInvocation(
 async function readBoundedJsonBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let totalBytes = 0;
-  for await (const chunk of req) {
-    totalBytes += (chunk as Buffer).length;
-    if (totalBytes > SPAWN_CURSOR_MAX_BODY_BYTES) {
-      throw new Error('Payload too large');
+  const timeoutSignal = AbortSignal.timeout(SPAWN_CURSOR_BODY_READ_TIMEOUT_MS);
+  const onTimeout = () => req.destroy(new RequestBodyTimeoutError());
+  timeoutSignal.addEventListener('abort', onTimeout, { once: true });
+  try {
+    for await (const chunk of req) {
+      totalBytes += (chunk as Buffer).length;
+      if (totalBytes > SPAWN_CURSOR_MAX_BODY_BYTES) {
+        throw new PayloadTooLargeError();
+      }
+      chunks.push(chunk as Buffer);
     }
-    chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks);
+  } finally {
+    timeoutSignal.removeEventListener('abort', onTimeout);
   }
-  return Buffer.concat(chunks);
-}
-
-function writeJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'X-Content-Type-Options': 'nosniff',
-  });
-  res.end(JSON.stringify(body));
 }
 
 export function isPathWithinDir(

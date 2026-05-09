@@ -2,6 +2,7 @@ import { lstatSync, realpathSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { errorResponse } from './http/error-response.ts';
 
 const ALLOWED_URL_PATTERNS: RegExp[] = [
   /^https?:\/\//i,
@@ -104,17 +105,26 @@ export function hasValidLocalOpOrigin(req: IncomingMessage): boolean {
 export function checkLocalOpSecurity(
   req: IncomingMessage,
   res: ServerResponse,
-  sendJson: (res: ServerResponse, status: number, data: unknown) => void,
+  options: { handler: string },
 ): boolean {
   if (!isLoopbackRequest(req)) {
-    sendJson(res, 403, {
-      ok: false,
-      error: 'Forbidden: local-op endpoints require loopback connection',
-    });
+    errorResponse(
+      res,
+      403,
+      'urn:ok:error:loopback-required',
+      'Local-op endpoints require a loopback connection.',
+      { handler: options.handler },
+    );
     return false;
   }
   if (!hasValidLocalOpOrigin(req)) {
-    sendJson(res, 403, { ok: false, error: 'Forbidden: invalid origin for local-op endpoint' });
+    errorResponse(
+      res,
+      403,
+      'urn:ok:error:invalid-origin',
+      'Origin header is not a permitted loopback origin.',
+      { handler: options.handler },
+    );
     return false;
   }
   return true;

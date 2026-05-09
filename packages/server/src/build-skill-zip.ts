@@ -5,6 +5,9 @@ import { basename, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yazl from 'yazl';
 
+/** Maximum uncompressed + compressed size. Catches accidental binary bloat.
+ *  Current baseline is ~10 KB DEFLATE — 100 KB gives an order of magnitude
+ *  of headroom without permitting a runaway regression. */
 const MAX_ZIP_BYTES = 102_400;
 
 export interface BuildSkillZipOptions {

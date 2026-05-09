@@ -209,6 +209,19 @@ describe('initContent', () => {
     const matches = gitignore.split('\n').filter((l) => l.trim() === 'local/').length;
     expect(matches).toBe(1);
   });
+
+  it('writes config.yml with content.dir override when contentDir option is set', () => {
+    const result = initContent(testDir, { contentDir: 'docs' });
+    expect(result.created).toContain('config.yml');
+    const configYml = readFileSync(join(testDir, OK_DIR, 'config.yml'), 'utf-8');
+    expect(configYml).toContain('content:\n  dir: docs');
+  });
+
+  it('writes config.yml with default commented content.dir when contentDir is "."', () => {
+    initContent(testDir, { contentDir: '.' });
+    const configYml = readFileSync(join(testDir, OK_DIR, 'config.yml'), 'utf-8');
+    expect(configYml).toContain('# content:\n#   dir: .');
+  });
 });
 
 function findCommittedDogfoodFile(relativePath: string): string | null {
@@ -286,12 +299,37 @@ describe('buildConfigYmlContent', () => {
     );
   });
 
-  it('produces a file with NO uncommented top-level keys (idempotent at parse)', () => {
+  it('produces a file with NO uncommented top-level keys (idempotent at parse) — default options', () => {
     const out = buildConfigYmlContent('1.0.0');
     const activeLines = out
       .split('\n')
       .map((l) => l.trim())
       .filter((l) => l.length > 0 && !l.startsWith('#'));
     expect(activeLines).toEqual([]);
+  });
+
+  it('produces a file with NO uncommented top-level keys when contentDir is "."', () => {
+    const out = buildConfigYmlContent('1.0.0', { contentDir: '.' });
+    const activeLines = out
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith('#'));
+    expect(activeLines).toEqual([]);
+  });
+
+  it('emits an active content.dir block when contentDir is a sub-path', () => {
+    const out = buildConfigYmlContent('1.0.0', { contentDir: 'docs' });
+    expect(out).toContain('content:\n  dir: docs');
+    expect(out).not.toContain('# content:\n#   dir: .');
+    const activeLines = out
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith('#'));
+    expect(activeLines).toEqual(['content:', 'dir: docs']);
+  });
+
+  it('quotes contentDir with whitespace so emitted YAML parses', () => {
+    const out = buildConfigYmlContent('1.0.0', { contentDir: 'with spaces/sub' });
+    expect(out).toContain('content:\n  dir: "with spaces/sub"');
   });
 });

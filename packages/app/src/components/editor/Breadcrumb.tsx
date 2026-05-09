@@ -9,6 +9,12 @@ import { useBlockSelection } from '../../editor/hooks/use-block-selection.ts';
 import { getEntryLabel } from '../../editor/selection/entry-label.ts';
 import { DOCUMENT_ROOT_LABEL } from '../../editor/utils/editor-strings.ts';
 
+/** Truncation budget for the `ancestorChain` array only. The synthetic
+ *  `Document` anchor is rendered as a sibling in `BreadcrumbContent` and is
+ *  NOT part of this count. When the chain exceeds the budget, leading
+ *  entries past the first collapse into a single `…` segment; the kept
+ *  shape is `[first-ancestor, …, ...last-two]` so the user retains
+ *  orientation at both ends of the chain. */
 const MAX_VISIBLE_SEGMENTS = 4;
 
 export function Breadcrumb({ editor }: { editor: Editor | null }) {

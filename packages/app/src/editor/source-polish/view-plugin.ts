@@ -38,6 +38,10 @@ function frontmatterRange(state: EditorState): { from: number; to: number } | nu
   return null;
 }
 
+/** Pure state-based decoration builder. Exported for unit tests — the ViewPlugin
+ * wrapper passes `view.visibleRanges` (viewport-scoped); tests can pass the
+ * whole-doc range to exercise every construct. No `view` dependency → works
+ * in Bun's headless test env without a DOM. */
 export function buildDecorationsForRanges(
   state: EditorState,
   ranges: readonly { from: number; to: number }[],

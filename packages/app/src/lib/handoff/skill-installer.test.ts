@@ -155,35 +155,61 @@ describe('httpSkillInstaller', () => {
     });
   });
 
-  test('400 with string error body: surfaces server detail (e.g., path confinement)', async () => {
+  test('400 with RFC 9457 problem+json: surfaces title (e.g., path confinement)', async () => {
     const installer = httpSkillInstaller({
       fetch: fakeFetch({
         ok: false,
         status: 400,
-        body: { ok: false, error: 'Output path must be within home directory' },
+        body: {
+          type: 'urn:ok:error:invalid-request',
+          title: 'Output path must be within home directory.',
+          status: 400,
+          instance: 'urn:uuid:00000000-0000-0000-0000-000000000000',
+        },
       }),
     });
 
     expect(await installer.install()).toEqual({
       ok: false,
       reason: 'http-error',
-      message: 'Output path must be within home directory',
+      message: 'Output path must be within home directory.',
     });
   });
 
-  test('500 with structured error body: surfaces error.message', async () => {
+  test('500 with RFC 9457 problem+json: surfaces title', async () => {
     const installer = httpSkillInstaller({
       fetch: fakeFetch({
         ok: false,
         status: 500,
-        body: { ok: false, error: { kind: 'internal', message: 'spawn EACCES' } },
+        body: {
+          type: 'urn:ok:error:internal-server-error',
+          title: 'Failed to install skill.',
+          status: 500,
+          instance: 'urn:uuid:00000000-0000-0000-0000-000000000001',
+        },
       }),
     });
 
     expect(await installer.install()).toEqual({
       ok: false,
       reason: 'http-error',
-      message: 'spawn EACCES',
+      message: 'Failed to install skill.',
+    });
+  });
+
+  test('non-contract error body (e.g., reverse-proxy 502): falls back to HTTP status', async () => {
+    const installer = httpSkillInstaller({
+      fetch: fakeFetch({
+        ok: false,
+        status: 502,
+        body: { someUnexpectedField: 'no title' } as unknown as Record<string, unknown>,
+      }),
+    });
+
+    expect(await installer.install()).toEqual({
+      ok: false,
+      reason: 'http-error',
+      message: 'HTTP 502',
     });
   });
 

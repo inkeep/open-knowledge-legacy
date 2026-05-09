@@ -10,6 +10,9 @@ export function SelectionAnnouncer({ editor }: { editor: Editor | null }) {
   const blockSelection = useBlockSelection(editor);
   const regionRef = useRef<HTMLDivElement | null>(null);
   const timeoutRef = useRef<number | null>(null);
+  /** Tracks whether the most-recent announcement was non-empty. Used to
+   *  decide if a transition to no-selection deserves a "deselection"
+   *  announcement (transition matters; standing-empty does not). */
   const lastWasSelected = useRef(false);
 
   useEffect(() => {

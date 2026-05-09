@@ -1,0 +1,836 @@
+{
+  "version": 1,
+  "topNode": "doc",
+  "nodes": {
+    "blockquote": {
+      "attrs": {
+        "sourceMarkerSpacings": {
+          "hasDefault": true,
+          "default": null
+        }
+      },
+      "content": "block+",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": false,
+      "defining": true,
+      "isolating": false
+    },
+    "codeBlock": {
+      "attrs": {
+        "fenceDelimiter": {
+          "hasDefault": true,
+          "default": "`"
+        },
+        "fenceLength": {
+          "hasDefault": true,
+          "default": 3
+        },
+        "language": {
+          "hasDefault": true,
+          "default": null
+        },
+        "meta": {
+          "hasDefault": true,
+          "default": null
+        },
+        "sourceStyle": {
+          "hasDefault": true,
+          "default": "fenced"
+        }
+      },
+      "content": "text*",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": false,
+      "defining": true,
+      "isolating": false
+    },
+    "commentBlock": {
+      "attrs": {
+        "sourceForm": {
+          "hasDefault": true,
+          "default": "percent"
+        },
+        "sourceLayout": {
+          "hasDefault": true,
+          "default": "block"
+        }
+      },
+      "content": "block+",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": false,
+      "defining": true,
+      "isolating": false
+    },
+    "doc": {
+      "attrs": {},
+      "content": "block+",
+      "marks": "",
+      "group": "",
+      "inline": false,
+      "atom": false,
+      "defining": false,
+      "isolating": false
+    },
+    "footnoteDefinition": {
+      "attrs": {
+        "identifier": {
+          "hasDefault": true,
+          "default": ""
+        },
+        "label": {
+          "hasDefault": true,
+          "default": null
+        }
+      },
+      "content": "block+",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": false,
+      "defining": true,
+      "isolating": false
+    },
+    "footnoteReference": {
+      "attrs": {
+        "identifier": {
+          "hasDefault": true,
+          "default": ""
+        },
+        "label": {
+          "hasDefault": true,
+          "default": null
+        }
+      },
+      "content": "",
+      "marks": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true,
+      "defining": false,
+      "isolating": false
+    },
+    "hardBreak": {
+      "attrs": {
+        "hardBreakStyle": {
+          "hasDefault": true,
+          "default": "backslash"
+        }
+      },
+      "content": "",
+      "marks": "",
+      "group": "inline",
+      "inline": true,
+      "atom": false,
+      "defining": false,
+      "isolating": false
+    },
+    "heading": {
+      "attrs": {
+        "headingStyle": {
+          "hasDefault": true,
+          "default": "atx"
+        },
+        "level": {
+          "hasDefault": true,
+          "default": 1
+        },
+        "sourceTrailingHashes": {
+          "hasDefault": true,
+          "default": null
+        },
+        "sourceUnderlineLength": {
+          "hasDefault": true,
+          "default": null
+        }
+      },
+      "content": "inline*",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": false,
+      "defining": true,
+      "isolating": false
+    },
+    "htmlBlock": {
+      "attrs": {
+        "content": {
+          "hasDefault": true,
+          "default": ""
+        }
+      },
+      "content": "",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": true,
+      "defining": false,
+      "isolating": false
+    },
+    "image": {
+      "attrs": {
+        "alt": {
+          "hasDefault": true,
+          "default": null
+        },
+        "height": {
+          "hasDefault": true,
+          "default": null
+        },
+        "src": {
+          "hasDefault": true,
+          "default": null
+        },
+        "title": {
+          "hasDefault": true,
+          "default": null
+        },
+        "width": {
+          "hasDefault": true,
+          "default": null
+        }
+      },
+      "content": "",
+      "marks": "",
+      "group": "inline",
+      "inline": true,
+      "atom": false,
+      "defining": false,
+      "isolating": false
+    },
+    "imageReference": {
+      "attrs": {
+        "alt": {
+          "hasDefault": true,
+          "default": ""
+        },
+        "identifier": {
+          "hasDefault": true,
+          "default": ""
+        },
+        "label": {
+          "hasDefault": true,
+          "default": ""
+        },
+        "referenceType": {
+          "hasDefault": true,
+          "default": "shortcut"
+        }
+      },
+      "content": "",
+      "marks": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true,
+      "defining": false,
+      "isolating": false
+    },
+    "jsxComponent": {
+      "attrs": {
+        "attributes": {
+          "hasDefault": true,
+          "default": []
+        },
+        "componentName": {
+          "hasDefault": true,
+          "default": ""
+        },
+        "kind": {
+          "hasDefault": true,
+          "default": "element"
+        },
+        "props": {
+          "hasDefault": true,
+          "default": {}
+        },
+        "sourceDirty": {
+          "hasDefault": true,
+          "default": false
+        },
+        "sourceRaw": {
+          "hasDefault": true,
+          "default": ""
+        }
+      },
+      "content": "block*",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": false,
+      "defining": true,
+      "isolating": true
+    },
+    "jsxInline": {
+      "attrs": {},
+      "content": "text*",
+      "marks": "",
+      "group": "inline",
+      "inline": true,
+      "atom": false,
+      "defining": false,
+      "isolating": false
+    },
+    "linkRefDef": {
+      "attrs": {
+        "href": {
+          "hasDefault": true,
+          "default": ""
+        },
+        "label": {
+          "hasDefault": true,
+          "default": ""
+        },
+        "sourceLayout": {
+          "hasDefault": true,
+          "default": null
+        },
+        "sourceTitleMarker": {
+          "hasDefault": true,
+          "default": null
+        },
+        "title": {
+          "hasDefault": true,
+          "default": null
+        }
+      },
+      "content": "",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": true,
+      "defining": false,
+      "isolating": false
+    },
+    "list": {
+      "attrs": {
+        "bulletMarker": {
+          "hasDefault": true,
+          "default": null
+        },
+        "listMarkerDelimiter": {
+          "hasDefault": true,
+          "default": null
+        },
+        "ordered": {
+          "hasDefault": true,
+          "default": false
+        },
+        "spread": {
+          "hasDefault": true,
+          "default": false
+        },
+        "start": {
+          "hasDefault": true,
+          "default": 1
+        }
+      },
+      "content": "listItem+",
+      "marks": "",
+      "group": "block list",
+      "inline": false,
+      "atom": false,
+      "defining": false,
+      "isolating": false
+    },
+    "listItem": {
+      "attrs": {
+        "checked": {
+          "hasDefault": true,
+          "default": null
+        },
+        "spread": {
+          "hasDefault": true,
+          "default": false
+        }
+      },
+      "content": "paragraph block*",
+      "marks": "",
+      "group": "",
+      "inline": false,
+      "atom": false,
+      "defining": true,
+      "isolating": false
+    },
+    "mathInline": {
+      "attrs": {
+        "formula": {
+          "hasDefault": true,
+          "default": ""
+        },
+        "id": {
+          "hasDefault": true,
+          "default": null
+        },
+        "language": {
+          "hasDefault": true,
+          "default": "latex"
+        }
+      },
+      "content": "",
+      "marks": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true,
+      "defining": false,
+      "isolating": false
+    },
+    "paragraph": {
+      "attrs": {},
+      "content": "inline*",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": false,
+      "defining": false,
+      "isolating": false
+    },
+    "rawMdxFallback": {
+      "attrs": {
+        "originalSpan": {
+          "hasDefault": true,
+          "default": {
+            "start": 0,
+            "end": 0
+          }
+        },
+        "reason": {
+          "hasDefault": true,
+          "default": ""
+        }
+      },
+      "content": "text*",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": false,
+      "defining": true,
+      "isolating": true
+    },
+    "table": {
+      "attrs": {
+        "sourceDashCounts": {
+          "hasDefault": true,
+          "default": null
+        }
+      },
+      "content": "tableRow+",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": false,
+      "defining": false,
+      "isolating": true
+    },
+    "tableCell": {
+      "attrs": {
+        "align": {
+          "hasDefault": true,
+          "default": null
+        },
+        "colspan": {
+          "hasDefault": true,
+          "default": 1
+        },
+        "colwidth": {
+          "hasDefault": true,
+          "default": null
+        },
+        "rowspan": {
+          "hasDefault": true,
+          "default": 1
+        }
+      },
+      "content": "block+",
+      "marks": "",
+      "group": "",
+      "inline": false,
+      "atom": false,
+      "defining": false,
+      "isolating": true
+    },
+    "tableHeader": {
+      "attrs": {
+        "align": {
+          "hasDefault": true,
+          "default": null
+        },
+        "colspan": {
+          "hasDefault": true,
+          "default": 1
+        },
+        "colwidth": {
+          "hasDefault": true,
+          "default": null
+        },
+        "rowspan": {
+          "hasDefault": true,
+          "default": 1
+        }
+      },
+      "content": "block+",
+      "marks": "",
+      "group": "",
+      "inline": false,
+      "atom": false,
+      "defining": false,
+      "isolating": true
+    },
+    "tableRow": {
+      "attrs": {},
+      "content": "(tableCell | tableHeader)*",
+      "marks": "",
+      "group": "",
+      "inline": false,
+      "atom": false,
+      "defining": false,
+      "isolating": false
+    },
+    "tag": {
+      "attrs": {
+        "value": {
+          "hasDefault": true,
+          "default": ""
+        }
+      },
+      "content": "",
+      "marks": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true,
+      "defining": false,
+      "isolating": false
+    },
+    "text": {
+      "attrs": {},
+      "content": "",
+      "marks": "",
+      "group": "inline",
+      "inline": false,
+      "atom": false,
+      "defining": false,
+      "isolating": false
+    },
+    "thematicBreak": {
+      "attrs": {
+        "sourceRaw": {
+          "hasDefault": true,
+          "default": "---"
+        }
+      },
+      "content": "",
+      "marks": "",
+      "group": "block",
+      "inline": false,
+      "atom": false,
+      "defining": false,
+      "isolating": false
+    },
+    "wikiLink": {
+      "attrs": {
+        "alias": {
+          "hasDefault": true,
+          "default": null
+        },
+        "anchor": {
+          "hasDefault": true,
+          "default": null
+        },
+        "resolved": {
+          "hasDefault": true,
+          "default": false
+        },
+        "target": {
+          "hasDefault": true,
+          "default": ""
+        }
+      },
+      "content": "",
+      "marks": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true,
+      "defining": false,
+      "isolating": false
+    },
+    "wikiLinkEmbed": {
+      "attrs": {
+        "alias": {
+          "hasDefault": true,
+          "default": null
+        },
+        "anchor": {
+          "hasDefault": true,
+          "default": null
+        },
+        "resolvedSrc": {
+          "hasDefault": true,
+          "default": null
+        },
+        "target": {
+          "hasDefault": true,
+          "default": ""
+        }
+      },
+      "content": "",
+      "marks": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true,
+      "defining": false,
+      "isolating": false
+    }
+  },
+  "marks": {
+    "code": {
+      "attrs": {
+        "sourceFenceChar": {
+          "hasDefault": true,
+          "default": "`"
+        },
+        "sourceFenceLength": {
+          "hasDefault": true,
+          "default": 1
+        }
+      },
+      "excludes": "",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "comment": {
+      "attrs": {
+        "sourceForm": {
+          "hasDefault": true,
+          "default": "percent"
+        }
+      },
+      "excludes": "",
+      "group": "",
+      "inclusive": false,
+      "spanning": true
+    },
+    "emphasis": {
+      "attrs": {
+        "sourceDelimiter": {
+          "hasDefault": true,
+          "default": "*"
+        }
+      },
+      "excludes": "emphasis",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "escapeMark": {
+      "attrs": {},
+      "excludes": "",
+      "group": "",
+      "inclusive": false,
+      "spanning": true
+    },
+    "highlight": {
+      "attrs": {},
+      "excludes": "highlight",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "link": {
+      "attrs": {
+        "alias": {
+          "hasDefault": true,
+          "default": null
+        },
+        "anchor": {
+          "hasDefault": true,
+          "default": null
+        },
+        "class": {
+          "hasDefault": true,
+          "default": null,
+          "__nonSerializableDefault": true
+        },
+        "href": {
+          "hasDefault": true,
+          "default": null
+        },
+        "linkStyle": {
+          "hasDefault": true,
+          "default": "inline"
+        },
+        "refLabel": {
+          "hasDefault": true,
+          "default": null
+        },
+        "rel": {
+          "hasDefault": true,
+          "default": "noopener noreferrer"
+        },
+        "sourceForm": {
+          "hasDefault": true,
+          "default": null
+        },
+        "sourceTitleMarker": {
+          "hasDefault": true,
+          "default": null
+        },
+        "sourceUrlForm": {
+          "hasDefault": true,
+          "default": null
+        },
+        "target": {
+          "hasDefault": true,
+          "default": null
+        },
+        "title": {
+          "hasDefault": true,
+          "default": null
+        }
+      },
+      "excludes": "link",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "sourceLiteral": {
+      "attrs": {
+        "sourceRaw": {
+          "hasDefault": true,
+          "default": ""
+        }
+      },
+      "excludes": "",
+      "group": "",
+      "inclusive": false,
+      "spanning": true
+    },
+    "strike": {
+      "attrs": {},
+      "excludes": "strike",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "strong": {
+      "attrs": {
+        "sourceDelimiter": {
+          "hasDefault": true,
+          "default": "**"
+        }
+      },
+      "excludes": "strong",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "underline": {
+      "attrs": {},
+      "excludes": "underline",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    }
+  },
+  "activeMdastPlugins": [
+    {
+      "name": "remark-parse",
+      "version": "11.0.0",
+      "hasOptions": false
+    },
+    {
+      "name": "remark-frontmatter",
+      "version": "5.0.0",
+      "hasOptions": true
+    },
+    {
+      "name": "remark-mdx-agnostic",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "remark-gfm",
+      "version": "4.0.1",
+      "hasOptions": false
+    },
+    {
+      "name": "remark-math",
+      "version": "6.0.0",
+      "hasOptions": true
+    },
+    {
+      "name": "remark-wiki-link",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "remark-github-alerts",
+      "version": "0.1.1",
+      "hasOptions": true
+    },
+    {
+      "name": "callout-transformer",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "restore-from-mdx",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "details-accordion-promoter",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "image-promoter",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "indented-code-promoter",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "math-promoter",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "single-dollar-math-promoter",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "highlight-promoter",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "mermaid-promoter",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "comment-promoter",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "merged-post-parse-walker",
+      "version": null,
+      "hasOptions": false
+    },
+    {
+      "name": "ensure-non-empty-doc",
+      "version": null,
+      "hasOptions": false
+    }
+  ]
+}

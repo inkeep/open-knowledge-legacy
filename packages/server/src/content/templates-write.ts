@@ -10,6 +10,9 @@ import {
 import { isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { stringify as stringifyYaml } from 'yaml';
 import { validateSubstitution } from './substitution.ts';
+import { getUserHome } from './user-home.ts';
+
+export type TemplateTarget = 'project' | 'user';
 
 type TemplateWriteResult =
   | {
@@ -47,18 +50,25 @@ interface WriteTemplateInput {
   name: string;
   body: string;
   frontmatter: TemplateFrontmatter;
+  target?: TemplateTarget;
 }
 
 interface DeleteTemplateInput {
   projectDir: string;
   folder: string;
   name: string;
+  target?: TemplateTarget;
 }
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 export function applyTemplateWrite(input: WriteTemplateInput): TemplateWriteResult {
-  const validation = validateInputs(input.projectDir, input.folder, input.name);
+  const target: TemplateTarget = input.target ?? 'project';
+  const resolvedRoot = resolveRootForTarget(target, input.projectDir);
+  if (!resolvedRoot.ok) return { ok: false, error: resolvedRoot.error };
+
+  const folderForValidation = target === 'user' ? '' : input.folder;
+  const validation = validateInputs(resolvedRoot.rootDir, folderForValidation, input.name);
   if (!validation.ok) return { ok: false, error: validation.error };
 
   const titleCheck = validateTitle(input.frontmatter.title);
@@ -68,7 +78,7 @@ export function applyTemplateWrite(input: WriteTemplateInput): TemplateWriteResu
   if (!subsCheck.ok) return { ok: false, error: subsCheck.error };
 
   const { templatesDir, filePath } = templatePaths(
-    input.projectDir,
+    resolvedRoot.rootDir,
     validation.folderRel,
     input.name,
   );
@@ -83,7 +93,7 @@ export function applyTemplateWrite(input: WriteTemplateInput): TemplateWriteResu
       ok: false,
       error: {
         code: 'WRITE_ERROR',
-        message: `Failed to create template directory at ${relPathOf(input.projectDir, templatesDir)}: ${(err as Error).message}`,
+        message: `Failed to create template directory at ${displayPath(target, resolvedRoot.rootDir, templatesDir)}: ${(err as Error).message}`,
       },
     };
   }
@@ -102,7 +112,7 @@ export function applyTemplateWrite(input: WriteTemplateInput): TemplateWriteResu
       ok: false,
       error: {
         code: 'WRITE_ERROR',
-        message: `Failed to write template at ${relPathOf(input.projectDir, filePath)}: ${(err as Error).message}`,
+        message: `Failed to write template at ${displayPath(target, resolvedRoot.rootDir, filePath)}: ${(err as Error).message}`,
       },
     };
   }
@@ -118,15 +128,25 @@ export function applyTemplateWrite(input: WriteTemplateInput): TemplateWriteResu
     );
   }
 
-  return { ok: true, path: relPathOf(input.projectDir, filePath), created, warnings };
+  return {
+    ok: true,
+    path: displayPath(target, resolvedRoot.rootDir, filePath),
+    created,
+    warnings,
+  };
 }
 
 export function applyTemplateDelete(input: DeleteTemplateInput): TemplateDeleteResult {
-  const validation = validateInputs(input.projectDir, input.folder, input.name);
+  const target: TemplateTarget = input.target ?? 'project';
+  const resolvedRoot = resolveRootForTarget(target, input.projectDir);
+  if (!resolvedRoot.ok) return { ok: false, error: resolvedRoot.error };
+
+  const folderForValidation = target === 'user' ? '' : input.folder;
+  const validation = validateInputs(resolvedRoot.rootDir, folderForValidation, input.name);
   if (!validation.ok) return { ok: false, error: validation.error };
 
   const { templatesDir, okDir, filePath } = templatePaths(
-    input.projectDir,
+    resolvedRoot.rootDir,
     validation.folderRel,
     input.name,
   );
@@ -140,7 +160,7 @@ export function applyTemplateDelete(input: DeleteTemplateInput): TemplateDeleteR
         ok: false,
         error: {
           code: 'UNLINK_FAILED',
-          message: `Failed to delete template at ${relPathOf(input.projectDir, filePath)}: ${(err as Error).message}`,
+          message: `Failed to delete template at ${displayPath(target, resolvedRoot.rootDir, filePath)}: ${(err as Error).message}`,
         },
       };
     }
@@ -163,10 +183,44 @@ export function applyTemplateDelete(input: DeleteTemplateInput): TemplateDeleteR
 
   return {
     ok: true,
-    path: relPathOf(input.projectDir, filePath),
+    path: displayPath(target, resolvedRoot.rootDir, filePath),
     existed,
     cleanedEmpty: { templatesDir: templatesCleaned, okDir: okCleaned },
   };
+}
+
+function resolveRootForTarget(
+  target: TemplateTarget,
+  projectDir: string,
+): { ok: true; rootDir: string } | { ok: false; error: { code: string; message: string } } {
+  if (target === 'user') {
+    const userHome = getUserHome();
+    if (!userHome) {
+      return {
+        ok: false,
+        error: {
+          code: 'USER_HOME_UNAVAILABLE',
+          message:
+            'User home directory could not be resolved. User templates require a writable home directory at ~/.ok/templates/.',
+        },
+      };
+    }
+    return { ok: true, rootDir: userHome };
+  }
+  return { ok: true, rootDir: projectDir };
+}
+
+function displayPath(target: TemplateTarget, rootDir: string, absPath: string): string {
+  if (target === 'user') {
+    if (absPath.startsWith(rootDir + sep)) {
+      return `~/${absPath
+        .slice(rootDir.length + 1)
+        .split(sep)
+        .join('/')}`;
+    }
+    return absPath.split(sep).join('/');
+  }
+  return relPathOf(rootDir, absPath);
 }
 
 function validateInputs(
@@ -227,7 +281,7 @@ function validateTitle(
       error: {
         code: 'TEMPLATE_TITLE_REQUIRED',
         message:
-          'Template frontmatter.title is required (D14). `title` is the menu surface — agents pick templates by name+title; a title-less template is effectively invisible. Set a non-empty `title` and retry.',
+          'Template frontmatter.title is required. `title` is the menu surface — agents pick templates by name+title; a title-less template is effectively invisible. Set a non-empty `title` and retry.',
       },
     };
   }
@@ -244,7 +298,7 @@ function validateSubstitutionAllowlist(
     ok: false,
     error: {
       code: 'TEMPLATE_UNKNOWN_VARIABLE',
-      message: `Template body contains unknown substitution token(s): ${offenders}. v1 allowlist: \`{{date}}\`, \`{{user}}\` (D5 / FR17). Remove or rename the offending tokens and retry.`,
+      message: `Template body contains unknown substitution token(s): ${offenders}. v1 allowlist: \`{{date}}\`, \`{{user}}\`. Remove or rename the offending tokens and retry.`,
     },
   };
 }

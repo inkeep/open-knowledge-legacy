@@ -146,7 +146,11 @@ describe('mountMcpAndApi /mcp guard', () => {
     });
 
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ ok: false, error: 'origin-not-allowed' });
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    const body = (await res.json()) as { type?: string; title?: string; status?: number };
+    expect(body.type).toBe('urn:ok:error:invalid-origin');
+    expect(body.title).toBe('Origin not allowed.');
+    expect(body.status).toBe(403);
     expect(calls).toBe(0);
   });
 
@@ -164,7 +168,10 @@ describe('mountMcpAndApi /mcp guard', () => {
     const res = await postMcpWithHost(port, 'evil.example');
 
     expect(res.status).toBe(403);
-    expect(JSON.parse(res.body)).toEqual({ ok: false, error: 'host-header-not-allowed' });
+    const body = JSON.parse(res.body) as { type?: string; title?: string; status?: number };
+    expect(body.type).toBe('urn:ok:error:host-not-allowed');
+    expect(body.title).toBe('Host header not allowed.');
+    expect(body.status).toBe(403);
     expect(calls).toBe(0);
   });
 

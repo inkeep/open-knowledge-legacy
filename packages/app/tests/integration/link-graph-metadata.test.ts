@@ -6,7 +6,6 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { createTestServer, type TestServer } from './test-harness';
 
 interface LinkGraphResponse {
-  ok: boolean;
   nodes: Array<{
     id: string;
     kind: 'doc' | 'external';
@@ -62,7 +61,7 @@ async function fetchLinkGraph(): Promise<LinkGraphResponse> {
 describe('/api/link-graph metadata enrichment', () => {
   test('doc nodes include cluster, category, tags from frontmatter', async () => {
     const data = await fetchLinkGraph();
-    expect(data.ok).toBe(true);
+    expect(Array.isArray(data.nodes)).toBe(true);
 
     const hubNode = data.nodes.find((n) => n.kind === 'doc' && n.docName === 'hub');
     expect(hubNode).toBeDefined();

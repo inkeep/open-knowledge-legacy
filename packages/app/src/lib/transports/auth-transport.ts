@@ -1,3 +1,20 @@
+/**
+ * Transport abstraction for the GitHub device-flow auth UI.
+ *
+ * Two implementations:
+ *   - `httpAuthTransport` — wraps `fetch('/api/local-op/auth/login')` +
+ *     `consumeAuthEventStream` (the existing path). Default for editor
+ *     windows + web distribution.
+ *   - `ipcAuthTransport` — wraps `bridge.localOp.auth.start()`. Used by
+ *     the Project Navigator window where there is no backing API server
+ *     (apiOrigin is empty).
+ *
+ * The `AuthModal` component accepts a `transport` prop; the default is
+ * the HTTP transport so existing editor callers don't change. Navigator
+ * passes the IPC transport explicitly.
+ */
+
+import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { consumeAuthEventStream } from '@/components/auth-event-stream';
 import type { OkDesktopBridge, OkLocalOpAuthEvent } from '@/lib/desktop-bridge-types';
 import { createBufferedAsyncStream } from './buffered-async-stream';
@@ -25,18 +42,46 @@ export function httpAuthTransport(): AuthTransport {
               body: JSON.stringify({ json: true }),
               signal,
             });
-            if (!res.ok || !res.body) {
+            if (!res.ok) {
+              let message = 'Failed to start sign-in — try again';
+              try {
+                const body = (await res.json()) as unknown;
+                const result = ProblemDetailsSchema.safeParse(body);
+                if (result.success) message = result.data.title;
+              } catch {}
+              push({ type: 'error', message });
+              return;
+            }
+            if (!res.body) {
               push({ type: 'error', message: 'Failed to start sign-in — try again' });
               return;
             }
             const terminatedByEvent = await consumeAuthEventStream(
               res.body,
               (line): 'terminal' | 'continue' => {
+                let parsed: unknown;
                 try {
-                  const event = JSON.parse(line) as AuthEvent;
-                  push(event);
-                  if (event.type === 'complete' || event.type === 'error') return 'terminal';
-                } catch {}
+                  parsed = JSON.parse(line);
+                } catch {
+                  console.warn(
+                    '[auth-transport] Dropped unparseable NDJSON line:',
+                    line.slice(0, 100),
+                  );
+                  return 'continue'; // malformed JSON line
+                }
+                if (
+                  parsed &&
+                  typeof parsed === 'object' &&
+                  (parsed as { type?: unknown }).type === 'error' &&
+                  'problem' in parsed
+                ) {
+                  const p = (parsed as { problem: { title?: string; detail?: string } }).problem;
+                  push({ type: 'error', message: p?.detail || p?.title || 'Unknown error' });
+                  return 'terminal';
+                }
+                const event = parsed as AuthEvent;
+                push(event);
+                if (event.type === 'complete' || event.type === 'error') return 'terminal';
                 return 'continue';
               },
             );

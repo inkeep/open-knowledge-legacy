@@ -13,6 +13,7 @@
  *
  * On success: calls onSuccess({ login, name, avatarUrl }) and closes.
  */
+import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { dispatchExternalLinkClick } from '@/lib/external-link';
@@ -22,27 +23,13 @@ import { Button } from './ui/button';
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 
-interface DeviceVerificationEvent {
-  type: 'verification';
-  user_code: string;
-  verification_uri: string;
-  expires_in: number;
-}
-
-interface DeviceCompleteEvent {
+interface PatCompleteEvent {
   type: 'complete';
   login: string;
   name?: string;
   email?: string;
   avatarUrl?: string;
 }
-
-interface DeviceErrorEvent {
-  type: 'error';
-  message: string;
-}
-
-type DeviceEvent = DeviceVerificationEvent | DeviceCompleteEvent | DeviceErrorEvent;
 
 async function copyToClipboard(text: string): Promise<void> {
   try {
@@ -264,28 +251,38 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
         body: JSON.stringify({ pat: pat.trim() }),
         signal: ac.signal,
       });
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
+        let message = 'Invalid token — check that it has repo scope';
+        try {
+          const body = (await res.json()) as unknown;
+          const result = ProblemDetailsSchema.safeParse(body);
+          if (result.success) message = result.data.title;
+        } catch {}
+        setError(message);
+        setLoading(false);
+        return;
+      }
+      if (!res.body) {
         setError('Invalid token — check that it has repo scope');
         setLoading(false);
         return;
       }
       const terminated = await consumeAuthEventStream(res.body, (line): 'terminal' | 'continue' => {
+        let event: PatCompleteEvent;
         try {
-          const event = JSON.parse(line) as DeviceEvent;
-          if (event.type === 'complete') {
-            onSuccess({
-              login: event.login,
-              name: event.name,
-              email: event.email,
-            });
-            setLoading(false);
-            return 'terminal';
-          } else if (event.type === 'error') {
-            setError(event.message);
-            setLoading(false);
-            return 'terminal';
-          }
-        } catch {}
+          event = JSON.parse(line) as PatCompleteEvent;
+        } catch {
+          return 'continue';
+        }
+        if (event.type === 'complete') {
+          onSuccess({
+            login: event.login,
+            name: event.name,
+            email: event.email,
+          });
+          setLoading(false);
+          return 'terminal';
+        }
         return 'continue';
       });
       if (!terminated) setError('No response — try again');
@@ -418,10 +415,10 @@ export function AuthModal({
   }
 
   function handleIdentitySave(name: string, email: string) {
-    void fetch('/api/local-op/auth/status', {
+    void fetch('/api/local-op/auth/set-identity', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ setIdentity: { name, email } }),
+      body: JSON.stringify({ name, email }),
     }).catch(() => {});
 
     const result = { ...(authResult ?? { login: '' }), name, email };

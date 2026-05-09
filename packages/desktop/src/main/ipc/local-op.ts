@@ -122,6 +122,9 @@ export function handleCloneCancel(deps: LocalOpDeps, streamId: string): void {
   }
 }
 
+/** Default host argument shared with the CLI runners — kept in sync so the
+ *  cache key matches the runner's resolved host even when the caller omits
+ *  the field. */
 const DEFAULT_AUTH_QUERY_HOST = 'github.com';
 
 function runCoalescedAuthQuery<T>(

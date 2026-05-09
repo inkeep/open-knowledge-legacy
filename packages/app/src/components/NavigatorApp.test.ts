@@ -35,7 +35,7 @@ function makeBridge(overrides: Partial<MockBridge> = {}): MockBridge {
     project: {
       listRecent: mock(() => Promise.resolve([])),
       getSessionState: mock(() =>
-        Promise.resolve({ openTabs: [], activeDocName: null, updatedAt: null }),
+        Promise.resolve({ openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null }),
       ),
       setSessionState: mock(() => Promise.resolve()),
       open: mock(() => Promise.resolve()),
@@ -67,7 +67,12 @@ describe('NavigatorApp bridge contract', () => {
           ]),
         ),
         getSessionState: mock(() =>
-          Promise.resolve({ openTabs: [], activeDocName: null, updatedAt: null }),
+          Promise.resolve({
+            openTabs: [],
+            activeDocName: null,
+            activeTabId: null,
+            updatedAt: null,
+          }),
         ),
         setSessionState: mock(() => Promise.resolve()),
         open: mock(() => Promise.resolve()),
@@ -82,8 +87,16 @@ describe('NavigatorApp bridge contract', () => {
 
   test('bridge.project.open accepts the new-window request shape', async () => {
     const bridge = makeBridge();
-    await bridge.project.open({ path: '/tmp/x', target: 'new-window' });
-    expect(bridge.project.open).toHaveBeenCalledWith({ path: '/tmp/x', target: 'new-window' });
+    await bridge.project.open({
+      path: '/tmp/x',
+      target: 'new-window',
+      entryPoint: 'pick-existing',
+    });
+    expect(bridge.project.open).toHaveBeenCalledWith({
+      path: '/tmp/x',
+      target: 'new-window',
+      entryPoint: 'pick-existing',
+    });
   });
 
   test('bridge.dialog.openFolder returns string | null', async () => {
@@ -194,5 +207,28 @@ describe('NavigatorApp launcher-header channel surface', () => {
   test('BetaBadge sits in the title row, not below the version line (chrome-level signal, not About-row info)', () => {
     const titleMatch = NAVIGATOR_SRC.match(/<h1[^>]*>Open Knowledge<\/h1>\s*<BetaBadge/);
     expect(titleMatch).not.toBeNull();
+  });
+});
+
+describe('NavigatorApp entry-point propagation', () => {
+  test('Open folder on disk → openProject(..., "pick-existing")', () => {
+    expect(NAVIGATOR_SRC).toMatch(/onOpenFolder\s*=[\s\S]*?openProject\([^)]*,\s*'pick-existing'/);
+  });
+
+  test('Start fresh → openProject(..., "start-fresh")', () => {
+    expect(NAVIGATOR_SRC).toMatch(/onStartFresh\s*=[\s\S]*?openProject\([^)]*,\s*'start-fresh'/);
+  });
+
+  test('Open Recent row → openProject(..., "recents")', () => {
+    expect(NAVIGATOR_SRC).toMatch(/onOpenRecent\s*=[\s\S]*?openProject\([^)]*,\s*'recents'/);
+  });
+
+  test('Clone-complete → openProject(..., "pick-existing")', () => {
+    expect(NAVIGATOR_SRC).toMatch(/onCloneComplete[\s\S]*?openProject\([^)]*,\s*'pick-existing'/);
+  });
+
+  test('local openProject helper threads an EntryPoint argument into bridge.project.open', () => {
+    expect(NAVIGATOR_SRC).toMatch(/entryPoint:\s*OkProjectEntryPoint/);
+    expect(NAVIGATOR_SRC).toMatch(/bridge\.project\.open\(\{[^}]*entryPoint(\s*,|\s*\})/);
   });
 });

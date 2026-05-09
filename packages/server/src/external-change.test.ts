@@ -18,6 +18,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import type * as Y from 'yjs';
 import { applyExternalChange, createExternalChangeHandler } from './external-change.ts';
+import { getReconciledBase, setReconciledBase } from './persistence.ts';
 
 type Conn = Awaited<ReturnType<Hocuspocus['openDirectConnection']>>;
 
@@ -179,6 +180,35 @@ describe('applyExternalChange — throwing helper', () => {
       context: { origin: 'file-watcher', paired: true },
     });
 
+    await conn.disconnect();
+  });
+
+  test('(e) catch path on post-mutation transact throw sets reconciledBase to mutated ytext', async () => {
+    const docName = 'test-catch-bounds-post-mutation';
+    const conn = await hp.openDirectConnection(docName);
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, docName, '# Original\n');
+    setReconciledBase(docName, '# Original\n');
+    expect(doc.getText('source').toString()).toBe('# Original\n');
+    expect(getReconciledBase(docName)).toBe('# Original\n');
+
+    const originalTransact = doc.transact.bind(doc);
+    doc.transact = ((fn: () => void, origin: unknown) => {
+      originalTransact(() => {
+        fn();
+        throw new Error('synthetic post-mutation transact failure');
+      }, origin);
+    }) as typeof doc.transact;
+
+    expect(() => {
+      applyExternalChange(hp, docName, '# After-Mutation\n');
+    }).toThrow(/synthetic/);
+
+    expect(doc.getText('source').toString()).toBe('# After-Mutation\n');
+    expect(getReconciledBase(docName)).toBe('# After-Mutation\n');
+
+    doc.transact = originalTransact as typeof doc.transact;
     await conn.disconnect();
   });
 });

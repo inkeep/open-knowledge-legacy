@@ -8,6 +8,9 @@ const LINK_DEF_RE = /^\s{0,3}\[([^\]]+)\]:\s/;
 
 const INLINE_REF_RE = /\[([^\]]*)\]\[([^\]]*)\]/g;
 
+/** Lezer node names whose contents are literal code — `[text][label]` inside
+ *  these is source being quoted, not a live reference link. Covers CommonMark
+ *  fenced code, indented code, and inline code. */
 const CODE_NODE_NAMES = new Set(['FencedCode', 'CodeBlock', 'InlineCode']);
 
 interface InlineRef {

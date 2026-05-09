@@ -41,6 +41,7 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { OK_DIR } from '../constants.ts';
 import { initContent } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
+import { resolveProjectRoot } from '../integrations/resolve-project-root.ts';
 import { accent, error, info, success, warning } from '../ui/colors.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
@@ -231,6 +232,7 @@ interface InitCommandOptions {
 }
 
 interface InitCommandResult {
+  projectRoot: string;
   contentCreated: string[];
   contentUpdated: string[];
   contentSkipped: string[];
@@ -254,13 +256,16 @@ const LAUNCH_CONFIG_NAME = 'open-knowledge-ui';
 
 type LaunchJsonAction = 'created' | 'merged' | 'failed';
 
-interface LaunchJsonResult {
+export interface LaunchJsonResult {
   action: LaunchJsonAction;
   configPath: string;
   error?: string;
 }
 
-function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {}): LaunchJsonResult {
+export function scaffoldLaunchJson(
+  cwd: string,
+  installOptions: McpInstallOptions = {},
+): LaunchJsonResult {
   const configPath = join(cwd, '.claude', 'launch.json');
   const entry: {
     name: string;
@@ -542,18 +547,30 @@ export function readExistingMcpEntry(
 
 export async function runInit(options: InitCommandOptions = {}): Promise<InitCommandResult> {
   const cwd = resolve(options.cwd ?? process.cwd());
+  const resolution = resolveProjectRoot(cwd, { homeDir: options.home });
+  const projectRoot = resolution.projectRoot;
+  const willScaffold = !existsSync(join(projectRoot, OK_DIR));
+  if (resolution.ancestorPromoted) {
+    console.log(`[ok] Opened existing project at ${projectRoot}`);
+  } else if (resolution.gitRootPromoted && willScaffold) {
+    console.log(
+      `[ok] Initialized OK at ${projectRoot} (scoped to ${resolution.defaultContentDir}/)`,
+    );
+  }
+
   const installOptions: McpInstallOptions = {
     mode: options.devMcp ? 'dev' : 'published',
   };
 
-  const gitResult = await ensureProjectGit(cwd);
+  const gitResult = await ensureProjectGit(projectRoot);
 
   let contentResult: ReturnType<typeof initContent>;
   try {
-    contentResult = initContent(cwd);
+    contentResult = initContent(projectRoot, { contentDir: resolution.defaultContentDir });
   } catch (err) {
-    const fallbackPath = EDITOR_TARGETS.claude.configPath(cwd, options.home);
+    const fallbackPath = EDITOR_TARGETS.claude.configPath(projectRoot, options.home);
     return {
+      projectRoot,
       contentCreated: [],
       contentUpdated: [],
       contentSkipped: [],
@@ -575,7 +592,7 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     promptFn: options.promptFn,
   });
 
-  const userEditorIds = options.editors ?? detectInstalledEditors(cwd, options.home);
+  const userEditorIds = options.editors ?? detectInstalledEditors(projectRoot, options.home);
   const projectEditorIds =
     options.editors ??
     ALL_EDITOR_IDS.filter((id) => EDITOR_TARGETS[id].projectConfigPath !== undefined);
@@ -588,7 +605,7 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     ).values(),
   );
   const availableTargets = userTargets.filter((target) =>
-    isEditorTargetAvailable(target, cwd, options.home),
+    isEditorTargetAvailable(target, projectRoot, options.home),
   );
 
   const editorResults: EditorMcpResult[] = [];
@@ -599,28 +616,34 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     if (skipMcp) {
       let configPath = '';
       try {
-        configPath = target.configPath(cwd, options.home);
+        configPath = target.configPath(projectRoot, options.home);
       } catch {}
       editorResults.push({
         editorId: target.id,
         label: target.label,
         action: 'skipped-flag',
         configPath,
-        serverName: target.serverName(cwd),
+        serverName: target.serverName(projectRoot),
       });
       continue;
     }
 
     if (writesUser(scope) && userTargets.includes(target)) {
-      editorResults.push(writeEditorMcpConfig(target, cwd, installOptions, options.home));
+      editorResults.push(writeEditorMcpConfig(target, projectRoot, installOptions, options.home));
     }
     if (writesProject(scope) && projectTargets.includes(target) && target.projectConfigPath) {
-      const projPath = target.projectConfigPath(cwd);
-      const projResult = writeEditorMcpConfig(target, cwd, installOptions, options.home, projPath);
+      const projPath = target.projectConfigPath(projectRoot);
+      const projResult = writeEditorMcpConfig(
+        target,
+        projectRoot,
+        installOptions,
+        options.home,
+        projPath,
+      );
       editorResults.push(projResult);
       if (projResult.action === 'written' || projResult.action === 'overwritten') {
         writtenProjectPaths.add(projPath);
-        projectSkillResults.push(writeProjectSkill(target, cwd));
+        projectSkillResults.push(writeProjectSkill(target, projectRoot));
       }
     }
   }
@@ -633,12 +656,13 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
   const legacyProjectConfigs = skipMcp
     ? []
     : availableTargets
-        .map((target) => collectProjectConfig(target, cwd))
+        .map((target) => collectProjectConfig(target, projectRoot))
         .filter((result): result is ProjectConfigResult => result !== undefined)
         .filter((result) => !writtenProjectPaths.has(result.path));
 
   const hasClaude = availableTargets.some((target) => target.id === 'claude');
-  const launchJson = hasClaude && !skipMcp ? scaffoldLaunchJson(cwd, installOptions) : undefined;
+  const launchJson =
+    hasClaude && !skipMcp ? scaffoldLaunchJson(projectRoot, installOptions) : undefined;
 
   const installSkill = options.installUserSkill ?? installUserSkill;
   const skillInstall = await installSkill({ home: options.home });
@@ -649,10 +673,11 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
   const primary = editorResults.find((r) => r.editorId === 'claude') ??
     editorResults[0] ?? {
       action: defaultAction,
-      configPath: EDITOR_TARGETS.claude.configPath(cwd, options.home),
+      configPath: EDITOR_TARGETS.claude.configPath(projectRoot, options.home),
     };
 
   return {
+    projectRoot,
     contentCreated: contentResult.created,
     contentUpdated: contentResult.updated,
     contentSkipped: contentResult.skipped,
@@ -946,17 +971,17 @@ export function initCommand(): Command {
         const { previewContent } = await import('../content/preview.ts');
         const { loadConfig } = await import('../config/loader.ts');
         const { resolveContentDir } = await import('@inkeep/open-knowledge-server');
-        const { config } = loadConfig(cwd);
-        const contentDir = resolveContentDir(config, cwd);
+        const { config } = loadConfig(result.projectRoot);
+        const contentDir = resolveContentDir(config, result.projectRoot);
         result.preview = previewContent({
-          projectDir: cwd,
+          projectDir: result.projectRoot,
           contentDir,
         });
       } catch (e) {
         result.previewWarning = e instanceof Error ? e.message : String(e);
       }
 
-      process.stdout.write(`${formatInitResult(result, cwd)}\n`);
+      process.stdout.write(`${formatInitResult(result, result.projectRoot)}\n`);
 
       if (result.editors.some((e) => e.action === 'failed') || result.mcpAction === 'failed') {
         process.exitCode = 1;

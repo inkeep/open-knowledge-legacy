@@ -187,6 +187,40 @@ describe('bootServer — MissingOkConfigError pre-listen check', () => {
   });
 });
 
+describe('bootServer — runtime state lives at projectDir, not contentDir', () => {
+  test('boot writes server.lock, principal.json, state.json under projectDir, not contentDir', async () => {
+    const projectDir = mkdtempSync(resolve(tmpDir, 'fake-repo-'));
+    await execFileAsync('git', ['init', '--initial-branch=main', projectDir]);
+    seedOkScaffold(projectDir);
+    const contentDir = resolve(projectDir, 'template-projects');
+    mkdirSync(contentDir, { recursive: true });
+
+    const booted = await bootServer({
+      config: TEST_CONFIG,
+      projectDir,
+      contentDir,
+      port: 0,
+      quiet: true,
+      gitEnabled: false,
+      idleShutdownMs: null,
+      attachUiSibling: false,
+    });
+    try {
+      await booted.ready;
+
+      const contentLocalDir = resolve(contentDir, '.ok');
+      expect(existsSync(contentLocalDir)).toBe(false);
+
+      const projectLocalDir = resolve(projectDir, '.ok', 'local');
+      expect(existsSync(resolve(projectLocalDir, 'server.lock'))).toBe(true);
+      expect(existsSync(resolve(projectLocalDir, 'principal.json'))).toBe(true);
+      expect(existsSync(resolve(projectLocalDir, 'state.json'))).toBe(true);
+    } finally {
+      await booted.destroy();
+    }
+  });
+});
+
 describe('bootServer — ok.boot OTel span attributes', () => {
   let exporter: InMemorySpanExporter | null = null;
   let provider: BasicTracerProvider | null = null;

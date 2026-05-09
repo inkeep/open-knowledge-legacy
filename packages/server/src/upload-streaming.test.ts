@@ -114,7 +114,7 @@ describe('tmpUploadDir / mintTempUploadPath', () => {
     rmSync(tmpBase, { recursive: true, force: true });
   });
 
-  test('tmpUploadDir resolves to <contentDir>/.ok/local/tmp', () => {
+  test('tmpUploadDir resolves to <projectDir>/.ok/local/tmp', () => {
     expect(tmpUploadDir(tmpBase)).toBe(resolve(tmpBase, '.ok', LOCAL_DIR, 'tmp'));
   });
 

@@ -49,12 +49,12 @@ interface ManagedRenameRecoveryResult {
 
 type MaybePromise<T> = T | Promise<T>;
 
-function journalDir(contentDir: string): string {
-  return getLocalDir(contentDir);
+function journalDir(projectDir: string): string {
+  return getLocalDir(projectDir);
 }
 
-export function managedRenameJournalPath(contentDir: string): string {
-  return resolve(journalDir(contentDir), MANAGED_RENAME_JOURNAL_FILENAME);
+export function managedRenameJournalPath(projectDir: string): string {
+  return resolve(journalDir(projectDir), MANAGED_RENAME_JOURNAL_FILENAME);
 }
 
 export function createManagedRenameRecoveryJournal(args: {
@@ -174,8 +174,8 @@ function parseManagedRenameRecoveryJournal(value: unknown): ManagedRenameRecover
   throw new Error(`Unsupported managed rename journal version: ${String(journal.version)}`);
 }
 
-export function readManagedRenameJournal(contentDir: string): ManagedRenameRecoveryJournal | null {
-  const path = managedRenameJournalPath(contentDir);
+export function readManagedRenameJournal(projectDir: string): ManagedRenameRecoveryJournal | null {
+  const path = managedRenameJournalPath(projectDir);
   if (!existsSync(path)) return null;
   try {
     const raw = readFileSync(path, 'utf-8');
@@ -188,28 +188,28 @@ export function readManagedRenameJournal(contentDir: string): ManagedRenameRecov
 }
 
 export function writeManagedRenameJournal(
-  contentDir: string,
+  projectDir: string,
   journal: ManagedRenameRecoveryJournalV2,
 ): void {
-  const path = managedRenameJournalPath(contentDir);
+  const path = managedRenameJournalPath(projectDir);
   tracedMkdirSync(dirname(path), { recursive: true });
   const tempPath = `${path}.tmp`;
   tracedWriteFileSync(tempPath, JSON.stringify(journal, null, 2), 'utf-8');
   tracedRenameSync(tempPath, path);
 }
 
-function clearManagedRenameJournal(contentDir: string): void {
-  tracedRmSync(managedRenameJournalPath(contentDir), { force: true });
+function clearManagedRenameJournal(projectDir: string): void {
+  tracedRmSync(managedRenameJournalPath(projectDir), { force: true });
 }
 
 export async function withManagedRenameRecovery<T>(
-  contentDir: string,
+  projectDir: string,
   journal: ManagedRenameRecoveryJournalV2,
   operation: () => MaybePromise<T>,
 ): Promise<T> {
-  writeManagedRenameJournal(contentDir, journal);
+  writeManagedRenameJournal(projectDir, journal);
   const result = await operation();
-  clearManagedRenameJournal(contentDir);
+  clearManagedRenameJournal(projectDir);
   return result;
 }
 
@@ -244,8 +244,11 @@ function pruneEmptyAncestors(filePath: string, contentDir: string): void {
   }
 }
 
-export function recoverPendingManagedRename(contentDir: string): ManagedRenameRecoveryResult {
-  const journal = readManagedRenameJournal(contentDir);
+export function recoverPendingManagedRename(
+  contentDir: string,
+  projectDir: string = contentDir,
+): ManagedRenameRecoveryResult {
+  const journal = readManagedRenameJournal(projectDir);
   if (!journal) {
     return { recovered: false, journal: null, restoredDocNames: [] };
   }
@@ -312,7 +315,7 @@ export function recoverPendingManagedRename(contentDir: string): ManagedRenameRe
     );
   }
 
-  clearManagedRenameJournal(contentDir);
+  clearManagedRenameJournal(projectDir);
 
   return {
     recovered: true,

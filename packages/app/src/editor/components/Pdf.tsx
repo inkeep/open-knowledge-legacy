@@ -11,6 +11,21 @@ interface PdfProps {
 
 const DEFAULT_HEIGHT_PX = 600;
 
+/** Layout presets — each maps to a different way of computing the base
+ *  render scale and how pages flow in the page container.
+ *
+ *  - `fit-width`   — one column; page scaled so its width fills the column.
+ *  - `fit-height`  — one column; page scaled so its height fills the
+ *                    available viewport (toolbar minus container height).
+ *  - `single`      — one column; page rendered at natural (scale=1) size.
+ *  - `two-odd`     — two columns; pairs (1,2) (3,4) …
+ *  - `two-even`    — two columns; page 1 alone on the right (cover),
+ *                    then pairs (2,3) (4,5) … (book-style).
+ *
+ *  Keep this alias in sync with `pdf-layout.ts`'s `PdfLayoutMode` — the
+ *  helper module is the single source of truth for the string union, and
+ *  `computeBaseScale` is exhaustively tested over every member there.
+ */
 type LayoutMode = PdfLayoutMode;
 
 const ZOOM_MIN = 0.5;
@@ -36,6 +51,8 @@ function loadPdfjs(): Promise<PdfJsModule> {
   return pdfjsPromise;
 }
 
+/** Per-page natural metadata (scale=1 viewport dims). Stable across zoom
+ *  / layout changes — captured once when the document loads. */
 interface PageInfo {
   pageNumber: number;
   naturalWidth: number;
@@ -44,6 +61,12 @@ interface PageInfo {
 
 type PdfDoc = import('pdfjs-dist').PDFDocumentProxy;
 
+/** Recognise pdfjs-dist's `RenderingCancelledException` so cleanup-driven
+ *  cancellations don't surface as unhandled rejections / console errors.
+ *  The exception is thrown when `RenderTask.cancel()` aborts an in-flight
+ *  render; it's expected behavior, not a failure. We match by `.name`
+ *  rather than `instanceof` because pdfjs-dist's internal exception class
+ *  isn't exported from the public API. */
 function isRenderingCancelledError(err: unknown): boolean {
   return err instanceof Error && err.name === 'RenderingCancelledException';
 }

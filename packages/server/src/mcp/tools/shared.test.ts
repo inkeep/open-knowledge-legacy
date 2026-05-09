@@ -1,6 +1,4 @@
-import { describe as _bunDescribe, afterAll, beforeAll, expect, test } from 'bun:test';
-
-const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
 import { type Config, ConfigSchema } from '../../config/schema.ts';
 import {
@@ -8,6 +6,7 @@ import {
   httpGet,
   httpPost,
   normalizeDocName,
+  parseRenameCollidingPairs,
   resolveProjectConfigContext,
   resolveProjectServerContext,
   textResult,
@@ -187,22 +186,81 @@ beforeAll(() => {
     fetch(req) {
       const url = new URL(req.url);
 
-      if (url.pathname === '/ok') {
-        return Response.json({ ok: true, data: 'hello' });
-      }
-      if (url.pathname === '/error') {
-        return Response.json({ ok: false, error: 'bad request' }, { status: 400 });
+      if (url.pathname === '/flat-success') {
+        return Response.json({ data: 'hello' });
       }
       if (url.pathname === '/not-json') {
         return new Response('plain text', { status: 200 });
       }
+      if (url.pathname === '/not-json-5xx') {
+        return new Response('upstream blew up', {
+          status: 500,
+          headers: { 'Content-Type': 'text/plain' },
+        });
+      }
       if (url.pathname === '/post-echo') {
-        return req.json().then((body) => Response.json({ ok: true, received: body }));
+        return req.json().then((body) => Response.json({ received: body }));
       }
       if (url.pathname === '/slow') {
         return new Promise((resolve) =>
-          setTimeout(() => resolve(Response.json({ ok: true })), 100),
+          setTimeout(() => resolve(Response.json({ data: 'late' })), 100),
         );
+      }
+      if (url.pathname === '/rfc9457-not-found') {
+        return Response.json(
+          {
+            type: 'urn:ok:error:doc-not-found',
+            title: 'Not found.',
+            status: 404,
+            instance: 'urn:uuid:11111111-1111-1111-1111-111111111111',
+          },
+          { status: 404 },
+        );
+      }
+      if (url.pathname === '/rfc9457-with-extensions') {
+        return Response.json(
+          {
+            type: 'urn:ok:error:doc-already-exists',
+            title: 'Exists.',
+            status: 409,
+            instance: 'urn:uuid:22222222-2222-2222-2222-222222222222',
+            colliding: [{ existing: 'a', incoming: 'b', to: 'c' }],
+          },
+          { status: 409 },
+        );
+      }
+      if (url.pathname === '/rfc9457-with-detail') {
+        return Response.json(
+          {
+            type: 'urn:ok:error:internal-server-error',
+            title: 'Internal server error.',
+            status: 500,
+            instance: 'urn:uuid:33333333-3333-3333-3333-333333333333',
+            detail: 'Database connection pool exhausted; retry after 5s.',
+          },
+          { status: 500 },
+        );
+      }
+      if (url.pathname === '/d22-flat-success') {
+        return Response.json({ src: 'photo.png', deduped: true });
+      }
+      if (url.pathname === '/d22-success-with-type-title') {
+        return Response.json({ type: 'document', title: 'My Page', body: 'hello' });
+      }
+      if (url.pathname === '/array-body-2xx') {
+        return Response.json(['a', 'b', 'c']);
+      }
+      if (url.pathname === '/array-body-5xx') {
+        return Response.json(['a', 'b', 'c'], { status: 500 });
+      }
+      if (url.pathname === '/null-body-2xx') {
+        return Response.json(null);
+      }
+      if (url.pathname === '/non-rfc9457-5xx') {
+        return Response.json({ message: 'upstream blew up', code: 'EX_BACKEND' }, { status: 502 });
+      }
+      if (url.pathname === '/intermediary-stray-ok-2xx') {
+        return Response.json({ ok: false, data: 'succeeded' });
       }
       return new Response('Not found', { status: 404 });
     },
@@ -215,22 +273,22 @@ afterAll(() => {
 });
 
 describe('httpGet', () => {
-  test('returns parsed JSON on success', async () => {
-    const result = await httpGet(baseUrl, '/ok');
+  test('flat 2xx success body: synthesizes ok=true and preserves payload fields', async () => {
+    const result = await httpGet(baseUrl, '/flat-success');
     expect(result.ok).toBe(true);
     expect(result.data).toBe('hello');
   });
 
-  test('returns parsed JSON on error status', async () => {
-    const result = await httpGet(baseUrl, '/error');
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe('bad request');
-  });
-
-  test('handles non-JSON response', async () => {
+  test('non-JSON 2xx response: ok:false with contract-violation error', async () => {
     const result = await httpGet(baseUrl, '/not-json');
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('non-JSON body');
+    expect(result.error).toContain('2xx response with non-JSON body');
+  });
+
+  test('non-JSON ≥400 response: ok:false with HTTP-status error', async () => {
+    const result = await httpGet(baseUrl, '/not-json-5xx');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('HTTP 500');
   });
 
   test('handles unreachable server', async () => {
@@ -248,8 +306,9 @@ describe('httpPost', () => {
   });
 
   test('works without body', async () => {
-    const result = await httpPost(baseUrl, '/ok');
+    const result = await httpPost(baseUrl, '/flat-success');
     expect(result.ok).toBe(true);
+    expect(result.data).toBe('hello');
   });
 
   test('handles unreachable server', async () => {
@@ -258,9 +317,169 @@ describe('httpPost', () => {
     expect(result.error).toContain('Server unreachable');
   });
 
-  test('handles non-JSON response', async () => {
+  test('non-JSON 2xx response: ok:false with contract-violation error', async () => {
     const result = await httpPost(baseUrl, '/not-json');
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('non-JSON body');
+    expect(result.error).toContain('2xx response with non-JSON body');
+  });
+
+  test('non-JSON ≥400 response: ok:false with HTTP-status error', async () => {
+    const result = await httpPost(baseUrl, '/not-json-5xx');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('HTTP 500');
+  });
+});
+
+describe('normalizeResponse — RFC 9457 + flat success', () => {
+  test('RFC 9457 problem+json: surfaces title as error', async () => {
+    const result = await httpGet(baseUrl, '/rfc9457-not-found');
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('Not found.');
+    expect(result.instance).toBe('urn:uuid:11111111-1111-1111-1111-111111111111');
+    expect(result.type).toBe('urn:ok:error:doc-not-found');
+    expect(result.status).toBe(404);
+    expect(result.detail).toBeUndefined();
+  });
+
+  test('RFC 9457 problem+json: detail field passthrough on a 5xx with detail', async () => {
+    const result = await httpGet(baseUrl, '/rfc9457-with-detail');
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(500);
+    expect(result.detail).toBe('Database connection pool exhausted; retry after 5s.');
+  });
+
+  test('RFC 9457 with extensions: preserves typed extension fields', async () => {
+    const result = await httpGet(baseUrl, '/rfc9457-with-extensions');
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('Exists.');
+    expect(result.colliding).toEqual([{ existing: 'a', incoming: 'b', to: 'c' }]);
+  });
+
+  test('flat D22 success (2xx, no ok wrapper): synthesizes ok=true', async () => {
+    const result = await httpGet(baseUrl, '/d22-flat-success');
+    expect(result.ok).toBe(true);
+    expect(result.src).toBe('photo.png');
+    expect(result.deduped).toBe(true);
+  });
+
+  test('2xx success whose body carries `type` + `title` is NOT misclassified as error', async () => {
+    const result = await httpGet(baseUrl, '/d22-success-with-type-title');
+    expect(result.ok).toBe(true);
+    expect(result.type).toBe('document');
+    expect(result.title).toBe('My Page');
+    expect(result.body).toBe('hello');
+  });
+
+  test('2xx top-level array body: surfaced under `data` field, not destructured', async () => {
+    const result = await httpGet(baseUrl, '/array-body-2xx');
+    expect(result.ok).toBe(true);
+    expect(result.data).toEqual(['a', 'b', 'c']);
+    expect(result['0']).toBeUndefined();
+    expect(result.length).toBeUndefined();
+  });
+
+  test('4xx/5xx top-level array body: rejected as non-object error', async () => {
+    const result = await httpGet(baseUrl, '/array-body-5xx');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('non-object body');
+  });
+
+  test('2xx null body: surfaced under `data` field as null', async () => {
+    const result = await httpGet(baseUrl, '/null-body-2xx');
+    expect(result.ok).toBe(true);
+    expect(result.data).toBeNull();
+  });
+
+  test('intermediary stray `ok: false` on 2xx: stripped + re-synthesized as ok:true', async () => {
+    const result = await httpGet(baseUrl, '/intermediary-stray-ok-2xx');
+    expect(result.ok).toBe(true);
+    expect(result.data).toBe('succeeded');
+  });
+
+  test('non-RFC-9457 5xx (proxy / non-our server): synthesizes `error` from body.message + preserves rest', async () => {
+    const result = await httpGet(baseUrl, '/non-rfc9457-5xx');
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('upstream blew up');
+    expect(result.message).toBe('upstream blew up');
+    expect(result.code).toBe('EX_BACKEND');
+    expect(result.title).toBeUndefined();
+  });
+
+  test('non-RFC-9457 5xx with no error/message → generic HTTP-status sentence', async () => {
+    const stripeServer = Bun.serve({
+      port: 0,
+      fetch: () => Response.json({ unrelated: true }, { status: 503 }),
+    });
+    try {
+      const result = await httpGet(`http://localhost:${stripeServer.port}`, '/anything');
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe('Server returned HTTP 503');
+      expect(result.unrelated).toBe(true);
+    } finally {
+      stripeServer.stop();
+    }
+  });
+
+  test('non-RFC-9457 4xx with body.error string → `error` ← body.error', async () => {
+    const stubServer = Bun.serve({
+      port: 0,
+      fetch: () => Response.json({ error: 'rate limited', message: 'try again' }, { status: 429 }),
+    });
+    try {
+      const result = await httpGet(`http://localhost:${stubServer.port}`, '/anything');
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe('rate limited');
+    } finally {
+      stubServer.stop();
+    }
+  });
+});
+
+describe('parseRenameCollidingPairs — defensive parsing at trust boundary', () => {
+  test('non-array input → empty array', () => {
+    expect(parseRenameCollidingPairs(undefined)).toEqual([]);
+    expect(parseRenameCollidingPairs(null)).toEqual([]);
+    expect(parseRenameCollidingPairs('not an array')).toEqual([]);
+    expect(parseRenameCollidingPairs(42)).toEqual([]);
+    expect(parseRenameCollidingPairs({ existing: 'a', incoming: 'b', to: 'c' })).toEqual([]);
+  });
+
+  test('array of valid entries → typed pairs', () => {
+    const pairs = parseRenameCollidingPairs([
+      { existing: 'a.md', incoming: 'A.md', to: 'A.md' },
+      { existing: 'b.md', incoming: 'B.md', to: 'B.md' },
+    ]);
+    expect(pairs).toEqual([
+      { existing: 'a.md', incoming: 'A.md', to: 'A.md' },
+      { existing: 'b.md', incoming: 'B.md', to: 'B.md' },
+    ]);
+  });
+
+  test('non-object entries filtered out', () => {
+    const pairs = parseRenameCollidingPairs([
+      { existing: 'a.md', incoming: 'A.md', to: 'A.md' },
+      'not-an-object',
+      null,
+      42,
+    ]);
+    expect(pairs).toEqual([{ existing: 'a.md', incoming: 'A.md', to: 'A.md' }]);
+  });
+
+  test('entries with non-string fields filtered out', () => {
+    const pairs = parseRenameCollidingPairs([
+      { existing: 'a.md', incoming: 'A.md', to: 'A.md' },
+      { existing: 1, incoming: 'B.md', to: 'B.md' },
+      { existing: 'c.md', incoming: 'C.md' },
+      { existing: 'd.md', incoming: null, to: 'D.md' },
+      { existing: 'e.md', incoming: 'E.md', to: 'E.md', extra: 'tolerated' },
+    ]);
+    expect(pairs).toEqual([
+      { existing: 'a.md', incoming: 'A.md', to: 'A.md' },
+      { existing: 'e.md', incoming: 'E.md', to: 'E.md' },
+    ]);
+  });
+
+  test('empty array → empty array', () => {
+    expect(parseRenameCollidingPairs([])).toEqual([]);
   });
 });

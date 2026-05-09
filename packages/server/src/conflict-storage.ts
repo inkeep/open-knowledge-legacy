@@ -1,11 +1,13 @@
 /**
  * ConflictStore — persistent storage and resolution logic for merge conflicts.
  *
- * Conflicts are stored at <contentDir>/.ok/local/conflicts.json (schema v1).
+ * Conflicts are stored at <projectDir>/.ok/local/conflicts.json (schema v1).
  * Each conflict entry records the file path and optional git object SHAs for
  * ours/theirs/base, enabling strategy-based resolution.
  *
- * US-014: CRUD + resolve strategies ('mine' | 'theirs' | 'content').
+ * Per-machine runtime state lives at the project root, not inside the content
+ * sub-folder, so a single project presents one `.ok/local/` regardless of
+ * `content.dir`.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -37,8 +39,8 @@ export class ConflictStore {
   private branch: string;
   private conflicts: ConflictEntry[] = [];
 
-  constructor(contentDir: string, projectDir: string, branch = 'main') {
-    this.storePath = join(getLocalDir(contentDir), 'conflicts.json');
+  constructor(projectDir: string, branch = 'main') {
+    this.storePath = join(getLocalDir(projectDir), 'conflicts.json');
     this.projectDir = projectDir;
     this.branch = branch;
     this.load();

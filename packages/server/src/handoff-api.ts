@@ -1,5 +1,8 @@
 import { execFile } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { InstalledAgentsSuccessSchema } from '@inkeep/open-knowledge-core';
+import { errorResponse } from './http/error-response.ts';
+import { successResponse } from './http/success-response.ts';
 
 export const INSTALLED_AGENTS_SCHEMES = ['claude', 'codex', 'cursor'] as const;
 export type InstalledAgentScheme = (typeof INSTALLED_AGENTS_SCHEMES)[number];
@@ -81,24 +84,24 @@ export async function handleInstalledAgents(
   probeAll: () => Promise<Record<InstalledAgentScheme, boolean>>,
 ): Promise<void> {
   if (req.method !== 'GET') {
-    writeJson(res, 405, { error: 'Method not allowed' });
+    errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+      handler: 'installed-agents',
+      extraHeaders: { Allow: 'GET' },
+    });
     return;
   }
   try {
     const result = await probeAll();
-    writeJson(res, 200, result);
+    successResponse(res, 200, InstalledAgentsSuccessSchema, result, {
+      handler: 'installed-agents',
+    });
   } catch (e) {
     console.error('[installed-agents]', e);
-    writeJson(res, 500, { error: 'Internal server error' });
+    errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+      handler: 'installed-agents',
+      cause: e,
+    });
   }
-}
-
-function writeJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'X-Content-Type-Options': 'nosniff',
-  });
-  res.end(JSON.stringify(body));
 }
 
 export function createOsProbe(

@@ -19,6 +19,8 @@ export function tryCloseNavigator(
 interface NavigatorDeps {
   createWindow: WindowManagerDeps['createWindow'];
   rendererEntryPath: string;
+  /** Dev-server URL injected by electron-vite (`process.env.ELECTRON_RENDERER_URL`).
+   *  When set, main uses `loadURL` for HMR; otherwise falls back to `loadFile`. */
   rendererDevUrl?: string | null;
   appVersion: string;
 }

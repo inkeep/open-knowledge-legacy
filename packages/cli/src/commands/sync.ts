@@ -1,9 +1,4 @@
-import {
-  type Config,
-  readServerLock,
-  resolveContentDir,
-  resolveLockDir,
-} from '@inkeep/open-knowledge-server';
+import { type Config, readServerLock, resolveLockDir } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import simpleGit from 'simple-git';
 
@@ -18,12 +13,11 @@ interface SyncOptions {
 
 export async function runSync(
   opts: SyncOptions,
-  config: Config,
+  _config: Config,
   cwd = process.cwd(),
 ): Promise<void> {
   const op = opts.op ?? 'sync';
-  const contentDir = resolveContentDir(config, cwd);
-  const lockDir = resolveLockDir(contentDir);
+  const lockDir = resolveLockDir(cwd);
 
   const lock = readServerLock(lockDir);
   if (lock && lock.port > 0) {
@@ -38,8 +32,14 @@ export async function runSync(
         body: JSON.stringify({ op }),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `Server responded with ${res.status}`);
+        const body = (await res.json().catch(() => ({}))) as {
+          title?: string;
+          error?: string;
+          message?: string;
+        };
+        throw new Error(
+          body.title ?? body.error ?? body.message ?? `Server responded with ${res.status}`,
+        );
       }
       emit(opts.json, { type: 'triggered', op, port: lock.port });
       if (!opts.json) {

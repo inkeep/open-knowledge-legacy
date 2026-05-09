@@ -14,10 +14,12 @@ export {
   type Unsubscribe as FrontmatterBindingUnsubscribe,
 } from './bind-frontmatter-doc.ts';
 export {
+  type BridgeInvariantLogPayload,
   type BridgeInvariantSite,
   type BridgeInvariantViolation,
   BridgeInvariantViolationError,
   type InvariantViolation,
+  toBridgeInvariantLog,
 } from './bridge-invariant.ts';
 export { type DiffChange, diffLinesFast } from './diff-lines.ts';
 export {

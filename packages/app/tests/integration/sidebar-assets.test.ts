@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DocumentListSuccessSchema } from '@inkeep/open-knowledge-core';
 import { awaitFileWatcherIndexed, createTestServer, type TestServer } from './test-harness';
 
 let server: TestServer;
@@ -47,17 +48,7 @@ describe('/api/documents sidebar asset rows', () => {
   test('returns referenced local assets as non-document rows', async () => {
     const res = await fetch(`http://localhost:${server.port}/api/documents`);
     expect(res.ok).toBe(true);
-    const body = (await res.json()) as {
-      ok: boolean;
-      documents: Array<{
-        kind?: string;
-        docName: string;
-        path?: string;
-        assetExt?: string;
-        mediaKind?: string | null;
-        referencedBy?: string[];
-      }>;
-    };
+    const body = DocumentListSuccessSchema.parse(await res.json());
 
     const doc = body.documents.find((entry) => entry.docName === 'docs/guide');
     expect(doc?.kind).toBe('document');

@@ -368,9 +368,18 @@ interface DialogCall {
 function makeDeps(opts: {
   executablePath?: string;
   fs?: FsOps;
+  /** Queue of `response` numbers returned by successive showMessageBox calls.
+   *  Missing entries default to 0 (Cancel). */
   responses?: number[];
+  /** Whether runAsAdmin resolves (success) or rejects, and how it rejects.
+   *  - 'ok' → resolves
+   *  - 'cancel' → rejects with reason='user-cancel' (Touch ID dismiss)
+   *  - 'spawn-error' → rejects with reason='spawn-error' (osascript ENOENT)
+   *  - 'shell-error' → rejects with reason='shell-error' (mid-flow shell fail) */
   adminOutcome?: 'ok' | 'cancel' | 'spawn-error' | 'shell-error';
   adminStderr?: string;
+  /** When true, no runAsAdmin stub is installed — lets the test observe whether
+   *  the runtime ever reached the admin-prompt stage. */
   omitRunAsAdmin?: boolean;
 }): {
   deps: CliInstallDeps;
@@ -680,6 +689,10 @@ describe('createBrokenSymlinkRepairHandler', () => {
       isPackaged?: boolean;
       status?: CliInstallStatus;
       response?: number;
+      /** Per-bundle dismissal-token plumbing. When any of these is
+       *  provided, the dismissal-gate branches light up; otherwise the
+       *  factory omits the keys so the gate behaves as if the caller
+       *  didn't plumb it. */
       appVersion?: string;
       getDismissedToken?: () => string | null;
       setDismissedToken?: (token: string) => void;

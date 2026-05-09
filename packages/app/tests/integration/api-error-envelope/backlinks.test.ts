@@ -1,0 +1,72 @@
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { BacklinksSuccessSchema, ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
+import { createTestServer, type TestServer } from '../test-harness';
+
+let server: TestServer;
+
+beforeAll(async () => {
+  server = await createTestServer();
+});
+
+afterAll(async () => {
+  await server.cleanup();
+});
+
+describe('backlinks envelope (RFC 9457)', () => {
+  test('happy path emits flat success body with application/json', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/backlinks?docName=any-doc`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/json');
+
+    const body = await res.json();
+    const parsed = BacklinksSuccessSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.docName).toBe('any-doc');
+      expect(Array.isArray(parsed.data.backlinks)).toBe(true);
+    }
+    expect((body as Record<string, unknown>).ok).toBeUndefined();
+  });
+
+  test('missing docName query param emits urn:ok:error:invalid-request', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/backlinks`);
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:invalid-request');
+      expect(parsed.data.title).toContain('docName');
+    }
+  });
+
+  test('unsafe docName emits urn:ok:error:invalid-request', async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/backlinks?docName=${encodeURIComponent('../etc')}`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:invalid-request');
+    }
+  });
+
+  test('method-not-allowed on POST emits problem+json with Allow: GET', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/backlinks`, { method: 'POST' });
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('GET');
+
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:method-not-allowed');
+    }
+  });
+});

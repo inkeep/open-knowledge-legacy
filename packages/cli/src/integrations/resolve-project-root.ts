@@ -1,0 +1,113 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, realpathSync } from 'node:fs';
+import { homedir as nodeHomedir } from 'node:os';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
+
+const ANCESTOR_WALK_DEPTH_LIMIT = 30;
+const OK_CONFIG_MARKER = '.ok/config.yml';
+
+export interface ResolveProjectRootResult {
+  /** Where `.ok/` lives or will live. Equals `realpath(cwd)` when no
+   * promotion happened; otherwise the ancestor that owned `.ok/config.yml`
+   * or the git working-tree root. */
+  readonly projectRoot: string;
+  /** Path the caller should write to `config.yml`'s `content.dir`. Always
+   * `'.'` on the no-promotion or ancestor-promoted branches (ancestor
+   * projects open with their existing config unchanged). On
+   * `gitRootPromoted: true`, the picked sub-path relative to `projectRoot`. */
+  readonly defaultContentDir: string;
+  readonly ancestorPromoted: boolean;
+  /** True iff the git working-tree root sat above `cwd` and won the
+   * promotion (no ancestor `.ok/`). Mutually exclusive with
+   * `ancestorPromoted`. */
+  readonly gitRootPromoted: boolean;
+}
+
+export interface ResolveProjectRootOptions {
+  /** Defaults to `os.homedir()`. Tests inject a fake home so fixtures live
+   * inside it without involving the real user's tree. */
+  homeDir?: string;
+  /** Resolves the git working-tree root for `cwd`. Defaults to shelling out
+   * to `git rev-parse --show-toplevel`. Tests inject a deterministic stub
+   * to avoid spinning up real git fixtures for unit-level coverage. */
+  gitTopLevel?: (cwd: string) => string | null;
+}
+
+function isDescendantOfHome(p: string, home: string): boolean {
+  const rel = relative(home, p);
+  return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+const defaultGitTopLevel = (cwd: string): string | null => {
+  try {
+    const result = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const trimmed = result.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  } catch {
+    return null;
+  }
+};
+
+export function resolveProjectRoot(
+  cwd: string,
+  opts: ResolveProjectRootOptions = {},
+): ResolveProjectRootResult {
+  const home = opts.homeDir ?? nodeHomedir();
+  const gitTopLevel = opts.gitTopLevel ?? defaultGitTopLevel;
+
+  const absCwd = resolve(cwd);
+  let realCwd: string;
+  try {
+    realCwd = realpathSync(absCwd);
+  } catch {
+    realCwd = absCwd;
+  }
+
+  let cursor = realCwd;
+  let depth = 0;
+  while (depth < ANCESTOR_WALK_DEPTH_LIMIT) {
+    if (cursor === home || cursor === '/' || cursor === '') break;
+    if (existsSync(resolve(cursor, OK_CONFIG_MARKER))) {
+      return {
+        projectRoot: cursor,
+        defaultContentDir: '.',
+        ancestorPromoted: cursor !== realCwd,
+        gitRootPromoted: false,
+      };
+    }
+    const next = dirname(cursor);
+    if (next === cursor) break;
+    cursor = next;
+    depth += 1;
+  }
+
+  const gitRoot = gitTopLevel(realCwd);
+  if (gitRoot !== null && isDescendantOfHome(gitRoot, home)) {
+    if (gitRoot === realCwd) {
+      return {
+        projectRoot: absCwd,
+        defaultContentDir: '.',
+        ancestorPromoted: false,
+        gitRootPromoted: false,
+      };
+    }
+    const sub = relative(gitRoot, realCwd);
+    return {
+      projectRoot: gitRoot,
+      defaultContentDir: sub.length > 0 && !sub.startsWith('..') ? sub : '.',
+      ancestorPromoted: false,
+      gitRootPromoted: true,
+    };
+  }
+
+  return {
+    projectRoot: absCwd,
+    defaultContentDir: '.',
+    ancestorPromoted: false,
+    gitRootPromoted: false,
+  };
+}

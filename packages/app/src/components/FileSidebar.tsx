@@ -1,4 +1,5 @@
 import {
+  FilePlus,
   FolderPlus,
   FoldVertical,
   ListCollapse,
@@ -99,6 +100,11 @@ function FileSidebarInner({ onOpenSearch }: FileSidebarProps) {
             icon={SquarePen}
             label="New File"
             onClick={() => fileTreeRef.current?.startCreating('file', '')}
+          />
+          <ToolbarButton
+            icon={FilePlus}
+            label="New from template…"
+            onClick={() => fileTreeRef.current?.startCreatingFromTemplate('')}
           />
           <ToolbarButton
             icon={FolderPlus}

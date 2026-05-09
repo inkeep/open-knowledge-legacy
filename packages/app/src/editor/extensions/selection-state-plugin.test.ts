@@ -36,6 +36,10 @@ const EMPTY: BlockSelection = {
   isDragging: false,
 };
 
+/** Plugin stub that mirrors the real plugin's state shape so we can run
+ *  `EditorState.create({plugins: [stub]})` and walk `apply` semantics. We
+ *  can't use the real plugin here because it pulls in TipTap's Extension
+ *  machinery. `deriveBlockSelection` is the testable unit. */
 function makeStubPlugin() {
   return new Plugin<BlockSelection>({
     key: selectionStatePluginKey,

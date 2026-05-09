@@ -244,7 +244,7 @@ test('sidebar folder: row click navigates to folder overview; treeitem toggles e
   await expect(nestedFile).toBeVisible();
 
   await folderRow.click();
-  await expect(page).toHaveURL(/#\/sidebar-folder$/);
+  await expect(page).toHaveURL(/#\/sidebar-folder\/$/);
 });
 
 test('markdown link edit dialog preserves page mode while clearing and updates the href target', async ({

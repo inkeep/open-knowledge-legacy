@@ -1,11 +1,15 @@
 import { defaultSkillInstaller, type SkillInstaller } from '@/lib/handoff/skill-installer';
 import '@/lib/desktop-bridge-types';
 
+/** Storage seam — `Pick`-equivalent of `Storage` so callers can inject
+ * in-memory doubles without implementing the full DOM Storage shape. */
 export interface SkillInstallStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 }
 
+/** Shape of `GET /api/skill/install-state` response. Mirrors the server's
+ * `SkillInstallStateSnapshot` (in `@inkeep/open-knowledge-server`). */
 interface SkillInstallStateSnapshotShape {
   currentVersion: string;
   targets: Partial<

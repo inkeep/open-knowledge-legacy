@@ -16,6 +16,8 @@ import {
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
+/** Helper: wait for debounce + microtask to settle. Must exceed TYPING_DEFER_MS (300ms)
+ *  for tests that trigger the defer path (e.g., Y.Text writes from non-local origin). */
 function wait(ms = 400): Promise<void> {
   return setTimeout(ms);
 }

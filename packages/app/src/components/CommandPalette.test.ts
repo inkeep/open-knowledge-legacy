@@ -65,6 +65,35 @@ describe('CommandPalette.runWithToast (IPC rejection → toast feedback)', () =>
   });
 });
 
+describe('Active-doc command visibility (source-level guards)', () => {
+  const SRC_PATH = join(__dirname, 'CommandPalette.tsx');
+  const src = readFileSync(SRC_PATH, 'utf-8');
+
+  const showGraphDecision =
+    src.match(/const showGraphCommand =[\s\S]*?;\n {2}const showProjectOpenFolder/)?.[0] ?? '';
+  const showAgentGroupDecision =
+    src.match(/const showAgentGroup =[\s\S]*?;\n {2}const tagListItems/)?.[0] ?? '';
+  const graphBlock = (() => {
+    const chunks = src.split(/(?=<CommandItem\b)/);
+    const ours = chunks.find((c) => c.includes('data-testid="command-palette-open-graph"'));
+    if (!ours) return '';
+    return ours.split('</CommandItem>')[0] ?? '';
+  })();
+
+  test('active-document commands are not rendered as disabled "No active doc" rows', () => {
+    expect(src).not.toContain('No active doc');
+    expect(showGraphDecision).toContain('activeDocName !== null');
+    expect(showAgentGroupDecision).toContain('handoffInput !== null');
+  });
+
+  test('Open graph block is selectable only after the visibility gate passes', () => {
+    expect(graphBlock, 'CommandItem with command-palette-open-graph not found').toBeTruthy();
+    expect(graphBlock).not.toContain('disabled={!activeDocName}');
+    expect(graphBlock).not.toContain('aria-label={activeDocName');
+    expect(graphBlock).toContain("requestDocPanelTab('graph')");
+  });
+});
+
 describe('Switch Project entry (source-level guards)', () => {
   const SRC_PATH = join(__dirname, 'CommandPalette.tsx');
   const src = readFileSync(SRC_PATH, 'utf-8');
@@ -150,5 +179,23 @@ describe('Settings entry (US-010 / FR-1 / D54 — source-level guards)', () => {
     if (agentGroupIdx >= 0) {
       expect(agentGroupIdx).toBeLessThan(projectGroupIdx);
     }
+  });
+});
+
+describe('CommandPalette entry-point propagation (source-level guards)', () => {
+  const SRC_PATH = join(__dirname, 'CommandPalette.tsx');
+  const src = readFileSync(SRC_PATH, 'utf-8');
+
+  test('Open Folder command tags the open call with entryPoint: "pick-existing"', () => {
+    const idx = src.indexOf('command-palette-open-folder');
+    expect(idx).toBeGreaterThan(0);
+    const window = src.slice(Math.max(0, idx - 800), idx + 200);
+    expect(window).toMatch(/bridge\.project\.open\(\{[^}]*entryPoint:\s*'pick-existing'/);
+  });
+
+  test('Recents row entry tags the open call with entryPoint: "recents"', () => {
+    expect(src).toMatch(
+      /switchableProjects[\s\S]*?bridge\.project\.open\(\{[^}]*entryPoint:\s*'recents'/,
+    );
   });
 });

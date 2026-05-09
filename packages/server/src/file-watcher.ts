@@ -42,7 +42,11 @@ type AssetDiskEvent =
   | { kind: 'asset-create'; path: string; relativePath: string }
   | { kind: 'asset-delete'; path: string; relativePath: string };
 
-export type DiskEvent = MarkdownDiskEvent | AssetDiskEvent;
+type FolderDiskEvent =
+  | { kind: 'folder-create'; path: string; relativePath: string }
+  | { kind: 'folder-delete'; path: string; relativePath: string };
+
+export type DiskEvent = MarkdownDiskEvent | AssetDiskEvent | FolderDiskEvent;
 
 export function assertNeverDiskEvent(event: never): never {
   throw new Error(`[DiskEvent] unhandled variant: ${JSON.stringify(event)}`);
@@ -56,9 +60,17 @@ export interface FileIndexEntry {
   aliases: string[];
 }
 
+export interface FolderIndexEntry {
+  size: 0;
+  modified: string;
+  canonicalPath: string;
+  inode: number;
+}
+
 export interface WatcherHandle {
   unsubscribe: () => Promise<void>;
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
+  getFolderIndex: () => ReadonlyMap<string, FolderIndexEntry>;
   getAliasMap: () => ReadonlyMap<string, string>;
   pruneFileIndexNowExcluded: () => number;
 }
@@ -119,6 +131,44 @@ function eventEscapesContentDir(rawPath: string, contentDir: string): boolean {
 export function pathToDocName(absPath: string, contentDir: string): string {
   const rel = relative(contentDir, absPath);
   return stripDocExtension(rel);
+}
+
+function contentRelativePath(contentDir: string, absPath: string): string | null {
+  const rel = relative(contentDir, absPath).replaceAll('\\', '/');
+  if (!rel || rel === '.' || rel === '..' || rel.startsWith('../')) return null;
+  return rel;
+}
+
+export function upsertFolderIndexEntry(
+  folderIndex: Map<string, FolderIndexEntry>,
+  contentDir: string,
+  folderPath: string,
+  stat: { mtime: Date; ino: number | bigint },
+  canonicalPath = folderPath,
+): string | null {
+  const relativePath = contentRelativePath(contentDir, folderPath);
+  if (!relativePath) return null;
+  folderIndex.set(relativePath, {
+    size: 0,
+    modified: stat.mtime.toISOString(),
+    canonicalPath,
+    inode: Number(stat.ino),
+  });
+  return relativePath;
+}
+
+export function removeFolderIndexEntries(
+  folderIndex: Map<string, FolderIndexEntry>,
+  relativePath: string,
+): boolean {
+  let removed = false;
+  for (const path of [...folderIndex.keys()]) {
+    if (path === relativePath || path.startsWith(`${relativePath}/`)) {
+      folderIndex.delete(path);
+      removed = true;
+    }
+  }
+  return removed;
 }
 
 function extractDocExtension(path: string): string | null {
@@ -354,6 +404,7 @@ function seedLastKnownHashes(
   contentDir: string,
   contentFilter: ContentFilter | undefined,
   fileIndex: Map<string, FileIndexEntry>,
+  folderIndex: Map<string, FolderIndexEntry>,
   aliasMap: Map<string, string>,
   visitedInodes?: Set<number>,
 ): void {
@@ -409,11 +460,20 @@ function seedLastKnownHashes(
           visited.add(canonStat.ino);
 
           if (canonStat.isDirectory()) {
+            const relPath = contentRelativePath(contentDir, fullPath);
             if (contentFilter) {
-              const relPath = relative(contentDir, canonical);
-              if (contentFilter.isDirExcluded(relPath)) continue;
+              if (!relPath || contentFilter.isDirExcluded(relPath)) continue;
             }
-            seedLastKnownHashes(canonical, contentDir, contentFilter, fileIndex, aliasMap, visited);
+            upsertFolderIndexEntry(folderIndex, contentDir, fullPath, canonStat, canonical);
+            seedLastKnownHashes(
+              canonical,
+              contentDir,
+              contentFilter,
+              fileIndex,
+              folderIndex,
+              aliasMap,
+              visited,
+            );
           } else if (canonStat.isFile() && isSupportedDocFile(entry.name)) {
             if (contentFilter) {
               const relPath = relative(contentDir, canonical);
@@ -455,11 +515,20 @@ function seedLastKnownHashes(
           console.warn(`[file-watcher] Failed to stat symlink target ${canonical}:`, e);
         }
       } else if (lst.isDirectory()) {
+        const relPath = contentRelativePath(contentDir, fullPath);
         if (contentFilter) {
-          const relPath = relative(contentDir, fullPath);
-          if (contentFilter.isDirExcluded(relPath)) continue;
+          if (!relPath || contentFilter.isDirExcluded(relPath)) continue;
         }
-        seedLastKnownHashes(fullPath, contentDir, contentFilter, fileIndex, aliasMap, visited);
+        upsertFolderIndexEntry(folderIndex, contentDir, fullPath, lst);
+        seedLastKnownHashes(
+          fullPath,
+          contentDir,
+          contentFilter,
+          fileIndex,
+          folderIndex,
+          aliasMap,
+          visited,
+        );
       } else if (lst.isFile() && isSupportedDocFile(entry.name)) {
         if (visited.has(lst.ino)) continue;
         visited.add(lst.ino);
@@ -511,7 +580,12 @@ function seedLastKnownHashes(
 }
 
 export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileIndexEntry>): void {
-  if (event.kind === 'asset-create' || event.kind === 'asset-delete') {
+  if (
+    event.kind === 'asset-create' ||
+    event.kind === 'asset-delete' ||
+    event.kind === 'folder-create' ||
+    event.kind === 'folder-delete'
+  ) {
     return;
   }
   const docName = event.kind === 'rename' ? event.newDocName : event.docName;
@@ -563,7 +637,70 @@ export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileInd
       });
       break;
     }
+    default:
+      assertNeverDiskEvent(event);
   }
+}
+
+function updateFolderIndexFromRawEvents(
+  rawEvents: Array<{ type: 'create' | 'update' | 'delete'; path: string }>,
+  contentDir: string,
+  contentFilter: ContentFilter | undefined,
+  folderIndex: Map<string, FolderIndexEntry>,
+): FolderDiskEvent[] {
+  const events: FolderDiskEvent[] = [];
+
+  for (const raw of rawEvents) {
+    const relativePath = contentRelativePath(contentDir, raw.path);
+    if (!relativePath) continue;
+
+    if (raw.type === 'delete') {
+      if (removeFolderIndexEntries(folderIndex, relativePath)) {
+        events.push({ kind: 'folder-delete', path: raw.path, relativePath });
+      }
+      continue;
+    }
+
+    let lst: ReturnType<typeof lstatSync>;
+    try {
+      lst = lstatSync(raw.path);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        console.warn(`[file-watcher] folder lstat failed for ${raw.path} (${code})`);
+      }
+      continue;
+    }
+
+    let folderStat: ReturnType<typeof statSync> | null = null;
+    let canonicalPath = raw.path;
+    if (lst.isDirectory()) {
+      folderStat = lst;
+    } else if (lst.isSymbolicLink()) {
+      try {
+        canonicalPath = realpathSync(raw.path);
+        if (!isWithinContentDir(canonicalPath, contentDir)) continue;
+        const stat = statSync(canonicalPath);
+        if (stat.isDirectory()) folderStat = stat;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') {
+          console.warn(`[file-watcher] folder symlink resolve failed for ${raw.path} (${code})`);
+        }
+        folderStat = null;
+      }
+    }
+    if (!folderStat) continue;
+    if (contentFilter?.isDirExcluded(relativePath)) continue;
+
+    const hadFolder = folderIndex.has(relativePath);
+    upsertFolderIndexEntry(folderIndex, contentDir, raw.path, folderStat, canonicalPath);
+    if (!hadFolder) {
+      events.push({ kind: 'folder-create', path: raw.path, relativePath });
+    }
+  }
+
+  return events;
 }
 
 export async function handleRawEvents(
@@ -571,6 +708,7 @@ export async function handleRawEvents(
   contentDir: string,
   contentFilter: ContentFilter | undefined,
   fileIndex: Map<string, FileIndexEntry>,
+  folderIndex: Map<string, FolderIndexEntry>,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
   aliasMap?: Map<string, string>,
 ): Promise<void> {
@@ -582,7 +720,13 @@ export async function handleRawEvents(
 
   const mdEvents = safeEvents.filter((e) => isSupportedDocFile(e.path));
   const assetEvents = safeEvents.filter((e) => isSupportedAssetFile(e.path, ASSET_EXTENSIONS));
-  if (mdEvents.length === 0 && assetEvents.length === 0) return;
+  const folderEvents = updateFolderIndexFromRawEvents(
+    safeEvents,
+    contentDir,
+    contentFilter,
+    folderIndex,
+  );
+  if (mdEvents.length === 0 && assetEvents.length === 0 && folderEvents.length === 0) return;
 
   const diskEvents =
     mdEvents.length > 0 ? await classifyEvents(mdEvents, contentDir, contentFilter, aliasMap) : [];
@@ -634,6 +778,11 @@ export async function handleRawEvents(
           contentFilter.decrementMdDir(dirname(event.oldDocName));
           contentFilter.incrementMdDir(dirname(event.newDocName));
           break;
+        case 'update':
+        case 'conflict':
+          break;
+        default:
+          assertNeverDiskEvent(event);
       }
     }
 
@@ -672,6 +821,25 @@ export async function handleRawEvents(
     );
   }
 
+  for (const event of folderEvents) {
+    getLogger('file-watcher').debug(
+      { kind: event.kind, path: event.path },
+      `[file-watcher] Dispatching: ${event.kind}`,
+    );
+    _fileWatcherEventsCounter().add(1, { 'disk.kind': event.kind, self: false });
+    await withSpan(
+      'file_watcher.process_event',
+      {
+        attributes: {
+          'disk.kind': event.kind,
+          'disk.path': normalizeFsPath(event.path),
+          'disk.path.role': classifyFsPath(event.path),
+        },
+      },
+      async () => onDiskEvent(event),
+    );
+  }
+
   for (const raw of assetEvents) {
     if (contentFilter) {
       const relPath = relative(contentDir, raw.path);
@@ -700,6 +868,7 @@ async function startParcelWatcher(
   contentDir: string,
   contentFilter: ContentFilter | undefined,
   fileIndex: Map<string, FileIndexEntry>,
+  folderIndex: Map<string, FolderIndexEntry>,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
   aliasMap: Map<string, string>,
 ): Promise<AsyncSubscription | null> {
@@ -732,6 +901,7 @@ async function startParcelWatcher(
             contentDir,
             contentFilter,
             fileIndex,
+            folderIndex,
             onDiskEvent,
             aliasMap,
           );
@@ -753,6 +923,7 @@ async function startChokidarWatcher(
   contentDir: string,
   contentFilter: ContentFilter | undefined,
   fileIndex: Map<string, FileIndexEntry>,
+  folderIndex: Map<string, FolderIndexEntry>,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
   aliasMap: Map<string, string>,
 ): Promise<AsyncSubscription> {
@@ -785,9 +956,15 @@ async function startChokidarWatcher(
         const batch = pendingEvents;
         pendingEvents = [];
         batchTimer = null;
-        handleRawEvents(batch, contentDir, contentFilter, fileIndex, onDiskEvent, aliasMap).catch(
-          (err) => console.error('[file-watcher] chokidar batch error:', err),
-        );
+        handleRawEvents(
+          batch,
+          contentDir,
+          contentFilter,
+          fileIndex,
+          folderIndex,
+          onDiskEvent,
+          aliasMap,
+        ).catch((err) => console.error('[file-watcher] chokidar batch error:', err));
       }, BATCH_WINDOW_MS);
     }
   }
@@ -795,6 +972,8 @@ async function startChokidarWatcher(
   watcher.on('add', (path) => queueEvent('create', path));
   watcher.on('change', (path) => queueEvent('update', path));
   watcher.on('unlink', (path) => queueEvent('delete', path));
+  watcher.on('addDir', (path) => queueEvent('create', path));
+  watcher.on('unlinkDir', (path) => queueEvent('delete', path));
 
   return {
     unsubscribe: () => {
@@ -821,9 +1000,10 @@ export async function startWatcher(
   }
 
   const fileIndex = new Map<string, FileIndexEntry>();
+  const folderIndex = new Map<string, FolderIndexEntry>();
   const aliasMap = new Map<string, string>();
 
-  seedLastKnownHashes(contentDir, contentDir, contentFilter, fileIndex, aliasMap);
+  seedLastKnownHashes(contentDir, contentDir, contentFilter, fileIndex, folderIndex, aliasMap);
 
   const evictionInterval = setInterval(evictStaleTrackerEntries, WRITE_TRACKER_TTL_MS);
 
@@ -834,6 +1014,7 @@ export async function startWatcher(
       contentDir,
       contentFilter,
       fileIndex,
+      folderIndex,
       onDiskEvent,
       aliasMap,
     );
@@ -845,6 +1026,7 @@ export async function startWatcher(
         contentDir,
         contentFilter,
         fileIndex,
+        folderIndex,
         onDiskEvent,
         aliasMap,
       );
@@ -870,6 +1052,9 @@ export async function startWatcher(
     },
     getFileIndex() {
       return fileIndex;
+    },
+    getFolderIndex() {
+      return folderIndex;
     },
     getAliasMap() {
       return aliasMap;
