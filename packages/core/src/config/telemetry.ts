@@ -15,6 +15,8 @@ export interface ConfigSpanAttributes extends Attributes {
   'config.transport'?: ConfigTransport;
 }
 
+/** Run `fn` inside a span; returns the function's result; ends the span on
+ * resolve/reject. Async + sync supported via `await`. */
 export async function withConfigSpan<T>(
   name: string,
   attributes: ConfigSpanAttributes | undefined,
@@ -63,6 +65,9 @@ export function withConfigSpanSync<T>(
   });
 }
 
+/** Add an event with structured attributes to the active span. Used to
+ * surface Zod issue paths without paying the cardinality cost of attribute
+ * pivoting. No-op when no active span. */
 export function addConfigSpanEvent(name: string, attributes?: Attributes): void {
   const span = trace.getActiveSpan();
   if (span) span.addEvent(name, attributes);

@@ -20,7 +20,11 @@ async function createPage(path: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
   });
-  const body = (await res.json()) as { ok: boolean; docName?: string; error?: string };
+  const body = (await res.json()) as {
+    docName?: string;
+    type?: string;
+    title?: string;
+  };
   return { status: res.status, body };
 }
 
@@ -28,7 +32,6 @@ describe('/api/create-page — simple file', () => {
   test('creates a file at root and returns docName', async () => {
     const { status, body } = await createPage('qa-simple-root.md');
     expect(status).toBe(200);
-    expect(body.ok).toBe(true);
     expect(body.docName).toBe('qa-simple-root');
     expect(existsSync(join(server.contentDir, 'qa-simple-root.md'))).toBe(true);
     expect(readFileSync(join(server.contentDir, 'qa-simple-root.md'), 'utf-8')).toBe('');
@@ -38,7 +41,6 @@ describe('/api/create-page — simple file', () => {
     await createPage('qa-pre/seed.md');
     const { status, body } = await createPage('qa-pre/child.md');
     expect(status).toBe(200);
-    expect(body.ok).toBe(true);
     expect(body.docName).toBe('qa-pre/child');
     expect(existsSync(join(server.contentDir, 'qa-pre/child.md'))).toBe(true);
   });
@@ -48,7 +50,6 @@ describe('/api/create-page — composite folder create (mkdirSync recursive)', (
   test('creates a new folder with an initial file in one round-trip', async () => {
     const { status, body } = await createPage('qa-new-folder/index.md');
     expect(status).toBe(200);
-    expect(body.ok).toBe(true);
     expect(body.docName).toBe('qa-new-folder/index');
     expect(existsSync(join(server.contentDir, 'qa-new-folder'))).toBe(true);
     expect(existsSync(join(server.contentDir, 'qa-new-folder/index.md'))).toBe(true);
@@ -57,7 +58,6 @@ describe('/api/create-page — composite folder create (mkdirSync recursive)', (
   test('creates deep, multi-level folder path that did not previously exist (QA-012)', async () => {
     const { status, body } = await createPage('deep/nested/folders/that/are/new/home.md');
     expect(status).toBe(200);
-    expect(body.ok).toBe(true);
     expect(body.docName).toBe('deep/nested/folders/that/are/new/home');
     expect(existsSync(join(server.contentDir, 'deep/nested/folders/that/are/new/home.md'))).toBe(
       true,
@@ -70,12 +70,12 @@ describe('/api/create-page — 409 EEXIST (QA-008)', () => {
     const path = 'qa-conflict.md';
     const first = await createPage(path);
     expect(first.status).toBe(200);
-    expect(first.body.ok).toBe(true);
+    expect(first.body.docName).toBe('qa-conflict');
 
     const second = await createPage(path);
     expect(second.status).toBe(409);
-    expect(second.body.ok).toBe(false);
-    expect(second.body.error).toMatch(/already exists/i);
+    expect(second.body.type).toBe('urn:ok:error:doc-already-exists');
+    expect(second.body.title).toMatch(/already exists/i);
   });
 });
 
@@ -83,33 +83,32 @@ describe('/api/create-page — path rejection (QA-009)', () => {
   test('rejects ".." traversal', async () => {
     const { status, body } = await createPage('docs/../escape.md');
     expect(status).toBe(400);
-    expect(body.ok).toBe(false);
-    expect(body.error).toMatch(/\.\.|escape/i);
+    expect(body.type).toBe('urn:ok:error:path-escape');
   });
 
   test('rejects leading /', async () => {
     const { status, body } = await createPage('/etc/passwd.md');
     expect(status).toBe(400);
-    expect(body.ok).toBe(false);
+    expect(body.type).toBe('urn:ok:error:path-escape');
   });
 
   test('rejects backslashes', async () => {
     const { status, body } = await createPage('docs\\winpath.md');
     expect(status).toBe(400);
-    expect(body.ok).toBe(false);
+    expect(body.type).toBe('urn:ok:error:path-escape');
   });
 
   test('rejects null byte', async () => {
     const { status, body } = await createPage('docs/\0nul.md');
     expect(status).toBe(400);
-    expect(body.ok).toBe(false);
+    expect(body.type).toBe('urn:ok:error:path-escape');
   });
 
   test('rejects missing .md extension', async () => {
     const { status, body } = await createPage('no-extension');
     expect(status).toBe(400);
-    expect(body.ok).toBe(false);
-    expect(body.error).toMatch(/\.md/i);
+    expect(body.type).toBe('urn:ok:error:invalid-request');
+    expect(body.title).toMatch(/\.md/i);
   });
 });
 
@@ -117,7 +116,7 @@ describe('/api/create-page — reserved name (QA-010)', () => {
   test('rejects __system__ with 400', async () => {
     const { status, body } = await createPage('__system__.md');
     expect(status).toBe(400);
-    expect(body.ok).toBe(false);
-    expect(body.error).toMatch(/reserved/i);
+    expect(body.type).toBe('urn:ok:error:reserved-doc-name');
+    expect(body.title).toMatch(/reserved/i);
   });
 });

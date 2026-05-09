@@ -21,7 +21,7 @@ export async function dispatchAssetClick(
 
   if (!ctx.forceOsDelegation) {
     const lookup = registry.lookup(ctx.ext);
-    if (lookup.found) {
+    if (lookup.ok) {
       lookup.viewer.render(ctx);
       return;
     }

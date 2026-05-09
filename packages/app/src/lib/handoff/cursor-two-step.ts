@@ -2,6 +2,7 @@ import {
   buildCursorUrl,
   type HandoffOutcome,
   type HandoffPayload,
+  ProblemDetailsSchema,
 } from '@inkeep/open-knowledge-core';
 import { type OpenExternalDeps, openExternal } from './open-external.ts';
 
@@ -38,11 +39,11 @@ function createFetchSpawnCursor(fetchImpl: typeof globalThis.fetch): SpawnCursor
     } catch {
       return { ok: false, reason: 'spawn-error' };
     }
+    if (res.status === 200) {
+      return { ok: true };
+    }
     if (res.status === 404) {
       return { ok: false, reason: 'not-installed' };
-    }
-    if (!res.ok && res.status !== 200) {
-      return { ok: false, reason: 'spawn-error' };
     }
     let body: unknown;
     try {
@@ -50,23 +51,31 @@ function createFetchSpawnCursor(fetchImpl: typeof globalThis.fetch): SpawnCursor
     } catch {
       return { ok: false, reason: 'spawn-error' };
     }
-    if (body && typeof body === 'object' && 'ok' in body) {
-      const obj = body as { ok: unknown; reason?: unknown };
-      if (obj.ok === true) return { ok: true };
-      if (obj.ok === false) {
-        const reason = obj.reason;
-        if (
-          reason === 'invalid-path' ||
-          reason === 'not-installed' ||
-          reason === 'timeout' ||
-          reason === 'spawn-error'
-        ) {
-          return { ok: false, reason };
-        }
-      }
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    if (!parsed.success) {
+      return { ok: false, reason: 'spawn-error' };
     }
-    return { ok: false, reason: 'spawn-error' };
+    return mapProblemTypeToReason(parsed.data.type);
   };
+}
+
+const CURSOR_PROBLEM_TYPE_TO_REASON: Record<
+  string,
+  'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error'
+> = {
+  'urn:ok:error:cursor-not-installed': 'not-installed',
+  'urn:ok:error:cursor-spawn-timeout': 'timeout',
+  'urn:ok:error:cursor-spawn-failed': 'spawn-error',
+  'urn:ok:error:invalid-request': 'invalid-path',
+  'urn:ok:error:path-escape': 'invalid-path',
+};
+
+function mapProblemTypeToReason(type: string): {
+  ok: false;
+  reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error';
+} {
+  const reason = CURSOR_PROBLEM_TYPE_TO_REASON[type] ?? 'spawn-error';
+  return { ok: false, reason };
 }
 
 function resolveSpawnCursor(

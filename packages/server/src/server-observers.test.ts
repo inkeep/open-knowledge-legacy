@@ -33,8 +33,9 @@ import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-ti
 import * as Y from 'yjs';
 import { AGENT_WRITE_ORIGIN } from './agent-sessions.ts';
 import { MANAGED_RENAME_ORIGIN, ROLLBACK_ORIGIN } from './api-extension.ts';
+import { __resetBridgeWatchdogForTests } from './bridge-watchdog.ts';
 import { FILE_WATCHER_ORIGIN } from './external-change.ts';
-import { getMetrics } from './metrics.ts';
+import { getMetrics, resetMetrics } from './metrics.ts';
 import {
   OBSERVER_SYNC_ORIGIN,
   type ObserverDispatchKind,
@@ -148,6 +149,9 @@ describe('Server Observer A — XmlFragment → Y.Text', () => {
   });
 
   test('Path B emits observer-a-path-b-fired telemetry (FR-41)', () => {
+    __resetBridgeWatchdogForTests();
+    resetMetrics();
+
     const { doc, xmlFragment, ytext, recorder } = createTestDoc();
     const before = getMetrics().observerAPathBFires;
 
@@ -185,13 +189,63 @@ describe('Server Observer A — XmlFragment → Y.Text', () => {
     expect(pathBEvent?.xmlFragmentAdvanced).toBe(true);
     expect(pathBEvent?.ytextDiverged).toBe(true);
     expect(typeof pathBEvent?.mergeBytesChanged).toBe('number');
+    expect(pathBEvent?.['doc.name']).toBeNull();
 
     const keys = Object.keys(pathBEvent ?? {}).sort();
     expect(keys).toEqual(
-      ['event', 'mergeBytesChanged', 'xmlFragmentAdvanced', 'ytextDiverged'].sort(),
+      ['doc.name', 'event', 'mergeBytesChanged', 'xmlFragmentAdvanced', 'ytextDiverged'].sort(),
     );
 
     expect(getMetrics().observerAPathBFires).toBe(before + pathBEvents.length);
+    expect(getMetrics().observerAPathBFiresSuppressed).toBe(0);
+
+    cleanup();
+  });
+
+  test('observer-a-path-b-fired event is rate-limited per doc; counter still tracks every fire', () => {
+    __resetBridgeWatchdogForTests();
+    resetMetrics();
+
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    populateFragment(doc, xmlFragment, '# Hello\n\nOriginal\n');
+    const cleanup = setupServerObservers(
+      setupOpts({ doc, xmlFragment, ytext, recorder, docName: 'rate-limit-test-doc' }),
+    );
+
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+
+    try {
+      for (let i = 0; i < 3; i++) {
+        doc.transact(() => {
+          ytext.insert(ytext.toString().length, `\nDivergence ${i}\n`);
+        }, OBSERVER_SYNC_ORIGIN);
+        populateFragment(doc, xmlFragment, `# Hello\n\nOriginal\n\nUser edit ${i}\n`);
+      }
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    const events = warnings
+      .map((w) => {
+        try {
+          return JSON.parse(w);
+        } catch {
+          return null;
+        }
+      })
+      .filter((e): e is Record<string, unknown> => e !== null);
+    const pathBEvents = events.filter((e) => e.event === 'observer-a-path-b-fired');
+
+    expect(pathBEvents.length).toBe(1);
+    expect(getMetrics().observerAPathBFires).toBe(1);
+    expect(getMetrics().observerAPathBFiresSuppressed).toBeGreaterThanOrEqual(2);
+    const totalFires =
+      getMetrics().observerAPathBFires + getMetrics().observerAPathBFiresSuppressed;
+    expect(totalFires).toBeGreaterThanOrEqual(3);
 
     cleanup();
   });
@@ -663,6 +717,15 @@ describe('Initial sync', () => {
 });
 
 describe('Server Observer B — error recovery paths', () => {
+  /** Wrap mdManager so parse/serialize can be toggled to throw.
+   *
+   * Under FR-22/G9, Observer B calls `parseWithFallback` — the real impl
+   * catches parse() errors and produces rawMdxFallback nodes. Tests still
+   * need to exercise the outer catch path for unexpected errors escaping
+   * parseWithFallback itself (internal RangeError, PM-construction failure,
+   * etc.), so the stub's parseWithFallback honours `parseThrow` directly.
+   * Serialize errors remain a valid test surface in the post-sync
+   * re-serialization block. */
   function createMdManagerStub() {
     let parseThrow: Error | null = null;
     let serializeThrow: Error | null = null;

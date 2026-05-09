@@ -1,6 +1,8 @@
 import type { Page } from '@playwright/test';
 import { expect, test, waitForActiveProviderSynced } from './_helpers';
 
+/** ~30 paragraphs of filler — enough to push the trailing chip well below
+ *  the first viewport (~720 px on the default Playwright viewport). */
 const FILLER = Array.from({ length: 30 }, (_, i) => `Filler line ${i + 1}.`).join('\n\n');
 
 interface PositionAssertions {

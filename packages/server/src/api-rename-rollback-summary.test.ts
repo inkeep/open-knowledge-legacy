@@ -76,6 +76,10 @@ async function buildBacklinkIndex(contentDir: string): Promise<BacklinkIndex> {
   return index;
 }
 
+/** Captures calls to the `flushGitCommit` hook so the leak-fix regression
+ *  test can assert that handleRenamePath / handleRollback drain pending
+ *  contributors into their own L2 commit instead of leaking into the next
+ *  unrelated write's commit. */
 type FlushGitCommitSpy = {
   readonly calls: ReadonlyArray<number>;
   fn: () => Promise<void>;
@@ -215,7 +219,9 @@ describe('handleRenamePath (kind: file) — agentId-guarded attribution', () => 
     });
 
     expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
+    const summaryErr = JSON.parse(response.body) as Record<string, unknown>;
+    expect(summaryErr.type).toBe('urn:ok:error:invalid-request');
+    expect(typeof summaryErr.title).toBe('string');
     expect(readFileSync(join(tmpDir, 'src.md'), 'utf-8')).toBe('# Src\n');
     expect(getMetrics().agentWriteCalls).toBe(0);
     expect(formatContributors()).toBe('');
@@ -270,7 +276,9 @@ describe('handleRenamePath (kind: file) — agentId-guarded attribution', () => 
     });
 
     expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
+    const summaryErr = JSON.parse(response.body) as Record<string, unknown>;
+    expect(summaryErr.type).toBe('urn:ok:error:invalid-request');
+    expect(typeof summaryErr.title).toBe('string');
     expect(readFileSync(join(tmpDir, 'src.md'), 'utf-8')).toBe('# Src\n');
     expect(formatContributors()).toBe('');
     expect(getMetrics().agentWriteCalls).toBe(0);
@@ -283,7 +291,7 @@ describe('handleRollback — agentId-guarded attribution (regression gate)', () 
       docName: 'test-doc',
       commitSha: 'a'.repeat(40),
     });
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(503);
     expect(formatContributors()).toBe('');
     expect(getMetrics().agentWriteCalls).toBe(0);
     expect(getMetrics().summariesProvided).toBe(0);
@@ -528,10 +536,10 @@ describe('handleRenamePath — actor identity routing', () => {
     });
 
     expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({
-      ok: false,
-      error: 'Case-only renames are not supported',
-    });
+    const parsed = JSON.parse(response.body) as Record<string, unknown>;
+    expect(parsed.type).toBe('urn:ok:error:invalid-request');
+    expect(typeof parsed.title).toBe('string');
+    expect(String(parsed.title)).toContain('Case-only');
   });
 
   test('non-string summary returns 400 before rename', async () => {
@@ -694,10 +702,9 @@ describe('handleRenamePath — content-filter admission (FR11)', () => {
     );
 
     expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({
-      ok: false,
-      error: 'Destination document is excluded by the workspace content config',
-    });
+    const parsed = JSON.parse(response.body) as Record<string, unknown>;
+    expect(parsed.type).toBe('urn:ok:error:invalid-request');
+    expect(String(parsed.title)).toContain('Destination document is excluded');
     expect(readFileSync(join(tmpDir, 'notes.md'), 'utf-8')).toBe('# Notes\n');
   });
 
@@ -717,10 +724,9 @@ describe('handleRenamePath — content-filter admission (FR11)', () => {
     );
 
     expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({
-      ok: false,
-      error: 'Destination folder is excluded by the workspace content config',
-    });
+    const parsed = JSON.parse(response.body) as Record<string, unknown>;
+    expect(parsed.type).toBe('urn:ok:error:invalid-request');
+    expect(String(parsed.title)).toContain('Destination folder is excluded');
     expect(readFileSync(join(folder, 'auth.md'), 'utf-8')).toBe('# Auth\n');
   });
 
@@ -739,7 +745,6 @@ describe('handleRenamePath — content-filter admission (FR11)', () => {
 
     expect(response.status).toBe(200);
     const parsed = JSON.parse(response.body);
-    expect(parsed.ok).toBe(true);
     expect(parsed.renamed).toEqual([{ fromDocName: 'notes', toDocName: 'renamed' }]);
   });
 

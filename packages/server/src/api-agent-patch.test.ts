@@ -93,7 +93,6 @@ describe('POST /api/agent-patch', () => {
 
       expect(response.status).toBe(200);
       expect(JSON.parse(response.body)).toEqual({
-        ok: true,
         timestamp: expect.any(String),
         subscriberCount: expect.any(Number),
         systemSubscriberCount: expect.any(Number),
@@ -133,10 +132,10 @@ describe('POST /api/agent-patch', () => {
       });
 
       expect(response.status).toBe(409);
-      expect(JSON.parse(response.body)).toEqual({
-        ok: false,
-        error: 'Target text no longer matches at the requested offset',
-      });
+      const parsed = JSON.parse(response.body);
+      expect(parsed.type).toBe('urn:ok:error:stale-target');
+      expect(parsed.status).toBe(409);
+      expect(parsed.title).toBeDefined();
       expect(ytext.toString()).toBe(initial);
     } finally {
       await sessionManager.closeAll();
@@ -169,7 +168,6 @@ describe('POST /api/agent-patch', () => {
 
       expect(response.status).toBe(200);
       expect(JSON.parse(response.body)).toEqual({
-        ok: true,
         timestamp: expect.any(String),
         subscriberCount: expect.any(Number),
         systemSubscriberCount: expect.any(Number),

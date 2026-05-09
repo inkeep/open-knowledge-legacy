@@ -27,6 +27,32 @@ describe('resolveNavigationTarget', () => {
     });
   });
 
+  test('prefers an exact document over a folder with the same basename', () => {
+    const resolved = resolveNavigationTarget('hello', {
+      pages: new Set(['hello']),
+      folderPaths: new Set(['hello']),
+    });
+
+    expect(resolved).toEqual({
+      kind: 'doc',
+      target: 'hello',
+      docName: 'hello',
+    });
+  });
+
+  test('uses trailing slash intent to open a folder with the same basename as a document', () => {
+    const resolved = resolveNavigationTarget('hello/', {
+      pages: new Set(['hello']),
+      folderPaths: new Set(['hello']),
+    });
+
+    expect(resolved).toEqual({
+      kind: 'folder',
+      target: 'hello',
+      folderPath: 'hello',
+    });
+  });
+
   test('resolves a canonical index note before a bare folder', () => {
     const resolved = resolveNavigationTarget('./reports/', {
       pages: new Set(['reports/index']),

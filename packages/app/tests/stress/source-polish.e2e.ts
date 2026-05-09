@@ -13,6 +13,10 @@ async function seedMarkdown(api: ApiHelpers, docName: string, markdown: string) 
   await api.replaceDoc(docName, markdown);
 }
 
+/** Switch to source mode and wait for CodeMirror to render. CM6 paints decorations
+ * synchronously on the next animation frame after the editor mounts, so waiting
+ * for `.cm-line` elements to appear (any non-empty doc produces at least one)
+ * is a reliable condition-based wait — no fixed-duration timeout needed. */
 async function switchToSource(page: Page) {
   await page.getByRole('radio', { name: 'Markdown source' }).click();
   await page.waitForSelector('.cm-content', { timeout: 10_000 });

@@ -19,10 +19,11 @@ import simpleGit from 'simple-git';
 import type * as Y from 'yjs';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
-import type { FileIndexEntry } from './file-watcher.ts';
+import { type ContentFilter, createContentFilter } from './content-filter.ts';
+import type { FileIndexEntry, FolderIndexEntry } from './file-watcher.ts';
 
 function makeReq(url: string, method: string, body: unknown): IncomingMessage {
-  const raw = JSON.stringify(body);
+  const raw = body === undefined ? '' : JSON.stringify(body);
   const readable = Readable.from(Buffer.from(raw)) as unknown as IncomingMessage;
   readable.method = method;
   readable.url = url;
@@ -67,7 +68,33 @@ function buildFileIndex(contentDir: string): ReadonlyMap<string, FileIndexEntry>
       index.set(docName, {
         size: stat.size,
         modified: stat.mtime.toISOString(),
+        canonicalPath: fullPath,
+        inode: stat.ino,
+        aliases: [],
       });
+    }
+  }
+
+  walk(contentDir);
+  return index;
+}
+
+function buildFolderIndex(contentDir: string): ReadonlyMap<string, FolderIndexEntry> {
+  const index = new Map<string, FolderIndexEntry>();
+
+  function walk(dir: string) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const fullPath = resolve(dir, entry.name);
+      const stat = statSync(fullPath);
+      const folderPath = fullPath.slice(contentDir.length + 1);
+      index.set(folderPath, {
+        size: 0,
+        modified: stat.mtime.toISOString(),
+        canonicalPath: fullPath,
+        inode: stat.ino,
+      });
+      walk(fullPath);
     }
   }
 
@@ -94,8 +121,10 @@ async function callApi(
     hocuspocus?: Parameters<typeof createApiExtension>[0]['hocuspocus'];
     sessionManager?: Parameters<typeof createApiExtension>[0]['sessionManager'];
     getFileIndex?: () => ReadonlyMap<string, FileIndexEntry>;
+    getFolderIndex?: () => ReadonlyMap<string, FolderIndexEntry>;
     signalChannel?: Parameters<typeof createApiExtension>[0]['signalChannel'];
     projectDir?: string;
+    contentFilter?: ContentFilter;
   },
 ): Promise<CapturedResponse> {
   const resolvedBacklinkIndex = await (options?.backlinkIndex ?? buildBacklinkIndex(contentDir));
@@ -115,9 +144,11 @@ async function callApi(
       } as unknown as Parameters<typeof createApiExtension>[0]['sessionManager']),
     contentDir,
     getFileIndex: options?.getFileIndex ?? (() => buildFileIndex(contentDir)),
+    getFolderIndex: options?.getFolderIndex ?? (() => buildFolderIndex(contentDir)),
     backlinkIndex: resolvedBacklinkIndex,
     signalChannel: options?.signalChannel,
     projectDir: options?.projectDir,
+    contentFilter: options?.contentFilter,
   });
 
   const req = makeReq(url, method, body);
@@ -186,7 +217,7 @@ describe('file operation API routes', () => {
       renamed: Array<{ fromDocName: string; toDocName: string }>;
       rewrittenDocs: Array<{ docName: string; rewrites: number }>;
     };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.renamed).toEqual([{ fromDocName: 'notes', toDocName: 'renamed-notes' }]);
     expect(body.rewrittenDocs).toEqual([
       { docName: 'journal', rewrites: 2 },
@@ -250,16 +281,16 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(404);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'Document not found: nonexistent-doc',
-    });
+    const parsed = JSON.parse(result.body) as Record<string, unknown>;
+    expect(parsed.type).toBe('urn:ok:error:doc-not-found');
+    expect(parsed.title).toContain('Document not found');
+    expect(parsed.title).toContain('nonexistent-doc');
 
     expect(hocuspocus.documents.has('nonexistent-doc')).toBe(false);
 
     const ok = await callApi(dir, '/api/document?docName=real-doc', 'GET', {}, { hocuspocus });
     expect(ok.status).toBe(200);
-    expect((JSON.parse(ok.body) as { ok: boolean }).ok).toBe(true);
+    expect((JSON.parse(ok.body) as { docName: string }).docName).toBe('real-doc');
   });
 
   test('rename does NOT materialize a phantom file for an in-memory-only backlink source', async () => {
@@ -493,9 +524,9 @@ describe('file operation API routes', () => {
     expect(readFileSync(join(dir, 'renamed-notes.md'), 'utf-8')).toBe('# Existing\n');
     expect(readFileSync(join(dir, 'journal.md'), 'utf-8')).toBe('# Journal\n\nSee [[notes]].\n');
 
-    const body = JSON.parse(result.body) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toBe('Destination already exists');
+    const body = JSON.parse(result.body) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:doc-already-exists');
+    expect(body.title).toContain('Destination already exists');
   });
 
   test('managed rename returns no-op success when source and destination match', async () => {
@@ -517,7 +548,6 @@ describe('file operation API routes', () => {
     expect(result.status).toBe(200);
     expect(readFileSync(join(dir, 'notes.md'), 'utf-8')).toBe('# Notes\n');
     expect(JSON.parse(result.body)).toEqual({
-      ok: true,
       renamed: [],
       rewrittenDocs: [],
     });
@@ -540,10 +570,9 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'Reserved document names cannot be renamed',
-    });
+    const reservedBody = JSON.parse(result.body) as Record<string, unknown>;
+    expect(reservedBody.type).toBe('urn:ok:error:reserved-doc-name');
+    expect(reservedBody.title).toContain('Reserved document names cannot be renamed');
   });
 
   test('managed rename with kind:folder on an existing file returns 400 (type mismatch)', async () => {
@@ -563,10 +592,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'Source path is not a folder',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:invalid-request');
+      expect(parsed.title).toContain('Source path is not a folder');
+    }
   });
 
   test('managed rename with kind:file on a .md-named directory returns 400 (type mismatch)', async () => {
@@ -586,10 +616,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'Source path is not a file',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:invalid-request');
+      expect(parsed.title).toContain('Source path is not a file');
+    }
   });
 
   test('managed rename rejects .ok as a destination (reserved directory)', async () => {
@@ -610,10 +641,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: '.ok is a reserved directory',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:reserved-doc-name');
+      expect(parsed.title).toContain('.ok is a reserved directory');
+    }
   });
 
   test('managed rename rejects .ok subpath as a destination', async () => {
@@ -633,10 +665,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: '.ok is a reserved directory',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:reserved-doc-name');
+      expect(parsed.title).toContain('.ok is a reserved directory');
+    }
   });
 
   test('managed rename returns 404 when the source document is missing', async () => {
@@ -655,10 +688,10 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(404);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'file does not exist',
-    });
+    const notFoundBody = JSON.parse(result.body) as Record<string, unknown>;
+    expect(notFoundBody.type).toBe('urn:ok:error:doc-not-found');
+    expect(typeof notFoundBody.title).toBe('string');
+    expect(String(notFoundBody.title).toLowerCase()).toContain('does not exist');
   });
 
   test.skipIf(process.platform === 'win32')(
@@ -685,10 +718,9 @@ describe('file operation API routes', () => {
       );
 
       expect(result.status).toBe(400);
-      expect(JSON.parse(result.body)).toEqual({
-        ok: false,
-        error: 'symlink-escape: path resolves outside content directory',
-      });
+      const symlinkBody = JSON.parse(result.body) as Record<string, unknown>;
+      expect(symlinkBody.type).toBe('urn:ok:error:path-escape');
+      expect(symlinkBody.title).toBe('symlink-escape: path resolves outside content directory.');
     },
   );
 
@@ -707,7 +739,7 @@ describe('file operation API routes', () => {
     expect(readFileSync(join(dir, 'renamed-notes.md'), 'utf-8')).toBe('# Notes\n');
 
     const body = JSON.parse(result.body) as { ok: boolean; renamed: Array<Record<string, string>> };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.renamed).toEqual([{ fromDocName: 'notes', toDocName: 'renamed-notes' }]);
   });
 
@@ -732,7 +764,7 @@ describe('file operation API routes', () => {
       ok: boolean;
       renamed: Array<{ fromDocName: string; toDocName: string }>;
     };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.renamed).toEqual([
       { fromDocName: 'docs/index', toDocName: 'guides/index' },
       { fromDocName: 'docs/nested/page', toDocName: 'guides/nested/page' },
@@ -787,7 +819,7 @@ describe('file operation API routes', () => {
       ok: boolean;
       pages: Array<{ docName: string; title: string }>;
     };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.pages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ docName: 'guides/index', title: 'Docs' }),
@@ -872,7 +904,7 @@ describe('file operation API routes', () => {
     expect(existsSync(join(dir, 'trash-me.md'))).toBe(false);
 
     const body = JSON.parse(result.body) as { ok: boolean; deletedDocNames: string[] };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.deletedDocNames).toEqual(['trash-me']);
   });
 
@@ -891,8 +923,212 @@ describe('file operation API routes', () => {
     expect(existsSync(join(dir, 'archive'))).toBe(false);
 
     const body = JSON.parse(result.body) as { ok: boolean; deletedDocNames: string[] };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.deletedDocNames).toEqual(['archive/index', 'archive/old/entry']);
+  });
+
+  test('creates an empty folder without materializing index.md', async () => {
+    const dir = setupTmpDir();
+
+    const result = await callApi(dir, '/api/create-folder', 'POST', {
+      path: 'New Folder',
+    });
+
+    expect(result.status).toBe(200);
+    expect(existsSync(join(dir, 'New Folder'))).toBe(true);
+    expect(existsSync(join(dir, 'New Folder/index.md'))).toBe(false);
+    const body = JSON.parse(result.body) as { path: string };
+    expect(body.path).toBe('New Folder');
+    expect((body as Record<string, unknown>).ok).toBeUndefined();
+  });
+
+  test('indexes intermediate folders created recursively', async () => {
+    const dir = setupTmpDir();
+    const folderIndex = new Map<string, FolderIndexEntry>();
+    const getFolderIndex = () => folderIndex;
+
+    const result = await callApi(
+      dir,
+      '/api/create-folder',
+      'POST',
+      {
+        path: 'a/b/c',
+      },
+      { getFolderIndex },
+    );
+
+    expect(result.status).toBe(200);
+    expect(existsSync(join(dir, 'a/b/c'))).toBe(true);
+
+    const docsResult = await callApi(dir, '/api/documents', 'GET', undefined, { getFolderIndex });
+    const body = JSON.parse(docsResult.body) as {
+      ok: boolean;
+      documents: Array<{ kind: string; path?: string }>;
+    };
+    const folderPaths = body.documents
+      .filter((entry) => entry.kind === 'folder')
+      .map((entry) => entry.path);
+    expect(folderPaths).toEqual(expect.arrayContaining(['a', 'a/b', 'a/b/c']));
+  });
+
+  test('rejects create-folder without a path', async () => {
+    const dir = setupTmpDir();
+
+    const result = await callApi(dir, '/api/create-folder', 'POST', {});
+
+    expect(result.status).toBe(400);
+    expect(JSON.parse(result.body)).toMatchObject({
+      type: 'urn:ok:error:invalid-request',
+      status: 400,
+    });
+  });
+
+  test('rejects create-folder traversal paths', async () => {
+    const dir = setupTmpDir();
+
+    const result = await callApi(dir, '/api/create-folder', 'POST', {
+      path: '../outside',
+    });
+
+    expect(result.status).toBe(400);
+    expect(JSON.parse(result.body)).toMatchObject({
+      type: 'urn:ok:error:invalid-request',
+      title: 'path must be a relative content path.',
+      status: 400,
+    });
+  });
+
+  test('rejects create-folder destinations inside .ok even without content filter', async () => {
+    const dir = setupTmpDir();
+
+    const result = await callApi(dir, '/api/create-folder', 'POST', {
+      path: '.ok/local/cache',
+    });
+
+    expect(result.status).toBe(400);
+    expect(existsSync(join(dir, '.ok/local/cache'))).toBe(false);
+    expect(JSON.parse(result.body)).toMatchObject({
+      type: 'urn:ok:error:reserved-doc-name',
+      title: "'.ok' is a reserved directory.",
+      status: 400,
+    });
+  });
+
+  test('rejects create-folder requests with non-string summary', async () => {
+    const dir = setupTmpDir();
+
+    const result = await callApi(dir, '/api/create-folder', 'POST', {
+      path: 'notes',
+      summary: 42,
+    });
+
+    expect(result.status).toBe(400);
+    expect(existsSync(join(dir, 'notes'))).toBe(false);
+    expect(JSON.parse(result.body)).toMatchObject({
+      type: 'urn:ok:error:invalid-request',
+      status: 400,
+    });
+  });
+
+  test('rejects create-folder destinations excluded by content config', async () => {
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, '.okignore'), 'ignored/\n', 'utf-8');
+    const contentFilter = createContentFilter({ projectDir: dir, contentDir: dir });
+
+    const result = await callApi(
+      dir,
+      '/api/create-folder',
+      'POST',
+      {
+        path: 'ignored/new',
+      },
+      { contentFilter },
+    );
+
+    expect(result.status).toBe(400);
+    expect(JSON.parse(result.body)).toMatchObject({
+      type: 'urn:ok:error:invalid-request',
+      title: 'Destination folder is excluded by the workspace content config.',
+      status: 400,
+    });
+  });
+
+  test('rejects create-folder collisions', async () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'existing'), { recursive: true });
+
+    const result = await callApi(dir, '/api/create-folder', 'POST', {
+      path: 'existing',
+    });
+
+    expect(result.status).toBe(409);
+    expect(JSON.parse(result.body)).toMatchObject({
+      type: 'urn:ok:error:doc-already-exists',
+      title: 'Folder already exists.',
+      status: 409,
+    });
+  });
+
+  test('lists empty folders from /api/documents', async () => {
+    const dir = setupTmpDir();
+    const folderIndex = new Map<string, FolderIndexEntry>([
+      [
+        'empty',
+        {
+          size: 0,
+          modified: '2026-01-01T00:00:00.000Z',
+          canonicalPath: join(dir, 'empty'),
+          inode: 1,
+        },
+      ],
+    ]);
+
+    const result = await callApi(dir, '/api/documents', 'GET', undefined, {
+      getFolderIndex: () => folderIndex,
+    });
+
+    expect(result.status).toBe(200);
+    const body = JSON.parse(result.body) as {
+      documents: Array<{ kind: string; path?: string }>;
+    };
+    expect((body as Record<string, unknown>).ok).toBeUndefined();
+    expect(body.documents).toContainEqual(
+      expect.objectContaining({ kind: 'folder', path: 'empty' }),
+    );
+  });
+
+  test('renames an empty folder on disk', async () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'empty'), { recursive: true });
+
+    const result = await callApi(dir, '/api/rename-path', 'POST', {
+      kind: 'folder',
+      fromPath: 'empty',
+      toPath: 'renamed',
+    });
+
+    expect(result.status).toBe(200);
+    expect(existsSync(join(dir, 'empty'))).toBe(false);
+    expect(existsSync(join(dir, 'renamed'))).toBe(true);
+    const body = JSON.parse(result.body) as { renamed: unknown[] };
+    expect((body as Record<string, unknown>).ok).toBeUndefined();
+    expect(body.renamed).toEqual([]);
+  });
+
+  test('deletes an empty folder and reports no deleted docs', async () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'empty'), { recursive: true });
+
+    const result = await callApi(dir, '/api/delete-path', 'POST', {
+      kind: 'folder',
+      path: 'empty',
+    });
+
+    expect(result.status).toBe(200);
+    expect(existsSync(join(dir, 'empty'))).toBe(false);
+    const body = JSON.parse(result.body) as { deletedDocNames: string[] };
+    expect((body as Record<string, unknown>).ok).toBeUndefined();
+    expect(body.deletedDocNames).toEqual([]);
   });
 
   test('rejects traversal attempts', async () => {
@@ -906,9 +1142,9 @@ describe('file operation API routes', () => {
     });
 
     expect(result.status).toBe(400);
-    const body = JSON.parse(result.body) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toContain('relative content paths');
+    const body = JSON.parse(result.body) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:invalid-request');
+    expect(body.title).toContain('relative content paths');
   });
 
   test.skipIf(process.platform === 'win32')(

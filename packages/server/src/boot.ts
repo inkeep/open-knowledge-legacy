@@ -225,6 +225,8 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
   });
 
   const httpServer = createHttpServer();
+  httpServer.headersTimeout = 30_000;
+  httpServer.requestTimeout = 60_000;
 
   const mount = mountMcpAndApi({
     httpServer,

@@ -30,9 +30,21 @@ Both `open-knowledge` and `ok` work as commands.
 The macOS app is in early access. Use the CLI to get started today.
 </Callout>
 
-If you'd prefer a native app, install Open Knowledge from the macOS DMG. The first launch detects every MCP-capable editor on your machine and offers to wire them up — see [Claude Desktop](/integrations/claude-desktop) for the full first-launch flow.
+If you'd prefer a native app, install Open Knowledge from the macOS DMG. The first launch detects every MCP-capable editor on your machine and offers to wire them up — see [Claude Desktop](/docs/integrations/claude-desktop) for the full first-launch flow.
 
 The DMG bundles its own CLI; put it on your PATH from **File → Install Command-Line Tools…** if you want `ok` available everywhere.
+
+### Opening a folder
+
+When you click **Pick Existing Project** (or open from Recents, drag-and-drop, or an `openknowledge://` deep link), a consent dialog confirms scaffolding details before writing anything. You choose:
+
+- Which directory to use as the content root (`Browse…` opens a folder picker constrained to the project)
+- Extra `.okignore` patterns. Files that match these patterns are ignored by Open Knowledge
+- Which AI tools to configure for this project
+
+Picking a folder via the dialog scaffolds `.ok/`; if you don't want OK in this folder, click **Cancel** and the folder is left untouched. Folders you create through **Start Fresh** apply defaults silently.
+
+When the picked folder lives inside a git repository, `.ok/` lands at the git working-tree root with `content.dir` scoped to the relative sub-path.
 
 ### Update channels
 
@@ -46,4 +58,4 @@ Open Knowledge is macOS and Linux only. Windows is not supported.
 
 ## What's next
 
-Run `ok init` in a project to scaffold MCP wiring for your editors. The full walkthrough is in the [Quickstart](/get-started/quickstart).
+Run `ok init` in a project to scaffold `.ok/` and register MCP wiring for your editors. The full walkthrough is in the [Quickstart](/docs/get-started/quickstart).

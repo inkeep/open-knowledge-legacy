@@ -21,6 +21,9 @@ export const FrontmatterValidationErrorSchema = z.discriminatedUnion('code', [
 
 export type FrontmatterValidationError = z.infer<typeof FrontmatterValidationErrorSchema>;
 
+/** Convert a Zod issue to a `FrontmatterIssue`. Path entries are coerced to
+ *  `string | number` (Zod's native path includes symbols which don't survive
+ *  JSON serialization). */
 export function toFrontmatterIssue(zIssue: z.core.$ZodIssue): FrontmatterIssue {
   return {
     path: zIssue.path.map((p) => (typeof p === 'symbol' ? String(p) : p)),
@@ -29,6 +32,10 @@ export function toFrontmatterIssue(zIssue: z.core.$ZodIssue): FrontmatterIssue {
   };
 }
 
+/** Build a `fieldErrors: Record<key, message>` map from a SCHEMA_INVALID
+ *  error — convenience for UI consumers (PropertyPanel) that key error
+ *  messages by the affected frontmatter field. Multi-issue keys are
+ *  concatenated with `'; '`. */
 export function fieldErrorsFromError(error: FrontmatterValidationError): Record<string, string> {
   if (error.code !== 'SCHEMA_INVALID') return {};
   const out: Record<string, string> = {};

@@ -14,8 +14,6 @@ const sampleDetection: readonly EditorDetection[] = [
   { id: 'claude', label: 'Claude Code', detected: true, willReplace: false },
   { id: 'claude-desktop', label: 'Claude Desktop', detected: false, willReplace: false },
   { id: 'cursor', label: 'Cursor', detected: true, willReplace: false },
-  { id: 'vscode', label: 'VS Code', detected: false, willReplace: false },
-  { id: 'windsurf', label: 'Windsurf', detected: false, willReplace: false },
   { id: 'codex', label: 'Codex', detected: false, willReplace: false },
 ];
 
@@ -25,8 +23,6 @@ describe('computeInitialSelection', () => {
     expect(sel.has('claude')).toBe(true);
     expect(sel.has('cursor')).toBe(true);
     expect(sel.has('claude-desktop')).toBe(false);
-    expect(sel.has('vscode')).toBe(false);
-    expect(sel.has('windsurf')).toBe(false);
     expect(sel.has('codex')).toBe(false);
     expect(sel.size).toBe(2);
   });
@@ -39,7 +35,7 @@ describe('computeInitialSelection', () => {
   test('all-detected preselects all', () => {
     const sel = computeInitialSelection([
       { id: 'claude', label: 'Claude Code', detected: true, willReplace: false },
-      { id: 'vscode', label: 'VS Code', detected: true, willReplace: false },
+      { id: 'cursor', label: 'Cursor', detected: true, willReplace: false },
     ]);
     expect(sel.size).toBe(2);
   });
@@ -47,7 +43,7 @@ describe('computeInitialSelection', () => {
   test('none-detected preselects none', () => {
     const sel = computeInitialSelection([
       { id: 'claude', label: 'Claude Code', detected: false, willReplace: false },
-      { id: 'vscode', label: 'VS Code', detected: false, willReplace: false },
+      { id: 'cursor', label: 'Cursor', detected: false, willReplace: false },
     ]);
     expect(sel.size).toBe(0);
   });
@@ -91,7 +87,7 @@ describe('selectedIdsOrdered', () => {
   test('selected ids NOT in detection payload are dropped (defensive)', () => {
     const sel = new Set<OkMcpWiringEditorId>(['claude']);
     const truncated: readonly EditorDetection[] = [
-      { id: 'vscode', label: 'VS Code', detected: false, willReplace: false },
+      { id: 'codex', label: 'Codex', detected: false, willReplace: false },
     ];
     const out = selectedIdsOrdered(sel, truncated);
     expect(out).toEqual([]);

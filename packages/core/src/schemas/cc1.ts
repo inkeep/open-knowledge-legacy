@@ -30,6 +30,14 @@ export type CC1Channel =
   | typeof CC1_CHANNEL_CONFIG_VALIDATION_REJECTED
   | typeof CC1_CHANNEL_CONFIG_IGNORE_NESTED_ERROR;
 
+/** `server-info` broadcast shape.
+ *
+ * `currentBranch` is the late-join backstop for the cross-branch
+ * invalidation flow — clients reconnecting after a branch switch
+ * compare it against their last-observed branch and trigger
+ * `handleBranchSwitched` on mismatch (`branch-switched` is stateless
+ * and has no replay). Optional for backwards compat with non-git
+ * deployments. */
 export const CC1ServerInfoPayloadSchema = z
   .object({
     v: z.literal(CC1_CONTRACT_VERSION),
@@ -60,6 +68,23 @@ export const CC1DerivedViewPayloadSchema = z
   .loose();
 export type CC1DerivedViewPayload = z.infer<typeof CC1DerivedViewPayloadSchema>;
 
+/** `disk-ack` broadcast shape — per-document state-vector watermark.
+ *
+ * `docName` carries the target document because `__system__` is the
+ * stateless carrier (broadcast doc) but the watermark applies to one
+ * specific document — this is the first per-doc CC1 channel.
+ *
+ * `sv` is base64-encoded `Uint8Array` (the output of
+ * `Y.encodeStateVector`). Base64 keeps the JSON wire-format printable
+ * while preserving byte-fidelity.
+ *
+ * `seq` is per-channel monotonic, NOT per-doc. Disk-ack consumers do
+ * NOT use it for ordering — `pool.observeDiskAck` ignores it entirely.
+ * The field is retained for wire-format uniformity with other CC1
+ * channels (debugging, future tooling that aggregates across
+ * channels). Do NOT rely on it for inter-doc ordering — that semantic
+ * is not preserved at this granularity. If per-doc ordering becomes
+ * necessary, add a separate `docSeq` field (additive, `.loose()`-permitted). */
 export const CC1DiskAckPayloadSchema = z
   .object({
     v: z.literal(CC1_CONTRACT_VERSION),
@@ -71,6 +96,16 @@ export const CC1DiskAckPayloadSchema = z
   .loose();
 export type CC1DiskAckPayload = z.infer<typeof CC1DiskAckPayloadSchema>;
 
+/** `config-validation-rejected` broadcast shape (FR-14b / D45 L3 / D56).
+ *
+ * Fired when the persistence-hook config-doc branch rejects a Y.Text
+ * mutation that produces a syntactically broken or schema-failing
+ * config document. The Settings pane subscribes to this channel and
+ * surfaces a toast + flashes the affected field (mapped from
+ * `error.issues[].path` for `SCHEMA_INVALID`).
+ *
+ * `error` carries the full `ConfigValidationError` envelope so consumers
+ * can render the same `humanFormat` text that CLI / MCP do. */
 export const CC1ConfigValidationRejectedPayloadSchema = z
   .object({
     v: z.literal(CC1_CONTRACT_VERSION),
@@ -84,6 +119,16 @@ export type CC1ConfigValidationRejectedPayload = z.infer<
   typeof CC1ConfigValidationRejectedPayloadSchema
 >;
 
+/** `config-ignore-nested-error` broadcast shape — payload-bearing.
+ *
+ * `path` is the project-relative path of the malformed nested `.okignore`
+ * file (full path is acceptable in CC1 payloads — only span/metric attrs
+ * need cardinality bounding).
+ *
+ * `error` is a short human-readable message describing the parse failure
+ * — already truncated/normalised at the emit site so the Settings toast
+ * can render it directly.
+ */
 export const CC1ConfigIgnoreNestedErrorPayloadSchema = z
   .object({
     v: z.literal(CC1_CONTRACT_VERSION),

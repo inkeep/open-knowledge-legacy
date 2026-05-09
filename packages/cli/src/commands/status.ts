@@ -1,4 +1,4 @@
-import { type Config, resolveContentDir, resolveLockDir } from '@inkeep/open-knowledge-server';
+import { type Config, resolveLockDir } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { inspectLock, type LockState } from './lock-state.ts';
 
@@ -9,6 +9,8 @@ interface StatusEntry {
   port?: number;
   startedAt?: string;
   host?: string;
+  /** Resolved `alive` verdict — `true` for local-live locks, `false` for
+   *  `missing` / `dead-pid` / `corrupt`, `'unknown'` for foreign-host. */
   alive: boolean | 'unknown';
 }
 
@@ -108,8 +110,8 @@ export function statusCommand(getConfig: () => Config): Command {
     .description('Show live state of the server + ui lockfiles for this project')
     .option('--json', 'Emit structured JSON instead of formatted text')
     .action((opts: { json?: boolean }) => {
-      const config = getConfig();
-      const lockDir = resolveLockDir(resolveContentDir(config, process.cwd()));
+      getConfig(); // still load config to surface any project-config errors
+      const lockDir = resolveLockDir(process.cwd());
       runStatus({ lockDir, json: opts.json === true });
     });
 }

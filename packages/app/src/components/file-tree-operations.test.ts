@@ -3,12 +3,11 @@ import {
   applyDeleteToDocuments,
   applyRenameToDocuments,
   buildRenamedNodePath,
-  isRenamePathResponse,
   isValidNodeName,
   normalizeRenameValue,
   remapActiveDocName,
 } from './file-tree-operations';
-import type { DocEntry } from './file-tree-utils';
+import type { FileEntry } from './file-tree-utils';
 
 const fileNode = {
   name: 'notes',
@@ -22,10 +21,24 @@ const folderNode = {
   kind: 'folder',
 } as const;
 
-const documents: DocEntry[] = [
-  { docName: 'docs/notes', size: 10, modified: '2026-04-13T00:00:00.000Z' },
-  { docName: 'docs/nested/page', size: 11, modified: '2026-04-13T00:00:00.000Z' },
-  { docName: 'README', size: 12, modified: '2026-04-13T00:00:00.000Z' },
+const documents: FileEntry[] = [
+  { kind: 'document', docName: 'docs/notes', size: 10, modified: '2026-04-13T00:00:00.000Z' },
+  {
+    kind: 'document',
+    docName: 'docs/nested/page',
+    size: 11,
+    modified: '2026-04-13T00:00:00.000Z',
+  },
+  { kind: 'folder', path: 'docs/empty', size: 0, modified: '2026-04-13T00:00:00.000Z' },
+  {
+    kind: 'asset',
+    path: 'docs/image.png',
+    assetExt: '.png',
+    mediaKind: 'image',
+    size: 1,
+    modified: '2026-04-13T00:00:00.000Z',
+  },
+  { kind: 'document', docName: 'README', size: 12, modified: '2026-04-13T00:00:00.000Z' },
 ];
 
 describe('file-tree-operations', () => {
@@ -65,14 +78,30 @@ describe('file-tree-operations', () => {
       applyRenameToDocuments(documents, [
         { fromDocName: 'docs/notes', toDocName: 'docs/renamed' },
         { fromDocName: 'docs/nested/page', toDocName: 'guides/nested/page' },
-      ]).map((doc) => doc.docName),
-    ).toEqual(['docs/renamed', 'guides/nested/page', 'README']);
+      ]).map((entry) => (entry.kind === 'document' ? entry.docName : entry.path)),
+    ).toEqual(['docs/renamed', 'guides/nested/page', 'docs/empty', 'docs/image.png', 'README']);
+  });
+
+  test('applyRenameToDocuments remaps explicit folder and asset paths', () => {
+    expect(
+      applyRenameToDocuments(documents, [], [{ fromPath: 'docs', toPath: 'guides' }]).map(
+        (entry) => (entry.kind === 'document' ? entry.docName : entry.path),
+      ),
+    ).toEqual(['docs/notes', 'docs/nested/page', 'guides/empty', 'guides/image.png', 'README']);
   });
 
   test('applyDeleteToDocuments removes all deleted doc names', () => {
     expect(
-      applyDeleteToDocuments(documents, ['docs/notes', 'docs/nested/page']).map(
-        (doc) => doc.docName,
+      applyDeleteToDocuments(documents, ['docs/notes', 'docs/nested/page']).map((entry) =>
+        entry.kind === 'document' ? entry.docName : entry.path,
+      ),
+    ).toEqual(['docs/empty', 'docs/image.png', 'README']);
+  });
+
+  test('applyDeleteToDocuments removes explicit folder and asset descendants', () => {
+    expect(
+      applyDeleteToDocuments(documents, ['docs/notes', 'docs/nested/page'], 'docs').map((entry) =>
+        entry.kind === 'document' ? entry.docName : entry.path,
       ),
     ).toEqual(['README']);
   });
@@ -84,17 +113,5 @@ describe('file-tree-operations', () => {
     expect(
       remapActiveDocName('README', [{ fromDocName: 'docs/notes', toDocName: 'docs/renamed' }]),
     ).toBe('README');
-  });
-
-  test('isRenamePathResponse validates the managed rename response shape', () => {
-    expect(
-      isRenamePathResponse({
-        ok: true,
-        renamed: [{ fromDocName: 'docs/notes', toDocName: 'docs/renamed' }],
-        rewrittenDocs: [{ docName: 'README', rewrites: 1 }],
-      }),
-    ).toBe(true);
-    expect(isRenamePathResponse({ ok: false, error: 'Destination already exists' })).toBe(true);
-    expect(isRenamePathResponse({ ok: true, renamed: [], rewrittenDocs: [{}] })).toBe(false);
   });
 });

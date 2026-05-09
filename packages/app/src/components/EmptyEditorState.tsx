@@ -1,3 +1,4 @@
+import { DocumentListSuccessSchema, SeedPlanSuccessSchema } from '@inkeep/open-knowledge-core';
 import { Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { OkBlob } from '@/components/OkBlob';
@@ -21,13 +22,11 @@ export function EmptyEditorState() {
     async function refresh() {
       const docsPromise = fetch('/api/documents')
         .then(async (res) => {
-          const data = (await res.json().catch(() => null)) as {
-            ok: boolean;
-            documents?: unknown[];
-          } | null;
+          const body = (await res.json().catch(() => null)) as unknown;
           if (cancelled) return;
-          if (res.ok && data?.ok && Array.isArray(data.documents)) {
-            setDocumentCount(data.documents.length);
+          const success = res.ok ? DocumentListSuccessSchema.safeParse(body) : null;
+          if (success?.success) {
+            setDocumentCount(countDocuments(success.data.documents));
             documentCountResolvedRef.current = true;
           } else if (!documentCountResolvedRef.current) {
             setDocumentCount(1);
@@ -44,15 +43,34 @@ export function EmptyEditorState() {
       const planPromise = (async () => {
         const okDesktop = typeof window !== 'undefined' ? window.okDesktop : undefined;
         try {
-          const result = okDesktop?.seed
-            ? await okDesktop.seed.plan()
-            : await fetch('/api/seed/plan').then((r) => r.json());
+          if (okDesktop?.seed) {
+            const result = await okDesktop.seed.plan();
+            if (cancelled) return;
+            if (!result.ok) {
+              setSeedStatus('error');
+              return;
+            }
+            const hasWork = result.plan.created.length > 0;
+            setSeedStatus(hasWork ? 'has-work' : 'seeded');
+            return;
+          }
+          const res = await fetch('/api/seed/plan');
           if (cancelled) return;
-          if (!result?.ok) {
+          if (!res.ok) {
             setSeedStatus('error');
             return;
           }
-          const hasWork = result.plan.created.length > 0;
+          const body = (await res.json().catch(() => null)) as unknown;
+          if (cancelled) return;
+          const parsed = SeedPlanSuccessSchema.safeParse(body);
+          if (!parsed.success) {
+            setSeedStatus('error');
+            return;
+          }
+          const plan = parsed.data.plan as {
+            created?: unknown[];
+          } | null;
+          const hasWork = (plan?.created?.length ?? 0) > 0;
           setSeedStatus(hasWork ? 'has-work' : 'seeded');
         } catch {
           if (!cancelled) setSeedStatus('error');
@@ -80,12 +98,11 @@ export function EmptyEditorState() {
     setSeedStatus('seeded');
     fetch('/api/documents')
       .then(async (res) => {
-        const data = (await res.json().catch(() => null)) as {
-          ok: boolean;
-          documents?: unknown[];
-        } | null;
-        if (res.ok && data?.ok && Array.isArray(data.documents)) {
-          setDocumentCount(data.documents.length);
+        const body = (await res.json().catch(() => null)) as unknown;
+        if (!res.ok) return;
+        const success = DocumentListSuccessSchema.safeParse(body);
+        if (success.success) {
+          setDocumentCount(countDocuments(success.data.documents));
         }
       })
       .catch(() => {});
@@ -112,6 +129,10 @@ export function EmptyEditorState() {
       />
     </div>
   );
+}
+
+function countDocuments(entries: ReadonlyArray<{ kind?: unknown }>): number {
+  return entries.filter((entry) => entry.kind === 'document').length;
 }
 
 function OnboardingMessage({ onCtaClick, showCta }: { onCtaClick: () => void; showCta: boolean }) {

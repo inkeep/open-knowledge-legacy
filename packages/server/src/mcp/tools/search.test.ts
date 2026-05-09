@@ -62,6 +62,18 @@ function mockFetchOk(payload: Record<string, unknown>): void {
   }) as unknown as typeof fetch;
 }
 
+function mockFetchProblem(
+  status: number,
+  payload: { type: string; title: string; detail?: string; instance?: string },
+): void {
+  globalThis.fetch = mock(async (_url: string, _init?: RequestInit) => {
+    return new Response(JSON.stringify({ ...payload, status }), {
+      status,
+      headers: { 'content-type': 'application/problem+json' },
+    });
+  }) as unknown as typeof fetch;
+}
+
 describe('search MCP tool — registration', () => {
   test('registers under the name "search" with read-only annotations', () => {
     const { server, registered } = makeFakeServer();
@@ -247,8 +259,11 @@ describe('search MCP tool — error paths', () => {
     expect(text).toContain('grep');
   });
 
-  test('server returns ok:false → tool reports error', async () => {
-    mockFetchOk({ ok: false, error: 'Query is too long' });
+  test('server returns RFC 9457 problem+json → tool reports error', async () => {
+    mockFetchProblem(400, {
+      type: 'urn:ok:error:invalid-request',
+      title: 'Query is too long',
+    });
     const { server, registered } = makeFakeServer();
     register(server, {
       resolveCwd: async () => '/tmp/proj',

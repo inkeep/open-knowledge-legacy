@@ -1,7 +1,7 @@
 import { hashFromAssetPath } from '@/lib/doc-hash';
 import { fileEntryToTreePath, treePathToAppPath } from './file-tree-adapter';
 import type { FileEntry } from './file-tree-utils';
-import { isAssetEntry, isDocumentEntry } from './file-tree-utils';
+import { isAssetEntry, isDocumentEntry, isFolderEntry } from './file-tree-utils';
 import { docNameForNavigationTarget, type ResolvedNavigationTarget } from './navigation-targets';
 
 interface FileTreeSelection {
@@ -17,7 +17,8 @@ interface ResolveFileTreeSelectionOptions {
 type FileTreeSelectionAction =
   | { kind: 'none' }
   | { kind: 'asset'; hash: string }
-  | { kind: 'document-or-folder'; path: string };
+  | { kind: 'document'; path: string }
+  | { kind: 'folder'; path: string };
 
 function documentSelection(docName: string | null): FileTreeSelection {
   return {
@@ -84,12 +85,18 @@ export function resolveFileTreeSelectionAction(
 
   const appPath = treePathToAppPath(selectedPath);
   if (selectedPath.endsWith('/')) {
-    return { kind: 'document-or-folder', path: appPath };
+    const hasFolderEntry = entries.some((item) => {
+      if (isFolderEntry(item)) return item.path === appPath || item.path.startsWith(`${appPath}/`);
+      const path = isAssetEntry(item) ? item.path : item.docName;
+      return path.startsWith(`${appPath}/`);
+    });
+    if (!hasFolderEntry) return { kind: 'none' };
+    return { kind: 'folder', path: appPath };
   }
 
   if (!entries.some((item) => isDocumentEntry(item) && item.docName === appPath)) {
     return { kind: 'none' };
   }
 
-  return { kind: 'document-or-folder', path: appPath };
+  return { kind: 'document', path: appPath };
 }

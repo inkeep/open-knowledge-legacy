@@ -1,6 +1,6 @@
 {
   "name": "@inkeep/open-knowledge-app",
-  "version": "0.4.0-beta.20",
+  "version": "0.4.0-beta.21",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,7 +19,7 @@
     "measure:fuzz": "bash scripts/measure-fuzz.sh",
     "measure:stress": "bash scripts/measure-stress.sh",
     "perf:compare": "bash scripts/perf-compare.sh",
-    "test:e2e": "playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/asset-embed.e2e.ts tests/stress/asset-embed-advanced.e2e.ts tests/stress/asset-click-dispatch.e2e.ts tests/stress/handoff.e2e.ts tests/stress/multi-agent-presence.e2e.ts tests/stress/editor-mode-persistence.e2e.ts tests/stress/sidebar-push-small-width.e2e.ts tests/stress/agent-activity-panel.e2e.ts tests/stress/drop-pipeline-auto-open.e2e.ts tests/stress/command-palette-flicker.e2e.ts",
+    "test:e2e": "playwright test tests/stress/ux-interactions.e2e.ts tests/stress/file-tree-create.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/asset-embed.e2e.ts tests/stress/asset-embed-advanced.e2e.ts tests/stress/asset-click-dispatch.e2e.ts tests/stress/handoff.e2e.ts tests/stress/multi-agent-presence.e2e.ts tests/stress/editor-mode-persistence.e2e.ts tests/stress/sidebar-push-small-width.e2e.ts tests/stress/agent-activity-panel.e2e.ts tests/stress/drop-pipeline-auto-open.e2e.ts tests/stress/command-palette-flicker.e2e.ts",
     "test:e2e:install-browsers": "playwright install chromium webkit firefox",
     "test:visual": "playwright test --config playwright.visual.config.ts",
     "test:visual:update": "playwright test --config playwright.visual.config.ts --update-snapshots",
@@ -28,7 +28,6 @@
     "perf:profile": "bun run tests/perf/profile.ts",
     "size": "turbo run build --filter=@inkeep/open-knowledge-app && size-limit"
   },
-  "//": "TODO: check why after installing @pierre/trees has exceeded by 55 kB; PropertyPanel pulled date-fns + react-day-picker into the eager bundle (~24 kB) — follow-up should lazy-load DateWidget so the calendar/date-fns chunk only loads on first date-property edit; @dnd-kit adds ~15 kB to the eager bundle (PropertyPanel imports it at top level) — follow-up should lazy-load PropertyPanel itself so dnd-kit + the widget zoo only load when a doc has frontmatter",
   "size-limit": [
     {
       "name": "main app bundle (gzipped)",

@@ -27,8 +27,21 @@ export function packageVersionMajorMinor(version: string): string {
   return `${major}.${minor}`;
 }
 
-export function buildConfigYmlContent(_version: string): string {
-  return `# yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@latest/dist/schemas/${CONFIG_SCHEMA_MAJOR_PATH}/config.project.schema.json
+function quoteYamlScalar(value: string): string {
+  return /^[A-Za-z0-9._\-/]+$/.test(value) ? value : JSON.stringify(value);
+}
+
+interface BuildConfigYmlOptions {
+  /** When set and not `'.'`, the scaffold's commented `content.dir`
+   * placeholder is replaced with the uncommented form so a freshly written
+   * config.yml carries the resolved scope (e.g., git-root promotion's picked
+   * sub-path). `'.'` and `undefined` both render the default commented
+   * placeholder. */
+  contentDir?: string;
+}
+
+export function buildConfigYmlContent(_version: string, options?: BuildConfigYmlOptions): string {
+  const template = `# yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@latest/dist/schemas/${CONFIG_SCHEMA_MAJOR_PATH}/config.project.schema.json
 # Open Knowledge — project configuration
 #
 # This file overrides built-in defaults for this project. Every key below
@@ -134,6 +147,12 @@ export function buildConfigYmlContent(_version: string): string {
 #       description: Canonical knowledge committed after a team decision. Produced by the \`consolidate\` tool with a \`supersedes:\` chain tying back to the research that preceded it.
 #       tags: [article, canonical, layer-consolidate]
 `;
+  const contentDir = options?.contentDir;
+  if (contentDir === undefined || contentDir === '.') return template;
+  return template.replace(
+    '# content:\n#   dir: .',
+    `content:\n  dir: ${quoteYamlScalar(contentDir)}`,
+  );
 }
 
 function writeIfMissing(filePath: string, content: string, label: string): boolean {
@@ -196,7 +215,18 @@ export const OK_OKIGNORE_TEMPLATE = `# .okignore — paths to exclude from the O
 #   !keep.md       # re-include a file .gitignore excluded
 `;
 
-export function initContent(projectDir: string): {
+interface InitContentOptions {
+  /** When set and not `'.'`, scaffolded `.ok/config.yml` carries an
+   * uncommented `content.dir: <value>` block. Used by the CLI's git-root
+   * promotion path to scope the project to a sub-folder of the git
+   * working tree without requiring the user to hand-edit the file. */
+  contentDir?: string;
+}
+
+export function initContent(
+  projectDir: string,
+  options?: InitContentOptions,
+): {
   created: string[];
   updated: string[];
   skipped: string[];
@@ -221,7 +251,7 @@ export function initContent(projectDir: string): {
   if (
     writeIfMissing(
       join(okDir, CONFIG_FILENAME),
-      buildConfigYmlContent(PACKAGE_VERSION),
+      buildConfigYmlContent(PACKAGE_VERSION, { contentDir: options?.contentDir }),
       `.ok/${CONFIG_FILENAME}`,
     )
   ) {

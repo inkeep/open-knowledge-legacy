@@ -182,9 +182,9 @@ describe('CC1 broadcast — L1 integration', () => {
       body: JSON.stringify({ path: '__system__.md' }),
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toContain('reserved');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:reserved-doc-name');
+    expect(String(body.title)).toContain('reserved');
   });
 
   test('forged BroadcastStateless on __system__ does not relay to other peers', async () => {

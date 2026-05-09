@@ -1,3 +1,15 @@
+/**
+ * C1: Concurrent WYSIWYG (XmlFragment) edits — multi-client convergence.
+ *
+ * Validates that 2-3 clients writing to XmlFragment concurrently converge
+ * correctly under the server-authoritative observer bridge. Cross-CRDT sync
+ * (XmlFragment → Y.Text) runs exclusively on the server via
+ * OBSERVER_SYNC_ORIGIN; client observers no longer write Y.Text.
+ *
+ * Per-test docName isolation via createTestClients(port, { count }) default.
+ * Client lifecycle in try/finally (not afterEach) per R8a.
+ */
+
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import * as Y from 'yjs';
@@ -29,6 +41,9 @@ function appendParagraph(client: TestClient, text: string): void {
   client.fragment.push([paragraph]);
 }
 
+/** Assert convergence: all clients have matching Y.Text and matching fragment,
+ *  and bridge invariant holds on each. Uses pollUntil to wait for the full
+ *  propagation chain (client → server observer → Y.Text → back to client). */
 async function assertConverged(clients: TestClient[], markers: string[]): Promise<void> {
   for (const marker of markers) {
     for (let i = 0; i < clients.length; i++) {

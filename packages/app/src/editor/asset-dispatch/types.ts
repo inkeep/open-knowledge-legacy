@@ -12,5 +12,5 @@ export interface AssetViewer {
 }
 
 export type AssetViewerLookupResult =
-  | { readonly found: true; readonly viewer: AssetViewer }
-  | { readonly found: false };
+  | { readonly ok: true; readonly viewer: AssetViewer }
+  | { readonly ok: false };

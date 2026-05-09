@@ -65,7 +65,7 @@ export interface BrowserWindowLike {
   once(event: 'ready-to-show', cb: () => void): void;
   webContents: {
     send(channel: string, ...args: unknown[]): void;
-    once(event: 'dom-ready', cb: () => void): void;
+    once(event: 'dom-ready' | 'did-finish-load', cb: () => void): void;
     setWindowOpenHandler(handler: (details: { url: string }) => { action: 'allow' | 'deny' }): void;
     on(
       event: 'will-navigate',
@@ -111,6 +111,8 @@ interface ProjectContext {
 interface CreateProjectWindowOpts {
   projectPath: string;
   pendingDeepLinkDoc?: string;
+  didEnsureGit?: boolean;
+  consentVersion?: number;
 }
 
 export interface WindowManagerDeps {
@@ -118,6 +120,8 @@ export interface WindowManagerDeps {
   forkUtility(entry: string, opts: { windowLifecycleBound?: boolean }): UtilityProcessLike;
   utilityEntryPath: string;
   rendererEntryPath: string;
+  /** electron-vite dev-server URL (`process.env.ELECTRON_RENDERER_URL`). When present,
+   *  main uses `loadURL` for HMR; otherwise falls back to `loadFile(rendererEntryPath)`. */
   rendererDevUrl?: string | null;
   setTimeout(cb: () => void, ms: number): unknown;
   killProbe(pid: number, signal: number | NodeJS.Signals): void;
@@ -295,6 +299,8 @@ export class WindowManager {
           projectDir: projectPath,
           port: 0,
           host: 'localhost',
+          didEnsureGit: opts.didEnsureGit === true,
+          consentVersion: opts.consentVersion ?? 1,
         },
       });
 
@@ -429,14 +435,15 @@ export class WindowManager {
       }
     });
 
+    const additionalArguments = [
+      `--ok-collab-url=ws://localhost:${port}/collab`,
+      `--ok-api-origin=${apiOrigin}`,
+      `--ok-project-path=${projectPath}`,
+      `--ok-project-name=${projectName}`,
+      `--ok-mode=editor`,
+    ];
     const window = this.deps.createWindow({
-      additionalArguments: [
-        `--ok-collab-url=ws://localhost:${port}/collab`,
-        `--ok-api-origin=${apiOrigin}`,
-        `--ok-project-path=${projectPath}`,
-        `--ok-project-name=${projectName}`,
-        `--ok-mode=editor`,
-      ],
+      additionalArguments,
       title: formatEditorTitle(projectName),
     });
 

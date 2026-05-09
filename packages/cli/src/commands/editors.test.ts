@@ -9,8 +9,6 @@ import {
   resolveCodexConfigPath,
   resolveCursorConfigPath,
   resolveEditorTargets,
-  resolveVsCodeConfigPath,
-  resolveWindsurfConfigPath,
 } from './editors.ts';
 
 describe('resolveAppSupportPath', () => {
@@ -119,38 +117,6 @@ describe('resolveCursorConfigPath', () => {
   });
 });
 
-describe('resolveVsCodeConfigPath', () => {
-  it('builds the macOS VS Code config path', () => {
-    expect(
-      resolveVsCodeConfigPath({
-        home: '/Users/alice',
-        platformName: 'darwin',
-      }),
-    ).toBe('/Users/alice/Library/Application Support/Code/User/mcp.json');
-  });
-
-  it('builds the Linux VS Code config path', () => {
-    expect(
-      resolveVsCodeConfigPath({
-        home: '/home/alice',
-        platformName: 'linux',
-        env: { XDG_CONFIG_HOME: '/tmp/xdg-config' },
-      }),
-    ).toBe('/tmp/xdg-config/Code/User/mcp.json');
-  });
-});
-
-describe('resolveWindsurfConfigPath', () => {
-  it('builds the global Windsurf config path', () => {
-    expect(
-      resolveWindsurfConfigPath({
-        home: '/Users/alice',
-        platformName: 'darwin',
-      }),
-    ).toBe('/Users/alice/.codeium/windsurf/mcp_config.json');
-  });
-});
-
 describe('resolveCodexConfigPath', () => {
   it('builds the default Codex config path', () => {
     expect(
@@ -240,17 +206,6 @@ describe('EDITOR_TARGETS.buildEntry with cliPath', () => {
     expect(entry.type).toBeUndefined();
   });
 
-  it('VS Code preserves type:stdio when cliPath is set', () => {
-    const entry = EDITOR_TARGETS.vscode.buildEntry('', {
-      cliPath: '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh',
-    });
-    expect(entry).toEqual({
-      type: 'stdio',
-      command: '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh',
-      args: ['mcp'],
-    });
-  });
-
   it('Cursor emits command:cliPath without type:stdio', () => {
     const entry = EDITOR_TARGETS.cursor.buildEntry('', { cliPath: '/usr/local/bin/ok' });
     expect(entry).toEqual({ command: '/usr/local/bin/ok', args: ['mcp'] });
@@ -259,11 +214,6 @@ describe('EDITOR_TARGETS.buildEntry with cliPath', () => {
 
   it('Codex emits command:cliPath (TOML format, no type:stdio)', () => {
     const entry = EDITOR_TARGETS.codex.buildEntry('', { cliPath: '/usr/local/bin/ok' });
-    expect(entry).toEqual({ command: '/usr/local/bin/ok', args: ['mcp'] });
-  });
-
-  it('Windsurf emits command:cliPath', () => {
-    const entry = EDITOR_TARGETS.windsurf.buildEntry('', { cliPath: '/usr/local/bin/ok' });
     expect(entry).toEqual({ command: '/usr/local/bin/ok', args: ['mcp'] });
   });
 

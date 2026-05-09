@@ -12,6 +12,12 @@ export const ALLOWED_AUDIO_MIME_TYPES = ['audio/mpeg', 'audio/wav', 'audio/ogg']
 
 export const ALLOWED_PDF_MIME_TYPES = ['application/pdf'] as const;
 
+/**
+ * Canonical image-extension set. One source of truth for every dispatch
+ * question: client emit-shape (`pickInsertShape`), server mdast→PM
+ * (`handlers.wikiLinkEmbed`), client TipTap renderHTML (WikiLinkEmbed).
+ * Widening here (e.g. heic) lands in all three dispatch paths atomically.
+ */
 export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
   'png',
   'jpg',

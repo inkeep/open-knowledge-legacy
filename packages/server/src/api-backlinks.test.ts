@@ -139,15 +139,14 @@ describe('graph endpoints', () => {
             backlinkIndex,
           )
         ).body,
-      ) as { ok: boolean; counts: Record<string, number> };
-      expect(counts.ok).toBe(true);
+      ) as { counts: Record<string, number> };
       expect(counts.counts).toEqual({ alpha: 0, beta: 1, gamma: 0, unknown: 0 });
 
       const countsMissing = JSON.parse(
         (await callRoute(contentDir, '/api/backlink-counts', fileIndex, backlinkIndex)).body,
-      ) as { ok: boolean; error: string };
-      expect(countsMissing.ok).toBe(false);
-      expect(countsMissing.error).toContain('Missing docNames');
+      ) as { type: string; title: string };
+      expect(countsMissing.type).toBe('urn:ok:error:invalid-request');
+      expect(countsMissing.title).toContain('Missing docNames');
 
       const forward = JSON.parse(
         (await callRoute(contentDir, '/api/forward-links?docName=alpha', fileIndex, backlinkIndex))
@@ -202,12 +201,10 @@ describe('graph endpoints', () => {
       const linkGraph = JSON.parse(
         (await callRoute(contentDir, '/api/link-graph', fileIndex, backlinkIndex)).body,
       ) as {
-        ok: boolean;
         nodes: Array<{ id: string; label: string; anchor: string | null }>;
         links: Array<{ source: string; target: string }>;
       };
 
-      expect(linkGraph.ok).toBe(true);
       expect(linkGraph.nodes.map((n) => n.id).sort()).toEqual(['alpha', 'beta', 'gamma']);
       expect(linkGraph.nodes.find((n) => n.id === 'alpha')?.label).toBe('Alpha');
       expect(linkGraph.nodes.find((n) => n.id === 'beta')?.label).toBe('Beta');
@@ -225,12 +222,10 @@ describe('graph endpoints', () => {
           )
         ).body,
       ) as {
-        ok: boolean;
         nodes: Array<{ id: string; label: string }>;
         links: Array<{ source: string; target: string }>;
       };
 
-      expect(oneHopGraph.ok).toBe(true);
       expect(oneHopGraph.nodes.map((n) => n.id).sort()).toEqual(['alpha', 'beta']);
       expect(oneHopGraph.links).toEqual([{ source: 'alpha', target: 'beta' }]);
 
@@ -241,10 +236,9 @@ describe('graph endpoints', () => {
         backlinkIndex,
       );
       expect(missingDocName.status).toBe(400);
-      expect(JSON.parse(missingDocName.body)).toEqual({
-        ok: false,
-        error: 'docName is required when degrees is provided',
-      });
+      const missingDocNameBody = JSON.parse(missingDocName.body) as { type: string; title: string };
+      expect(missingDocNameBody.type).toBe('urn:ok:error:invalid-request');
+      expect(missingDocNameBody.title).toContain('docName is required');
 
       const invalidDegrees = await callRoute(
         contentDir,
@@ -253,10 +247,9 @@ describe('graph endpoints', () => {
         backlinkIndex,
       );
       expect(invalidDegrees.status).toBe(400);
-      expect(JSON.parse(invalidDegrees.body)).toEqual({
-        ok: false,
-        error: 'degrees must be a non-negative integer',
-      });
+      const invalidDegreesBody = JSON.parse(invalidDegrees.body) as { type: string; title: string };
+      expect(invalidDegreesBody.type).toBe('urn:ok:error:invalid-request');
+      expect(invalidDegreesBody.title).toContain('degrees must be');
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -330,13 +323,11 @@ describe('graph endpoints', () => {
       );
       expect(globalResponse.status).toBe(200);
       const globalBody = JSON.parse(globalResponse.body) as {
-        ok: boolean;
         deadLinks: Array<{
           target: string;
           sources: Array<{ source: string; title: string; snippet: string | null }>;
         }>;
       };
-      expect(globalBody.ok).toBe(true);
       expect(globalBody.deadLinks).toEqual([
         {
           target: 'missing-target',
@@ -363,7 +354,6 @@ describe('graph endpoints', () => {
       );
       expect(scopedResponse.status).toBe(200);
       const scopedBody = JSON.parse(scopedResponse.body) as {
-        ok: boolean;
         deadLinks: Array<{
           target: string;
           sources: Array<{ source: string; title: string; snippet: string | null }>;
@@ -390,7 +380,7 @@ describe('graph endpoints', () => {
         backlinkIndex,
       );
       expect(emptyResponse.status).toBe(200);
-      expect(JSON.parse(emptyResponse.body)).toEqual({ ok: true, deadLinks: [] });
+      expect(JSON.parse(emptyResponse.body)).toEqual({ deadLinks: [] });
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -404,10 +394,9 @@ describe('graph endpoints', () => {
       const fileIndex = new Map<string, FileIndexEntry>();
       const response = await callRoute(contentDir, '/api/dead-links', fileIndex);
       expect(response.status).toBe(503);
-      expect(JSON.parse(response.body)).toEqual({
-        ok: false,
-        error: 'Backlink index not configured',
-      });
+      const body = JSON.parse(response.body) as { type: string; title: string; status: number };
+      expect(body.type).toBe('urn:ok:error:backlink-index-not-configured');
+      expect(body.status).toBe(503);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -501,10 +490,9 @@ describe('graph endpoints', () => {
       );
 
       expect(response.status).toBe(400);
-      expect(JSON.parse(response.body)).toEqual({
-        ok: false,
-        error: 'Invalid orphan mode. Allowed values: incoming, outgoing, both',
-      });
+      const body = JSON.parse(response.body) as { type: string; title: string };
+      expect(body.type).toBe('urn:ok:error:invalid-request');
+      expect(body.title).toContain('Invalid orphan mode');
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -536,7 +524,7 @@ describe('POST /api/test-rescan-backlinks', () => {
         },
       );
       expect(rescanResp.status).toBe(200);
-      expect(JSON.parse(rescanResp.body)).toEqual({ ok: true });
+      expect(JSON.parse(rescanResp.body)).toEqual({});
 
       const backlinks = backlinkIndex.getBacklinks('beta');
       expect(backlinks.map((b) => b.source)).toEqual(['alpha']);
@@ -563,7 +551,11 @@ describe('POST /api/test-rescan-backlinks', () => {
           method: 'POST',
         },
       );
-      expect(resp.status).toBe(0);
+      expect(resp.status).toBe(404);
+      expect(resp.headers['Content-Type']).toBe('application/problem+json');
+      const body = JSON.parse(resp.body);
+      expect(body.type).toBe('urn:ok:error:not-found');
+      expect(body.title).toBe('API endpoint not found.');
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }

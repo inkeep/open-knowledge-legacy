@@ -4,6 +4,10 @@ import { join, relative } from 'node:path';
 
 const SRC_DIR = new URL('../..', import.meta.url).pathname;
 
+/** Subdirectories under `src/` where direct imports of the handoff primitives
+ *  are allowlisted — these are the homes of the primitives themselves
+ *  (`lib/handoff/`) and the UI hook that routes every mount surface to them
+ *  (`components/handoff/`). Paths are `src/`-relative, POSIX-form. */
 const ALLOWLISTED_SUBPATHS = ['lib/handoff', 'components/handoff'] as const;
 
 const PROHIBITED_IMPORT_SUBSTRINGS = [

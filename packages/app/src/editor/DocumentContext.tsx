@@ -1,10 +1,10 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import type { Principal } from '@inkeep/open-knowledge-core';
-import { PrincipalResponseSchema } from '@inkeep/open-knowledge-core';
-import { createContext, type ReactNode, use, useEffect, useState } from 'react';
+import { PrincipalSuccessSchema } from '@inkeep/open-knowledge-core';
+import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
-import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
+import { docNameFromHash, hashFromDocName, hashFromFolderPath } from '@/lib/doc-hash';
 import { mark } from '@/lib/perf';
 import { refreshServerInfo } from '@/lib/server-info-refresh';
 import { useCollabUrl } from '@/lib/use-collab-url';
@@ -14,12 +14,19 @@ import { subscribePoolEviction } from './editor-cache';
 import {
   addOpenTab,
   createEditorTabSessionState,
+  docNameForTabId,
+  docTabId,
+  filterOpenTabsForKnownTargets,
+  folderTabId,
   localTabSessionStorageKey,
-  nextActiveDocAfterClose,
+  nextActiveTabAfterClose,
+  nextActiveTabAfterCloseMany,
+  parseEditorTabId,
   parseEditorTabSessionState,
   readLocalTabSessionState,
   remapOpenTabs,
   removeOpenTab,
+  tabIdForNavigationTarget,
   writeLocalTabSessionState,
 } from './editor-tabs';
 import {
@@ -43,6 +50,7 @@ interface DocumentContextValue {
   activeDocName: string | null;
   activeProvider: HocuspocusProvider | null;
   openTabs: ReadonlyArray<string>;
+  tabSessionLoaded: boolean;
   syncState: SyncState;
   serverRestartRecovery: ServerRestartRecoveryState;
   poolEntries: ReadonlyArray<PoolEntrySnapshot>;
@@ -52,8 +60,16 @@ interface DocumentContextValue {
   openTargetTransition: (target: ResolvedNavigationTarget) => void;
   clearTarget: () => void;
   closeDocument: (docName: string) => void;
-  closeTab: (docName: string) => void;
-  remapTabsForRename: (renamed: readonly { fromDocName: string; toDocName: string }[]) => void;
+  closeTab: (tabId: string) => void;
+  closeTabs: (tabIds: readonly string[]) => void;
+  syncOpenTabsWithKnownTargets: (targets: {
+    pages: ReadonlySet<string>;
+    folderPaths: ReadonlySet<string>;
+  }) => void;
+  remapTabsForRename: (
+    renamed: readonly { fromDocName: string; toDocName: string }[],
+    renamedFolders?: readonly { fromPath: string; toPath: string }[],
+  ) => void;
   closeAndClearForRename: (docName: string) => Promise<void>;
   recycleDocument: (docName: string) => void;
   prewarm: (docName: string) => void;
@@ -137,6 +153,30 @@ function readInitialLocalTabs(): string[] {
   return readLocalTabSessionState(storage, key, MAX_POOL).openTabs;
 }
 
+function hashFromTabId(tabId: string): string {
+  const tab = parseEditorTabId(tabId);
+  return tab.kind === 'doc' ? hashFromDocName(tab.docName) : hashFromFolderPath(tab.folderPath);
+}
+
+function tabIdFromHash(hash: string): string | null {
+  const docName = docNameFromHash(hash);
+  if (!docName) return null;
+  const trimmed = docName.trim();
+  if (/\/+$/.test(trimmed)) {
+    const folderPath = trimmed.replace(/\/+$/g, '');
+    return folderPath ? folderTabId(folderPath) : null;
+  }
+  return docTabId(docName);
+}
+
+function activeTabIdForTarget(
+  activeTarget: ResolvedNavigationTarget | null,
+  activeDocName: string | null,
+): string | null {
+  if (activeTarget) return tabIdForNavigationTarget(activeTarget);
+  return activeDocName ? docTabId(activeDocName) : null;
+}
+
 function takeSnapshot(p: ProviderPool): Snapshot {
   const active = p.getActive();
   const poolEntries: PoolEntrySnapshot[] = [];
@@ -162,6 +202,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   const [activeTarget, setActiveTarget] = useState<ResolvedNavigationTarget | null>(null);
   const [openTabs, setOpenTabs] = useState<string[]>(readInitialLocalTabs);
   const [tabSessionLoaded, setTabSessionLoaded] = useState(false);
+  const tabSessionMutatedRef = useRef(false);
   const [tabIdentityResolved, setTabIdentityResolved] = useState(false);
   const [principal, setPrincipal] = useState<Principal | null>(null);
   const [systemProvider, setSystemProvider] = useState<HocuspocusProvider | null>(null);
@@ -186,29 +227,35 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       : Promise.resolve(
           localKey
             ? readLocalTabSessionState(storage, localKey, MAX_POOL)
-            : { openTabs: [], activeDocName: null, updatedAt: null },
+            : { openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null },
         );
 
     loaded
       .then((raw) => {
         if (cancelled) return;
         const state = parseEditorTabSessionState(raw, MAX_POOL);
+        if (tabSessionMutatedRef.current) return;
         const p = getPool(collabUrl);
-        for (const docName of state.openTabs) {
-          p.open(docName);
+        for (const tabId of state.openTabs) {
+          const docName = docNameForTabId(tabId);
+          if (docName) p.open(docName);
         }
         setOpenTabs((current) => {
           let next = state.openTabs;
-          for (const docName of current) {
-            next = addOpenTab(next, docName, MAX_POOL);
+          for (const tabId of current) {
+            next = addOpenTab(next, tabId, MAX_POOL);
           }
           return next;
         });
         const currentHashDoc = docNameFromHash(window.location.hash);
         const shouldRestoreActive = currentHashDoc === null && window.location.hash.length === 0;
-        const restoredActive = state.activeDocName ?? state.openTabs[0] ?? null;
+        const restoredActive =
+          state.activeTabId ??
+          (state.activeDocName ? docTabId(state.activeDocName) : null) ??
+          state.openTabs[0] ??
+          null;
         if (shouldRestoreActive && restoredActive) {
-          window.location.hash = hashFromDocName(restoredActive);
+          window.location.hash = hashFromTabId(restoredActive);
         }
       })
       .catch((err: unknown) => {
@@ -225,7 +272,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!tabSessionLoaded) return;
-    const state = createEditorTabSessionState(openTabs, snapshot.activeDocName);
+    const activeTabId = activeTabIdForTarget(activeTarget, snapshot.activeDocName);
+    const state = createEditorTabSessionState(openTabs, activeTabId);
     const bridge = getDesktopBridge();
     if (bridge) {
       void bridge.project.setSessionState(state).catch((err: unknown) => {
@@ -237,7 +285,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     if (!localKey) return;
     const storage = typeof localStorage !== 'undefined' ? localStorage : null;
     writeLocalTabSessionState(storage, localKey, state);
-  }, [openTabs, snapshot.activeDocName, tabSessionLoaded]);
+  }, [activeTarget, openTabs, snapshot.activeDocName, tabSessionLoaded]);
+
+  function markTabSessionMutated() {
+    if (!tabSessionLoaded) tabSessionMutatedRef.current = true;
+  }
 
   useEffect(() => {
     if (collabUrl === null) return;
@@ -255,7 +307,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((json: unknown) => {
         if (cancelled) return;
-        const parsed = PrincipalResponseSchema.safeParse(json);
+        const parsed = PrincipalSuccessSchema.safeParse(json);
         if (parsed.success) {
           p.setTabIdentity({ principalId: parsed.data.id, tabSessionId });
           setPrincipal(parsed.data);
@@ -314,10 +366,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   const openDocument = (docName: string) => {
     mark('ok/nav/open-document', { docName, transition: false });
     if (collabUrl === null) return;
+    markTabSessionMutated();
     const p = getPool(collabUrl);
     const entry = p.open(docName);
     if (!entry) return; // reserved doc (e.g. __system__) — pool refused admission
-    setOpenTabs((current) => addOpenTab(current, docName, MAX_POOL));
+    setOpenTabs((current) => addOpenTab(current, docTabId(docName), MAX_POOL));
     p.setActive(docName);
     setActiveTarget({ kind: 'doc', target: docName, docName });
   };
@@ -326,24 +379,35 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     openDocument(docName);
   };
 
-  const openTarget = (target: ResolvedNavigationTarget) => {
+  const openTargetWithOptions = (
+    target: ResolvedNavigationTarget,
+    options: { markPendingSessionMutation: boolean },
+  ) => {
     if (collabUrl === null) return;
+    if (options.markPendingSessionMutation) markTabSessionMutated();
     const p = getPool(collabUrl);
     const docName = docNameForNavigationTarget(target);
     if (docName) {
       const entry = p.open(docName);
       if (!entry) return;
-      setOpenTabs((current) => addOpenTab(current, docName, MAX_POOL));
+      setOpenTabs((current) => addOpenTab(current, docTabId(docName), MAX_POOL));
       p.setActive(docName);
     } else {
       p.clearActive();
+      const tabId = tabIdForNavigationTarget(target);
+      if (tabId) {
+        setOpenTabs((current) => addOpenTab(current, tabId, MAX_POOL));
+      }
     }
     setActiveTarget(target);
+  };
+  const openTarget = (target: ResolvedNavigationTarget) => {
+    openTargetWithOptions(target, { markPendingSessionMutation: true });
   };
   const openTargetTransition = (target: ResolvedNavigationTarget) => {
     const docName = docNameForNavigationTarget(target);
     mark('ok/nav/open-target', { docName, kind: target.kind, transition: false });
-    openTarget(target);
+    openTargetWithOptions(target, { markPendingSessionMutation: false });
   };
 
   const value: DocumentContextValue = {
@@ -352,6 +416,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     activeDocName: snapshot.activeDocName,
     activeProvider: snapshot.activeProvider,
     openTabs,
+    tabSessionLoaded,
     syncState: snapshot.syncState,
     serverRestartRecovery: snapshot.serverRestartRecovery,
     poolEntries: snapshot.poolEntries,
@@ -370,27 +435,31 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     },
     closeDocument: (docName: string) => {
       if (collabUrl === null) return;
+      markTabSessionMutated();
       const p = getPool(collabUrl);
       p.close(docName);
-      setOpenTabs((current) => removeOpenTab(current, docName));
+      setOpenTabs((current) => removeOpenTab(current, docTabId(docName)));
       setActiveTarget((current) => {
         if (!current) return current;
         return docNameForNavigationTarget(current) === docName ? null : current;
       });
     },
-    closeTab: (docName: string) => {
-      let nextActiveDocName: string | null = null;
+    closeTab: (tabId: string) => {
+      markTabSessionMutated();
+      let nextActiveTabId: string | null = null;
+      const closingDocName = docNameForTabId(tabId);
       if (collabUrl !== null) {
         const p = getPool(collabUrl);
-        p.close(docName);
+        if (closingDocName) p.close(closingDocName);
       }
+      const currentActiveTabId = activeTabIdForTarget(activeTarget, snapshot.activeDocName);
       setOpenTabs((current) => {
-        nextActiveDocName = nextActiveDocAfterClose(current, snapshot.activeDocName, docName);
-        return removeOpenTab(current, docName);
+        nextActiveTabId = nextActiveTabAfterClose(current, currentActiveTabId, tabId);
+        return removeOpenTab(current, tabId);
       });
-      if (snapshot.activeDocName !== docName) return;
-      if (nextActiveDocName) {
-        window.location.hash = hashFromDocName(nextActiveDocName);
+      if (currentActiveTabId !== tabId) return;
+      if (nextActiveTabId) {
+        window.location.hash = hashFromTabId(nextActiveTabId);
         return;
       }
       if (collabUrl !== null) {
@@ -400,12 +469,106 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       setActiveTarget(null);
       window.location.hash = '';
     },
-    remapTabsForRename: (renamed) => {
-      const next = remapOpenTabs(openTabs, renamed, MAX_POOL);
+    closeTabs: (tabIds: readonly string[]) => {
+      markTabSessionMutated();
+      const closingTabIds = new Set(tabIds.filter((tabId) => tabId.length > 0));
+      if (closingTabIds.size === 0) return;
       if (collabUrl !== null) {
         const p = getPool(collabUrl);
-        for (const docName of next) {
-          p.open(docName);
+        for (const tabId of closingTabIds) {
+          const docName = docNameForTabId(tabId);
+          if (docName) p.close(docName);
+        }
+      }
+
+      let nextActiveTabId: string | null = null;
+      const currentActiveTabId = activeTabIdForTarget(activeTarget, snapshot.activeDocName);
+      setOpenTabs((current) => {
+        nextActiveTabId = nextActiveTabAfterCloseMany(current, currentActiveTabId, closingTabIds);
+        return current.filter((tabId) => !closingTabIds.has(tabId));
+      });
+
+      if (!currentActiveTabId || !closingTabIds.has(currentActiveTabId)) {
+        setActiveTarget((current) => {
+          if (!current) return current;
+          const targetTabId = tabIdForNavigationTarget(current);
+          return targetTabId && closingTabIds.has(targetTabId) ? null : current;
+        });
+        return;
+      }
+      if (nextActiveTabId) {
+        window.location.hash = hashFromTabId(nextActiveTabId);
+        return;
+      }
+      if (collabUrl !== null) {
+        const p = getPool(collabUrl);
+        p.clearActive();
+      }
+      setActiveTarget(null);
+      window.location.hash = '';
+    },
+    syncOpenTabsWithKnownTargets: ({ pages, folderPaths }) => {
+      const keepMissingDocName = activeTarget?.kind === 'missing' ? activeTarget.target : null;
+      const nextOpenTabs = filterOpenTabsForKnownTargets(openTabs, {
+        pages,
+        folderPaths,
+        keepMissingDocName,
+      });
+      if (nextOpenTabs.length === openTabs.length) return;
+
+      const nextTabIds = new Set(nextOpenTabs);
+      const staleTabIds = openTabs.filter((tabId) => !nextTabIds.has(tabId));
+      const staleTabIdSet = new Set(staleTabIds);
+      markTabSessionMutated();
+
+      if (collabUrl !== null) {
+        const p = getPool(collabUrl);
+        for (const tabId of staleTabIds) {
+          const docName = docNameForTabId(tabId);
+          if (docName) p.close(docName);
+        }
+      }
+
+      setOpenTabs(nextOpenTabs);
+
+      const hashTabId = typeof window !== 'undefined' ? tabIdFromHash(window.location.hash) : null;
+      const currentActiveTabId = activeTabIdForTarget(activeTarget, snapshot.activeDocName);
+      const tabToReplace =
+        hashTabId && staleTabIdSet.has(hashTabId)
+          ? hashTabId
+          : currentActiveTabId && staleTabIdSet.has(currentActiveTabId)
+            ? currentActiveTabId
+            : null;
+
+      if (!tabToReplace) {
+        setActiveTarget((current) => {
+          if (!current) return current;
+          const targetTabId = tabIdForNavigationTarget(current);
+          return targetTabId && staleTabIdSet.has(targetTabId) ? null : current;
+        });
+        return;
+      }
+
+      const nextActiveTabId = nextActiveTabAfterCloseMany(openTabs, tabToReplace, staleTabIds);
+      if (nextActiveTabId) {
+        window.location.hash = hashFromTabId(nextActiveTabId);
+        return;
+      }
+      if (collabUrl !== null) {
+        const p = getPool(collabUrl);
+        p.clearActive();
+      }
+      setActiveTarget(null);
+      window.location.hash = '';
+    },
+    remapTabsForRename: (renamed, renamedFolders = []) => {
+      markTabSessionMutated();
+      const next = remapOpenTabs(openTabs, renamed, MAX_POOL, renamedFolders);
+      if (collabUrl !== null) {
+        const p = getPool(collabUrl);
+        for (const tabId of next) {
+          const docName = docNameForTabId(tabId);
+          if (docName) p.open(docName);
         }
       }
       setOpenTabs(next);

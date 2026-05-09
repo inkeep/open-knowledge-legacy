@@ -14,6 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   type TemplateDetail,
   type TemplateMenuEntry,
+  type TemplateTarget,
   useTemplate,
 } from '@/hooks/use-folder-config';
 
@@ -22,9 +23,12 @@ interface Props {
   template: TemplateMenuEntry | null;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
+  /** Where the template lives. Defaults to `"project"` (folder-scoped); pass
+      `"user"` for the Settings → User templates flow. */
+  target?: TemplateTarget;
 }
 
-export function TemplateEditDialog({ folderPath, template, onOpenChange, onSaved }: Props) {
+export function TemplateEditDialog({ folderPath, template, onOpenChange, onSaved, target }: Props) {
   const open = template !== null;
 
   function handleClose() {
@@ -47,6 +51,11 @@ export function TemplateEditDialog({ folderPath, template, onOpenChange, onSaved
                 inherited
               </Badge>
             ) : null}
+            {template?.scope === 'user' ? (
+              <Badge variant="primary" className="text-2xs">
+                user
+              </Badge>
+            ) : null}
           </DialogTitle>
           <DialogDescription className="sr-only">
             {template?.description ?? 'Edit template'}
@@ -59,6 +68,7 @@ export function TemplateEditDialog({ folderPath, template, onOpenChange, onSaved
             template={template}
             onCancel={handleClose}
             onSaved={handleSaved}
+            target={target}
           />
         ) : null}
       </DialogContent>
@@ -71,13 +81,15 @@ function TemplateEditBody({
   template,
   onCancel,
   onSaved,
+  target,
 }: {
   folderPath: string;
   template: TemplateMenuEntry;
   onCancel: () => void;
   onSaved: () => void;
+  target?: TemplateTarget;
 }) {
-  const state = useTemplate(folderPath, template.name);
+  const state = useTemplate(folderPath, template.name, target);
 
   if (state.status === 'loading' || state.status === 'idle') {
     return (
@@ -98,17 +110,21 @@ function TemplateEditBody({
       </DialogBody>
     );
   }
-  return <TemplateEditForm detail={state.data} onCancel={onCancel} onSaved={onSaved} />;
+  return (
+    <TemplateEditForm detail={state.data} onCancel={onCancel} onSaved={onSaved} target={target} />
+  );
 }
 
 function TemplateEditForm({
   detail,
   onCancel,
   onSaved,
+  target,
 }: {
   detail: TemplateDetail;
   onCancel: () => void;
   onSaved: () => void;
+  target?: TemplateTarget;
 }) {
   const fm = detail.frontmatter as Record<string, unknown>;
   const form = useTemplateForm({
@@ -122,6 +138,7 @@ function TemplateEditForm({
       body: detail.body,
     },
     onCommitted: onSaved,
+    ...(target !== undefined ? { target } : {}),
   });
 
   return (

@@ -1,3 +1,18 @@
+/**
+ * Integration: WYSIWYG paste dispatcher reorder — markdown-first ahead of
+ * Branch C (data-pm-slice).
+ *
+ * Verifies the OK→OK regression path with the real `MarkdownManager`
+ * (sharedExtensions) and the real PM schema. The unit tests in
+ * `handle-paste.test.ts` mock `mdManager.parse`; this file confirms that
+ * realistic OK clipboard payloads (`<img/>` JSX, `<Callout>` JSX) round-trip
+ * through the canonical markdown path and produce the expected PM tree
+ * shape — descriptor identity preserved.
+ *
+ * Source-side dispatcher reorder is exercised end-to-end via Playwright
+ * (US-009) — CM6 `EditorView.domEventHandlers` wiring requires a real DOM.
+ */
+
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import { mdManager, schema } from './test-harness.ts';

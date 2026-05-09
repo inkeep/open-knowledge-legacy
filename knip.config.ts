@@ -19,6 +19,10 @@ export default {
     'packages/app/src/components/McpConsentDialogBody.tsx': ['duplicates'],
     'packages/core/src/extensions/list.ts': ['duplicates'],
     'packages/desktop/src/main/auto-updater.ts': ['types'],
+    'packages/core/src/schemas/api.type-tests.ts': ['files'],
+    'packages/server/src/http/request-validation.ts': ['exports', 'types'],
+    'packages/server/src/http/error-response.ts': ['exports'],
+    'packages/app/src/editor/http-client.ts': ['types'],
   },
   workspaces: {
     'packages/app': {

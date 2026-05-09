@@ -9,9 +9,15 @@ import { accent, dim, error as errorColor, info, success, warning } from '../ui/
 interface InstallSkillCommandOptions {
   out?: string;
   noOpen?: boolean;
+  /** Bypass the install-state gate and rebuild unconditionally. The CLI
+   * flavor of FR12's reinstall affordance — when you know Claude Desktop
+   * lost the skill, `--force` rebuilds the bundle without consulting
+   * `~/.ok/skill-state/claude-cowork`. */
   force?: boolean;
   spawnFn?: SpawnLike;
   platformName?: NodeJS.Platform;
+  /** Test seam — override `$HOME` so the install-state gate reads/writes
+   * a tmpdir instead of the real `~/.ok/skill-state/`. */
   home?: string;
 }
 

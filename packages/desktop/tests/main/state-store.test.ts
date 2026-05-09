@@ -62,17 +62,36 @@ describe('state-store (recent projects + LRU)', () => {
     const state = setProjectSessionState(emptyState(), '/tmp/a', {
       openTabs: ['README', 'docs/guide'],
       activeDocName: 'docs/guide',
+      activeTabId: 'docs/guide',
       updatedAt: '2026-05-06T00:00:00Z',
     });
     expect(getProjectSessionState(state, '/tmp/a')).toEqual({
       openTabs: ['README', 'docs/guide'],
       activeDocName: 'docs/guide',
+      activeTabId: 'docs/guide',
       updatedAt: '2026-05-06T00:00:00Z',
     });
     expect(getProjectSessionState(state, '/tmp/b')).toEqual({
       openTabs: [],
       activeDocName: null,
+      activeTabId: null,
       updatedAt: null,
+    });
+  });
+
+  test('project session state preserves active folder tabs', () => {
+    const folderTabId = '\u0000folder:docs';
+    const state = setProjectSessionState(emptyState(), '/tmp/a', {
+      openTabs: ['README', folderTabId],
+      activeDocName: null,
+      activeTabId: folderTabId,
+      updatedAt: '2026-05-06T00:00:00Z',
+    });
+    expect(getProjectSessionState(state, '/tmp/a')).toEqual({
+      openTabs: ['README', folderTabId],
+      activeDocName: null,
+      activeTabId: folderTabId,
+      updatedAt: '2026-05-06T00:00:00Z',
     });
   });
 
@@ -80,12 +99,14 @@ describe('state-store (recent projects + LRU)', () => {
     const withSession = setProjectSessionState(emptyState(), '/tmp/a', {
       openTabs: ['README'],
       activeDocName: 'README',
+      activeTabId: 'README',
       updatedAt: '2026-05-06T00:00:00Z',
     });
     const next = removeRecentProject(withSession, '/tmp/a');
     expect(getProjectSessionState(next, '/tmp/a')).toEqual({
       openTabs: [],
       activeDocName: null,
+      activeTabId: null,
       updatedAt: null,
     });
   });
@@ -106,6 +127,7 @@ describe('state-store (recent projects + LRU)', () => {
         '/tmp/a': {
           openTabs: ['README', 'README', '', 'docs/guide'],
           activeDocName: 'docs/guide',
+          activeTabId: 'docs/guide',
           updatedAt: '2026-05-06T00:00:00Z',
         },
       },
@@ -117,6 +139,7 @@ describe('state-store (recent projects + LRU)', () => {
     expect(parsed?.projectSessions['/tmp/a']).toEqual({
       openTabs: ['README', 'docs/guide'],
       activeDocName: 'docs/guide',
+      activeTabId: 'docs/guide',
       updatedAt: '2026-05-06T00:00:00Z',
     });
   });

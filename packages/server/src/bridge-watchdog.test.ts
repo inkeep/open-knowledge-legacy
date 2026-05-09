@@ -4,8 +4,10 @@ import {
   __getViolationRateTupleCountForTests,
   __resetBridgeWatchdogForTests,
   assertBridgeInvariant,
+  emitObserverAPathBFired,
   shouldEmitBridgeInvariantViolation,
   shouldEmitBridgeToleranceApplied,
+  shouldEmitObserverAPathBFired,
   shouldThrowOnBridgeInvariantViolation,
 } from './bridge-watchdog.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
@@ -337,6 +339,135 @@ describe('shouldEmitBridgeInvariantViolation — gate semantics', () => {
     expect(shouldEmitBridgeInvariantViolation('observer-b', 'doc-1', 1000)).toBe(true);
     expect(shouldEmitBridgeInvariantViolation('observer-b', undefined, 1500)).toBe(false);
     expect(shouldEmitBridgeInvariantViolation('observer-b', 'doc-1', 1500)).toBe(false);
+  });
+});
+
+describe('shouldEmitObserverAPathBFired — per-doc rate-limiter', () => {
+  test('first call for a doc returns true', () => {
+    expect(shouldEmitObserverAPathBFired('doc-1', 1000)).toBe(true);
+  });
+
+  test('repeat call inside window returns false', () => {
+    shouldEmitObserverAPathBFired('doc-1', 1000);
+    expect(shouldEmitObserverAPathBFired('doc-1', 1500)).toBe(false);
+  });
+
+  test('call after debounce expires returns true', () => {
+    shouldEmitObserverAPathBFired('doc-1', 1000);
+    expect(shouldEmitObserverAPathBFired('doc-1', 70_000)).toBe(true);
+  });
+
+  test('different docs have independent windows', () => {
+    expect(shouldEmitObserverAPathBFired('doc-1', 1000)).toBe(true);
+    expect(shouldEmitObserverAPathBFired('doc-2', 1000)).toBe(true);
+    expect(shouldEmitObserverAPathBFired('doc-1', 1500)).toBe(false);
+    expect(shouldEmitObserverAPathBFired('doc-2', 1500)).toBe(false);
+  });
+
+  test('docName=undefined uses __nodoc__ sentinel (distinct from any named doc)', () => {
+    expect(shouldEmitObserverAPathBFired(undefined, 1000)).toBe(true);
+    expect(shouldEmitObserverAPathBFired('doc-1', 1000)).toBe(true);
+    expect(shouldEmitObserverAPathBFired(undefined, 1500)).toBe(false);
+    expect(shouldEmitObserverAPathBFired('doc-1', 1500)).toBe(false);
+  });
+
+  test('emitObserverAPathBFired increments suppressed counter when rate-limited', () => {
+    expect(emitObserverAPathBFired('doc-1', 1000)).toBe(true);
+    expect(getMetrics().observerAPathBFiresSuppressed).toBe(0);
+    expect(emitObserverAPathBFired('doc-1', 1500)).toBe(false);
+    expect(getMetrics().observerAPathBFiresSuppressed).toBe(1);
+    expect(emitObserverAPathBFired('doc-1', 2000)).toBe(false);
+    expect(getMetrics().observerAPathBFiresSuppressed).toBe(2);
+  });
+
+  test('emitObserverAPathBFired returns true after window resets', () => {
+    expect(emitObserverAPathBFired('doc-1', 1000)).toBe(true);
+    expect(emitObserverAPathBFired('doc-1', 70_000)).toBe(true);
+    expect(getMetrics().observerAPathBFiresSuppressed).toBe(0);
+  });
+});
+
+describe('bridge-invariant-violation payload redaction (OK_TELEMETRY_VERBOSE opt-in)', () => {
+  let originalNodeEnv: string | undefined;
+  let originalVerbose: string | undefined;
+
+  beforeEach(() => {
+    originalNodeEnv = process.env.NODE_ENV;
+    originalVerbose = process.env.OK_TELEMETRY_VERBOSE;
+    process.env.NODE_ENV = 'production';
+  });
+
+  afterEach(() => {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    if (originalVerbose === undefined) delete process.env.OK_TELEMETRY_VERBOSE;
+    else process.env.OK_TELEMETRY_VERBOSE = originalVerbose;
+  });
+
+  function emitOnce(ytextSnapshot: string, fragmentSnapshot: string): Record<string, unknown> {
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      assertBridgeInvariant(ytextSnapshot, fragmentSnapshot, {
+        site: 'observer-b',
+        docName: 'doc-1',
+        nowMs: 1000,
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+    expect(warnings).toHaveLength(1);
+    return JSON.parse(warnings[0] ?? '{}') as Record<string, unknown>;
+  }
+
+  test('default emit redacts raw diff; payload carries length + FNV hash only', () => {
+    const event = emitOnce('# user-typed body\n', '# canonical fragment body\n');
+    expect(event.event).toBe('bridge-invariant-violation');
+    expect(event.redacted).toBe(true);
+    expect('diff' in event).toBe(false);
+    expect(typeof event.ytextHash).toBe('string');
+    expect(typeof event.fragmentHash).toBe('string');
+    expect(event.ytextLen).toBe('# user-typed body\n'.length);
+    expect(event.fragmentLen).toBe('# canonical fragment body\n'.length);
+    const serialized = JSON.stringify(event);
+    expect(serialized).not.toContain('user-typed body');
+    expect(serialized).not.toContain('canonical fragment body');
+  });
+
+  test('OK_TELEMETRY_VERBOSE=1 includes the truncated diff (opt-in posture)', () => {
+    process.env.OK_TELEMETRY_VERBOSE = '1';
+    const event = emitOnce('# user-typed body\n', '# canonical fragment body\n');
+    expect(event.redacted).toBe(false);
+    expect(typeof event.diff).toBe('string');
+    expect(String(event.diff)).toContain('user-typed body');
+    expect(String(event.diff)).toContain('canonical fragment body');
+    expect(typeof event.ytextHash).toBe('string');
+  });
+
+  test('OK_TELEMETRY_VERBOSE=0 stays redacted (only "1" enables verbose)', () => {
+    process.env.OK_TELEMETRY_VERBOSE = '0';
+    const event = emitOnce('# user-typed body\n', '# canonical fragment body\n');
+    expect(event.redacted).toBe(true);
+    expect('diff' in event).toBe(false);
+  });
+
+  test('FNV-1a hash is stable for the same input across calls', () => {
+    const a = emitOnce('# stable A\n', '# stable B\n');
+    __resetBridgeWatchdogForTests();
+    const b = emitOnce('# stable A\n', '# stable B\n');
+    expect(a.ytextHash).toBe(b.ytextHash);
+    expect(a.fragmentHash).toBe(b.fragmentHash);
+  });
+
+  test('different inputs produce different hashes (collision probability is 1/2^32)', () => {
+    const a = emitOnce('# alpha\n', '# beta\n');
+    __resetBridgeWatchdogForTests();
+    const b = emitOnce('# gamma\n', '# delta\n');
+    expect(a.ytextHash).not.toBe(b.ytextHash);
+    expect(a.fragmentHash).not.toBe(b.fragmentHash);
   });
 });
 

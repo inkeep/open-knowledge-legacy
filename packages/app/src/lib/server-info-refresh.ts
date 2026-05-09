@@ -1,4 +1,4 @@
-import { ServerInfoResponseSchema } from '@inkeep/open-knowledge-core';
+import { ServerInfoSuccessSchema } from '@inkeep/open-knowledge-core';
 import { handleBranchSwitched } from '../editor/branch-invalidation';
 import type { ProviderPool } from '../editor/provider-pool';
 
@@ -38,7 +38,7 @@ export async function refreshServerInfo(pool: ProviderPool, baseUrl = ''): Promi
   } catch {
     return;
   }
-  const result = ServerInfoResponseSchema.safeParse(info);
+  const result = ServerInfoSuccessSchema.safeParse(info);
   if (!result.success) {
     console.warn(
       JSON.stringify({ event: 'ok-server-info-schema-mismatch', issues: result.error.issues }),

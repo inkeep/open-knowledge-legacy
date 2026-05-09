@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { z } from 'zod';
-import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
+import { resolveLockDir } from '../../config/paths.ts';
 import { parentFolderOf } from '../../content/nested-folder-rules.ts';
 import { applySubstitution, todayIsoUtc } from '../../content/substitution.ts';
 import { resolveTemplatesAvailable } from '../../content/templates-resolver.ts';
@@ -150,7 +150,7 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-      const lockDir = resolveLockDir(resolveContentDir(config, cwd));
+      const lockDir = resolveLockDir(cwd);
       const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;

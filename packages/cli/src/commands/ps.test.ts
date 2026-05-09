@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { extractOkBinaryPath } from '../utils/process-scan.ts';
 import type { LockState } from './lock-state.ts';
-import { renderTable, runPs, timeAgo } from './ps.ts';
+import { isDesktopCommand, renderTable, runPs, timeAgo } from './ps.ts';
+
+const ELECTRON_UTILITY_COMMAND =
+  '/path/to/Electron Helper.app/Contents/MacOS/Electron Helper --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US';
 
 function makeAliveServer(overrides?: {
   worktreeRoot?: string;
@@ -97,7 +100,7 @@ describe('timeAgo', () => {
   });
 });
 
-describe('runPs default (alive-only)', () => {
+describe('runPs default (alive + foreign-host)', () => {
   test('shows alive server, hides dead-pid server', async () => {
     const aliveServerState = makeAliveServer({ worktreeRoot: '/tmp/notes' });
     const deadServerState = makeDeadServer({ worktreeRoot: '/tmp/old-project' });
@@ -118,6 +121,21 @@ describe('runPs default (alive-only)', () => {
     const output = lines.join('\n');
     expect(output).toContain('/tmp/notes');
     expect(output).not.toContain('/tmp/old-project');
+  });
+
+  test('shows foreign-host server by default (hostname drift case)', async () => {
+    const foreignServerState = makeForeignServer({ worktreeRoot: '/tmp/shared' });
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/shared/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? foreignServerState : missingLock),
+      log: (msg) => lines.push(msg),
+    });
+
+    const output = lines.join('\n');
+    expect(output).toContain('/tmp/shared');
+    expect(output).toContain('foreign');
   });
 
   test('prints empty state message when no alive servers', async () => {
@@ -187,6 +205,121 @@ describe('runPs --all', () => {
     const output = lines.join('\n');
     expect(output).toContain('/tmp/shared');
     expect(output).toContain('foreign');
+  });
+});
+
+describe('isDesktopCommand', () => {
+  test('returns true for Electron utility process with NodeService sub-type', () => {
+    expect(isDesktopCommand(ELECTRON_UTILITY_COMMAND)).toBe(true);
+  });
+
+  test('returns false for CLI start command', () => {
+    expect(
+      isDesktopCommand('/usr/local/bin/node /opt/open-knowledge/packages/cli/dist/cli.mjs start'),
+    ).toBe(false);
+  });
+
+  test('returns false for null command', () => {
+    expect(isDesktopCommand(null)).toBe(false);
+  });
+
+  test('returns false for non-Electron Chromium utility (e.g. VS Code, Slack)', () => {
+    expect(
+      isDesktopCommand(
+        '/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper.app/Contents/MacOS/Code Helper --type=utility --utility-sub-type=network.mojom.NetworkService',
+      ),
+    ).toBe(false);
+    expect(
+      isDesktopCommand(
+        '/Applications/Slack.app/Contents/Frameworks/Slack Helper.app/Contents/MacOS/Slack Helper --type=utility',
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('runPs desktop labeling', () => {
+  test('alive server with --type=utility command shows "desktop" label', async () => {
+    const aliveServerState = makeAliveServer({ worktreeRoot: '/tmp/notes' });
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/notes/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? aliveServerState : missingLock),
+      resolveCommand: () => ELECTRON_UTILITY_COMMAND,
+      log: (msg) => lines.push(msg),
+    });
+
+    const output = lines.join('\n');
+    expect(output).toContain('/tmp/notes');
+    expect(output).toContain('desktop');
+    expect(output).not.toMatch(/\brunning\b/);
+  });
+
+  test('foreign-host server with --type=utility command shows "desktop", not "foreign"', async () => {
+    const foreignServerState = makeForeignServer({ worktreeRoot: '/tmp/vault' });
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/vault/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? foreignServerState : missingLock),
+      resolveCommand: () => ELECTRON_UTILITY_COMMAND,
+      log: (msg) => lines.push(msg),
+    });
+
+    const output = lines.join('\n');
+    expect(output).toContain('/tmp/vault');
+    expect(output).toContain('desktop');
+    expect(output).not.toContain('foreign');
+  });
+
+  test('alive server with non-utility command keeps "running" label', async () => {
+    const aliveServerState = makeAliveServer({ worktreeRoot: '/tmp/notes' });
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/notes/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? aliveServerState : missingLock),
+      resolveCommand: () =>
+        '/usr/local/bin/node /opt/open-knowledge/packages/cli/dist/cli.mjs start',
+      log: (msg) => lines.push(msg),
+    });
+
+    const output = lines.join('\n');
+    expect(output).toContain('running');
+    expect(output).not.toContain('desktop');
+  });
+
+  test('JSON output exposes isDesktop flag', async () => {
+    const aliveServerState = makeAliveServer({ worktreeRoot: '/tmp/notes' });
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/notes/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? aliveServerState : missingLock),
+      resolveCommand: () => ELECTRON_UTILITY_COMMAND,
+      json: true,
+      log: (msg) => lines.push(msg),
+    });
+
+    const parsed = JSON.parse(lines.join('\n')) as Array<{ isDesktop: boolean }>;
+    expect(parsed[0]?.isDesktop).toBe(true);
+  });
+
+  test('dead-pid + Electron command keeps "stale" label (not "desktop")', async () => {
+    const deadServerState = makeDeadServer({ worktreeRoot: '/tmp/notes' });
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/notes/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? deadServerState : missingLock),
+      resolveCommand: () => ELECTRON_UTILITY_COMMAND,
+      all: true, // dead-pid hidden by default
+      log: (msg) => lines.push(msg),
+    });
+
+    const output = lines.join('\n');
+    expect(output).toContain('stale');
+    expect(output).not.toContain('desktop');
   });
 });
 
@@ -265,6 +398,8 @@ describe('runPs --json', () => {
       lockPath: string;
       binary: string | null;
       command: string | null;
+      isDesktop: boolean;
+      displayStatus: string;
     }>;
 
     expect(parsed).toHaveLength(1);
@@ -286,6 +421,8 @@ describe('runPs --json', () => {
     expect(entry.command).toBe(
       '/usr/local/bin/node /tmp/open-knowledge/packages/cli/src/cli.ts start',
     );
+    expect(entry.isDesktop).toBe(false);
+    expect(entry.displayStatus).toBe('running');
   });
 
   test('ui is null when ui lock is missing', async () => {
@@ -374,6 +511,148 @@ describe('PORTS column', () => {
     const output = lines.join('\n');
     expect(output).toContain('5173 / 3001');
   });
+
+  test('foreign-host ui shows port in PORTS (post inspectLock-reorder)', async () => {
+    const aliveServer = makeAliveServer({ worktreeRoot: '/tmp/notes', port: 5173 });
+    const foreignUi: LockState = {
+      status: 'foreign-host',
+      lockPath: '/tmp/notes/.ok/ui.lock',
+      lock: {
+        pid: 23456,
+        hostname: 'old-bonjour-name',
+        port: 3001,
+        startedAt: '2026-05-05T08:01:00.000Z',
+        worktreeRoot: '/tmp/notes',
+      },
+    };
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/notes/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? aliveServer : foreignUi),
+      log: (msg) => lines.push(msg),
+    });
+
+    const output = lines.join('\n');
+    expect(output).toContain('5173 / 3001');
+  });
+});
+
+describe('ui-orphan label', () => {
+  function makeAliveUi(overrides?: { pid?: number; port?: number }): LockState {
+    return {
+      status: 'alive',
+      lockPath: '/tmp/notes/.ok/ui.lock',
+      lock: {
+        pid: overrides?.pid ?? 23456,
+        hostname: 'test-host',
+        port: overrides?.port ?? 3001,
+        startedAt: '2026-05-05T08:01:00.000Z',
+        worktreeRoot: '/tmp/notes',
+      },
+    };
+  }
+  function makeForeignUi(overrides?: { pid?: number; port?: number }): LockState {
+    return {
+      status: 'foreign-host',
+      lockPath: '/tmp/notes/.ok/ui.lock',
+      lock: {
+        pid: overrides?.pid ?? 23456,
+        hostname: 'old-bonjour-name',
+        port: overrides?.port ?? 3001,
+        startedAt: '2026-05-05T08:01:00.000Z',
+        worktreeRoot: '/tmp/notes',
+      },
+    };
+  }
+
+  test('dead server + alive ui → "ui-orphan", visible by default', async () => {
+    const deadServer = makeDeadServer({ worktreeRoot: '/tmp/notes' });
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/notes/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? deadServer : makeAliveUi()),
+      log: (msg) => lines.push(msg),
+    });
+
+    const output = lines.join('\n');
+    expect(output).toContain('/tmp/notes');
+    expect(output).toContain('ui-orphan');
+    expect(output).not.toMatch(/\bstale\b/);
+  });
+
+  test('dead server + foreign-host ui (live PID) also → "ui-orphan"', async () => {
+    const deadServer = makeDeadServer({ worktreeRoot: '/tmp/notes' });
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/notes/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? deadServer : makeForeignUi()),
+      log: (msg) => lines.push(msg),
+    });
+
+    expect(lines.join('\n')).toContain('ui-orphan');
+  });
+
+  test('dead server + dead ui → "stale" (not orphan)', async () => {
+    const deadServer = makeDeadServer({ worktreeRoot: '/tmp/notes' });
+    const deadUi: LockState = {
+      status: 'dead-pid',
+      lockPath: '/tmp/notes/.ok/ui.lock',
+      lock: {
+        pid: 999,
+        hostname: 'test-host',
+        port: 3001,
+        startedAt: '2026-05-05T08:01:00.000Z',
+        worktreeRoot: '/tmp/notes',
+      },
+    };
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/notes/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? deadServer : deadUi),
+      all: true, // stale needs --all to show at all
+      log: (msg) => lines.push(msg),
+    });
+
+    const output = lines.join('\n');
+    expect(output).toContain('stale');
+    expect(output).not.toContain('ui-orphan');
+  });
+
+  test('alive server + alive ui → "running" (orphan only when server dead)', async () => {
+    const aliveServer = makeAliveServer({ worktreeRoot: '/tmp/notes' });
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/notes/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? aliveServer : makeAliveUi()),
+      log: (msg) => lines.push(msg),
+    });
+
+    const output = lines.join('\n');
+    expect(output).toContain('running');
+    expect(output).not.toContain('ui-orphan');
+  });
+
+  test('ui-orphan row shows live UI PID, not dead server PID', async () => {
+    const deadServer = makeDeadServer({ worktreeRoot: '/tmp/notes', pid: 44444 });
+    const aliveUi = makeAliveUi({ pid: 23456 });
+
+    const lines: string[] = [];
+    await runPs({
+      discover: async () => ['/tmp/notes/.ok'],
+      inspect: (_lockDir, name) => (name === 'server' ? deadServer : aliveUi),
+      log: (msg) => lines.push(msg),
+    });
+
+    const output = lines.join('\n');
+    expect(output).toContain('ui-orphan');
+    expect(output).toContain('23456'); // UI PID
+    expect(output).not.toContain('44444'); // dead server PID
+  });
 });
 
 describe('server lock missing/corrupt discards entry', () => {
@@ -423,6 +702,7 @@ describe('renderTable', () => {
       lockPath: '/tmp/notes/.ok/server.lock',
       binary: '/tmp/open-knowledge/packages/cli/src/cli.ts',
       command: '/usr/local/bin/node /tmp/open-knowledge/packages/cli/src/cli.ts start',
+      isDesktop: false,
     };
 
     const output = renderTable([entry]);

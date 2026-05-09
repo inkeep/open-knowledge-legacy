@@ -77,6 +77,8 @@ interface SyncEngineOptions {
   credentialArgs?: string[];
   cc1Broadcaster?: CC1Broadcaster | null;
   onStateChange?: (state: SyncState) => void;
+  /** Callback to gate batch-in-progress during merge operations.
+   *  Prevents HEAD watcher from firing reconciliation mid-merge. */
   setBatchInProgress?: (value: boolean) => void;
   onAutoDisable?: (reason: 'protected-branch') => void | Promise<void>;
 }
@@ -167,8 +169,8 @@ export class SyncEngine {
     this.onStateChange = options.onStateChange;
     this.setBatchInProgress = options.setBatchInProgress;
     this.onAutoDisable = options.onAutoDisable;
-    this.statePath = resolve(getLocalDir(this.contentDir), 'sync-state.json');
-    this.conflictStore = new ConflictStore(this.contentDir, this.projectDir, this.currentBranch);
+    this.statePath = resolve(getLocalDir(this.projectDir), 'sync-state.json');
+    this.conflictStore = new ConflictStore(this.projectDir, this.currentBranch);
   }
 
   async start(): Promise<void> {

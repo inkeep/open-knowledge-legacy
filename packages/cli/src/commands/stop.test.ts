@@ -31,6 +31,19 @@ function dead(pid: number): LockState {
     },
   };
 }
+function foreign(pid: number, port: number): LockState {
+  return {
+    status: 'foreign-host',
+    lockPath: `/tmp/fake-${pid}.lock`,
+    lock: {
+      pid,
+      port,
+      hostname: 'other-host',
+      startedAt: '2026-04-16T00:00:00Z',
+      worktreeRoot: '/x',
+    },
+  };
+}
 
 describe('buildStopPlan', () => {
   test('both alive → both targeted', () => {
@@ -142,5 +155,85 @@ describe('runStop', () => {
     });
     expect(killed).toEqual([200]);
     expect(outcome.stopped.map((t) => t.pid)).toEqual([200]);
+  });
+});
+
+describe('buildStopPlan with foreign-host states', () => {
+  test('foreign-host + locally-live PID → targeted (hostname drift)', () => {
+    const plan = buildStopPlan(foreign(100, 3001), foreign(200, 3000), {
+      isAlive: () => true,
+    });
+    expect(plan.targets).toEqual([
+      { name: 'server', pid: 100, port: 3001 },
+      { name: 'ui', pid: 200, port: 3000 },
+    ]);
+  });
+
+  test('foreign-host + dead PID → skipped (truly cross-host or stale)', () => {
+    const plan = buildStopPlan(foreign(100, 3001), foreign(200, 3000), {
+      isAlive: () => false,
+    });
+    expect(plan.targets).toEqual([]);
+  });
+
+  test('mix: alive + foreign-host-live → both targeted', () => {
+    const plan = buildStopPlan(aliveLock(100, 3001), foreign(200, 3000), {
+      isAlive: () => true,
+    });
+    expect(plan.targets).toEqual([
+      { name: 'server', pid: 100, port: 3001 },
+      { name: 'ui', pid: 200, port: 3000 },
+    ]);
+  });
+
+  test('mix: alive + foreign-host-dead → only alive targeted', () => {
+    const plan = buildStopPlan(aliveLock(100, 3001), foreign(200, 3000), {
+      isAlive: () => false,
+    });
+    expect(plan.targets).toEqual([{ name: 'server', pid: 100, port: 3001 }]);
+  });
+
+  test('isAlive is consulted per-pid, not once', () => {
+    const checked: number[] = [];
+    buildStopPlan(foreign(100, 3001), foreign(200, 3000), {
+      isAlive: (pid) => {
+        checked.push(pid);
+        return pid === 200;
+      },
+    });
+    expect(checked).toEqual([100, 200]);
+  });
+});
+
+describe('runStop with foreign-host states', () => {
+  test('foreign-host + locally-live → SIGTERM sent', () => {
+    const killed: Array<[number, string]> = [];
+    const outcome = runStop({
+      lockDir: '/tmp/x',
+      inspect: (name) => (name === 'server' ? foreign(100, 3001) : foreign(200, 3000)),
+      kill: (pid, sig) => killed.push([pid, sig]),
+      isAlive: () => true,
+      log: () => {},
+      error: () => {},
+    });
+    expect(killed).toEqual([
+      [100, 'SIGTERM'],
+      [200, 'SIGTERM'],
+    ]);
+    expect(outcome.stopped.map((t) => t.pid)).toEqual([100, 200]);
+  });
+
+  test('foreign-host + dead PID → no targets, no SIGTERM', () => {
+    const killed: number[] = [];
+    const outcome = runStop({
+      lockDir: '/tmp/x',
+      inspect: (name) => (name === 'server' ? foreign(100, 3001) : foreign(200, 3000)),
+      kill: (pid) => killed.push(pid),
+      isAlive: () => false,
+      log: () => {},
+      error: () => {},
+    });
+    expect(killed).toEqual([]);
+    expect(outcome.hadTargets).toBe(false);
   });
 });

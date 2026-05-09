@@ -254,6 +254,10 @@ export function EditorDemo() {
   );
 }
 
+/* ---------------------------------------------------------------------------
+ * SourceTextarea — styled to look like the real CodeMirror source editor
+ * --------------------------------------------------------------------------- */
+
 function SourceTextarea({
   ref,
   value,
@@ -298,6 +302,10 @@ function SourceTextarea({
   );
 }
 
+/* ---------------------------------------------------------------------------
+ * Icons — exact SVGs from packages/app/src/components/icons/
+ * --------------------------------------------------------------------------- */
+
 function TextboxIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
@@ -313,6 +321,10 @@ function MarkdownIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+/* ---------------------------------------------------------------------------
+ * ModeToggle — mirrors the real ToggleGroup with variant="segmented" size="sm"
+ * --------------------------------------------------------------------------- */
 
 function ModeToggle({
   mode,
@@ -362,6 +374,11 @@ function ToggleItem({
     </button>
   );
 }
+
+/* ---------------------------------------------------------------------------
+ * DemoBlockDragHandle — uses the real @tiptap/extension-drag-handle plugin.
+ * Mirrors packages/app/src/editor/extensions/drag-handle.ts but self-contained.
+ * --------------------------------------------------------------------------- */
 
 const HANDLE_HEIGHT = 20;
 const MAX_SINGLE_LINE_HEIGHT = 44;
@@ -447,6 +464,10 @@ const DemoBlockDragHandle = Extension.create({
     ];
   },
 });
+
+/* ---------------------------------------------------------------------------
+ * MockPresenceBar — mirrors packages/app/src/presence/PresenceBar.tsx
+ * --------------------------------------------------------------------------- */
 
 function MockPresenceBar() {
   return (

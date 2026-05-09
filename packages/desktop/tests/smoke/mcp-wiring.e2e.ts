@@ -222,7 +222,7 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
 
   test('partial-failure — read-only Cursor dir leaves marker absent, other writes succeed', async () => {
     const tmpHome = createTmpHome('partial');
-    seedEditorDetectionDirs(tmpHome, ['.claude', '.cursor', '.codeium/windsurf']);
+    seedEditorDetectionDirs(tmpHome, ['.claude', '.cursor']);
     const cursorDir = join(tmpHome, '.cursor');
     chmodSync(cursorDir, 0o444);
 
@@ -254,7 +254,6 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
       expect(readMarker(tmpHome)).toBeNull();
 
       expect(existsSync(join(tmpHome, '.claude.json'))).toBe(true);
-      expect(existsSync(join(tmpHome, '.codeium', 'windsurf', 'mcp_config.json'))).toBe(true);
       expect(existsSync(join(tmpHome, '.cursor', 'mcp.json'))).toBe(false);
     } finally {
       await closeAppSafely(app);

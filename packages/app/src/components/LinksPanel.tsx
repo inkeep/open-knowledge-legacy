@@ -1,3 +1,10 @@
+import {
+  type BacklinkEntry,
+  BacklinksSuccessSchema,
+  type ForwardLinkEntry,
+  ForwardLinksSuccessSchema,
+  ProblemDetailsSchema,
+} from '@inkeep/open-knowledge-core';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowUpRight,
@@ -10,8 +17,8 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { folderIndexCreateSeed, resolveLinkTargetIntent } from '@/components/link-target-intent';
-import { NewItemDialog } from '@/components/NewItemDialog';
 import { usePageList } from '@/components/PageListContext';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -24,68 +31,66 @@ import {
 } from '@/components/ui/panel';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { HttpResponseParseError } from '@/editor/http-client';
+import { type CreatePageSeed, createPageFromSeedAndUpdate } from '@/lib/create-page';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { cn } from '@/lib/utils';
 import { resolveTargetNavigationIntent } from './target-navigation-intent';
 
 const INITIAL_VISIBLE = 5;
 
-interface BacklinkItem {
-  source: string;
-  anchor: string | null;
-  title: string;
-  snippet: string | null;
-}
-
-interface BacklinksResponse {
-  ok: boolean;
-  backlinks?: BacklinkItem[];
-  error?: string;
-}
-
-interface DocumentForwardLinkItem {
-  kind: 'doc';
-  docName: string;
-  anchor: string | null;
-  title: string;
-  snippet: string | null;
-}
-
-interface ExternalForwardLinkItem {
-  kind: 'external';
-  url: string;
-  title: string;
-  snippet: string | null;
-}
-
-type ForwardLinkItem = DocumentForwardLinkItem | ExternalForwardLinkItem;
-
-interface ForwardLinksResponse {
-  ok: boolean;
-  forwardLinks?: ForwardLinkItem[];
-  error?: string;
-}
-
-async function fetchBacklinks(docName: string): Promise<BacklinkItem[]> {
+async function fetchBacklinks(docName: string): Promise<BacklinkEntry[]> {
   const res = await fetch(`/api/backlinks?docName=${encodeURIComponent(docName)}`);
-  if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
-  const data = (await res.json()) as BacklinksResponse;
-  if (!data.ok) throw new Error(data.error ?? 'Failed to load backlinks');
-  return data.backlinks ?? [];
+  const body = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(body);
+    if (!problem.success) {
+      throw new HttpResponseParseError(
+        `Failed to parse backlinks error response (HTTP ${res.status})`,
+        { status: res.status },
+      );
+    }
+    throw new Error(problem.data.title);
+  }
+  const success = BacklinksSuccessSchema.safeParse(body);
+  if (!success.success) {
+    throw new HttpResponseParseError('Backlinks response did not match expected shape.', {
+      status: res.status,
+    });
+  }
+  return success.data.backlinks;
 }
 
-async function fetchForwardLinks(docName: string): Promise<ForwardLinkItem[]> {
+async function fetchForwardLinks(docName: string): Promise<ForwardLinkEntry[]> {
   const res = await fetch(`/api/forward-links?docName=${encodeURIComponent(docName)}`);
-  if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
-  const data = (await res.json()) as ForwardLinksResponse;
-  if (!data.ok) throw new Error(data.error ?? 'Failed to load outgoing links');
-  return data.forwardLinks ?? [];
+  const body = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(body);
+    if (!problem.success) {
+      throw new HttpResponseParseError(
+        `Failed to parse forward-links error response (HTTP ${res.status})`,
+        { status: res.status },
+      );
+    }
+    throw new Error(problem.data.title);
+  }
+  const success = ForwardLinksSuccessSchema.safeParse(body);
+  if (!success.success) {
+    throw new HttpResponseParseError('Forward-links response did not match expected shape.', {
+      status: res.status,
+    });
+  }
+  return success.data.forwardLinks;
 }
 
 function compactDocPath(docName: string): string {
   const segments = docName.split('/');
   if (segments.length <= 2) return docName;
   return `…/${segments.slice(-2).join('/')}`;
+}
+
+function navigateToDocHash(docName: string): void {
+  window.location.hash = hashFromDocName(docName);
 }
 
 function SectionTrigger({
@@ -144,11 +149,13 @@ interface LinkRowProps {
   ariaLabel?: string;
   href?: string;
   external?: boolean;
+  disabled?: boolean;
   onClick?: () => void;
   hoverAction?: {
     icon: ReactNode;
     tooltip: string;
     onClick: () => void;
+    disabled?: boolean;
   };
 }
 
@@ -164,6 +171,7 @@ function LinkRow({
   ariaLabel,
   href,
   external,
+  disabled,
   onClick,
   hoverAction,
 }: LinkRowProps) {
@@ -192,8 +200,12 @@ function LinkRow({
       type="button"
       aria-label={ariaLabel}
       title={titleHover}
+      disabled={disabled}
       onClick={onClick}
-      className={cn(overlayClassName, 'cursor-pointer bg-transparent p-0')}
+      className={cn(
+        overlayClassName,
+        'cursor-pointer bg-transparent p-0 disabled:cursor-not-allowed disabled:opacity-60',
+      )}
     >
       {title}
     </button>
@@ -218,7 +230,8 @@ function LinkRow({
             <button
               type="button"
               aria-label={hoverAction.tooltip}
-              className="relative z-10 shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+              disabled={hoverAction.disabled}
+              className="relative z-10 shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground group-hover:opacity-100"
               onClick={hoverAction.onClick}
             >
               {hoverAction.icon}
@@ -312,7 +325,7 @@ function BacklinksSection({ docName }: { docName: string }) {
 }
 
 function ForwardLinksSection({ docName }: { docName: string }) {
-  const { folderPaths, pages, pagesBySlug, loading: pagesLoading } = usePageList();
+  const { addPage, folderPaths, pages, pagesBySlug, loading: pagesLoading } = usePageList();
   const {
     data: links = [],
     isLoading,
@@ -322,34 +335,32 @@ function ForwardLinksSection({ docName }: { docName: string }) {
     queryFn: () => fetchForwardLinks(docName),
     enabled: !pagesLoading && pages.has(docName),
   });
-  const [createTarget, setCreateTarget] = useState<DocumentForwardLinkItem | null>(null);
+  const [creatingKey, setCreatingKey] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [prevDocName, setPrevDocName] = useState(docName);
   if (prevDocName !== docName) {
     setPrevDocName(docName);
     setExpanded(false);
+    setCreatingKey(null);
   }
   const visible = expanded ? links : links.slice(0, INITIAL_VISIBLE);
 
-  const createDialogIntent =
-    createTarget === null
-      ? null
-      : resolveLinkTargetIntent(createTarget.docName, {
-          pages,
-          folderPaths,
-          pagesBySlug,
-        });
-  const createDialogSeed =
-    createDialogIntent === null
-      ? null
-      : createDialogIntent.kind === 'create'
-        ? {
-            initialDir: createDialogIntent.initialDir,
-            suggestedName: createDialogIntent.suggestedName,
-          }
-        : folderIndexCreateSeed(createDialogIntent);
+  async function handleCreatePage(seed: CreatePageSeed, key: string) {
+    if (creatingKey) return;
+    setCreatingKey(key);
+    try {
+      await createPageFromSeedAndUpdate(seed, {
+        addPage,
+        onCreated: navigateToDocHash,
+      });
+      setCreatingKey(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create page');
+      setCreatingKey(null);
+    }
+  }
 
-  function renderRow(link: ForwardLinkItem) {
+  function renderRow(link: ForwardLinkEntry) {
     if (link.kind === 'external') {
       const titleIsUrl = link.title === link.url;
       return (
@@ -383,25 +394,35 @@ function ForwardLinksSection({ docName }: { docName: string }) {
       linkIntent.kind === 'navigate' ? linkIntent.hashDocName : link.docName;
     const navigateHref = hashFromDocName(navigateHashDocName, link.anchor);
 
-    if (unresolved) {
+    if (unresolved && linkIntent.kind === 'create') {
+      const seed = {
+        initialDir: linkIntent.initialDir,
+        suggestedName: linkIntent.suggestedName,
+      };
       return (
         <LinkRow
           key={key}
           icon={<TriangleAlert className="size-3.5" />}
           iconColorClass="text-amber-600 dark:text-amber-400"
-          rowTooltip="Missing page — click to create"
-          ariaLabel={`Missing page: ${link.title}. Click to create.`}
+          rowTooltip={creatingKey === key ? 'Creating page...' : 'Missing page — click to create'}
+          ariaLabel={
+            creatingKey === key
+              ? `Creating page: ${link.title}.`
+              : `Missing page: ${link.title}. Click to create.`
+          }
           title={displayTitle}
           path={path}
           titleHover={link.docName}
           anchor={link.anchor}
           snippet={link.snippet}
-          onClick={() => setCreateTarget(link)}
+          disabled={creatingKey !== null}
+          onClick={() => void handleCreatePage(seed, key)}
         />
       );
     }
 
-    if (folderTarget) {
+    if (folderTarget && linkIntent.kind === 'navigate') {
+      const seed = folderIndexCreateSeed(linkIntent);
       return (
         <LinkRow
           key={key}
@@ -416,8 +437,11 @@ function ForwardLinksSection({ docName }: { docName: string }) {
           href={navigateHref}
           hoverAction={{
             icon: <Plus className="size-3.5" />,
-            tooltip: 'Create index note',
-            onClick: () => setCreateTarget(link),
+            tooltip: creatingKey === key ? 'Creating index note...' : 'Create index note',
+            disabled: creatingKey !== null || seed === null,
+            onClick: () => {
+              if (seed) void handleCreatePage(seed, key);
+            },
           }}
         />
       );
@@ -438,45 +462,33 @@ function ForwardLinksSection({ docName }: { docName: string }) {
   }
 
   return (
-    <>
-      <Collapsible defaultOpen>
-        <SectionTrigger title="Outgoing" count={links.length} isLoading={isLoading} />
-        <CollapsibleContent>
-          <div className="px-2 pb-3" aria-busy={isLoading}>
-            {error ? (
-              <div className="px-3">
-                <PanelError>
-                  {error instanceof Error ? error.message : 'Failed to load outgoing links'}
-                </PanelError>
-              </div>
-            ) : links.length === 0 && !isLoading ? (
-              <div className="px-3">
-                <PanelEmpty>This page doesn't link to anything yet.</PanelEmpty>
-              </div>
-            ) : (
-              <>
-                <div className="flex flex-col gap-1">{visible.map(renderRow)}</div>
-                <ShowMoreButton
-                  total={links.length}
-                  expanded={expanded}
-                  onToggle={() => setExpanded((prev) => !prev)}
-                />
-              </>
-            )}
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
-
-      <NewItemDialog
-        open={createTarget !== null}
-        kind="file"
-        initialDir={createDialogSeed?.initialDir ?? ''}
-        suggestedName={createDialogSeed?.suggestedName}
-        onOpenChange={(open: boolean) => {
-          if (!open) setCreateTarget(null);
-        }}
-      />
-    </>
+    <Collapsible defaultOpen>
+      <SectionTrigger title="Outgoing" count={links.length} isLoading={isLoading} />
+      <CollapsibleContent>
+        <div className="px-2 pb-3" aria-busy={isLoading}>
+          {error ? (
+            <div className="px-3">
+              <PanelError>
+                {error instanceof Error ? error.message : 'Failed to load outgoing links'}
+              </PanelError>
+            </div>
+          ) : links.length === 0 && !isLoading ? (
+            <div className="px-3">
+              <PanelEmpty>This page doesn't link to anything yet.</PanelEmpty>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-col gap-1">{visible.map(renderRow)}</div>
+              <ShowMoreButton
+                total={links.length}
+                expanded={expanded}
+                onToggle={() => setExpanded((prev) => !prev)}
+              />
+            </>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 

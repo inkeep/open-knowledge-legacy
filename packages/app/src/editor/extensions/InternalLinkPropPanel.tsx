@@ -19,15 +19,16 @@ import {
 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
+import { toast } from 'sonner';
 import { InteractionPropPanel } from '../../components/InteractionPropPanel';
 import {
   folderIndexCreateSeed,
   resolveLinkTargetIntent,
 } from '../../components/link-target-intent';
-import { NewItemDialog } from '../../components/NewItemDialog';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { type CreatePageSeed, createPageFromSeedAndUpdate } from '../../lib/create-page';
 import { normalizeDocNameInput } from '../../lib/doc-paths';
 import { cn } from '../../lib/utils';
 import { dispatchAssetClick } from '../asset-dispatch';
@@ -247,9 +248,9 @@ export function InternalLinkPropPanel({
   const href = (info?.attrs?.href as string | undefined) ?? '';
 
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [createDialogMode, setCreateDialogMode] = useState<'missing' | 'folder-index' | null>(null);
+  const [creatingMode, setCreatingMode] = useState<'missing' | 'folder-index' | null>(null);
 
-  const { folderPaths, pages, loading } = usePageList();
+  const { addPage, folderPaths, pages, loading } = usePageList();
 
   if (!info || !href) {
     return null;
@@ -319,8 +320,7 @@ export function InternalLinkPropPanel({
     }
   }
 
-  function handleCreated(docName: string) {
-    if (createDialogMode !== 'missing') return;
+  function updateMissingLinkHref(docName: string) {
     const live = getCurrentMarkInfo(editor.state, nodeId);
     if (!live) return;
     editor
@@ -340,6 +340,7 @@ export function InternalLinkPropPanel({
   let isUnresolved = false;
   let isFolder = false;
   let folderCreateSeed: ReturnType<typeof folderIndexCreateSeed> = null;
+  let missingCreateSeed: CreatePageSeed | null = null;
 
   if (loading) {
     stateLabel = {
@@ -370,6 +371,10 @@ export function InternalLinkPropPanel({
     folderCreateSeed = folderIndexCreateSeed(intent);
     isFolder = intent.kind === 'navigate' && intent.displayState === 'folder';
     isUnresolved = intent.kind === 'create';
+    missingCreateSeed =
+      intent.kind === 'create'
+        ? { initialDir: intent.initialDir, suggestedName: intent.suggestedName }
+        : null;
     if (isFolder) {
       stateLabel = {
         icon: <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />,
@@ -410,6 +415,33 @@ export function InternalLinkPropPanel({
     contextElement: editor.view.dom,
   };
 
+  function createSeedForMode(mode: 'missing' | 'folder-index'): CreatePageSeed | null {
+    if (mode === 'folder-index') return folderCreateSeed;
+    return missingCreateSeed;
+  }
+
+  async function handleCreatePage(mode: 'missing' | 'folder-index') {
+    const seed = createSeedForMode(mode);
+    if (!seed || creatingMode) return;
+    setCreatingMode(mode);
+    try {
+      await createPageFromSeedAndUpdate(seed, {
+        addPage,
+        onCreated(docName) {
+          if (mode === 'missing') {
+            updateMissingLinkHref(docName);
+          }
+          window.location.hash = `#/${docName}`;
+          onClose();
+        },
+      });
+      setCreatingMode(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create page');
+      setCreatingMode(null);
+    }
+  }
+
   return (
     <>
       <InteractionPropPanel
@@ -442,14 +474,24 @@ export function InternalLinkPropPanel({
             </Button>
           ) : null}
           {isUnresolved ? (
-            <Button size="sm" variant="default" onClick={() => setCreateDialogMode('missing')}>
-              Create page
+            <Button
+              size="sm"
+              variant="default"
+              disabled={creatingMode !== null}
+              onClick={() => void handleCreatePage('missing')}
+            >
+              {creatingMode === 'missing' ? 'Creating…' : 'Create page'}
             </Button>
           ) : null}
           {isFolder && folderCreateSeed ? (
-            <Button size="sm" variant="outline" onClick={() => setCreateDialogMode('folder-index')}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={creatingMode !== null}
+              onClick={() => void handleCreatePage('folder-index')}
+            >
               <FilePlus2 className="size-3.5" aria-hidden="true" />
-              Create index
+              {creatingMode === 'folder-index' ? 'Creating…' : 'Create index'}
             </Button>
           ) : null}
           {/* Spacer pushes Edit + Remove to the right, separating
@@ -470,58 +512,6 @@ export function InternalLinkPropPanel({
           </Button>
         </div>
       </InteractionPropPanel>
-
-      <NewItemDialog
-        open={createDialogMode !== null}
-        onOpenChange={(open) => {
-          if (!open) setCreateDialogMode(null);
-        }}
-        kind="file"
-        initialDir={
-          createDialogMode === 'folder-index' && folderCreateSeed
-            ? folderCreateSeed.initialDir
-            : isUnresolved && target?.kind === 'doc'
-              ? resolveLinkTargetIntent(target.docName, { pages, folderPaths }).kind === 'create'
-                ? (
-                    resolveLinkTargetIntent(target.docName, { pages, folderPaths }) as {
-                      kind: 'create';
-                      initialDir: string;
-                    }
-                  ).initialDir
-                : ''
-              : ''
-        }
-        suggestedName={
-          createDialogMode === 'folder-index' && folderCreateSeed
-            ? folderCreateSeed.suggestedName
-            : isUnresolved && target?.kind === 'doc'
-              ? resolveLinkTargetIntent(target.docName, { pages, folderPaths }).kind === 'create'
-                ? (
-                    resolveLinkTargetIntent(target.docName, { pages, folderPaths }) as {
-                      kind: 'create';
-                      suggestedName?: string;
-                    }
-                  ).suggestedName
-                : undefined
-              : undefined
-        }
-        description={
-          createDialogMode === 'folder-index' && folderCreateSeed ? (
-            <>
-              Create an index note for{' '}
-              <span className="font-medium text-foreground">{folderCreateSeed.initialDir}/</span>
-            </>
-          ) : (
-            <>
-              Create a page for{' '}
-              <span className="font-medium text-foreground">
-                {target?.kind === 'doc' ? target.docName : ''}
-              </span>
-            </>
-          )
-        }
-        onCreated={handleCreated}
-      />
 
       <EditMarkdownLinkDialog
         open={editDialogOpen}

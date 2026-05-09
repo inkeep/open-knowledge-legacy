@@ -8,6 +8,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
+import { emitProblem } from './ui-problem.ts';
 import {
   type ProxyServerHandle,
   proxyRequest,
@@ -22,6 +23,8 @@ export interface UiServerHandle {
   port: number;
   release: () => void;
   detachSafetyNet: () => void;
+  /** Reset the safety-net timer as if activity just occurred. Called on every
+   *  `/api/config` hit so an actively-used UI doesn't disconnect at 12h. */
   nudgeSafetyNet: () => void;
 }
 
@@ -62,7 +65,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   const { resolveContentDir, resolveLockDir } = await import('@inkeep/open-knowledge-server');
 
   const contentDir = resolveContentDir(opts.config, opts.cwd);
-  const lockDir = resolveLockDir(contentDir);
+  const lockDir = resolveLockDir(opts.cwd);
 
   acquireUiLock(lockDir, { port: 0, worktreeRoot: opts.cwd });
 
@@ -126,15 +129,12 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
       apiConfigNudge?.();
       const lock = readServerLock(lockDir);
       if (!lock || lock.port <= 0) {
-        res.writeHead(503, {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-store',
-        });
-        res.end(
-          JSON.stringify({
-            error: 'Collab server not running. Start `ok start` or run `ok status`.',
-            path: url,
-          }),
+        emitProblem(
+          res,
+          503,
+          'urn:ok:error:collab-server-not-running',
+          'Collab server not running. Start `ok start` or run `ok status`.',
+          `Path: ${url}`,
         );
         return;
       }
@@ -150,7 +150,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
         if (staticHandler) {
           staticHandler(req, res);
         } else {
-          notFound(res);
+          notFound(res, url);
         }
       });
       return;
@@ -161,7 +161,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
       return;
     }
 
-    notFound(res);
+    notFound(res, url);
   };
 
   const bindTargets: string[] = opts.host === undefined ? ['::1', '127.0.0.1'] : [opts.host];
@@ -271,9 +271,14 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   };
 }
 
-function notFound(res: ServerResponse): void {
-  res.writeHead(404);
-  res.end('Not found');
+function notFound(res: ServerResponse, path?: string): void {
+  emitProblem(
+    res,
+    404,
+    'urn:ok:error:not-found',
+    'Resource not found.',
+    path !== undefined ? `Path: ${path}` : undefined,
+  );
 }
 
 function resolveRequestedPort(optsPort: string | undefined, envPort: string | undefined): number {
@@ -373,7 +378,7 @@ export function uiCommand(getConfig: () => Config): Command {
     .action(async (opts: { port?: string; host?: string }) => {
       const { dim } = await import('../ui/colors.ts');
       const { UiLockCollisionError } = await import('@inkeep/open-knowledge-server');
-      const { resolveContentDir, resolveLockDir } = await import('@inkeep/open-knowledge-server');
+      const { resolveLockDir } = await import('@inkeep/open-knowledge-server');
       const config = getConfig();
       const host = opts.host;
 
@@ -419,7 +424,7 @@ export function uiCommand(getConfig: () => Config): Command {
       } catch (err) {
         if (!(err instanceof UiLockCollisionError)) throw err;
 
-        const lockDir = resolveLockDir(resolveContentDir(config, process.cwd()));
+        const lockDir = resolveLockDir(process.cwd());
         const proxyHost = host ?? 'localhost';
         let result: UiCollisionResult;
         try {

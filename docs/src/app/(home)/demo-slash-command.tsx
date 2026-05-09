@@ -280,6 +280,10 @@ function filterItems(items: SlashCommandItem[], query: string): SlashCommandItem
   );
 }
 
+/* ---------------------------------------------------------------------------
+ * SlashCommandMenu
+ * --------------------------------------------------------------------------- */
+
 const CATEGORY_LABELS: Record<string, string> = {
   basic: 'Basic blocks',
   insert: 'Insert',
@@ -409,6 +413,10 @@ function SlashMenuGroup({
     </div>
   );
 }
+
+/* ---------------------------------------------------------------------------
+ * DemoSlashCommand — TipTap extension using tippy.js for positioning
+ * --------------------------------------------------------------------------- */
 
 const slashCommandKey = new PluginKey('demoSlashCommand');
 

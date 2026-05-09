@@ -63,7 +63,7 @@ const cases = [
     filename: 'photo.png',
     mime: 'image/png',
     bytes: () => Array.from(createPngBuffer('drop-noautoopen-png')),
-    sourceMarker: 'photo.png',
+    sourceMarker: /photo(?:-\d+)?\.png/,
   },
   {
     name: 'mp4-video',
@@ -71,7 +71,7 @@ const cases = [
     filename: 'clip.mp4',
     mime: 'video/mp4',
     bytes: () => Array.from(createMp4Buffer('drop-noautoopen-mp4')),
-    sourceMarker: 'clip.mp4',
+    sourceMarker: /clip(?:-\d+)?\.mp4/,
   },
   {
     name: 'mp3-audio',
@@ -79,7 +79,7 @@ const cases = [
     filename: 'sound.mp3',
     mime: 'audio/mpeg',
     bytes: () => Array.from(createMp3Buffer('drop-noautoopen-mp3')),
-    sourceMarker: 'sound.mp3',
+    sourceMarker: /sound(?:-\d+)?\.mp3/,
   },
 ] as const;
 
@@ -100,7 +100,7 @@ test.describe('Drop pipeline does not auto-open the descriptor PropPanel', () =>
 
       await expect
         .poll(async () => await getSourceText(page), { timeout: 5_000 })
-        .toContain(c.sourceMarker);
+        .toMatch(c.sourceMarker);
 
       await expect(page.locator('[data-prop-panel]')).toBeHidden({
         timeout: PROP_PANEL_TIMEOUT,

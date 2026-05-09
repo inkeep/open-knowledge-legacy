@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
+import { parseApiError } from '../lib/parse-api-error.ts';
 
 const args = process.argv.slice(2);
 
@@ -41,9 +42,29 @@ if (useFile && (usePatch || useMarkdown || rapidIndex >= 0)) {
   process.exit(1);
 }
 
-async function agentWriteRaw(): Promise<{ ok: boolean; timestamp?: string; error?: string }> {
+type WriteResult = { ok: boolean; timestamp?: string; error?: string; type?: string };
+
+async function parseWriteResponse(res: Response): Promise<WriteResult> {
+  const body = (await res.json().catch(() => null)) as {
+    timestamp?: unknown;
+    type?: unknown;
+  } | null;
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: parseApiError(body) ?? `HTTP ${res.status}`,
+      type: typeof body?.type === 'string' ? body.type : undefined,
+    };
+  }
+  return {
+    ok: true,
+    timestamp: typeof body?.timestamp === 'string' ? body.timestamp : undefined,
+  };
+}
+
+async function agentWriteRaw(): Promise<WriteResult> {
   const res = await fetch(`${BASE_URL}/api/agent-write`, { method: 'POST' });
-  return (await res.json()) as { ok: boolean; timestamp?: string; error?: string };
+  return parseWriteResponse(res);
 }
 
 const SIM_AGENT_ID = 'agent-sim-001';
@@ -52,7 +73,7 @@ const SIM_AGENT_NAME = 'agent-sim';
 async function agentWriteMarkdown(
   markdown: string,
   position: 'append' | 'prepend' | 'replace' = 'append',
-): Promise<{ ok: boolean; timestamp?: string; error?: string }> {
+): Promise<WriteResult> {
   const res = await fetch(`${BASE_URL}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -64,13 +85,10 @@ async function agentWriteMarkdown(
       agentName: SIM_AGENT_NAME,
     }),
   });
-  return (await res.json()) as { ok: boolean; timestamp?: string; error?: string };
+  return parseWriteResponse(res);
 }
 
-async function agentPatch(
-  find: string,
-  replace: string,
-): Promise<{ ok: boolean; timestamp?: string; error?: string }> {
+async function agentPatch(find: string, replace: string): Promise<WriteResult> {
   const res = await fetch(`${BASE_URL}/api/agent-patch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -82,12 +100,27 @@ async function agentPatch(
       agentName: SIM_AGENT_NAME,
     }),
   });
-  return (await res.json()) as { ok: boolean; timestamp?: string; error?: string };
+  return parseWriteResponse(res);
 }
 
 async function readDocument(): Promise<{ ok: boolean; content?: string; error?: string }> {
   const res = await fetch(`${BASE_URL}/api/document?docName=${encodeURIComponent(docName)}`);
-  return (await res.json()) as { ok: boolean; content?: string; error?: string };
+  const body = (await res.json().catch(() => null)) as {
+    docName?: unknown;
+    content?: unknown;
+    type?: unknown;
+    title?: unknown;
+  } | null;
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: typeof body?.title === 'string' ? body.title : `HTTP ${res.status}`,
+    };
+  }
+  return {
+    ok: true,
+    content: typeof body?.content === 'string' ? body.content : '',
+  };
 }
 
 async function doWrite(index: number) {
@@ -193,7 +226,7 @@ async function runPatchMode() {
       const result = await agentPatch(find, replace);
       if (result.ok) {
         console.log(`    OK — patch applied`);
-      } else if (result.error === 'Text not found in document') {
+      } else if (result.type === 'urn:ok:error:target-not-found') {
         console.log(`    not found — skipping`);
       } else {
         console.error(`    FAIL — ${result.error ?? 'unknown error'}`);

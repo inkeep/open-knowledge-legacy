@@ -32,6 +32,9 @@ export interface CloneProgressEvent {
 export interface CloneCompleteEvent {
   type: 'complete';
   port: number;
+  /** Absolute, tilde-expanded path to the cloned repo. Always populated by
+   *  the HTTP relay (it intercepts the CLI's `complete` to chain into
+   *  `startServerAtDirAndGetPort` before forwarding). */
   dir: string;
 }
 

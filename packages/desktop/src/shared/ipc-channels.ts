@@ -1,16 +1,16 @@
 /**
  * Typed IPC request channel map (renderer → main, request/response pattern).
  *
- * D14 (hand-rolled discriminated union, not tRPC/tipc): every channel name is
- * a top-level key in `RequestChannels`; each key maps to `{ args: [...]; result: T }`.
- * The preload-side `invoke<K>()` helper (see `./ipc-invoke.ts`) uses these
- * types for full autocomplete + compile-time safety. Grep-able channel names
- * are the primary observability — a channel name tells you exactly where the
- * handler lives in main and where the caller lives in renderer without touching
- * a debugger.
+ * Hand-rolled discriminated union (not tRPC/tipc): every channel name is a
+ * top-level key in `RequestChannels`; each key maps to
+ * `{ args: [...]; result: T }`. The preload-side `invoke<K>()` helper (see
+ * `./ipc-invoke.ts`) uses these types for full autocomplete + compile-time
+ * safety. Grep-able channel names are the primary observability — a
+ * channel name tells you exactly where the handler lives in main and where
+ * the caller lives in renderer without touching a debugger.
  *
- * Scale-match trigger (FU-3): at >20 channels, migrate baseline to
- * `@electron-toolkit/typed-ipc` or `@egoist/tipc`. Currently 35 — well past
+ * Scale-match trigger: at >20 channels, migrate baseline to
+ * `@electron-toolkit/typed-ipc` or `@egoist/tipc`. Currently 42 — well past
  * the trigger; migrate before adding another batch.
  */
 
@@ -24,6 +24,7 @@ import type {
   OkLocalOpAuthStatusResponse,
   OkUpdateChannel,
 } from './bridge-contract.ts';
+import type { EntryPoint } from './entry-point.ts';
 
 export interface RecentProject {
   path: string;
@@ -35,11 +36,13 @@ export interface RecentProject {
 interface ProjectOpenRequest {
   path: string;
   target: 'new-window';
+  entryPoint: EntryPoint;
 }
 
 interface ProjectSessionState {
   openTabs: string[];
   activeDocName: string | null;
+  activeTabId: string | null;
   updatedAt: string | null;
 }
 
@@ -51,6 +54,8 @@ export interface HandoffStatsLine {
   readonly target: 'claude-cowork' | 'claude-code' | 'codex' | 'cursor';
   readonly host: 'electron' | 'web';
   readonly outcome: 'ok' | 'error';
+  /** ISO 8601 timestamp from the caller — not generated server-side so tests
+   *  can supply a deterministic value. */
   readonly ts: string;
   readonly reason?:
     | 'not-installed'
@@ -61,14 +66,98 @@ export interface HandoffStatsLine {
     | 'web-host-cursor-unsupported';
 }
 
-export type McpWiringEditorId =
-  | 'claude'
-  | 'claude-desktop'
-  | 'cursor'
-  | 'vscode'
-  | 'windsurf'
-  | 'codex';
+/** Editor IDs known to the first-launch MCP consent flow. Mirrors
+ *  `EditorId` in `packages/cli/src/commands/editors.ts`. Desktop `main/` DOES
+ *  dep `@inkeep/open-knowledge` (workspace dep for the
+ *  `writeUserMcpConfigs` / `EDITOR_TARGETS` surface), but `shared/` modules
+ *  stay zero-dep — any cross-package value import from the IPC surface
+ *  forces every preload / renderer consumer to pull CLI internals into its
+ *  bundle. Keeping the literal-union local preserves that split; drift with
+ *  the CLI's `EditorId` is caught at typecheck via the `McpWiringCliSurface`
+ *  interface in `main/mcp-wiring.ts` (which references BOTH types). */
+export type McpWiringEditorId = 'claude' | 'claude-desktop' | 'cursor' | 'codex';
 
+/** Sensitive-path warning category mirrored across the IPC boundary —
+ *  literal-union form so the renderer can switch on `kind` without pulling
+ *  the main-side helper module. Matches `SensitivePathWarning['kind']` in
+ *  `packages/desktop/src/main/folder-admission.ts`. */
+type OnboardingWarningKind =
+  | 'root'
+  | 'home'
+  | 'home-documents'
+  | 'home-desktop'
+  | 'home-downloads'
+  | 'volumes-mount'
+  | 'drive-root';
+
+type OnboardingGitState = 'present' | 'absent' | 'shell-only';
+
+/** Show payload pushed to the renderer when main decides to render the
+ *  consent dialog. Carries everything the dialog renders without further IPC
+ *  round-trips — except the file-count preview, which is throttled and
+ *  fetched on demand. */
+export interface OnboardingShowPayload {
+  readonly pickedPath: string;
+  readonly projectDir: string;
+  readonly defaultContentDir: string;
+  readonly gitState: OnboardingGitState;
+  readonly gitRootPromoted: boolean;
+  readonly warnings: readonly { readonly kind: OnboardingWarningKind }[];
+  readonly editorOptions: readonly {
+    readonly id: McpWiringEditorId;
+    readonly label: string;
+    /** True when this editor scaffolds a per-project MCP config; false when
+     *  only the user-level config is writable. Surfaced as a per-row badge
+     *  in the consent dialog so the user can distinguish project-scoped vs
+     *  user-only editors before clicking Start. */
+    readonly hasProjectConfig: boolean;
+  }[];
+}
+
+export interface OnboardingConfirmRequest {
+  readonly initGit: boolean;
+  readonly contentDir: string;
+  readonly additionalIgnores: string;
+  readonly editorIds: readonly McpWiringEditorId[];
+}
+
+/** Confirm result. `ok: false` includes a user-facing error string the
+ *  dialog renders inline. */
+export type OnboardingConfirmResult = { ok: true } | { ok: false; error: string };
+
+/** Cancel result is always `ok: true` — cancel can't fail meaningfully (no
+ *  fs writes happen). The shape is symmetric with confirm so the renderer
+ *  store can use a single result type. */
+export type OnboardingCancelResult = { ok: true } | { ok: false; error: string };
+
+/** File-count probe request — the renderer asks main for an updated count
+ *  after the user types into the Content directory field. The walk root is
+ *  pinned to the projectDir main captured when it dispatched
+ *  `ok:onboarding:show`; the renderer doesn't get to supply it. */
+export interface OnboardingProbeContentRequest {
+  readonly contentDir: string;
+}
+
+/** Probe response. `truncated` is true when the walk hit the cap before
+ *  finishing (`count` reads as `≥ 50,000`). `error` carries the inline
+ *  message; renderer renders it as `Preview unavailable: <error>` but
+ *  doesn't block Start. */
+export type OnboardingProbeContentResult =
+  | {
+      readonly ok: true;
+      readonly count: number;
+      readonly sample: readonly string[];
+      readonly truncated: boolean;
+    }
+  | { readonly ok: false; readonly error: string };
+
+/** Single entry in the consent dialog — one per editor in `ALL_EDITOR_IDS`.
+ *  `detected: true` preselects the checkbox.
+ *  `willReplace: true` signals that this editor has an existing OK-managed
+ *  entry (canonical npx, historical `-y` variant, or prior cliPath shape)
+ *  that clicking Add would overwrite — surfaced per-row in the dialog so
+ *  long-time CLI users who ran `ok init` months ago aren't surprised to
+ *  find their entry silently stomped by a bundle-absolute cliPath. */
 export interface McpWiringEditorDetection {
   readonly id: McpWiringEditorId;
   readonly label: string;
@@ -76,15 +165,32 @@ export interface McpWiringEditorDetection {
   readonly willReplace: boolean;
 }
 
+/** Confirm payload from renderer → main. Editors the user checked when they
+ *  clicked "Add". Subset of `McpWiringEditorId`. */
 export interface McpWiringConfirmRequest {
   readonly editorIds: readonly McpWiringEditorId[];
 }
 
+/** Confirm / skip response shape. `ok:false` surfaces when (a)
+ *  `writeUserMcpConfigs` throws, (b) any per-editor write returns
+ *  `action:'failed'` (deferred-marker — caller fires a sonner toast since
+ *  the dialog itself unmounts on result), or (c) the skip-marker write
+ *  fails. The `error` string is user-facing copy. */
 export type McpWiringConfirmResult = { ok: true } | { ok: false; error: string };
 export type McpWiringSkipResult = { ok: true } | { ok: false; error: string };
 
+/** Options for the open-folder native picker. `defaultPath` seeds the initial
+ *  directory shown to the user (e.g., the project root for the consent dialog's
+ *  Browse button). */
+interface DialogOpenFolderOpts {
+  readonly defaultPath?: string;
+}
+
 export interface RequestChannels {
-  'ok:dialog:open-folder': { args: []; result: string | null };
+  'ok:dialog:open-folder': {
+    args: [opts?: DialogOpenFolderOpts];
+    result: string | null;
+  };
   'ok:dialog:create-folder': { args: []; result: string | null };
   'ok:shell:open-external': { args: [url: string]; result: undefined };
   'ok:shell:detect-protocol': {
@@ -147,6 +253,22 @@ export interface RequestChannels {
   };
   'ok:mcp-wiring:skip': { args: []; result: McpWiringSkipResult };
   'ok:mcp-wiring:renderer-ready': { args: []; result: undefined };
+
+  'ok:onboarding:confirm': {
+    args: [request: OnboardingConfirmRequest];
+    result: OnboardingConfirmResult;
+  };
+  'ok:onboarding:cancel': { args: []; result: OnboardingCancelResult };
+  'ok:onboarding:renderer-ready': { args: []; result: undefined };
+  /** Async probe for the file-count preview line in the dialog. The walk
+   *  caps at 50,000 entries. 750 ms throttle is enforced renderer-side;
+   *  main runs the probe synchronously but yields each request to a
+   *  `setImmediate` boundary so the IPC reply doesn't block the main loop
+   *  on huge trees. */
+  'ok:onboarding:probe-content': {
+    args: [request: OnboardingProbeContentRequest];
+    result: OnboardingProbeContentResult;
+  };
 
   'ok:skill:detect-claude-desktop': { args: []; result: boolean };
 

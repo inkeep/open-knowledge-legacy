@@ -1,31 +1,13 @@
-/**
- * utilityProcess entry — hosts Hocuspocus via `bootServer()` per project window.
- *
- * Lifecycle:
- *   1. Module load: register IPC + signal handlers, start parent-death poll
- *   2. `init` IPC from main → call `bootServer({ ...opts, attachUiSibling: false, idleShutdownMs: null })`
- *   3. On `bootedServer.ready` → post `{ type: 'ready', port, apiOrigin }` back to main
- *   4. On `shutdown` IPC OR SIGTERM/SIGINT OR parent death → drain + exit
- *
- * D36 opt-outs: no `ok ui` sibling (BrowserWindow IS the UI), no idle-shutdown
- * (BrowserWindow lifecycle owns this utility's lifetime).
- *
- * D49 parent-death detection: macOS has no PR_SET_PDEATHSIG, so we poll
- * `process.kill(parentPid, 0)` every 5s. If the parent dies (`EPERM` /
- * `ESRCH`), self-exit cleanly so the server.lock is released. Linux + Windows
- * variants are stubbed for M1 (per D51 macOS-only) — see code comments.
- *
- * R19 guard: this module MUST NOT import `attachIdleShutdown` from anywhere.
- * The Biome GritQL rule from US-012 will eventually enforce this; the comment
- * is the human-side reminder.
- */
-
 import { rename, writeFile } from 'node:fs/promises';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { initContent } from '@inkeep/open-knowledge';
+import { readConfigSafely, resolveConfigPath } from '@inkeep/open-knowledge-core/server';
 import {
   type BootedServer,
   type BootServerOptions,
+  type Config,
   ConfigSchema,
+  ensureProjectGit,
 } from '@inkeep/open-knowledge-server';
 import { type KeyringSmokeResult, runKeyringSmoke } from './keyring-smoke.ts';
 
@@ -36,7 +18,10 @@ export interface UtilityInitMessage {
   opts: Pick<
     BootServerOptions,
     'contentDir' | 'projectDir' | 'port' | 'host' | 'debounce' | 'maxDebounce'
-  >;
+  > & {
+    didEnsureGit?: boolean;
+    consentVersion?: number;
+  };
 }
 export interface UtilityShutdownMessage {
   type: 'shutdown';
@@ -100,7 +85,20 @@ export interface SetupUtilityDeps {
   runSmoke?: () => Promise<KeyringSmokeResult>;
   env?: Record<string, string | undefined>;
   writeSmokeResult?: (path: string, contents: string) => Promise<void>;
+  prepareBootEnvironment?: PrepareBootEnvironment;
 }
+
+export interface PreparedBootEnvironment {
+  config: Config;
+  contentDir: string;
+  contentRoot: string | undefined;
+  configValid: boolean;
+  degradedHints?: readonly string[];
+}
+
+export type PrepareBootEnvironment = (
+  ipcOpts: UtilityInitMessage['opts'],
+) => Promise<PreparedBootEnvironment>;
 
 export interface UtilityHandle {
   readyPromise: Promise<UtilityReadyMessage>;
@@ -167,17 +165,27 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
   async function handleInit(msg: UtilityInitMessage) {
     try {
       const server = await deps.importServer();
-      const config = ConfigSchema.parse({});
+      const projectDir = msg.opts.projectDir ?? msg.opts.contentDir;
+      const prepare = deps.prepareBootEnvironment ?? defaultPrepareBootEnvironment;
+      const prepared = await prepare(msg.opts);
+
+      if (env.OK_DEBUG_DESKTOP_BOOT_TRACE === '1') {
+        console.warn(
+          `[desktop-boot-trace] projectDir=${projectDir} contentRoot=${JSON.stringify(
+            prepared.contentRoot,
+          )} resolvedContentDir=${prepared.contentDir} configValid=${prepared.configValid}`,
+        );
+      }
+
       booted = await server.bootServer({
         ...msg.opts,
-        config,
-        attachUiSibling: false, // D36 — no `ok ui` sibling under Electron
-        idleShutdownMs: null, // D36 — BrowserWindow lifecycle owns utility lifetime
-        skipAutoInit: false,
-        autoInitFn: () => {
-          const result = initContent(msg.opts.projectDir ?? msg.opts.contentDir);
-          return result.created.length > 0 || result.updated.length > 0;
-        },
+        contentDir: prepared.contentDir,
+        contentRoot: prepared.contentRoot,
+        config: prepared.config,
+        attachUiSibling: false, // No `ok ui` sibling under Electron
+        idleShutdownMs: null, // BrowserWindow lifecycle owns utility lifetime
+        skipAutoInit: true,
+        autoInitFn: undefined,
       });
       const readyMsg: UtilityReadyMessage = {
         type: 'ready',
@@ -187,10 +195,14 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
       deps.parentPort?.postMessage(readyMsg);
       resolveReady(readyMsg);
 
-      if (booted.degraded.length > 0) {
+      const mergedDegraded: readonly string[] =
+        prepared.degradedHints && prepared.degradedHints.length > 0
+          ? [...booted.degraded, ...prepared.degradedHints]
+          : booted.degraded;
+      if (mergedDegraded.length > 0) {
         deps.parentPort?.postMessage({
           type: 'degraded',
-          subsystems: booted.degraded,
+          subsystems: mergedDegraded,
         });
       }
     } catch (err) {
@@ -285,6 +297,79 @@ async function defaultWriteSmokeResult(path: string, contents: string): Promise<
   const tmp = `${path}.tmp`;
   await writeFile(tmp, contents, { encoding: 'utf-8' });
   await rename(tmp, path);
+}
+
+async function defaultPrepareBootEnvironment(
+  ipcOpts: UtilityInitMessage['opts'],
+): Promise<PreparedBootEnvironment> {
+  const projectDir = ipcOpts.projectDir ?? ipcOpts.contentDir;
+
+  const degradedHints: string[] = [];
+  if (ipcOpts.didEnsureGit !== true) {
+    const result = await ensureProjectGit(projectDir);
+    if (result.repaired === true) {
+      degradedHints.push('project-git-shell-only');
+    }
+  }
+
+  initContent(projectDir);
+
+  const configResult = readConfigSafely({
+    absPath: resolveConfigPath('project', projectDir),
+    sideline: false,
+    warn: (m: string) => console.warn(m),
+  });
+  let config: Config;
+  let configValid: boolean;
+  if (configResult.valid) {
+    config = configResult.value;
+    configValid = true;
+  } else {
+    console.warn('[config] desktop boot config invalid — using schema defaults');
+    config = ConfigSchema.parse({});
+    configValid = false;
+  }
+
+  const contentDir = resolveContentDir(projectDir, config, ipcOpts.contentDir);
+  const rawContentDir = config.content.dir;
+  const contentRoot =
+    typeof rawContentDir === 'string' && rawContentDir.length > 0 && rawContentDir !== '.'
+      ? rawContentDir
+      : undefined;
+  return {
+    config,
+    contentDir,
+    contentRoot,
+    configValid,
+    degradedHints: degradedHints.length > 0 ? degradedHints : undefined,
+  };
+}
+
+export function resolveContentDir(
+  projectDir: string,
+  config: Config,
+  ipcFallback: string | undefined,
+): string {
+  const fallback = ipcFallback ?? projectDir;
+  const configContentDir = config.content.dir;
+  if (
+    typeof configContentDir !== 'string' ||
+    configContentDir.length === 0 ||
+    configContentDir === '.'
+  ) {
+    return fallback;
+  }
+  const resolved = isAbsolute(configContentDir)
+    ? configContentDir
+    : resolve(projectDir, configContentDir);
+  const rel = relative(projectDir, resolved);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    console.warn(
+      `[config] content.dir=${JSON.stringify(configContentDir)} resolves outside projectDir — using IPC fallback`,
+    );
+    return fallback;
+  }
+  return resolved;
 }
 
 if ((process as NodeJS.Process & { parentPort?: unknown }).parentPort) {

@@ -17,7 +17,7 @@
  * yields a byte-identical file.
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { argv, exit } from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -63,9 +63,7 @@ const args = argv.slice(2);
 const CHECK_MODE = args.includes('--check');
 const outIdx = args.indexOf('--out');
 const OUT_PATH =
-  outIdx >= 0 && args[outIdx + 1]
-    ? args[outIdx + 1]
-    : join(REPO_ROOT, 'THIRD_PARTY_NOTICES.md');
+  outIdx >= 0 && args[outIdx + 1] ? args[outIdx + 1] : join(REPO_ROOT, 'THIRD_PARTY_NOTICES.md');
 
 function byteCompare(a, b) {
   return a < b ? -1 : a > b ? 1 : 0;
@@ -147,12 +145,7 @@ function collectClosure() {
       continue;
     }
 
-    if (
-      !isWorkspacePkg(pkg) &&
-      pkg.name &&
-      pkg.version &&
-      !isPlatformRestricted(pkg)
-    ) {
+    if (!isWorkspacePkg(pkg) && pkg.name && pkg.version && !isPlatformRestricted(pkg)) {
       collected.push({ dir: pkgDir, pkg });
     }
 
@@ -222,8 +215,7 @@ function normalizeSpdx(licenseField, pkgName) {
       .map((l) => (typeof l === 'string' ? l : l.type || JSON.stringify(l)))
       .join(' OR ');
   }
-  if (typeof licenseField === 'object')
-    return licenseField.type || JSON.stringify(licenseField);
+  if (typeof licenseField === 'object') return licenseField.type || JSON.stringify(licenseField);
   return String(licenseField);
 }
 
@@ -252,11 +244,7 @@ function extractCopyrights(licenseText) {
         ) {
           break;
         }
-        if (
-          /^[-*•]/.test(next) ||
-          /^\S+ <\S+@\S+>/.test(next) ||
-          /^copyright\b/i.test(next)
-        ) {
+        if (/^[-*•]/.test(next) || /^\S+ <\S+@\S+>/.test(next) || /^copyright\b/i.test(next)) {
           block.push(next);
           j++;
         } else {
@@ -466,9 +454,7 @@ function build() {
   }
 
   push('## LGPL-3.0 — transitive optional binary', '');
-  const lgplResolved = (grouped.get('LGPL') || []).find(
-    (e) => e.pkg.name === 'node-liblzma',
-  );
+  const lgplResolved = (grouped.get('LGPL') || []).find((e) => e.pkg.name === 'node-liblzma');
   push(
     `\`node-liblzma\`${
       lgplResolved ? `@${lgplResolved.pkg.version}` : ''
@@ -556,13 +542,7 @@ function build() {
     hr();
   }
 
-  const PERMISSIVE_NO_ATTR = [
-    'BlueOak-1.0.0',
-    '0BSD',
-    'WTFPL',
-    'Unlicense',
-    'CC0-1.0',
-  ];
+  const PERMISSIVE_NO_ATTR = ['BlueOak-1.0.0', '0BSD', 'WTFPL', 'Unlicense', 'CC0-1.0'];
   const noAttrEntries = [];
   for (const cat of PERMISSIVE_NO_ATTR) {
     if (grouped.has(cat)) noAttrEntries.push(...grouped.get(cat));
@@ -650,8 +630,7 @@ function build() {
 const generated = build();
 
 function computeHeaderDiff(existing, fresh) {
-  const headerOf = (s) =>
-    new Set(s.split('\n').filter((l) => /^### `[^@]+@[^`]+`$/.test(l)));
+  const headerOf = (s) => new Set(s.split('\n').filter((l) => /^### `[^@]+@[^`]+`$/.test(l)));
   const a = headerOf(existing);
   const b = headerOf(fresh);
   const added = [...b].filter((h) => !a.has(h)).sort();

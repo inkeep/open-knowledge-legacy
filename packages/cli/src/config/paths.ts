@@ -6,6 +6,6 @@ export function resolveContentDir(config: Config, cwd: string): string {
   return resolve(cwd, config.content.dir);
 }
 
-export function resolveLockDir(contentDir: string): string {
-  return getLocalDir(contentDir);
+export function resolveLockDir(projectDir: string): string {
+  return getLocalDir(projectDir);
 }

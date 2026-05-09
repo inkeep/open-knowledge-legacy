@@ -4,6 +4,7 @@ import {
   composeNewItemPath,
   ensureMdExtension,
   isNewItemShortcut,
+  sortTemplatesForPicker,
   validatePath,
 } from './NewItemDialog';
 
@@ -272,5 +273,74 @@ describe('isNewItemShortcut', () => {
         target: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe('sortTemplatesForPicker', () => {
+  function entry(
+    name: string,
+    scope: 'local' | 'inherited' | 'user',
+    title?: string,
+  ): {
+    name: string;
+    title?: string;
+    description?: string;
+    path: string;
+    source_folder: string;
+    scope: 'local' | 'inherited' | 'user';
+  } {
+    return {
+      name,
+      ...(title === undefined ? {} : { title }),
+      path: `${name}.md`,
+      source_folder: scope === 'user' ? '~/.ok' : '',
+      scope,
+    };
+  }
+
+  test('groups by scope: local → inherited → user', () => {
+    const sorted = sortTemplatesForPicker([
+      entry('zeta-user', 'user'),
+      entry('beta-inherited', 'inherited'),
+      entry('alpha-local', 'local'),
+    ]);
+    expect(sorted.map((t) => t.name)).toEqual(['alpha-local', 'beta-inherited', 'zeta-user']);
+  });
+
+  test('within scope, sorts by title (or name when title absent)', () => {
+    const sorted = sortTemplatesForPicker([
+      entry('zoo', 'local', 'Aardvark'),
+      entry('apple', 'local'),
+      entry('banana', 'local', 'Cherry'),
+    ]);
+    expect(sorted.map((t) => t.name)).toEqual(['zoo', 'apple', 'banana']);
+  });
+
+  test('returns a new array (does not mutate input)', () => {
+    const input = [entry('b', 'local'), entry('a', 'local')];
+    const sorted = sortTemplatesForPicker(input);
+    expect(sorted).not.toBe(input);
+    expect(input.map((t) => t.name)).toEqual(['b', 'a']);
+  });
+
+  test('handles empty list', () => {
+    expect(sortTemplatesForPicker([])).toEqual([]);
+  });
+
+  test('mixed scopes interleaved are correctly grouped', () => {
+    const sorted = sortTemplatesForPicker([
+      entry('m-local', 'local'),
+      entry('z-user', 'user'),
+      entry('a-inherited', 'inherited'),
+      entry('b-user', 'user'),
+      entry('c-local', 'local'),
+    ]);
+    expect(sorted.map((t) => `${t.scope}:${t.name}`)).toEqual([
+      'local:c-local',
+      'local:m-local',
+      'inherited:a-inherited',
+      'user:b-user',
+      'user:z-user',
+    ]);
   });
 });

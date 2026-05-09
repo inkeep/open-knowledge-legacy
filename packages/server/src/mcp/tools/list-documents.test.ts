@@ -26,6 +26,7 @@ beforeAll(() => {
       return Response.json({
         ok: true,
         documents: [
+          { kind: 'folder', path: 'notes', size: 0, modified: '2026-01-01' },
           { docName: 'alpha', size: 10, modified: '2026-01-01', isSymlink: false },
           { docName: 'notes/beta', size: 20, modified: '2026-01-02', isSymlink: false },
         ],
@@ -81,6 +82,7 @@ describe('list_documents — previewUrl + ui block', () => {
       ui: { baseUrl: string | null; port: number | null };
     };
     expect(s.documents).toHaveLength(2);
+    expect(s.documents.some((row) => row.docName === undefined)).toBe(false);
     expect(s.documents[0]?.previewUrl).toBe('https://env.example/#/alpha');
     expect(s.documents[0]?.previewUrlSource).toBe('env');
     expect(s.documents[1]?.previewUrl).toBe('https://env.example/#/notes/beta');

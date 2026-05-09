@@ -47,6 +47,7 @@ import { subscribeToConfigValidationRejected } from '@/lib/config-validation-eve
 import { cn } from '@/lib/utils';
 import { ChannelSection } from './ChannelSection';
 import { OkignoreSection } from './OkignoreSection';
+import { ProjectTemplatesSection } from './ProjectTemplatesSection';
 import {
   getEnumOptions,
   getFieldDefault,
@@ -54,6 +55,7 @@ import {
   resolveLeafSchema,
 } from './schema-walker';
 import type { SlotForwardedProps } from './slot-forwarded-props';
+import { UserTemplatesSection } from './UserTemplatesSection';
 import { pickFirstIssueForPath, useConfigForm } from './use-config-form';
 
 type Scope = 'user' | 'project';
@@ -183,7 +185,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       id: 'user',
       label: 'User',
       enabled: true,
-      items: [{ id: 'preferences', label: 'Preferences' }],
+      items: [
+        { id: 'preferences', label: 'Preferences' },
+        { id: 'user-templates', label: 'User templates' },
+      ],
     },
     {
       id: 'project',
@@ -191,6 +196,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       enabled: hasProject,
       items: [
         { id: 'project-general', label: 'General' },
+        { id: 'project-templates', label: 'Templates' },
         { id: 'okignore', label: 'Ignore patterns' },
       ],
     },
@@ -391,6 +397,12 @@ function SettingsContent({
         )}
       </div>
     );
+  }
+  if (activeId === 'user-templates') {
+    return <UserTemplatesSection />;
+  }
+  if (activeId === 'project-templates') {
+    return <ProjectTemplatesSection />;
   }
   if (activeId === 'okignore') {
     return <OkignoreSection binding={okignoreBinding} synced={okignoreSynced} />;

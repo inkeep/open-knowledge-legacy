@@ -1767,6 +1767,17 @@ button:active:not(:disabled) {
 .ProseMirror .jsx-component-wrapper[data-component-type="commonmarkimage"][data-align="right"] {
   text-align: right;
 }
+/* Tailwind v4 preflight sets `img { display: block }` (to fix the
+ * baseline-descender gap when img sits next to text). Block elements
+ * ignore the parent's `text-align`, which silently breaks the three
+ * alignment rules above. Override to `inline-block` ONLY inside an
+ * alignment-bearing image wrapper so the `text-align` can center /
+ * left / right the img — Tailwind's block default stays in place for
+ * every other img on the page. */
+.ProseMirror .jsx-component-wrapper[data-component-type="img"][data-align] img,
+.ProseMirror .jsx-component-wrapper[data-component-type="commonmarkimage"][data-align] img {
+  display: inline-block;
+}
 
 .ProseMirror .jsx-component-wrapper[data-component-type="callout"],
 .ProseMirror .jsx-component-wrapper[data-component-type="gfmcallout"] {

@@ -3,17 +3,26 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveTemplatesAvailable } from './templates-resolver.ts';
+import {
+  __resetUserHomeProviderForTest,
+  __setUserHomeProviderForTest,
+  resolveTemplatesAvailable,
+} from './templates-resolver.ts';
 
 describe('resolveTemplatesAvailable', () => {
   let projectDir: string;
+  let isolatedHome: string;
 
   beforeEach(async () => {
     projectDir = await mkdtemp(join(tmpdir(), 'tpl-resolver-'));
+    isolatedHome = await mkdtemp(join(tmpdir(), 'tpl-resolver-home-isolated-'));
+    __setUserHomeProviderForTest(() => isolatedHome);
   });
 
   afterEach(async () => {
+    __resetUserHomeProviderForTest();
     await rm(projectDir, { recursive: true, force: true });
+    await rm(isolatedHome, { recursive: true, force: true });
   });
 
   function writeTemplate(folder: string, name: string, body: string): void {
@@ -166,5 +175,146 @@ describe('resolveTemplatesAvailable', () => {
     expect(tpls[0]?.name).toBe('broken');
     expect(tpls[0]?.title).toBeUndefined();
     expect(tpls[0]?.description).toBeUndefined();
+  });
+});
+
+describe('resolveTemplatesAvailable — user-global layer (~/.ok/templates/)', () => {
+  let projectDir: string;
+  let userHome: string;
+
+  beforeEach(async () => {
+    projectDir = await mkdtemp(join(tmpdir(), 'tpl-resolver-proj-'));
+    userHome = await mkdtemp(join(tmpdir(), 'tpl-resolver-home-'));
+    __setUserHomeProviderForTest(() => userHome);
+  });
+
+  afterEach(async () => {
+    __resetUserHomeProviderForTest();
+    await rm(projectDir, { recursive: true, force: true });
+    await rm(userHome, { recursive: true, force: true });
+  });
+
+  function writeUserTemplate(name: string, body: string): void {
+    const dir = join(userHome, '.ok', 'templates');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${name}.md`), body);
+  }
+
+  function writeProjectTemplate(folder: string, name: string, body: string): void {
+    const dir = join(projectDir, folder, '.ok', 'templates');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${name}.md`), body);
+  }
+
+  function withFm(title: string, description: string, body = ''): string {
+    return `---\ntitle: ${title}\ndescription: ${description}\n---\n${body}`;
+  }
+
+  test('missing ~/.ok/templates/ is a graceful no-op', () => {
+    expect(resolveTemplatesAvailable(projectDir, '')).toEqual([]);
+    expect(resolveTemplatesAvailable(projectDir, 'meetings')).toEqual([]);
+  });
+
+  test('user templates surface with scope: "user" and source_folder: "~/.ok"', () => {
+    writeUserTemplate('weekly-review', withFm('Weekly Review', 'A personal template.'));
+    writeUserTemplate('daily-standup', withFm('Daily Standup', 'Quick notes.'));
+
+    const tpls = resolveTemplatesAvailable(projectDir, '');
+    expect(tpls).toHaveLength(2);
+    const names = tpls.map((t) => t.name).sort();
+    expect(names).toEqual(['daily-standup', 'weekly-review']);
+    for (const t of tpls) {
+      expect(t.scope).toBe('user');
+      expect(t.source_folder).toBe('~/.ok');
+    }
+    const review = tpls.find((t) => t.name === 'weekly-review');
+    expect(review?.title).toBe('Weekly Review');
+    expect(review?.description).toBe('A personal template.');
+    expect(review?.path.endsWith('/.ok/templates/weekly-review.md')).toBe(true);
+  });
+
+  test('user templates surface in any project folder', () => {
+    writeUserTemplate('weekly-review', withFm('Weekly Review', 'Personal.'));
+
+    const fromRoot = resolveTemplatesAvailable(projectDir, '');
+    const fromNested = resolveTemplatesAvailable(projectDir, 'meetings/2026-05-08');
+    expect(fromRoot).toHaveLength(1);
+    expect(fromNested).toHaveLength(1);
+    expect(fromNested[0]?.scope).toBe('user');
+    expect(fromNested[0]?.name).toBe('weekly-review');
+  });
+
+  test('closest-wins: project-local template shadows user template of the same name', () => {
+    writeUserTemplate('meeting-notes', withFm('User Version', 'Personal flavor.'));
+    writeProjectTemplate('meetings', 'meeting-notes', withFm('Project Version', 'Team flavor.'));
+
+    const tpls = resolveTemplatesAvailable(projectDir, 'meetings');
+    expect(tpls).toHaveLength(1);
+    expect(tpls[0]?.scope).toBe('local');
+    expect(tpls[0]?.title).toBe('Project Version');
+    expect(tpls[0]?.source_folder).toBe('meetings');
+  });
+
+  test('closest-wins: project-root template shadows user template of the same name', () => {
+    writeUserTemplate('global-template', withFm('User Version', 'Personal flavor.'));
+    writeProjectTemplate('', 'global-template', withFm('Project Version', 'Team flavor.'));
+
+    const tpls = resolveTemplatesAvailable(projectDir, 'meetings');
+    expect(tpls).toHaveLength(1);
+    expect(tpls[0]?.scope).toBe('inherited');
+    expect(tpls[0]?.title).toBe('Project Version');
+    expect(tpls[0]?.source_folder).toBe('');
+  });
+
+  test('mixed scopes: local + inherited + user all surface with correct labels', () => {
+    writeUserTemplate('weekly-review', withFm('Weekly Review', 'Personal.'));
+    writeProjectTemplate('', 'global', withFm('Global', 'Team-wide.'));
+    writeProjectTemplate('meetings', 'prep-notes', withFm('Prep', 'Local to meetings.'));
+
+    const tpls = resolveTemplatesAvailable(projectDir, 'meetings');
+    expect(tpls).toHaveLength(3);
+    const byName = Object.fromEntries(tpls.map((t) => [t.name, t]));
+    expect(byName['prep-notes']?.scope).toBe('local');
+    expect(byName.global?.scope).toBe('inherited');
+    expect(byName['weekly-review']?.scope).toBe('user');
+  });
+
+  test('non-md files in ~/.ok/templates/ are ignored', () => {
+    writeUserTemplate('good', withFm('Good', 'OK'));
+    const dir = join(userHome, '.ok', 'templates');
+    writeFileSync(join(dir, 'README.txt'), 'not a template');
+    writeFileSync(join(dir, 'image.png'), 'fake png');
+
+    const tpls = resolveTemplatesAvailable(projectDir, '');
+    expect(tpls).toHaveLength(1);
+    expect(tpls[0]?.name).toBe('good');
+    expect(tpls[0]?.scope).toBe('user');
+  });
+
+  test('user templates without frontmatter still surface', () => {
+    writeUserTemplate('no-meta', '# Just a body\n');
+
+    const tpls = resolveTemplatesAvailable(projectDir, '');
+    expect(tpls).toHaveLength(1);
+    expect(tpls[0]?.name).toBe('no-meta');
+    expect(tpls[0]?.scope).toBe('user');
+    expect(tpls[0]?.title).toBeUndefined();
+    expect(tpls[0]?.description).toBeUndefined();
+  });
+
+  test('degenerate case: projectDir === homedir() — no double-count of templates', () => {
+    const sharedHome = userHome;
+    const sharedDir = join(sharedHome, '.ok', 'templates');
+    mkdirSync(sharedDir, { recursive: true });
+    writeFileSync(
+      join(sharedDir, 'shared.md'),
+      withFm('Shared', 'Same dir as both project and user'),
+    );
+
+    const tpls = resolveTemplatesAvailable(sharedHome, '');
+    expect(tpls).toHaveLength(1);
+    expect(tpls[0]?.name).toBe('shared');
+    expect(tpls[0]?.scope).toBe('local');
+    expect(tpls[0]?.source_folder).toBe('');
   });
 });

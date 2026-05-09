@@ -17,7 +17,6 @@ import {
 } from './test-harness';
 
 interface TimelineResponse {
-  ok: boolean;
   entries: Array<{
     sha: string;
     type: 'wip' | 'checkpoint' | 'upstream' | 'rollback';
@@ -30,14 +29,19 @@ interface TimelineResponse {
 }
 
 interface RollbackResponse {
-  ok: boolean;
-  error?: string;
+  type?: string;
+  title?: string;
 }
 
 interface RenameResponse {
-  ok: boolean;
   renamed?: Array<{ fromDocName: string; toDocName: string }>;
-  error?: string;
+  type?: string;
+  title?: string;
+}
+
+interface DocumentListEntry {
+  kind?: 'document' | 'asset' | 'folder';
+  docName?: string;
 }
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -163,6 +167,12 @@ function readRenameLogEntries(server: RestartableServer): RenameLogEntry[] {
   return [...index.byTo.values()];
 }
 
+function isDocumentListDoc(entry: DocumentListEntry): entry is DocumentListEntry & {
+  docName: string;
+} {
+  return entry.kind === 'document' && typeof entry.docName === 'string';
+}
+
 async function pollForBackfill(
   server: RestartableServer,
   expectedFromTo: Array<{ from: string; to: string }>,
@@ -275,7 +285,7 @@ describe('Timeline rename-history mitigation — integration', () => {
     );
 
     const postRename = await getHistory(server.port, bDoc);
-    expect(postRename.ok).toBe(true);
+    expect(postRename.entries).toBeDefined();
     const shas = postRename.entries.map((e) => e.sha);
     expect(shas).toContain(preRenameSha);
     expect(shas).toContain(renameEntry?.commitSha);
@@ -286,7 +296,6 @@ describe('Timeline rename-history mitigation — integration', () => {
       ...AGENT,
     });
     expect(rb.status).toBe(200);
-    expect(rb.body.ok).toBe(true);
 
     await pollUntil(() => existsSync(join(server.contentDir, `${bDoc}.md`)), 5_000, 25);
 
@@ -392,7 +401,7 @@ describe('Timeline rename-history mitigation — integration', () => {
     ]);
 
     const cHistory = await getHistory(server.port, 'c');
-    expect(cHistory.ok).toBe(true);
+    expect(cHistory.entries).toBeDefined();
     const shas = cHistory.entries.map((e) => e.sha);
     expect(shas).toContain(aWipSha);
     const renameAB = readRenameLogEntries(server).find((e) => e.from === 'a' && e.to === 'b');
@@ -515,7 +524,7 @@ describe('Timeline rename-history mitigation — integration', () => {
     });
 
     const hist = await getHistory(server.port, 'parent/getting-started-renamed');
-    expect(hist.ok).toBe(true);
+    expect(hist.entries).toBeDefined();
 
     const subjects = hist.entries.map((e) => e.message);
     expect(
@@ -622,8 +631,8 @@ describe('Timeline rename-history mitigation — integration', () => {
     await pollUntil(async () => {
       const res = await fetch(`http://localhost:${server.port}/api/documents`);
       if (!res.ok) return false;
-      const data = (await res.json()) as { documents?: Array<{ docName: string }> };
-      return (data.documents ?? []).some((d) => d.docName === 'summary-a');
+      const data = (await res.json()) as { documents?: DocumentListEntry[] };
+      return (data.documents ?? []).some((d) => isDocumentListDoc(d) && d.docName === 'summary-a');
     }, 10_000);
 
     const renameRes = await renamePath(server.port, {
@@ -692,7 +701,6 @@ describe('Timeline rename-history mitigation — integration', () => {
 
     const versionRes = await getHistoryVersion(server.port, 'writing-haiku', preRenameSha);
     expect(versionRes.status).toBe(200);
-    expect(versionRes.body.ok).toBe(true);
     expect(versionRes.body.content).toContain('Haiku v1');
     expect(versionRes.body.content).toContain('original body');
   }, 60_000);
@@ -703,8 +711,8 @@ describe('Timeline rename-history mitigation — integration', () => {
     await pollUntil(async () => {
       const res = await fetch(`http://localhost:${server.port}/api/documents`);
       if (!res.ok) return false;
-      const data = (await res.json()) as { documents?: Array<{ docName: string }> };
-      return (data.documents ?? []).some((d) => d.docName === 'pure-a');
+      const data = (await res.json()) as { documents?: DocumentListEntry[] };
+      return (data.documents ?? []).some((d) => isDocumentListDoc(d) && d.docName === 'pure-a');
     }, 10_000);
 
     const renameRes = await renamePath(server.port, {
@@ -741,10 +749,10 @@ describe('Timeline rename-history mitigation — integration', () => {
       if (res.ok) {
         const data = (await res.json()) as {
           ok: boolean;
-          documents?: Array<{ docName: string }>;
+          documents?: DocumentListEntry[];
         };
-        indexedCount = (data.documents ?? []).filter((d) =>
-          d.docName.startsWith('big/doc-'),
+        indexedCount = (data.documents ?? []).filter(
+          (d) => isDocumentListDoc(d) && d.docName.startsWith('big/doc-'),
         ).length;
         if (indexedCount === COUNT) break;
       }

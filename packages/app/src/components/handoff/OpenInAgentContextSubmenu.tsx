@@ -22,8 +22,18 @@ export function contextRowHint(inputMissing: boolean): string | null {
 }
 
 interface OpenInAgentContextSubmenuProps {
+  /** Handoff input for the right-clicked node. `null` means the row's dispatch
+   *  is not actionable (no workspace metadata yet). Every row still renders
+   *  disabled with a "No workspace" hint so the UX doesn't flicker. */
   readonly input: HandoffDispatchInput | null;
+  /** Install state per target. Supplied by `FileTree`'s top-level
+   *  `useInstalledAgents()` call so every file row shares one coordinator. */
   readonly installStates: Record<HandoffTarget, InstallState>;
+  /** Host classifier — left in the prop signature for consumers that already
+   *  thread it; v1 doesn't use it because uninstalled rows aren't rendered.
+   *  Web-host Cursor uses the same probe + filter as every other target now
+   *  that `cursor-two-step.ts` has a `/api/spawn-cursor` fetch fallback
+   *  (PR #625). */
   readonly isElectronHost: boolean;
   readonly dispatch: (
     target: HandoffTarget,

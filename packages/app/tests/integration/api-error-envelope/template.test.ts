@@ -1,0 +1,101 @@
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import {
+  ProblemDetailsSchema,
+  TemplateDeleteSuccessSchema,
+  TemplatePutSuccessSchema,
+} from '@inkeep/open-knowledge-core';
+import { createTestServer, type TestServer } from '../test-harness';
+
+let server: TestServer;
+
+beforeAll(async () => {
+  server = await createTestServer();
+});
+
+afterAll(async () => {
+  await server.cleanup();
+});
+
+describe('template envelope (RFC 9457)', () => {
+  test('GET on missing template emits 404 + template-not-found', async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/template?name=nonexistent&folder=`,
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:template-not-found');
+      expect(parsed.data.status).toBe(404);
+    }
+  });
+
+  test('PUT happy path emits flat success body with path/created/warnings', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/template`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folder: '',
+        name: 'mytmpl',
+        body: '# Hello',
+        frontmatter: { title: 'My Template' },
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/json');
+
+    const body = await res.json();
+    const parsed = TemplatePutSuccessSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.created).toBe(true);
+    }
+    expect((body as Record<string, unknown>).ok).toBeUndefined();
+  });
+
+  test('PUT with missing title emits urn:ok:error:invalid-request', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/template`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder: '', name: 'untitled', body: '' }),
+    });
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:invalid-request');
+    }
+  });
+
+  test('DELETE happy path emits flat success body', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/template?name=mytmpl&folder=`, {
+      method: 'DELETE',
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/json');
+
+    const body = await res.json();
+    const parsed = TemplateDeleteSuccessSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    expect((body as Record<string, unknown>).ok).toBeUndefined();
+  });
+
+  test('method-not-allowed on PATCH emits problem+json with Allow: GET, PUT, DELETE', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/template`, { method: 'PATCH' });
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('GET, PUT, DELETE');
+
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:method-not-allowed');
+    }
+  });
+});

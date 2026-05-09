@@ -10,8 +10,10 @@ import { NavigatorApp } from '@/components/NavigatorApp';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@/lib/desktop-bridge-types';
+import { installConsentListener } from '@/lib/consent-store';
 import { installDesktopFetchRewrite } from '@/lib/desktop-fetch';
 import { installDeepLinkListener } from '@/lib/install-deep-link-listener';
+import { installOnboardingToastListener } from '@/lib/install-onboarding-toast';
 import { installMcpConsentListener } from '@/lib/mcp-consent-store';
 import { initWebVitals } from '@/lib/perf';
 import { installColdMountInstrumentation } from '@/lib/perf/cold-mount-instrumentation';
@@ -40,6 +42,14 @@ if (typeof window !== 'undefined') {
 
 if (typeof window !== 'undefined') {
   installMcpConsentListener({ bridge: window.okDesktop });
+}
+
+if (typeof window !== 'undefined') {
+  installConsentListener({ bridge: window.okDesktop });
+}
+
+if (typeof window !== 'undefined') {
+  installOnboardingToastListener({ bridge: window.okDesktop });
 }
 
 const queryClient = new QueryClient({

@@ -7,8 +7,10 @@
   "scripts": {
     "dev": "next dev --port 3010",
     "build": "next build",
+    "prebuild": "bun validate-link",
     "start": "next start --port 3010",
     "typecheck": "next typegen && fumadocs-mdx && tsc --noEmit",
+    "validate-link": "bun scripts/validate-link.ts",
     "postinstall": "fumadocs-mdx"
   },
   "dependencies": {
@@ -42,6 +44,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "next-validate-link": "^1.6.6",
     "@types/node": "^24.0.7",
     "@types/react": "^19",
     "@types/react-dom": "^19",

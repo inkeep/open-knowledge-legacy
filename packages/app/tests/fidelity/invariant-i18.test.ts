@@ -3,6 +3,13 @@ import type { JSONContent } from '@tiptap/core';
 import * as fc from 'fast-check';
 import { mdManager, mdRoundTrip, NUM_RUNS } from './helpers';
 
+/** Strip γ-path-specific attrs that differ across authoring forms (sourceRaw,
+ * source-attr array). After the canonical/compat split (see
+ * `registry/types.ts`), `componentName` ALSO differs by source form
+ * (`GFMCallout` for `> [!NOTE]`, `Callout` for `<Callout>` MDX); both render
+ * through the same React component via `rendersAs: 'Callout'` on GFMCallout.
+ * Strip componentName for prop-shape comparison — render-time equivalence is
+ * the load-bearing invariant, not byte-equal PM trees. */
 function stripGammaAttrs(node: JSONContent): JSONContent {
   if (!node) return node;
   let attrs = node.attrs;

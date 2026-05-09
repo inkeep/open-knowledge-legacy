@@ -320,7 +320,6 @@ describe('resolveCliPath — hybrid symlink-or-bundle resolution', () => {
 
 describe('isPublishedCanonical — exact canonical-shape predicate', () => {
   const claude = EDITOR_TARGETS.claude;
-  const vscode = EDITOR_TARGETS.vscode;
 
   test('Fixture A — canonical published npx shape → true (Claude)', () => {
     const existing: Record<string, unknown> = {
@@ -328,15 +327,6 @@ describe('isPublishedCanonical — exact canonical-shape predicate', () => {
       args: ['@inkeep/open-knowledge', 'mcp'],
     };
     expect(isPublishedCanonical(existing, claude)).toBe(true);
-  });
-
-  test('Fixture A — canonical published npx shape → true (VS Code with type:stdio)', () => {
-    const existing: Record<string, unknown> = {
-      type: 'stdio',
-      command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
-    };
-    expect(isPublishedCanonical(existing, vscode)).toBe(true);
   });
 
   test('Fixture C — canonical + user-augmented env → true', () => {
@@ -750,13 +740,10 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
       expect(payload.detectedEditors.length).toBe(ALL_EDITOR_IDS.length);
       const claude = payload.detectedEditors.find((d) => d.id === 'claude');
       const cursor = payload.detectedEditors.find((d) => d.id === 'cursor');
-      const vscode = payload.detectedEditors.find((d) => d.id === 'vscode');
       expect(claude?.detected).toBe(true);
       expect(cursor?.detected).toBe(true);
-      expect(vscode?.detected).toBe(false);
       expect(claude?.willReplace).toBe(false);
       expect(cursor?.willReplace).toBe(false);
-      expect(vscode?.willReplace).toBe(false);
     } finally {
       handle.destroy();
     }
@@ -796,10 +783,8 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
       };
       const claude = payload.detectedEditors.find((d) => d.id === 'claude');
       const cursor = payload.detectedEditors.find((d) => d.id === 'cursor');
-      const vscode = payload.detectedEditors.find((d) => d.id === 'vscode');
       expect(claude?.willReplace).toBe(true);
       expect(cursor?.willReplace).toBe(false);
-      expect(vscode?.willReplace).toBe(false);
     } finally {
       handle.destroy();
     }

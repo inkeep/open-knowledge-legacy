@@ -205,7 +205,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   const serverInstanceId = randomUUID();
 
-  const lockDir = getLocalDir(contentDir);
+  const lockDir = getLocalDir(projectDir);
   acquireServerLock(lockDir, {
     port: options.port ?? 0,
     worktreeRoot: projectDir,
@@ -244,6 +244,13 @@ export function createServer(options: ServerOptions): ServerInstance {
   const forceUnloadSet = new Set<Document>();
   let shutdownAllowsUnload = false;
   let forceUnloadDocument!: (document: Document) => Promise<void>;
+
+  let resolveReady!: () => void;
+  let rejectReady!: (err: unknown) => void;
+  const ready = new Promise<void>((res, rej) => {
+    resolveReady = res;
+    rejectReady = rej;
+  });
 
   function signalChannel(channel: 'files' | 'backlinks' | 'graph' | 'tags'): void {
     cc1Broadcaster?.signal(channel);
@@ -473,6 +480,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       contentFilter,
       serverInstanceId,
       getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
+      getFolderIndex: () => (watcher ? watcher.getFolderIndex() : new Map()),
       getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
       enableTestRoutes,
       shadowRef,
@@ -493,6 +501,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       resolveEmbed,
       getPrincipal: () => loadedPrincipal,
       forceUnloadDocument,
+      ready,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 
@@ -587,9 +596,16 @@ export function createServer(options: ServerOptions): ServerInstance {
         return event.newDocName;
       case 'asset-create':
       case 'asset-delete':
+      case 'folder-create':
+      case 'folder-delete':
         return event.relativePath;
-      default:
+      case 'create':
+      case 'update':
+      case 'delete':
+      case 'conflict':
         return event.docName;
+      default:
+        return assertNeverDiskEvent(event);
     }
   }
 
@@ -824,6 +840,11 @@ export function createServer(options: ServerOptions): ServerInstance {
           basenameIndex.remove(event.relativePath);
           signalChannel('files');
           scheduleAssetRerender(basename(event.relativePath));
+          break;
+        }
+        case 'folder-create':
+        case 'folder-delete': {
+          signalChannel('files');
           break;
         }
         default:
@@ -1177,7 +1198,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   async function initAsync(): Promise<void> {
     try {
-      loadedPrincipal = await loadPrincipal(contentDir);
+      loadedPrincipal = await loadPrincipal(projectDir);
       log.info({ principalId: loadedPrincipal.id }, '[server] principal loaded');
     } catch (e) {
       log.warn(
@@ -1314,7 +1335,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
 
     try {
-      const recovery = recoverPendingManagedRename(contentDir);
+      const recovery = recoverPendingManagedRename(contentDir, projectDir);
       if (recovery.recovered && recovery.journal) {
         const fromPath =
           recovery.journal.version === 2
@@ -1340,7 +1361,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
 
     try {
-      const sweep = cleanupOrphanUploadTempfiles(contentDir);
+      const sweep = cleanupOrphanUploadTempfiles(projectDir);
       if (sweep.deleted > 0 || sweep.errors > 0) {
         log.info(
           {
@@ -1916,9 +1937,14 @@ export function createServer(options: ServerOptions): ServerInstance {
       log.warn({ err }, '[server] SyncEngine failed to start — sync disabled');
       syncEngine = null;
     }
+
+    signalChannel('files');
+    signalChannel('backlinks');
+    signalChannel('graph');
+    signalChannel('tags');
   }
 
-  const ready = initAsync();
+  initAsync().then(resolveReady, rejectReady);
 
   return {
     hocuspocus,

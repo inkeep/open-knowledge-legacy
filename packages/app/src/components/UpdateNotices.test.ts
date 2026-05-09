@@ -6,7 +6,6 @@ import {
   attachUpdateSubscribers,
   pickActiveNotice,
   TOAST_A_ACTION,
-  TOAST_A_BODY,
   TOAST_A_ERROR_BODY,
   TOAST_B_ACTION,
   TOAST_C_ACTION,
@@ -17,6 +16,7 @@ import {
   TOAST_E_ACTION_RESET,
   TOAST_E_ACTION_STAY,
   TOAST_E_ERROR_BODY,
+  toastABody,
   toastBBody,
   toastDBody,
   toastEBody,
@@ -98,13 +98,17 @@ function castBridge(fake: FakeBridge): OkDesktopBridge {
 }
 
 describe('copy helpers (minimal-wording revision)', () => {
-  test('toastBBody formats the "Updated to v<X>" string', () => {
-    expect(toastBBody('0.1.1')).toBe('Updated to v0.1.1');
-    expect(toastBBody('2.0.0-beta.1')).toBe('Updated to v2.0.0-beta.1');
+  test('toastABody formats the version-specific pending-install string', () => {
+    expect(toastABody('0.1.1')).toBe('Version 0.1.1 ready to install');
+    expect(toastABody('2.0.0-beta.1')).toBe('Version 2.0.0-beta.1 ready to install');
+  });
+
+  test('toastBBody formats the "Updated to Version <X>" string', () => {
+    expect(toastBBody('0.1.1')).toBe('Updated to Version 0.1.1');
+    expect(toastBBody('2.0.0-beta.1')).toBe('Updated to Version 2.0.0-beta.1');
   });
 
   test('canonical copy strings match the single-card minimal revision', () => {
-    expect(TOAST_A_BODY).toBe('Update ready');
     expect(TOAST_A_ACTION).toBe('Relaunch');
     expect(TOAST_B_ACTION).toBe('Release notes');
     expect(TOAST_C_BODY).toBe('Updates paused');
@@ -199,7 +203,7 @@ describe('Notice A — ok:update:downloaded', () => {
     bridge._downloaded?.({ version: '0.1.1' });
     expect(addNotice).toHaveBeenCalledTimes(1);
     const [notice] = addNotice.mock.calls[0] as [UpdateNotice];
-    expect(notice.body).toBe(TOAST_A_BODY);
+    expect(notice.body).toBe(toastABody('0.1.1'));
     expect(notice.id).toBe('update-downloaded-0.1.1');
     expect(notice.action?.label).toBe(TOAST_A_ACTION);
     expect(notice.variant).toBeUndefined();
@@ -321,7 +325,7 @@ describe('Notice B — ok:update:whats-new', () => {
     bridge._whatsNew?.({ version: '0.3.1', releaseUrl });
     expect(addNotice).toHaveBeenCalledTimes(1);
     const notice = addNotice.mock.calls[0]?.[0] as UpdateNotice;
-    expect(notice.body).toBe('Updated to v0.3.1');
+    expect(notice.body).toBe('Updated to Version 0.3.1');
     expect(notice.id).toBe('whats-new-0.3.1');
     expect(notice.action?.label).toBe(TOAST_B_ACTION);
     expect(notice.priority).toBe(3); // whats-new = lowest

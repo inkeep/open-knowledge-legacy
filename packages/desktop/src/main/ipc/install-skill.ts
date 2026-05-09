@@ -24,6 +24,8 @@ interface InstallSkillIpcDeps {
   app: Pick<App, 'getPath'>;
   shell: Pick<Shell, 'openPath'>;
   home?: string;
+  /** When `true`, bypass the install-state gate and rebuild unconditionally
+   * (FR12 reinstall affordance). */
   force?: boolean;
 }
 

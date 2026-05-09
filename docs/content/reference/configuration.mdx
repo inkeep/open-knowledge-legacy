@@ -22,7 +22,7 @@ Edits made anywhere reflect everywhere; an open Settings pane refreshes live.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `content.dir` | string | `"."` | Content directory, relative to project root. Excluded paths live in `.okignore` — see [Ignore patterns](/features/ignore-patterns). |
+| `content.dir` | string | `"."` | Content directory, relative to project root. Auto-set to the relative sub-path when `.ok/` is scaffolded at the git working-tree root from a sub-folder. Excluded paths live in `.okignore` — see [Ignore patterns](/docs/features/ignore-patterns). |
 | `preview.baseUrl` | URL | (unset) | Override for `previewUrl` returned by MCP tools. Project-scope only. |
 | `appearance.theme` | `"light" \| "dark" \| "system"` | (unset) | Editor theme. |
 | `appearance.editorModeDefault` | `"wysiwyg" \| "source"` | (unset) | Initial editor mode for new docs. |
@@ -34,7 +34,7 @@ Default frontmatter for a folder lives in that folder's `.ok/frontmatter.yml`, n
 
 ## Ignore patterns
 
-Path exclusions live in a project-root `.okignore` file using gitignore syntax — `.gitignore` rules are honored automatically alongside it, and a leading `!` re-includes a file `.gitignore` excluded. Edit patterns from the **Ignore patterns** section of the Settings pane, the right-click menu in the file tree, or by hand in any editor; the running server picks up changes without a restart. See [Ignore patterns](/features/ignore-patterns) for the full UX.
+Path exclusions live in a project-root `.okignore` file using gitignore syntax — `.gitignore` rules are honored automatically alongside it, and a leading `!` re-includes a file `.gitignore` excluded. Edit patterns from the **Ignore patterns** section of the Settings pane, the right-click menu in the file tree, or by hand in any editor; the running server picks up changes without a restart. See [Ignore patterns](/docs/features/ignore-patterns) for the full UX.
 
 ## Precedence
 

@@ -51,11 +51,56 @@ export type SpawnCursorResult =
       readonly reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error';
     };
 
+function spawnCursorResultToWire(result: SpawnCursorResult): {
+  status: number;
+  contentType: string;
+  body: string;
+} {
+  if (result.ok) {
+    return { status: 200, contentType: 'application/json', body: JSON.stringify({}) };
+  }
+  const map: Record<
+    'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error',
+    { status: number; type: string; title: string }
+  > = {
+    'invalid-path': {
+      status: 403,
+      type: 'urn:ok:error:path-escape',
+      title: 'Path escapes the content directory.',
+    },
+    'not-installed': {
+      status: 422,
+      type: 'urn:ok:error:cursor-not-installed',
+      title: 'Cursor CLI not found on this machine.',
+    },
+    timeout: {
+      status: 504,
+      type: 'urn:ok:error:cursor-spawn-timeout',
+      title: 'Cursor spawn exceeded the deadline.',
+    },
+    'spawn-error': {
+      status: 502,
+      type: 'urn:ok:error:cursor-spawn-failed',
+      title: 'Cursor spawn failed.',
+    },
+  };
+  const entry = map[result.reason];
+  return {
+    status: entry.status,
+    contentType: 'application/problem+json',
+    body: JSON.stringify({ type: entry.type, title: entry.title, status: entry.status }),
+  };
+}
+
 export interface HandoffMockConfig {
   readonly host: 'electron' | 'web';
   readonly install: InstallMap;
   readonly spawnCursor?: SpawnCursorResult;
+  /** Worker's baseURL — passed so the mock bridge's `collabUrl` / `apiOrigin`
+   *  point at the real Vite+Hocuspocus instance for this worker. */
   readonly workerBaseURL: string;
+  /** Worker's content dir — passed so the mock bridge's `projectPath`
+   *  matches the on-disk content dir and `useWorkspace()` resolves cleanly. */
   readonly workerContentDir: string;
 }
 
@@ -78,10 +123,11 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
     });
     await page.route('**/api/spawn-cursor', async (route) => {
       const result = cfg.spawnCursor ?? { ok: true };
+      const wire = spawnCursorResultToWire(result);
       await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(result),
+        status: wire.status,
+        contentType: wire.contentType,
+        body: wire.body,
       });
     });
     await page.route('**/api/install-skill', async (route) => {
@@ -133,6 +179,8 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
             reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error';
           };
       fakeTimeOffset: number;
+      /** Web-host only: set once `/api/installed-agents` fetch resolves so
+       *  tests can poll for the probe having landed. */
       installedAgentsFetchResolved: boolean;
     }
     const mocks: HandoffMocksState = {

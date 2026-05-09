@@ -8,6 +8,7 @@ import type {
   OkLocalOpStream,
   OkMcpWiringShowPayload,
   OkMenuAction,
+  OkOnboardingShowPayload,
   OkUpdateChannel,
   OkUpdateDowngradeWarningInfo,
   OkUpdateDownloadedInfo,
@@ -204,7 +205,7 @@ const bridge: OkDesktopBridge = {
   },
 
   dialog: {
-    openFolder: () => invoke('ok:dialog:open-folder'),
+    openFolder: (opts) => invoke('ok:dialog:open-folder', opts),
     createFolder: () => invoke('ok:dialog:create-folder'),
   },
 
@@ -268,6 +269,44 @@ const bridge: OkDesktopBridge = {
     },
     confirm: (editorIds) => invoke('ok:mcp-wiring:confirm', { editorIds }),
     skip: () => invoke('ok:mcp-wiring:skip'),
+  },
+
+  onboarding: {
+    onShow(cb: (payload: OkOnboardingShowPayload) => void) {
+      const listener = (_event: IpcRendererEvent, payload: OkOnboardingShowPayload) => cb(payload);
+      ipcRenderer.on('ok:onboarding:show', listener);
+      return () => ipcRenderer.removeListener('ok:onboarding:show', listener);
+    },
+    signalReady: () => {
+      invoke('ok:onboarding:renderer-ready').catch(() => {});
+    },
+    confirm: (request) => invoke('ok:onboarding:confirm', request),
+    cancel: () => invoke('ok:onboarding:cancel'),
+    probeContent: (request) => invoke('ok:onboarding:probe-content', request),
+    onToast(
+      cb: (
+        payload:
+          | { readonly kind: 'ancestor-promote'; readonly ancestorPath: string }
+          | {
+              readonly kind: 'git-root-promote';
+              readonly gitRoot: string;
+              readonly contentDir: string;
+            },
+      ) => void,
+    ) {
+      const listener = (
+        _event: IpcRendererEvent,
+        payload:
+          | { readonly kind: 'ancestor-promote'; readonly ancestorPath: string }
+          | {
+              readonly kind: 'git-root-promote';
+              readonly gitRoot: string;
+              readonly contentDir: string;
+            },
+      ) => cb(payload);
+      ipcRenderer.on('ok:onboarding:toast', listener);
+      return () => ipcRenderer.removeListener('ok:onboarding:toast', listener);
+    },
   },
 
   localOp: {

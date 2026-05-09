@@ -21,7 +21,14 @@ interface AssetEntry {
   referencedBy?: string[];
 }
 
-export type FileEntry = DocumentEntry | AssetEntry;
+interface FolderEntry {
+  kind: 'folder';
+  path: string;
+  size: number;
+  modified: string;
+}
+
+export type FileEntry = DocumentEntry | AssetEntry | FolderEntry;
 export type DocEntry = DocumentEntry;
 
 export function isAssetEntry(entry: FileEntry): entry is AssetEntry {
@@ -29,7 +36,11 @@ export function isAssetEntry(entry: FileEntry): entry is AssetEntry {
 }
 
 export function isDocumentEntry(entry: FileEntry): entry is DocumentEntry {
-  return !isAssetEntry(entry);
+  return entry.kind === 'document';
+}
+
+export function isFolderEntry(entry: FileEntry): entry is FolderEntry {
+  return entry.kind === 'folder';
 }
 
 export function computeAncestors(docName: string | null): string[] {

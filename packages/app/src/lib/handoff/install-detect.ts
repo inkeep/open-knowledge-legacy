@@ -5,6 +5,8 @@ export const UNIQUE_SCHEMES: ReadonlyArray<string> = [
   ...new Set(KNOWN_TARGETS.flatMap((t) => t.schemes)),
 ];
 
+/** Per-scheme probe result. `lastChecked` is applied downstream on the target
+ *  state, not stored per-scheme — the probe boundary is a pure snapshot. */
 interface SchemeProbeResult {
   readonly installed: boolean;
   readonly displayName?: string;
@@ -100,6 +102,8 @@ export async function probeViaFetch(deps: {
 }
 
 export interface ProbeDeps {
+  /** One-shot probe — returns `SchemeStates` for every unique scheme.
+   *  Strategies (`probeViaElectron`, `probeViaFetch`) satisfy this shape. */
   probe: () => Promise<SchemeStates>;
   isElectronHost: () => boolean;
   now: () => number;
@@ -107,12 +111,18 @@ export interface ProbeDeps {
 }
 
 export interface ProbeHandle {
+  /** Trigger a probe. Subject to throttle + inflight dedup. Resolves when the
+   *  probe completes, or immediately if throttled / already inflight. */
   probe(): Promise<void>;
   getTargetStates(): Record<HandoffTarget, InstallState>;
   subscribe(cb: (states: Record<HandoffTarget, InstallState>) => void): () => void;
+  /** Stop the coordinator — cancels subscriptions. A pending probe resolves
+   *  without notifying. Idempotent. */
   cancel(): void;
 }
 
+/** Deep-equal check for the per-scheme probe map — avoids a re-render when the
+ *  probe returns the same answer twice in a row (common case under throttle). */
 function schemeStatesEqual(a: SchemeStates, b: SchemeStates): boolean {
   const aKeys = Object.keys(a);
   const bKeys = Object.keys(b);

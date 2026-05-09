@@ -35,7 +35,9 @@ export function TemplatesCard({ folderPath, state, onChange }: Props) {
 
   async function handleDelete(target: TemplateMenuEntry) {
     setDeleting(true);
-    const result = await deleteTemplate(target.source_folder, target.name);
+    const deleteTargetType = target.scope === 'user' ? 'user' : 'project';
+    const folderArg = target.scope === 'user' ? '' : target.source_folder;
+    const result = await deleteTemplate(folderArg, target.name, deleteTargetType);
     setDeleting(false);
     if (!result.ok) {
       toast.error(`Delete failed: ${result.error}`);
@@ -121,6 +123,7 @@ export function TemplatesCard({ folderPath, state, onChange }: Props) {
           if (!open) setEditTarget(null);
         }}
         onSaved={onChange}
+        target={editTarget?.scope === 'user' ? 'user' : 'project'}
       />
       <Dialog
         open={!!deleteTarget}
@@ -136,7 +139,9 @@ export function TemplatesCard({ folderPath, state, onChange }: Props) {
             customDescription={`This permanently removes ${deleteTarget.path}. Agents that reference this template by name will fail until it's recreated or shadowed by an ancestor.${
               deleteTarget.scope === 'inherited'
                 ? '\n\nThis template lives at an ancestor folder — deleting affects every folder under that ancestor that does not shadow it locally.'
-                : ''
+                : deleteTarget.scope === 'user'
+                  ? '\n\nThis template lives in your user home (~/.ok/templates/) — deleting affects every OK project you open with this user account.'
+                  : ''
             }`}
           />
         )}
@@ -179,6 +184,11 @@ function TemplateRow({
           {template.scope === 'inherited' ? (
             <Badge variant="gray" className="ml-auto shrink-0 text-2xs">
               inherited
+            </Badge>
+          ) : null}
+          {template.scope === 'user' ? (
+            <Badge variant="primary" className="ml-auto shrink-0 text-2xs">
+              user
             </Badge>
           ) : null}
         </div>

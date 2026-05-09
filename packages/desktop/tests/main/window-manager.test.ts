@@ -146,6 +146,8 @@ describe('WindowManager', () => {
         projectDir: '/tmp/test-project',
         port: 0,
         host: 'localhost',
+        didEnsureGit: false,
+        consentVersion: 1,
       },
     });
 

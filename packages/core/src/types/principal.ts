@@ -1,1 +1,1 @@
-export type { PrincipalResponse as Principal } from '../schemas/api.ts';
+export type { PrincipalSuccess as Principal } from '../schemas/api/index.ts';

@@ -21,19 +21,39 @@ function makeReq(remoteAddress: string, origin?: string): IncomingMessage {
   return req;
 }
 
-function makeRes(): {
-  res: ServerResponse;
-  calls: Array<{ status: number; data: unknown }>;
-} {
-  const calls: Array<{ status: number; data: unknown }> = [];
-  const res = {} as ServerResponse;
-  return { res, calls };
+interface CapturedResponse {
+  status: number;
+  contentType: string | undefined;
+  body: unknown;
 }
 
-function makeSendJson(calls: Array<{ status: number; data: unknown }>) {
-  return (_res: ServerResponse, status: number, data: unknown) => {
-    calls.push({ status, data });
-  };
+function makeRes(): {
+  res: ServerResponse;
+  calls: CapturedResponse[];
+} {
+  const calls: CapturedResponse[] = [];
+  let lastStatus = 0;
+  let lastHeaders: Record<string, string> = {};
+  const res = {
+    writeHead(status: number, headers: Record<string, string>) {
+      lastStatus = status;
+      lastHeaders = headers;
+    },
+    end(body: string) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        parsed = body;
+      }
+      calls.push({
+        status: lastStatus,
+        contentType: lastHeaders['Content-Type'],
+        body: parsed,
+      });
+    },
+  } as unknown as ServerResponse;
+  return { res, calls };
 }
 
 describe('isLoopbackRequest', () => {
@@ -199,40 +219,46 @@ describe('isPathWithinHome — symlink containment', () => {
 describe('checkLocalOpSecurity', () => {
   test('allows loopback request with no origin', () => {
     const { res, calls } = makeRes();
-    const result = checkLocalOpSecurity(makeReq('127.0.0.1'), res, makeSendJson(calls));
+    const result = checkLocalOpSecurity(makeReq('127.0.0.1'), res, { handler: 'test-handler' });
     expect(result).toBe(true);
     expect(calls).toHaveLength(0);
   });
 
   test('allows loopback request with valid origin', () => {
     const { res, calls } = makeRes();
-    const result = checkLocalOpSecurity(
-      makeReq('127.0.0.1', 'http://localhost:5173'),
-      res,
-      makeSendJson(calls),
-    );
+    const result = checkLocalOpSecurity(makeReq('127.0.0.1', 'http://localhost:5173'), res, {
+      handler: 'test-handler',
+    });
     expect(result).toBe(true);
     expect(calls).toHaveLength(0);
   });
 
-  test('rejects non-loopback request with 403', () => {
+  test('rejects non-loopback request with RFC 9457 problem+json 403', () => {
     const { res, calls } = makeRes();
-    const result = checkLocalOpSecurity(makeReq('10.0.0.5'), res, makeSendJson(calls));
+    const result = checkLocalOpSecurity(makeReq('10.0.0.5'), res, { handler: 'test-handler' });
     expect(result).toBe(false);
     expect(calls).toHaveLength(1);
     expect(calls[0].status).toBe(403);
+    expect(calls[0].contentType).toBe('application/problem+json');
+    const body = calls[0].body as { type: string; title: string; status: number };
+    expect(body.type).toBe('urn:ok:error:loopback-required');
+    expect(body.title).toContain('loopback');
+    expect(body.status).toBe(403);
   });
 
-  test('rejects invalid origin with 403', () => {
+  test('rejects invalid origin with RFC 9457 problem+json 403', () => {
     const { res, calls } = makeRes();
-    const result = checkLocalOpSecurity(
-      makeReq('127.0.0.1', 'https://evil.example.com'),
-      res,
-      makeSendJson(calls),
-    );
+    const result = checkLocalOpSecurity(makeReq('127.0.0.1', 'https://evil.example.com'), res, {
+      handler: 'test-handler',
+    });
     expect(result).toBe(false);
     expect(calls).toHaveLength(1);
     expect(calls[0].status).toBe(403);
+    expect(calls[0].contentType).toBe('application/problem+json');
+    const body = calls[0].body as { type: string; title: string; status: number };
+    expect(body.type).toBe('urn:ok:error:invalid-origin');
+    expect(body.title).toContain('Origin');
+    expect(body.status).toBe(403);
   });
 });
 

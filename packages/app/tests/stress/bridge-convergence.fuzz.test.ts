@@ -446,6 +446,8 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       ? [FIXED_SEED]
       : Array.from({ length: SEED_COUNT }, (_, i) => Date.now() + i);
 
+  /**
+   */
   test.each(seeds)('bridge-convergence seed %d', async (seed) => {
     let setupOk = false;
     let clients: Awaited<ReturnType<typeof createTestClients>> = [] as never;

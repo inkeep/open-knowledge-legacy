@@ -1,7 +1,11 @@
 import { FolderOpenIcon, Loader2Icon, PlusIcon } from 'lucide-react';
 import { type ComponentType, useEffect, useState } from 'react';
 import { useUpdateChannel } from '@/hooks/use-update-channel';
-import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
+import type {
+  OkDesktopBridge,
+  OkProjectEntryPoint,
+  RecentProjectEntry,
+} from '@/lib/desktop-bridge-types';
 import {
   resolveErrorMessage,
   runWithErrorStatePure as runWithErrorStatePureBase,
@@ -12,6 +16,7 @@ import { ipcCloneTransport } from '@/lib/transports/clone-transport';
 import { AuthModal } from './AuthModal';
 import { BetaBadge } from './BetaBadge';
 import { CloneDialog } from './CloneDialog';
+import { ConsentDialog } from './ConsentDialog';
 import { GithubIcon } from './icons/github';
 import { OkIcon } from './icons/ok';
 import { McpConsentDialog } from './McpConsentDialog';
@@ -66,19 +71,19 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
     runWithErrorState(async () => {
       const path = await bridge.dialog.openFolder();
       if (!path) return;
-      await openProject(bridge, path);
+      await openProject(bridge, path, 'pick-existing');
     }, 'Failed to open folder.');
 
   const onStartFresh = () =>
     runWithErrorState(async () => {
       const path = await bridge.dialog.createFolder();
       if (!path) return;
-      await openProject(bridge, path);
+      await openProject(bridge, path, 'start-fresh');
     }, 'Failed to create project folder.');
 
   const onOpenRecent = (path: string) =>
     runWithErrorState(async () => {
-      await openProject(bridge, path);
+      await openProject(bridge, path, 'recents');
     }, 'Failed to open project.');
 
   return (
@@ -174,6 +179,12 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           `ok:mcp-wiring:show`. Mounted identically in App.tsx (D-M6-R10). */}
       <McpConsentDialog />
 
+      {/* Per-project consent dialog — self-gates on the shared `consentStore`
+          snapshot, renders nothing until main fires `ok:onboarding:show`
+          for a Pick Existing / Recents / deep-link / drag-drop pick that
+          resolves to a fresh kind. Navigator-only. */}
+      <ConsentDialog />
+
       <AuthModal
         open={authModalOpen}
         onOpenChange={(next) => {
@@ -203,7 +214,10 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           setAuthModalOpen(true);
         }}
         onCloneComplete={({ dir }) => {
-          void runWithErrorState(() => openProject(bridge, dir), 'Failed to open cloned project.');
+          void runWithErrorState(
+            () => openProject(bridge, dir, 'pick-existing'),
+            'Failed to open cloned project.',
+          );
         }}
       />
     </div>
@@ -260,6 +274,10 @@ function RecentRow({ project, onOpen }: { project: RecentProject; onOpen: () => 
   );
 }
 
-async function openProject(bridge: OkDesktopBridge, path: string): Promise<void> {
-  await bridge.project.open({ path, target: 'new-window' });
+async function openProject(
+  bridge: OkDesktopBridge,
+  path: string,
+  entryPoint: OkProjectEntryPoint,
+): Promise<void> {
+  await bridge.project.open({ path, target: 'new-window', entryPoint });
 }

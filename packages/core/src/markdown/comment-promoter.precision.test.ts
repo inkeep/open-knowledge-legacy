@@ -1,3 +1,31 @@
+/**
+ * Comment precision tests — both source forms (`%%text%%` Obsidian-
+ * style + `<!-- text -->` HTML comment) recognised on parse; each form
+ * round-trips byte-stable on save (the delimiter the author typed is
+ * the delimiter that gets saved, threaded via the `sourceForm` PM
+ * attribute). Comments are literal authoring annotations (hidden in
+ * WYSIWYG via `display: none` on the PM extensions) — there is no
+ * slash command and no JSX form.
+ *
+ * Companion to `comment-promoter.ts`. Mirrors the structure of
+ * `highlight-promoter.precision.test.ts` (the closest precedent — both
+ * are heuristic walkers over `text` mdast nodes producing inline marks
+ * with mirror-shaped rules).
+ *
+ * Coverage tiers:
+ *
+ *   1. Acceptance    — basic `%%…%%` shapes that MUST comment.
+ *   2. Rejection     — shapes that MUST stay prose (delimiter ambiguity,
+ *                      empty-body skip, percent-encoded URLs).
+ *   3. Multi-match   — multiple comments on one line, mixed prose.
+ *   4. Mark interop  — bold/italic/code/strikethrough/highlight inside.
+ *   5. HTML form     — `<!-- text -->` recognition (inline + block).
+ *   6. Protection    — code spans, inline math, block math, wikilinks
+ *                      cannot have `%%…%%` claimed inside them.
+ *   7. Round-trip    — parse + serialize byte-stable for both `%%`
+ *                      and `<!--` forms; sourceForm preserved.
+ */
+
 import { describe, expect, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import { sharedExtensions } from '../extensions/shared.ts';
@@ -561,6 +589,8 @@ describe('comment-promoter — direct mdast→markdown (sourceForm dispatch)', (
     expect(out).toBe('%%hi%%');
   });
 
+  /**
+   */
   test('comment with sourceForm=`percent` emits `%%children%%`', async () => {
     const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
     const node = {
@@ -598,6 +628,8 @@ describe('comment-promoter — direct mdast→markdown (sourceForm dispatch)', (
     },
   };
 
+  /**
+   */
   test('commentBlock with no sourceForm emits `%%\\n\\n…\\n\\n%%`', async () => {
     const { toMarkdownHandlers } = await import('./to-markdown-handlers.ts');
     const node = {

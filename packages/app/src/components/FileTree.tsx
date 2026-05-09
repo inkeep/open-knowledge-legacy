@@ -1,8 +1,14 @@
-import type {
-  HandoffOutcome,
-  HandoffTarget,
-  InstallState,
-  OkignoreBinding,
+import {
+  CreateFolderSuccessSchema,
+  CreatePageSuccessSchema,
+  DeletePathSuccessSchema,
+  DocumentListSuccessSchema,
+  type HandoffOutcome,
+  type HandoffTarget,
+  type InstallState,
+  type OkignoreBinding,
+  RenamePathSuccessSchema,
+  WorkspaceSuccessSchema,
 } from '@inkeep/open-knowledge-core';
 import {
   type ContextMenuItem,
@@ -17,6 +23,7 @@ import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import {
   Copy,
   EyeOff,
+  FilePlus,
   FolderOpen,
   FolderPlus,
   FoldVertical,
@@ -66,7 +73,7 @@ import {
   applyRenameToDocuments,
   type FileTreeTarget,
   type RenamedDocMapping,
-  type RenamePathResponse,
+  type RenamedFolderMapping,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
 import {
@@ -78,7 +85,10 @@ import {
   type FileEntry,
   isAssetEntry,
   isDocumentEntry,
+  isFolderEntry,
 } from '@/components/file-tree-utils';
+import { NewItemDialog } from '@/components/NewItemDialog';
+import { usePageList } from '@/components/PageListContext';
 import {
   appendPattern,
   parseOkignoreDoc,
@@ -96,10 +106,13 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { docTabId, folderTabId, remapPathForFolderRenames } from '@/editor/editor-tabs';
 import { useConfigContext } from '@/lib/config-provider';
-import { hashFromDocName } from '@/lib/doc-hash';
+import { hashFromDocName, hashFromFolderPath } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
+import { parseServerResponse, parseSuccessOrWarn } from '@/lib/parse-server-response';
 import { createRefreshScheduler } from '@/lib/refresh-scheduler';
 import { joinWorkspacePath } from '@/lib/workspace-paths';
 import { OpenInAgentContextSubmenu } from './handoff/OpenInAgentContextSubmenu';
@@ -112,8 +125,20 @@ import { useInstalledAgents } from './handoff/useInstalledAgents';
 import { cancelHoverPrewarm, scheduleHoverPrewarm } from './sidebar-hover-prewarm';
 import { useSidebar } from './ui/sidebar';
 
+const MARKDOWN_TREE_EXTENSION_PATTERN = /\.(md|mdx)$/i;
+
 function navigateTo(targetPath: string) {
   window.location.hash = hashFromDocName(targetPath);
+}
+
+function parseAlreadyExistsRenamePath(message: string): string | null {
+  const match = message.match(/^"(.+)" already exists\.$/);
+  return match ? match[1] : null;
+}
+
+function markdownTreeExtension(path: string): string | null {
+  const match = path.match(MARKDOWN_TREE_EXTENSION_PATTERN);
+  return match ? match[0] : null;
 }
 
 async function copyToClipboard(text: string, label: string): Promise<void> {
@@ -192,26 +217,26 @@ function isAgentTreePath(treePath: string): boolean {
   return !!name && AGENT_FILE_NAMES.has(name);
 }
 
-interface DeletePathResponse {
-  ok: boolean;
-  deletedDocNames?: string[];
-  error?: string;
+interface PendingCreate {
+  kind: 'file' | 'folder';
+  renamePath: string;
+  createdPath: string;
+  previousHash: string;
+  disposeCommitListener: () => void;
 }
 
-interface CreatePageResponse {
-  ok: boolean;
-  docName?: string;
-  error?: string;
+interface PendingCreateCleanupOptions {
+  updateUi?: boolean;
+  restoreLocation?: boolean;
+}
+
+interface FileTreeDeleteRequest {
+  targets: FileTreeTarget[];
 }
 
 interface WorkspaceInfo {
   contentDir: string;
   pathSeparator: '/' | '\\';
-}
-
-interface PendingCreate {
-  kind: 'file' | 'folder';
-  renamePath: string;
 }
 
 function revealInFileManagerLabel(platform: 'darwin' | 'win32' | 'linux'): string {
@@ -275,10 +300,14 @@ interface FileTreeMenuProps {
   model: PierreFileTreeModel;
   okignoreBinding: OkignoreBinding | null;
   onStartCreating: (kind: 'file' | 'folder', parentDir: string) => void;
-  onDelete: (target: FileTreeTarget) => void;
+  /** Open NewItemDialog for the given parent dir so the template picker is
+   *  reachable. Sibling to `onStartCreating`'s inline-rename fast path. */
+  onStartCreatingFromTemplate: (parentDir: string) => void;
+  onDelete: (targets: FileTreeTarget[]) => void;
   onExpandSubtree: (treePath: string) => void;
   onCollapseSubtree: (treePath: string) => void;
   isAsset: boolean;
+  isAssetTreePath: (treePath: string) => boolean;
 }
 
 function asDirectoryHandle(
@@ -288,7 +317,7 @@ function asDirectoryHandle(
   return item as FileTreeDirectoryHandle;
 }
 
-function selectOnlyTreeItem(
+function _selectOnlyTreeItem(
   model: PierreFileTreeModel,
   item: NonNullable<ReturnType<PierreFileTreeModel['getItem']>>,
 ): void {
@@ -302,6 +331,88 @@ function selectOnlyTreeItem(
   }
 }
 
+function treePathToTarget(treePath: string): FileTreeTarget {
+  return treeItemToTarget({
+    kind: treePath.endsWith('/') ? 'directory' : 'file',
+    name: treePath,
+    path: treePath,
+  });
+}
+
+function isTreePathInsideFolder(treePath: string, folderTreePath: string): boolean {
+  return treePath !== folderTreePath && treePath.startsWith(folderTreePath);
+}
+
+function selectedTreePathsToDeleteTargets(
+  selectedTreePaths: readonly string[],
+  isAssetTreePath: (treePath: string) => boolean,
+): FileTreeTarget[] {
+  const uniqueDeletablePaths = [...new Set(selectedTreePaths)].filter(
+    (treePath) => !isAssetTreePath(treePath),
+  );
+  const selectedFolderPaths = uniqueDeletablePaths.filter((treePath) => treePath.endsWith('/'));
+  return uniqueDeletablePaths
+    .filter(
+      (treePath) =>
+        !selectedFolderPaths.some((folderPath) => isTreePathInsideFolder(treePath, folderPath)),
+    )
+    .map(treePathToTarget);
+}
+
+function isPathAtOrInsideFolder(path: string, folderPath: string): boolean {
+  return path === folderPath || path.startsWith(`${folderPath}/`);
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName;
+  return (
+    tagName === 'INPUT' ||
+    tagName === 'TEXTAREA' ||
+    tagName === 'SELECT' ||
+    target.isContentEditable ||
+    target.closest('[contenteditable="true"]') !== null
+  );
+}
+
+function collectTabsToCloseForDelete(
+  targets: readonly FileTreeTarget[],
+  documents: readonly FileEntry[],
+  folderTreePaths: readonly string[],
+): { docNames: Set<string>; folderPaths: Set<string> } {
+  const docNames = new Set<string>();
+  const folderPaths = new Set<string>();
+
+  for (const target of targets) {
+    if (target.kind === 'file') {
+      docNames.add(target.path);
+      continue;
+    }
+
+    folderPaths.add(target.path);
+    for (const entry of documents) {
+      if (isDocumentEntry(entry) && entry.docName.startsWith(`${target.path}/`)) {
+        docNames.add(entry.docName);
+      }
+    }
+    for (const treePath of folderTreePaths) {
+      const folderPath = treeDirectoryPathToFolderPath(treePath);
+      if (isPathAtOrInsideFolder(folderPath, target.path)) {
+        folderPaths.add(folderPath);
+      }
+    }
+  }
+
+  return { docNames, folderPaths };
+}
+
+function deleteTargetCoversPendingCreate(target: FileTreeTarget, pending: PendingCreate): boolean {
+  if (target.kind === 'file') {
+    return pending.kind === 'file' && target.path === pending.createdPath;
+  }
+  return isPathAtOrInsideFolder(pending.createdPath, target.path);
+}
+
 function FileTreeMenu({
   item,
   context,
@@ -311,15 +422,23 @@ function FileTreeMenu({
   model,
   okignoreBinding,
   onStartCreating,
+  onStartCreatingFromTemplate,
   onDelete,
   onExpandSubtree,
   onCollapseSubtree,
   isAsset,
+  isAssetTreePath,
 }: FileTreeMenuProps) {
   const target = treeItemToTarget(item);
   const isFolder = item.kind === 'directory';
   const canHide = !isAsset && okignoreBinding !== null;
   const hideLabel = isFolder ? 'Hide files in this folder' : 'Hide this file';
+  const selectedTreePaths = model.getSelectedPaths();
+  const selectedDeleteTargets = selectedTreePaths.includes(target.treePath)
+    ? selectedTreePathsToDeleteTargets(selectedTreePaths, isAssetTreePath)
+    : [];
+  const deleteTargets = selectedDeleteTargets.length > 1 ? selectedDeleteTargets : [target];
+  const deleteLabel = deleteTargets.length > 1 ? `Delete ${deleteTargets.length} Items` : 'Delete';
   const handoffInput = !isFolder
     ? buildHandoffInput({
         docName: treeFilePathToDocName(item.path),
@@ -361,6 +480,16 @@ function FileTreeMenu({
             >
               <SquarePen aria-hidden="true" />
               New File
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={anyActionBusy}
+              onSelect={() => {
+                closeForInlineSurface();
+                onStartCreatingFromTemplate(treeDirectoryPathToFolderPath(item.path));
+              }}
+            >
+              <FilePlus aria-hidden="true" />
+              New from template…
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={anyActionBusy}
@@ -473,11 +602,11 @@ function FileTreeMenu({
               disabled={anyActionBusy}
               onSelect={() => {
                 close();
-                onDelete(target);
+                onDelete(deleteTargets);
               }}
             >
               <Trash2 aria-hidden="true" />
-              Delete
+              {deleteLabel}
             </DropdownMenuItem>
           </>
         ) : null}
@@ -488,6 +617,10 @@ function FileTreeMenu({
 
 export interface FileTreeHandle {
   startCreating(kind: 'file' | 'folder', parentDir: string): void;
+  /** Open NewItemDialog at the given parentDir so the template picker is
+   *  reachable from any toolbar / sidebar surface. Sibling to
+   *  `startCreating`'s inline-rename fast path. */
+  startCreatingFromTemplate(parentDir: string): void;
   expandAll(): void;
   collapseAll(): void;
 }
@@ -496,22 +629,36 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const {
     activeDocName,
     activeTarget,
+    closeTabs,
+    closeTab,
     closeDocument,
     closeAndClearForRename,
+    openTarget,
     prewarm,
     remapTabsForRename,
   } = useDocumentContext();
   const { notifySidebarFileSelected } = useSidebar();
   const { resolvedTheme } = useTheme();
+  const { addPage } = usePageList();
   function navigateToWithPulse(targetPath: string) {
     navigateTo(targetPath);
+    notifySidebarFileSelected();
+  }
+  function navigateToFolderWithPulse(folderPath: string) {
+    const nextHash = hashFromFolderPath(folderPath);
+    if (window.location.hash !== nextHash) {
+      const { pathname, search } = window.location;
+      window.history.replaceState(null, '', `${pathname}${search}${nextHash}`);
+    }
+    openTarget({ kind: 'folder', target: folderPath, folderPath });
     notifySidebarFileSelected();
   }
   const [documents, setDocuments] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyPath, setBusyPath] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<FileTreeTarget | null>(null);
+  const [deleteRequest, setDeleteRequest] = useState<FileTreeDeleteRequest | null>(null);
+  const [newItemRequest, setNewItemRequest] = useState<{ parentDir: string } | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
 
   const documentsRef = useRef(documents);
@@ -522,22 +669,25 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const assetTreePathsRef = useRef(assetTreePaths);
   const activeAncestorTreePathsRef = useRef<string[]>([]);
   const pendingCreateRef = useRef<PendingCreate | null>(null);
+  const cleanupPendingCreateRef = useRef<
+    (pending: PendingCreate, options?: PendingCreateCleanupOptions) => Promise<void>
+  >(async () => {});
   const skipNextResetSignatureRef = useRef<string | null>(null);
   const hoveredPrewarmDocRef = useRef<string | null>(null);
   const suppressSelectionRef = useRef(false);
   const busyPathRef = useRef<string | null>(null);
+  const fileTreeHostRef = useRef<HTMLDivElement | null>(null);
   const handleSelectionChangeRef = useRef<(selectedPaths: readonly string[]) => void>(() => {});
   const handleRenameRef = useRef<(event: FileTreeRenameEvent) => void>(() => {});
+  const handleRenameErrorRef = useRef<(message: string) => void>((message) => toast.error(message));
   const handleDropCompleteRef = useRef<(event: FileTreeDropResult) => void>(() => {});
+  const activeTargetRef = useRef(activeTarget);
 
   const {
     selectedFilePath,
     selectedFolderPath,
     navigationPath: activeNavigationPath,
-  } = resolveFileTreeSelection(activeTarget, activeDocName, {
-    isKnownDocument: (docName) =>
-      documents.some((entry) => isDocumentEntry(entry) && entry.docName === docName),
-  });
+  } = resolveFileTreeSelection(activeTarget, activeDocName);
   const activeTreePath = selectedFilePath
     ? docNameToTreePath(
         selectedFilePath,
@@ -592,7 +742,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     renaming: {
       canRename: isAvailable,
       onRename: (event) => handleRenameRef.current(event),
-      onError: toast.error,
+      onError: (message) => handleRenameErrorRef.current(message),
     },
     onSelectionChange: (selectedPaths) => handleSelectionChangeRef.current(selectedPaths),
     renderRowDecoration: ({ item }) => {
@@ -628,10 +778,32 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     : computeTreeAncestorPaths(activeTreePath ?? activeNavigationPath);
   const activeAncestorTreePathsSignature = activeAncestorTreePaths.join('\0');
 
+  const collectExpandedFolderTreePaths = () => {
+    const expanded = new Set<string>();
+    for (const folderPath of folderTreePathsRef.current) {
+      const item = asDirectoryHandle(model.getItem(folderPath));
+      if (item?.isExpanded()) {
+        expanded.add(folderPath);
+      }
+    }
+    return expanded;
+  };
+
+  const expandedPathsForReset = (nextDocuments?: readonly FileEntry[]) => {
+    const nextFolderPaths = new Set(
+      collectTreeFolderPathsFromDocuments(nextDocuments ?? documentsRef.current),
+    );
+    const expanded = collectExpandedFolderTreePaths();
+    for (const ancestor of activeAncestorTreePathsRef.current) {
+      expanded.add(ancestor);
+    }
+    return [...expanded].filter((path) => nextFolderPaths.has(path));
+  };
+
   const resetModelToDocuments = (nextDocuments?: readonly FileEntry[]) => {
     const nextPaths = documentsToTreePaths(nextDocuments ?? documentsRef.current);
     model.resetPaths(nextPaths, {
-      initialExpandedPaths: activeAncestorTreePathsRef.current,
+      initialExpandedPaths: expandedPathsForReset(nextDocuments),
     });
   };
 
@@ -641,19 +813,144 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
   const isAssetTreePath = (treePath: string) => assetTreePathsRef.current.has(treePath);
 
+  function recoverMarkdownRenameConflict(message: string): boolean {
+    const bareDestinationPath = parseAlreadyExistsRenamePath(message);
+    if (!bareDestinationPath || markdownTreeExtension(bareDestinationPath)) return false;
+
+    const sourceTreePath = model.getFocusedPath() ?? model.getSelectedPaths()[0] ?? null;
+    if (!sourceTreePath || sourceTreePath.endsWith('/') || isAssetTreePath(sourceTreePath)) {
+      return false;
+    }
+
+    const sourceExtension = markdownTreeExtension(sourceTreePath);
+    if (!sourceExtension) return false;
+
+    const folderTreePath = folderPathToTreeDirectoryPath(bareDestinationPath);
+    if (!folderTreePathsRef.current.includes(folderTreePath)) return false;
+
+    const destinationTreePath = `${bareDestinationPath}${sourceExtension}`;
+    if (treePathsRef.current.includes(destinationTreePath)) return false;
+
+    const event = {
+      sourcePath: sourceTreePath,
+      destinationPath: destinationTreePath,
+      isFolder: false,
+    } satisfies FileTreeRenameEvent;
+
+    void handleTreeRename(event);
+    model.move(sourceTreePath, destinationTreePath);
+    return true;
+  }
+
+  const clearPendingCreate = (pending?: PendingCreate | null) => {
+    const current = pending ?? pendingCreateRef.current;
+    if (!current || pendingCreateRef.current !== current) return;
+    current.disposeCommitListener();
+    pendingCreateRef.current = null;
+  };
+
+  async function cleanupPendingCreate(
+    pending: PendingCreate,
+    options: PendingCreateCleanupOptions = {},
+  ) {
+    const updateUi = options.updateUi ?? true;
+    const restoreLocation = options.restoreLocation ?? updateUi;
+
+    clearPendingCreate(pending);
+    if (updateUi) setBusyPath(pending.renamePath);
+
+    try {
+      const res = await fetch('/api/delete-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: pending.kind, path: pending.createdPath }),
+      });
+      if (!res.ok && res.status !== 404) {
+        const parsed = await parseServerResponse(res, `Failed to clean up pending ${pending.kind}`);
+        if (parsed.ok) return;
+        const message = `${parsed.title} - ${pending.kind} "${pending.createdPath}" still exists on disk`;
+        if (updateUi) {
+          toast.error(message);
+        } else {
+          console.warn(`[FileTree] cleanup pending create failed: ${message}`);
+        }
+        if (updateUi) {
+          setBusyPath(null);
+          resetModelToDocuments();
+        }
+        return;
+      }
+    } catch (err) {
+      console.warn('[FileTree] cleanup pending create failed:', err);
+      if (updateUi) {
+        toast.error(
+          `Network error - ${pending.kind} "${pending.createdPath}" still exists on disk`,
+        );
+      }
+      if (updateUi) {
+        setBusyPath(null);
+        resetModelToDocuments();
+      }
+      return;
+    }
+
+    if (updateUi) {
+      if (pending.kind === 'file') {
+        closeDocument(pending.createdPath);
+      } else {
+        closeTab(folderTabId(pending.createdPath));
+      }
+    }
+    if (updateUi) {
+      setDocuments((current) => {
+        const next = applyDeleteToDocuments(
+          current,
+          pending.kind === 'file' ? [pending.createdPath] : [],
+          pending.kind === 'folder' ? pending.createdPath : undefined,
+        );
+        markNextDocumentsAsApplied(next);
+        return next;
+      });
+    }
+    emitDocumentsChanged(['files', 'backlinks', 'graph']);
+    if (restoreLocation) window.location.hash = pending.previousHash;
+    if (updateUi) setBusyPath(null);
+  }
+
+  useEffect(() => {
+    return () => {
+      const pending = pendingCreateRef.current;
+      if (pending) {
+        void cleanupPendingCreateRef
+          .current(pending, {
+            restoreLocation: false,
+            updateUi: false,
+          })
+          .catch((err) => {
+            console.warn('[FileTree] unmount cleanup failed:', err);
+          });
+      }
+    };
+  }, []);
+
   useEffect(() => {
     let active = true;
 
     async function refreshDocs() {
       try {
         const res = await fetch('/api/documents');
-        const data = await res.json().catch(() => null);
+        const parsed = await parseServerResponse(res, 'Failed to load documents');
         if (!active) return;
-        if (res.ok && data?.ok) {
-          setDocuments(data.documents);
-          setError(null);
+        if (!parsed.ok) {
+          setError(parsed.title);
         } else {
-          setError(data?.error ?? `Server error (HTTP ${res.status})`);
+          const success = DocumentListSuccessSchema.safeParse(parsed.body);
+          if (!success.success) {
+            setError('Documents response did not match expected shape.');
+          } else {
+            setDocuments(success.data.documents as unknown as FileEntry[]);
+            setError(null);
+          }
         }
       } catch (err) {
         if (active) setError('Could not reach server');
@@ -691,17 +988,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       .then(async (res) => {
         const data = await res.json();
         if (!active) return;
-        if (
-          res.ok &&
-          data?.ok &&
-          typeof data.contentDir === 'string' &&
-          (data.pathSeparator === '/' || data.pathSeparator === '\\')
-        ) {
-          setWorkspace({
-            contentDir: data.contentDir,
-            pathSeparator: data.pathSeparator,
-          });
-        }
+        if (!res.ok) return;
+        const parsed = parseSuccessOrWarn(WorkspaceSuccessSchema, data, 'workspace', null);
+        if (!parsed) return;
+        setWorkspace({
+          contentDir: parsed.contentDir,
+          pathSeparator: parsed.pathSeparator,
+        });
       })
       .catch((err) => {
         console.warn('[FileTree] /api/workspace fetch failed:', err);
@@ -711,13 +1004,14 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     };
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: expandedPathsForReset reads refs; model + treePathsSignature are the reset triggers.
   useEffect(() => {
     if (skipNextResetSignatureRef.current === treePathsSignature) {
       skipNextResetSignatureRef.current = null;
       return;
     }
     model.resetPaths(treePathsRef.current, {
-      initialExpandedPaths: activeAncestorTreePathsRef.current,
+      initialExpandedPaths: expandedPathsForReset(),
     });
   }, [model, treePathsSignature]);
 
@@ -735,7 +1029,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     const item = model.getItem(activeTreePath);
     if (!item) return;
     suppressSelectionRef.current = true;
-    selectOnlyTreeItem(model, item);
+    item.select();
     item.focus();
     queueMicrotask(() => {
       suppressSelectionRef.current = false;
@@ -754,9 +1048,27 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     });
   }, [model]);
 
-  const applyRenamedDocuments = async (renamed: RenamedDocMapping[]) => {
-    const currentActiveDocName = activeDocNameRef.current;
+  useEffect(() => {
+    return model.onMutation('remove', (event) => {
+      const pending = pendingCreateRef.current;
+      if (!pending || event.path !== pending.renamePath) return;
+      void cleanupPendingCreateRef.current(pending);
+    });
+  }, [model]);
+
+  const applyRenamedDocuments = async (
+    renamed: RenamedDocMapping[],
+    renamedFolders: RenamedFolderMapping[] = [],
+    activeBeforeRename?: { docName: string | null; folderPath: string | null },
+  ) => {
+    const currentActiveDocName = activeBeforeRename?.docName ?? activeDocNameRef.current;
     const nextActiveDocName = remapActiveDocName(currentActiveDocName, renamed);
+    const currentActiveFolderPath =
+      activeBeforeRename?.folderPath ??
+      (activeTargetRef.current?.kind === 'folder' ? activeTargetRef.current.folderPath : null);
+    const nextActiveFolderPath = currentActiveFolderPath
+      ? remapPathForFolderRenames(currentActiveFolderPath, renamedFolders)
+      : null;
 
     await Promise.all(
       renamed.flatMap((entry) => [
@@ -764,75 +1076,41 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         closeAndClearForRename(entry.toDocName),
       ]),
     );
-    remapTabsForRename(renamed);
+    for (const entry of renamed) {
+      addPage(entry.toDocName);
+    }
+    remapTabsForRename(renamed, renamedFolders);
 
     setDocuments((current) => {
-      const next = applyRenameToDocuments(current, renamed);
+      const next = applyRenameToDocuments(current, renamed, renamedFolders);
       markNextDocumentsAsApplied(next);
       return next;
     });
-    emitDocumentsChanged(['files', 'backlinks', 'graph']);
 
-    if (nextActiveDocName && nextActiveDocName !== currentActiveDocName) {
+    if (
+      currentActiveFolderPath &&
+      nextActiveFolderPath &&
+      nextActiveFolderPath !== currentActiveFolderPath
+    ) {
+      navigateToFolderWithPulse(nextActiveFolderPath);
+    } else if (nextActiveDocName && nextActiveDocName !== currentActiveDocName) {
       window.location.hash = hashFromDocName(nextActiveDocName);
     }
+    emitDocumentsChanged(['files', 'backlinks', 'graph']);
   };
 
   async function handleTreeRename(event: FileTreeRenameEvent) {
-    const kind = event.isFolder ? 'folder' : 'file';
     const sourceTreePath = normalizeTreePathForKind(event.sourcePath, event.isFolder);
     const destinationTreePath = normalizeTreePathForKind(event.destinationPath, event.isFolder);
-    const pendingCreate = pendingCreateRef.current;
 
     setBusyPath(sourceTreePath);
     setError(null);
 
     try {
-      if (pendingCreate?.renamePath === sourceTreePath) {
-        const createPath = createPagePathFromTreeDestination(kind, destinationTreePath);
-        const res = await fetch('/api/create-page', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: createPath }),
-        });
-        const data: CreatePageResponse | null = await res.json();
-
-        if (!res.ok || !data?.ok) {
-          const msg = data?.error ?? `Failed to create ${kind}`;
-          toast.error(msg);
-          setError(msg);
-          resetModelToDocuments();
-          pendingCreateRef.current = null;
-          setBusyPath(null);
-          return;
-        }
-
-        const docName = data.docName ?? createPath.replace(/\.md$/i, '');
-        setDocuments((current) => {
-          if (current.some((doc) => !isAssetEntry(doc) && doc.docName === docName)) return current;
-          const next = [
-            ...current,
-            {
-              kind: 'document',
-              docName,
-              modified: new Date().toISOString(),
-              size: 0,
-            } satisfies FileEntry,
-          ];
-          markNextDocumentsAsApplied(next);
-          return next;
-        });
-        navigateTo(docName);
-        emitDocumentsChanged(['files', 'backlinks', 'graph']);
-        pendingCreateRef.current = null;
-        setBusyPath(null);
-        return;
-      }
-
       if (!event.isFolder && isAssetTreePath(sourceTreePath)) {
         toast.error('Assets cannot be renamed from the sidebar');
         resetModelToDocuments();
-        pendingCreateRef.current = null;
+        clearPendingCreate();
         setBusyPath(null);
         return;
       }
@@ -848,26 +1126,49 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
             fromPath: treeFilePathToDocName(sourceTreePath),
             toPath: treeFilePathToDocName(destinationTreePath),
           };
+      const activeBeforeRename = {
+        docName: activeDocNameRef.current,
+        folderPath:
+          activeTargetRef.current?.kind === 'folder' ? activeTargetRef.current.folderPath : null,
+      };
 
       const res = await fetch('/api/rename-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data: RenamePathResponse = await res.json();
+      const parsed = await parseServerResponse(res, 'Failed to rename path');
 
-      if (!res.ok || !data.ok) {
-        const msg = data.ok ? 'Failed to rename path' : data.error || 'Failed to rename path';
-        toast.error(msg);
-        setError(msg);
+      if (!parsed.ok) {
+        toast.error(parsed.title);
+        setError(parsed.title);
         resetModelToDocuments();
-        pendingCreateRef.current = null;
+        const pending = pendingCreateRef.current;
+        if (pending && pending.renamePath === sourceTreePath) {
+          await cleanupPendingCreate(pending);
+        } else {
+          clearPendingCreate();
+        }
         setBusyPath(null);
         return;
       }
 
-      await applyRenamedDocuments(data.renamed);
-      pendingCreateRef.current = null;
+      const success = parseSuccessOrWarn(RenamePathSuccessSchema, parsed.body, 'rename-path', {
+        renamed: [],
+      });
+      await applyRenamedDocuments(
+        success.renamed,
+        event.isFolder
+          ? [
+              {
+                fromPath: treeDirectoryPathToFolderPath(sourceTreePath),
+                toPath: treeDirectoryPathToFolderPath(destinationTreePath),
+              },
+            ]
+          : [],
+        activeBeforeRename,
+      );
+      clearPendingCreate();
       setBusyPath(null);
     } catch (err) {
       console.warn('[FileTree] rename failed:', err);
@@ -875,7 +1176,12 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       toast.error(msg);
       setError(msg);
       resetModelToDocuments();
-      pendingCreateRef.current = null;
+      const pending = pendingCreateRef.current;
+      if (pending && pending.renamePath === sourceTreePath) {
+        await cleanupPendingCreate(pending);
+      } else {
+        clearPendingCreate();
+      }
       setBusyPath(null);
     }
   }
@@ -900,6 +1206,12 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
     try {
       let renamed: RenamedDocMapping[] = [];
+      const renamedFolders: RenamedFolderMapping[] = [];
+      const activeBeforeRename = {
+        docName: activeDocNameRef.current,
+        folderPath:
+          activeTargetRef.current?.kind === 'folder' ? activeTargetRef.current.folderPath : null,
+      };
       for (const operation of operations) {
         const isFolder = operation.sourcePath.endsWith('/');
         const payload = isFolder
@@ -919,20 +1231,31 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        const data: RenamePathResponse = await res.json();
+        const parsed = await parseServerResponse(res, 'Failed to move');
 
-        if (!res.ok || !data.ok) {
-          const msg = data.ok ? 'Failed to move' : data.error || 'Failed to move';
-          toast.error(msg);
-          setError(msg);
+        if (!parsed.ok) {
+          toast.error(parsed.title);
+          setError(parsed.title);
           resetModelToDocuments();
           setBusyPath(null);
           return;
         }
-        renamed = renamed.concat(data.renamed);
+        const success = parseSuccessOrWarn(
+          RenamePathSuccessSchema,
+          parsed.body,
+          'rename-path:drop',
+          { renamed: [] },
+        );
+        renamed = renamed.concat(success.renamed);
+        if (isFolder) {
+          renamedFolders.push({
+            fromPath: treeDirectoryPathToFolderPath(operation.sourcePath),
+            toPath: treeDirectoryPathToFolderPath(operation.destinationTreePath),
+          });
+        }
       }
 
-      await applyRenamedDocuments(renamed);
+      await applyRenamedDocuments(renamed, renamedFolders, activeBeforeRename);
       setBusyPath(null);
     } catch (err) {
       console.warn('[FileTree] move failed:', err);
@@ -942,18 +1265,151 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     }
   }
 
-  function startCreating(kind: 'file' | 'folder', parentDir: string) {
+  function startCreatingFromTemplate(parentDir: string) {
+    setNewItemRequest({ parentDir });
+  }
+
+  async function startCreating(kind: 'file' | 'folder', parentDir: string) {
+    if (busyPathRef.current) return;
+
+    const pendingCreate = pendingCreateRef.current;
+    if (pendingCreate) {
+      clearPendingCreate(pendingCreate);
+    }
+
     try {
       const placeholder = createTreePlaceholder(kind, parentDir, [
         ...treePaths,
         ...folderTreePathsRef.current,
       ]);
-      pendingCreateRef.current = { kind, renamePath: placeholder.renamePath };
+      setBusyPath(placeholder.renamePath);
+      busyPathRef.current = placeholder.renamePath;
+      const previousHash = window.location.hash;
+
+      let createdPath: string;
+      if (kind === 'file') {
+        const createPath = createPagePathFromTreeDestination('file', placeholder.addPath);
+        const res = await fetch('/api/create-page', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: createPath }),
+        });
+        const parsed = await parseServerResponse(res, `Failed to create file`);
+
+        if (!parsed.ok) {
+          toast.error(parsed.title);
+          setError(parsed.title);
+          setBusyPath(null);
+          busyPathRef.current = null;
+          return;
+        }
+
+        const fallbackDocName = treeFilePathToDocName(createPath);
+        const success = parseSuccessOrWarn(CreatePageSuccessSchema, parsed.body, 'create-page', {
+          docName: fallbackDocName,
+        });
+        const docName = success.docName;
+        createdPath = docName;
+        const docExt = createPath.toLowerCase().endsWith('.mdx') ? '.mdx' : '.md';
+        setDocuments((current) => {
+          if (current.some((entry) => isDocumentEntry(entry) && entry.docName === docName)) {
+            return current;
+          }
+          const next = [
+            ...current,
+            {
+              kind: 'document',
+              docName,
+              docExt,
+              modified: new Date().toISOString(),
+              size: 0,
+            } satisfies FileEntry,
+          ];
+          markNextDocumentsAsApplied(next);
+          return next;
+        });
+        emitDocumentsChanged(['files', 'backlinks', 'graph']);
+        navigateToWithPulse(docName);
+      } else {
+        const folderPath = treeDirectoryPathToFolderPath(placeholder.addPath);
+        const res = await fetch('/api/create-folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: folderPath }),
+        });
+        const parsed = await parseServerResponse(res, `Failed to create folder`);
+
+        if (!parsed.ok) {
+          toast.error(parsed.title);
+          setError(parsed.title);
+          setBusyPath(null);
+          busyPathRef.current = null;
+          return;
+        }
+
+        const success = parseSuccessOrWarn(
+          CreateFolderSuccessSchema,
+          parsed.body,
+          'create-folder',
+          { path: folderPath },
+        );
+        createdPath = success.path;
+        setDocuments((current) => {
+          if (current.some((entry) => isFolderEntry(entry) && entry.path === createdPath)) {
+            return current;
+          }
+          const next = [
+            ...current,
+            {
+              kind: 'folder',
+              path: createdPath,
+              modified: new Date().toISOString(),
+              size: 0,
+            } satisfies FileEntry,
+          ];
+          markNextDocumentsAsApplied(next);
+          return next;
+        });
+        emitDocumentsChanged(['files']);
+        navigateToFolderWithPulse(createdPath);
+      }
+
+      let disposed = false;
+      const handleCommitKeyDown = (event: KeyboardEvent) => {
+        if (event.key !== 'Enter') return;
+        const pending = pendingCreateRef.current;
+        if (!pending || pending.renamePath !== placeholder.renamePath) return;
+        queueMicrotask(() => clearPendingCreate(pending));
+      };
+      const disposeCommitListener = () => {
+        if (disposed) return;
+        disposed = true;
+        document.removeEventListener('keydown', handleCommitKeyDown, true);
+      };
+      document.addEventListener('keydown', handleCommitKeyDown, true);
+      pendingCreateRef.current = {
+        kind,
+        renamePath: placeholder.renamePath,
+        createdPath,
+        previousHash,
+        disposeCommitListener,
+      };
+      setBusyPath(null);
+      busyPathRef.current = null;
       model.add(placeholder.addPath);
       model.startRenaming(placeholder.renamePath, { removeIfCanceled: true });
     } catch (err) {
       console.warn('[FileTree] create placeholder failed:', err);
       toast.error('Could not start creating a new item');
+      const pending = pendingCreateRef.current;
+      if (pending) {
+        await cleanupPendingCreate(pending);
+      } else {
+        clearPendingCreate();
+      }
+      setBusyPath(null);
+      busyPathRef.current = null;
+      resetModelToDocuments();
     }
   }
 
@@ -992,13 +1448,16 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   useLayoutEffect(() => {
     documentsRef.current = documents;
     activeDocNameRef.current = activeDocName;
+    activeTargetRef.current = activeTarget;
     assetTreePathsRef.current = assetTreePaths;
     busyPathRef.current = busyPath;
     treePathsRef.current = treePaths;
     folderTreePathsRef.current = folderTreePaths;
     activeAncestorTreePathsRef.current = activeAncestorTreePaths;
+    cleanupPendingCreateRef.current = cleanupPendingCreate;
     handleSelectionChangeRef.current = (selectedPaths) => {
       if (suppressSelectionRef.current) return;
+      if (selectedPaths.length !== 1) return;
       const action = resolveFileTreeSelectionAction(selectedPaths[0], documentsRef.current);
       if (action.kind === 'none') {
         const selected = selectedPaths[0];
@@ -1015,14 +1474,58 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         notifySidebarFileSelected();
         return;
       }
+      if (action.kind === 'folder') {
+        navigateToFolderWithPulse(action.path);
+        return;
+      }
       navigateToWithPulse(action.path);
+    };
+    handleRenameErrorRef.current = (message) => {
+      if (recoverMarkdownRenameConflict(message)) return;
+      toast.error(message);
     };
     handleRenameRef.current = handleTreeRename;
     handleDropCompleteRef.current = handleDropComplete;
   });
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 'a') {
+        return;
+      }
+      if (isEditableKeyboardTarget(event.target)) return;
+
+      const host = fileTreeHostRef.current;
+      const target = event.target;
+      const activeElement = document.activeElement;
+      const eventStartedInTree = target instanceof Node && host?.contains(target);
+      const focusIsInTree = activeElement instanceof Node && host?.contains(activeElement);
+      if (!eventStartedInTree && !focusIsInTree) return;
+
+      const selectedPaths = new Set([...folderTreePathsRef.current, ...treePathsRef.current]);
+      suppressSelectionRef.current = true;
+      for (const treePath of selectedPaths) {
+        if (!treePath || assetTreePathsRef.current.has(treePath)) continue;
+        model.getItem(treePath)?.select();
+      }
+      queueMicrotask(() => {
+        suppressSelectionRef.current = false;
+      });
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
+  }, [model]);
+
   useImperativeHandle(ref, () => ({
-    startCreating,
+    startCreating(kind, parentDir) {
+      void startCreating(kind, parentDir);
+    },
+    startCreatingFromTemplate(parentDir) {
+      startCreatingFromTemplate(parentDir);
+    },
     expandAll() {
       startTransition(() => {
         for (const folderPath of folderTreePathsRef.current) {
@@ -1047,43 +1550,100 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     },
   }));
 
-  async function handleDelete(target: FileTreeTarget) {
-    setBusyPath(target.path);
-    setDeleteTarget(null);
+  async function handleDeleteTargets(targets: FileTreeTarget[]) {
+    const firstTarget = targets[0];
+    if (!firstTarget) return;
+    setBusyPath(firstTarget.path);
+    setDeleteRequest(null);
 
     try {
-      const treePath =
-        target.kind === 'folder'
-          ? folderPathToTreeDirectoryPath(target.path)
-          : docNameToTreePath(target.path, target.docExt);
-      const res = await fetch('/api/delete-path', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: target.kind, path: target.path }),
-      });
-      const data: DeletePathResponse = await res.json();
+      const tabsToClose = collectTabsToCloseForDelete(
+        targets,
+        documentsRef.current,
+        folderTreePathsRef.current,
+      );
+      const deletedDocNames: string[] = [];
+      const deletedFolderPaths: string[] = [];
+      const successfulTargets: FileTreeTarget[] = [];
+      for (const target of targets) {
+        setBusyPath(target.path);
+        const res = await fetch('/api/delete-path', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: target.kind, path: target.path }),
+        });
+        const parsed = await parseServerResponse(res, 'Failed to delete path');
 
-      if (!res.ok || !data.ok) {
-        toast.error(data.error ?? 'Failed to delete path');
-        setBusyPath(null);
-        return;
+        if (!parsed.ok) {
+          const partialTabsToClose = collectTabsToCloseForDelete(
+            successfulTargets,
+            documentsRef.current,
+            folderTreePathsRef.current,
+          );
+          const partialDeleted = new Set([...partialTabsToClose.docNames, ...deletedDocNames]);
+          const partialDeletedFolders = new Set([
+            ...partialTabsToClose.folderPaths,
+            ...deletedFolderPaths,
+          ]);
+          closeTabs([
+            ...[...partialDeleted].map((docName) => docTabId(docName)),
+            ...[...partialDeletedFolders].map((folderPath) => folderTabId(folderPath)),
+          ]);
+          toast.error(parsed.title);
+          setBusyPath(null);
+          resetModelToDocuments();
+          emitDocumentsChanged(['files', 'backlinks', 'graph']);
+          return;
+        }
+
+        const success = parseSuccessOrWarn(DeletePathSuccessSchema, parsed.body, 'delete-path', {
+          deletedDocNames: [],
+        });
+        deletedDocNames.push(...success.deletedDocNames);
+        if (target.kind === 'folder') {
+          deletedFolderPaths.push(target.path);
+        }
+        successfulTargets.push(target);
       }
 
-      const deletedDocNames = Array.isArray(data.deletedDocNames) ? data.deletedDocNames : [];
-      const deleted = new Set(deletedDocNames);
-      for (const docName of deleted) closeDocument(docName);
+      const pendingCreate = pendingCreateRef.current;
+      if (
+        pendingCreate &&
+        targets.some((target) => deleteTargetCoversPendingCreate(target, pendingCreate))
+      ) {
+        if (pendingCreate.kind === 'file') {
+          tabsToClose.docNames.add(pendingCreate.createdPath);
+        } else {
+          tabsToClose.folderPaths.add(pendingCreate.createdPath);
+        }
+        clearPendingCreate(pendingCreate);
+      }
 
-      if (model.getItem(treePath))
-        model.remove(treePath, target.kind === 'folder' ? { recursive: true } : undefined);
+      const deleted = new Set([...tabsToClose.docNames, ...deletedDocNames]);
+      const deletedFolders = new Set([...tabsToClose.folderPaths, ...deletedFolderPaths]);
+      closeTabs([
+        ...[...deleted].map((docName) => docTabId(docName)),
+        ...[...deletedFolders].map((folderPath) => folderTabId(folderPath)),
+      ]);
+
+      for (const target of targets) {
+        const treePath =
+          target.kind === 'folder'
+            ? folderPathToTreeDirectoryPath(target.path)
+            : docNameToTreePath(target.path, target.docExt);
+        if (model.getItem(treePath)) {
+          model.remove(treePath, target.kind === 'folder' ? { recursive: true } : undefined);
+        }
+      }
       setDocuments((current) => {
-        const next = applyDeleteToDocuments(current, deletedDocNames);
+        let next = applyDeleteToDocuments(current, [...deleted]);
+        for (const folderPath of deletedFolders) {
+          next = applyDeleteToDocuments(next, [], folderPath);
+        }
         markNextDocumentsAsApplied(next);
         return next;
       });
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
-
-      const currentActiveDocName = activeDocNameRef.current;
-      if (currentActiveDocName && deleted.has(currentActiveDocName)) window.location.hash = '';
       setBusyPath(null);
     } catch (err) {
       console.warn('[FileTree] delete failed:', err);
@@ -1120,11 +1680,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   }
 
   if (loading) {
-    return (
-      <div className="flex flex-1 items-center justify-center py-8">
-        <span className="select-none text-sidebar-foreground/30 text-sm">Loading...</span>
-      </div>
-    );
+    return <FileTreeSkeleton />;
   }
 
   if (documents.length === 0) {
@@ -1151,56 +1707,76 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   }
 
   const anyActionBusy = busyPath !== null;
+  const primaryDeleteTarget = deleteRequest?.targets[0] ?? null;
   return (
     <>
-      <PierreFileTree
-        header={
-          error && (
-            <span role="alert" className="px-3 pb-1 text-destructive text-xs">
-              {error}
-            </span>
-          )
-        }
-        model={model}
-        style={createFileTreeStyle(resolvedTheme)}
-        onMouseMove={handleTreeMouseMove}
-        onMouseLeave={cancelCurrentHoverPrewarm}
-        renderContextMenu={(item, context) => (
-          <FileTreeMenu
-            item={item}
-            context={context}
-            anyActionBusy={anyActionBusy}
-            workspace={workspace}
-            handoff={handoff}
-            model={model}
-            okignoreBinding={okignoreBinding}
-            onStartCreating={startCreating}
-            onDelete={setDeleteTarget}
-            onExpandSubtree={expandSubtree}
-            onCollapseSubtree={collapseSubtree}
-            isAsset={assetTreePaths.has(item.path)}
-          />
-        )}
-      />
+      <div ref={fileTreeHostRef} className="flex min-h-0 flex-1 flex-col">
+        <PierreFileTree
+          header={
+            error && (
+              <span role="alert" className="px-3 pb-1 text-destructive text-xs">
+                {error}
+              </span>
+            )
+          }
+          model={model}
+          style={createFileTreeStyle(resolvedTheme)}
+          onMouseMove={handleTreeMouseMove}
+          onMouseLeave={cancelCurrentHoverPrewarm}
+          renderContextMenu={(item, context) => (
+            <FileTreeMenu
+              item={item}
+              context={context}
+              anyActionBusy={anyActionBusy}
+              workspace={workspace}
+              handoff={handoff}
+              model={model}
+              okignoreBinding={okignoreBinding}
+              onStartCreating={startCreating}
+              onStartCreatingFromTemplate={startCreatingFromTemplate}
+              onDelete={(targets) => setDeleteRequest({ targets })}
+              onExpandSubtree={expandSubtree}
+              onCollapseSubtree={collapseSubtree}
+              isAsset={assetTreePaths.has(item.path)}
+              isAssetTreePath={isAssetTreePath}
+            />
+          )}
+        />
+      </div>
       <Dialog
-        open={!!deleteTarget}
+        open={!!deleteRequest}
         onOpenChange={(open) => {
-          if (!open && !busyPath) setDeleteTarget(null);
+          if (!open && !busyPath) setDeleteRequest(null);
         }}
       >
-        {deleteTarget && (
+        {deleteRequest && primaryDeleteTarget && (
           <DeleteConfirmationDialog
-            itemName={`${deleteTarget.name}${deleteTarget.kind === 'file' ? (deleteTarget.docExt ?? '.md') : '/'}`}
-            isSubmitting={busyPath === deleteTarget.path}
-            onDelete={() => handleDelete(deleteTarget)}
-            customDescription={
-              deleteTarget.kind === 'folder'
-                ? `Are you sure you want to delete ${deleteTarget.name}/ and all files inside? This action cannot be undone.`
+            itemName={
+              deleteRequest.targets.length === 1
+                ? `${primaryDeleteTarget.name}${primaryDeleteTarget.kind === 'file' ? (primaryDeleteTarget.docExt ?? '.md') : '/'}`
                 : undefined
+            }
+            isSubmitting={busyPath !== null}
+            onDelete={() => handleDeleteTargets(deleteRequest.targets)}
+            customTitle={deleteRequest.targets.length > 1 ? 'Delete selected items' : undefined}
+            customDescription={
+              deleteRequest.targets.length > 1
+                ? `Are you sure you want to delete ${deleteRequest.targets.length} selected items? Folders and all files inside them will be deleted. This action cannot be undone.`
+                : primaryDeleteTarget.kind === 'folder'
+                  ? `Are you sure you want to delete ${primaryDeleteTarget.name}/ and all files inside? This action cannot be undone.`
+                  : undefined
             }
           />
         )}
       </Dialog>
+      <NewItemDialog
+        open={newItemRequest !== null}
+        onOpenChange={(open) => {
+          if (!open) setNewItemRequest(null);
+        }}
+        kind="file"
+        initialDir={newItemRequest?.parentDir ?? ''}
+      />
     </>
   );
 }
@@ -1212,4 +1788,28 @@ function findTreeItemPath(event: MouseEvent): string | null {
     }
   }
   return null;
+}
+
+const FILE_TREE_SKELETON_ROW_WIDTHS = ['w-3/4', 'w-2/3', 'w-4/5', 'w-1/2', 'w-3/5', 'w-2/3'];
+
+function FileTreeSkeleton() {
+  return (
+    <div
+      className="flex flex-1 flex-col gap-1 px-2 py-2"
+      role="status"
+      aria-busy="true"
+      aria-label="Loading files"
+    >
+      {FILE_TREE_SKELETON_ROW_WIDTHS.map((width, index) => (
+        <div
+          // biome-ignore lint/suspicious/noArrayIndexKey: fixed-length static decoration list
+          key={index}
+          className="flex h-6 items-center gap-2"
+        >
+          <Skeleton className="h-3 w-3 shrink-0 rounded-sm" />
+          <Skeleton className={`h-3 ${width}`} />
+        </div>
+      ))}
+    </div>
+  );
 }

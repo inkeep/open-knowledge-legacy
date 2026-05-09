@@ -37,6 +37,7 @@ import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
 import type { AgentPresenceBroadcaster } from './agent-presence.ts';
 import type { AgentSessionManager } from './agent-sessions.ts';
 import { isAllowedApiOrigin } from './api-origin.ts';
+import { errorResponse } from './http/error-response.ts';
 import type { PinoLogger } from './logger.ts';
 import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import type { McpHttpHandler } from './mcp-http.ts';
@@ -96,18 +97,21 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
         ? req.headers['mcp-session-id'][0]
         : req.headers['mcp-session-id'];
       if (!isLoopbackAddress(req.socket.remoteAddress)) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'loopback-required' }));
+        errorResponse(res, 403, 'urn:ok:error:loopback-required', 'Loopback access required.', {
+          handler: 'mcp',
+        });
         return;
       }
       if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'host-header-not-allowed' }));
+        errorResponse(res, 403, 'urn:ok:error:host-not-allowed', 'Host header not allowed.', {
+          handler: 'mcp',
+        });
         return;
       }
       if (origin !== undefined && !isAllowedApiOrigin(origin)) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'origin-not-allowed' }));
+        errorResponse(res, 403, 'urn:ok:error:invalid-origin', 'Origin not allowed.', {
+          handler: 'mcp',
+        });
         return;
       }
       if (origin !== undefined) {
@@ -125,8 +129,10 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
       mcpHttpHandler.handle(req, res).catch((err) => {
         log.error({ err, sessionId }, 'Unhandled MCP HTTP error');
         if (!res.writableEnded && !res.headersSent) {
-          res.writeHead(500);
-          res.end('Internal server error');
+          errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+            handler: 'mcp',
+            cause: err,
+          });
         } else if (!res.writableEnded) {
           res.end();
         }
@@ -139,28 +145,31 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
         .hooks('onRequest', { request: req, response: res } as any)
         .then(() => {
           if (res.writableEnded || res.headersSent) return;
-          res.statusCode = 404;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'API route not found', path: url }));
+          errorResponse(res, 404, 'urn:ok:error:not-found', 'API endpoint not found.', {
+            handler: 'mcp-mount',
+            detail: `No handler for ${req.method ?? 'GET'} ${url}`,
+          });
         })
         .catch((err) => {
           log.error({ err }, 'Unhandled onRequest error');
           if (!res.writableEnded && !res.headersSent) {
-            res.writeHead(500);
-            res.end('Internal server error');
+            errorResponse(
+              res,
+              500,
+              'urn:ok:error:internal-server-error',
+              'Internal server error.',
+              { handler: 'mcp-mount', cause: err },
+            );
           } else if (!res.writableEnded) {
             res.end();
           }
         });
       return;
     }
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: 'Not found. The React UI is served by `ok ui` (default port 3000).',
-        path: url ?? '/',
-      }),
-    );
+    errorResponse(res, 404, 'urn:ok:error:not-found', 'Not found.', {
+      handler: 'mcp-mount',
+      detail: `The React UI is served by \`ok ui\` (default port 3000). No handler for ${url ?? '/'}`,
+    });
   };
 
   const onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {

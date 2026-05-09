@@ -116,6 +116,12 @@ export {
 } from './handoff-api.ts';
 export { readBranchFromHead } from './head-watcher.ts';
 export {
+  createStreamingErrorWriter,
+  errorResponse,
+  type HttpErrorStatus,
+  streamingProblemEvent,
+} from './http/error-response.ts';
+export {
   type AttachIdleShutdownOptions,
   attachIdleShutdown,
   type IdleShutdownHandle,

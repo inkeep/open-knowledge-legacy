@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { assetPathFromHash, docNameFromHash, hashFromAssetPath, hashFromDocName } from './doc-hash';
+import {
+  assetPathFromHash,
+  docNameFromHash,
+  hashFromAssetPath,
+  hashFromDocName,
+  hashFromFolderPath,
+} from './doc-hash';
 
 describe('docNameFromHash', () => {
   test('returns null for empty hash', () => {
@@ -20,6 +26,10 @@ describe('docNameFromHash', () => {
 
   test('parses nested path', () => {
     expect(docNameFromHash('#/folder/sub/page')).toBe('folder/sub/page');
+  });
+
+  test('preserves trailing slash for folder intent', () => {
+    expect(docNameFromHash('#/folder/sub/')).toBe('folder/sub/');
   });
 
   test('strips query string', () => {
@@ -62,6 +72,22 @@ describe('hashFromDocName', () => {
 
   test('null anchor produces no query', () => {
     expect(hashFromDocName('doc', null)).toBe('#/doc');
+  });
+});
+
+describe('hashFromFolderPath', () => {
+  test('adds a trailing slash', () => {
+    expect(hashFromFolderPath('docs/guide')).toBe('#/docs/guide/');
+  });
+
+  test('does not duplicate a trailing slash', () => {
+    expect(hashFromFolderPath('docs/guide/')).toBe('#/docs/guide/');
+  });
+
+  test('encodes anchor with special characters', () => {
+    expect(hashFromFolderPath('docs/guide', 'hello world')).toBe(
+      '#/docs/guide/?anchor=hello%20world',
+    );
   });
 });
 

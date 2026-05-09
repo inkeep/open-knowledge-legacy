@@ -46,6 +46,9 @@ const p = (text = ''): ReturnType<Schema['node']> =>
 const jsx = (name: string, children: ReturnType<Schema['node']>[] = []) =>
   schema.node('jsxComponent', { componentName: name }, children);
 
+/** Build an EditorState with the real BridgeIdPlugin's PM plugin installed.
+ *  Bypasses TipTap's Extension wiring — addProseMirrorPlugins() returns the
+ *  PM plugins directly, which we hand to EditorState.create. */
 function makeState(doc: ReturnType<Schema['node']>): EditorState {
   const ext = BridgeIdPlugin;
   // biome-ignore lint/suspicious/noExplicitAny: PM plugin extraction
@@ -53,6 +56,8 @@ function makeState(doc: ReturnType<Schema['node']>): EditorState {
   return EditorState.create({ doc, plugins });
 }
 
+/** Helper: get plugin state, throwing on null so tests fail fast (and so
+ *  the type narrows for downstream code without `?.` cascades). */
 function getPluginState(state: EditorState) {
   const ps = bridgeIdPluginKey.getState(state);
   if (!ps) throw new Error('bridgeIdPlugin not installed');

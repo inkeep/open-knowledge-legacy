@@ -117,8 +117,10 @@ describe('Managed rename — crash recovery via boot-time initAsync (QA-006)', (
       body: JSON.stringify({ kind: 'folder', fromPath: 'articles', toPath: 'essays' }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean };
-    expect(body.ok).toBe(true);
+    const body = (await res.json()) as {
+      renamed: Array<{ fromDocName: string; toDocName: string }>;
+    };
+    expect(body.renamed.length).toBeGreaterThan(0);
 
     expect(existsSync(join(contentDir, 'essays', 'a.md'))).toBe(true);
     expect(existsSync(join(contentDir, 'articles', 'a.md'))).toBe(false);

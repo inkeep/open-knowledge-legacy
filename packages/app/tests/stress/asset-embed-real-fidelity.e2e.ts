@@ -227,14 +227,14 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
         const t0 = performance.now();
         const res = await fetch('/api/upload', { method: 'POST', body: fd });
         const elapsedMs = performance.now() - t0;
-        const body = (await res.json()) as { ok: boolean; src?: string; deduped?: boolean };
+        const body = (await res.json()) as { src?: string; path?: string; deduped?: boolean };
         return { status: res.status, body, elapsedMs, sentBytes: size };
       },
       { docName, size: payloadBytes },
     );
 
     expect(resultJson.status).toBe(200);
-    expect(resultJson.body.ok).toBe(true);
+    expect(typeof resultJson.body.src).toBe('string');
 
     expect(resultJson.elapsedMs).toBeLessThan(10_000);
 

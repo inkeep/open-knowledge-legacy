@@ -8,6 +8,8 @@ async function waitForProvider(page: Page) {
   });
 }
 
+/** Wait for the editor's top-level doc to contain at least N blocks (seed
+ *  acknowledged) — replaces every `waitForTimeout(500)` after a write. */
 async function waitForDocSeeded(page: Page, minChildCount = 1) {
   await page.waitForFunction(
     (n) => (window.__activeEditor?.state.doc.childCount ?? 0) >= n,

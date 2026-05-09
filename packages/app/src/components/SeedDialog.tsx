@@ -1,3 +1,4 @@
+import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { FileText, Folder, Loader2, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -21,14 +22,18 @@ import {
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import type {
+  OkScaffoldApplyResult,
   OkScaffoldPlan,
   OkSeedApplyResult,
+  OkSeedError,
   OkSeedPlanResult,
 } from '@/lib/desktop-bridge-types';
 
 interface SeedDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Fired after a successful apply — used by the empty state to trigger the
+      OkBlob celebration burst. The dialog still owns the toast + dismissal. */
   onSeedApplied?: () => void;
 }
 
@@ -40,6 +45,26 @@ type DialogPhase =
   | { kind: 'applying'; plan: OkScaffoldPlan };
 
 type RootChoice = 'project-root' | 'subfolder';
+
+async function translateSeedError(res: Response): Promise<OkSeedError> {
+  const body = (await res.json().catch(() => null)) as unknown;
+  const parsed = ProblemDetailsSchema.safeParse(body);
+  if (!parsed.success) {
+    return { kind: 'internal', message: `HTTP ${res.status}` };
+  }
+  const message = parsed.data.detail ?? parsed.data.title;
+  const t = parsed.data.type;
+  if (t === 'urn:ok:error:seed-prerequisite-missing') {
+    return { kind: 'prerequisite-missing', message };
+  }
+  if (t === 'urn:ok:error:seed-invalid-root') {
+    return { kind: 'invalid-root', message };
+  }
+  if (t === 'urn:ok:error:no-project-dir') {
+    return { kind: 'no-project', message };
+  }
+  return { kind: 'internal', message };
+}
 
 function seedClient() {
   const okDesktop = typeof window !== 'undefined' ? window.okDesktop : undefined;
@@ -53,7 +78,14 @@ function seedClient() {
     plan: async (rootDir?: string): Promise<OkSeedPlanResult> => {
       const qs = rootDir ? `?rootDir=${encodeURIComponent(rootDir)}` : '';
       const res = await fetch(`/api/seed/plan${qs}`);
-      return (await res.json()) as OkSeedPlanResult;
+      if (!res.ok) {
+        return { ok: false, error: await translateSeedError(res) };
+      }
+      const body = (await res.json().catch(() => null)) as { plan?: OkScaffoldPlan } | null;
+      if (!body?.plan) {
+        return { ok: false, error: { kind: 'internal', message: 'Malformed plan response' } };
+      }
+      return { ok: true, plan: body.plan };
     },
     apply: async (plan: OkScaffoldPlan): Promise<OkSeedApplyResult> => {
       const res = await fetch('/api/seed/apply', {
@@ -61,7 +93,16 @@ function seedClient() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan }),
       });
-      return (await res.json()) as OkSeedApplyResult;
+      if (!res.ok) {
+        return { ok: false, error: await translateSeedError(res) };
+      }
+      const body = (await res.json().catch(() => null)) as {
+        result?: OkScaffoldApplyResult;
+      } | null;
+      if (!body?.result) {
+        return { ok: false, error: { kind: 'internal', message: 'Malformed apply response' } };
+      }
+      return { ok: true, result: body.result };
     },
   };
 }
@@ -308,6 +349,9 @@ interface Layer {
   blurb: string;
 }
 
+/** Short description per starter folder (≤2 lines) — used by
+    `CreatedItemsList` to annotate each folder row in the "what gets created"
+    list. */
 const LAYERS: readonly Layer[] = [
   {
     name: 'external-sources',
@@ -330,6 +374,8 @@ const FILE_DESCRIPTIONS: Record<string, string> = {
   'log.md': 'Append-only timeline',
 };
 
+/** Last path segment so descriptions still attach in subfolder mode — e.g.
+    `brain/external-sources` resolves to the `external-sources` layer blurb. */
 function basename(path: string): string {
   return path.split('/').pop() ?? path;
 }

@@ -35,14 +35,19 @@ async function setupFixture(): Promise<Fixture> {
 
 async function waitForCondition(
   predicate: () => boolean,
-  { timeoutMs = 5_000, pollMs = 25 }: { timeoutMs?: number; pollMs?: number } = {},
+  {
+    timeoutMs = 5_000,
+    pollMs = 25,
+    describe,
+  }: { timeoutMs?: number; pollMs?: number; describe?: () => string } = {},
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
     await new Promise((r) => setTimeout(r, pollMs));
   }
-  throw new Error(`waitForCondition timed out after ${timeoutMs}ms`);
+  const diagnostic = describe ? ` — ${describe()}` : '';
+  throw new Error(`waitForCondition timed out after ${timeoutMs}ms${diagnostic}`);
 }
 
 beforeEach(() => {
@@ -90,10 +95,16 @@ describe('FR-33: persistence reads body from Y.Text', () => {
         serverDoc.getText('source').insert(0, '__foo__\n');
       }, userOrigin);
 
-      await waitForCondition(() => {
-        if (!existsSync(docPath)) return false;
-        return readFileSync(docPath, 'utf-8').includes('__foo__');
-      });
+      await waitForCondition(
+        () => {
+          if (!existsSync(docPath)) return false;
+          return readFileSync(docPath, 'utf-8').includes('__foo__');
+        },
+        {
+          describe: () =>
+            `disk read at ${docPath} did not contain '__foo__' (file exists: ${existsSync(docPath)})`,
+        },
+      );
       const diskBytes = readFileSync(docPath, 'utf-8');
       expect(diskBytes).toContain('__foo__');
       expect(diskBytes).not.toContain('**foo**');
@@ -131,11 +142,17 @@ describe('FR-33: persistence reads body from Y.Text', () => {
         serverDoc.getText('source').insert(0, 'Line1\r\nLine2\r\n');
       }, userOrigin);
 
-      await waitForCondition(() => {
-        if (!existsSync(docPath)) return false;
-        const bytes = readFileSync(docPath, 'utf-8');
-        return bytes.length > 0 && bytes.includes('Line1');
-      });
+      await waitForCondition(
+        () => {
+          if (!existsSync(docPath)) return false;
+          const bytes = readFileSync(docPath, 'utf-8');
+          return bytes.length > 0 && bytes.includes('Line1');
+        },
+        {
+          describe: () =>
+            `disk read at ${docPath} did not contain 'Line1' (file exists: ${existsSync(docPath)}, size: ${existsSync(docPath) ? readFileSync(docPath, 'utf-8').length : 'n/a'})`,
+        },
+      );
       const diskBytes = readFileSync(docPath, 'utf-8');
       expect(diskBytes).toContain('Line1');
       expect(diskBytes).toContain('Line2');
@@ -263,10 +280,16 @@ describe('FR-33: full round-trip preserves user-form bytes', () => {
         ytext.insert(ytext.length, '__more__\n');
       }, userOrigin);
 
-      await waitForCondition(() => {
-        if (!existsSync(docPath)) return false;
-        return readFileSync(docPath, 'utf-8').includes('__more__');
-      });
+      await waitForCondition(
+        () => {
+          if (!existsSync(docPath)) return false;
+          return readFileSync(docPath, 'utf-8').includes('__more__');
+        },
+        {
+          describe: () =>
+            `disk read at ${docPath} did not contain '__more__' (file exists: ${existsSync(docPath)})`,
+        },
+      );
 
       const diskAfterEdit = readFileSync(docPath, 'utf-8');
       expect(diskAfterEdit).toContain('__bold__');

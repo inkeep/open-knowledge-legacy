@@ -15,3 +15,15 @@ export {
 } from './commands/init.ts';
 export { type LoadConfigResult, loadConfig } from './config/loader.ts';
 export { initContent } from './content/init.ts';
+export { type PreviewResult, previewContent } from './content/preview.ts';
+export {
+  type ResolveProjectRootOptions,
+  type ResolveProjectRootResult,
+  resolveProjectRoot,
+} from './integrations/resolve-project-root.ts';
+export {
+  type ProjectAiEditorOutcome,
+  type ProjectAiIntegrationOutcome,
+  type ProjectAiIntegrationsResult,
+  writeProjectAiIntegrations,
+} from './integrations/write-project-ai-integrations.ts';

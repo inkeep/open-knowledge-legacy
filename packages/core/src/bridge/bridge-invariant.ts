@@ -1,3 +1,5 @@
+import { fnv1aDigest } from './hash-util.ts';
+
 export type BridgeInvariantSite = 'observer-b' | 'persistence' | 'test-harness';
 
 export interface BridgeInvariantViolation {
@@ -8,6 +10,47 @@ export interface BridgeInvariantViolation {
   fragmentMdSnapshot: string;
   unifiedDiff: string;
   stack: string | undefined;
+}
+
+export interface BridgeInvariantLogPayload {
+  event: 'bridge-invariant-violation';
+  site: BridgeInvariantSite;
+  'doc.name': string | null;
+  'tolerance-class-attempted': 'untracked';
+  'normalize-equal-modulo-tolerance': false;
+  ytextLen: number;
+  fragmentLen: number;
+  ytextHash: string;
+  fragmentHash: string;
+  diff?: string;
+  redacted: boolean;
+  timestamp: string;
+}
+
+export function toBridgeInvariantLog(
+  violation: BridgeInvariantViolation,
+  opts?: { verbose?: boolean; nowMs?: number },
+): BridgeInvariantLogPayload {
+  const verbose = opts?.verbose === true;
+  const timestamp =
+    opts?.nowMs !== undefined ? new Date(opts.nowMs).toISOString() : new Date().toISOString();
+  const base: BridgeInvariantLogPayload = {
+    event: 'bridge-invariant-violation',
+    site: violation.site,
+    'doc.name': violation.docName ?? null,
+    'tolerance-class-attempted': 'untracked',
+    'normalize-equal-modulo-tolerance': false,
+    ytextLen: violation.ytextSnapshot.length,
+    fragmentLen: violation.fragmentMdSnapshot.length,
+    ytextHash: fnv1aDigest(violation.ytextSnapshot),
+    fragmentHash: fnv1aDigest(violation.fragmentMdSnapshot),
+    redacted: !verbose,
+    timestamp,
+  };
+  if (verbose) {
+    return { ...base, diff: violation.unifiedDiff };
+  }
+  return base;
 }
 
 export type InvariantViolation = BridgeInvariantViolation;

@@ -14,6 +14,7 @@ const NESTED_PATH = '/Users/who/dragons/specs/foo';
 
 interface CapturedResponse {
   status: number;
+  headers: Record<string, string>;
   body: unknown;
 }
 
@@ -38,11 +39,15 @@ function makeReq(
 }
 
 function makeRes(): { res: ServerResponse; captured: CapturedResponse } {
-  const captured: CapturedResponse = { status: 0, body: undefined };
+  const captured: CapturedResponse = { status: 0, headers: {}, body: undefined };
   let chunks = '';
   const res = {
-    writeHead: (status: number, _headers?: unknown) => {
+    headersSent: false,
+    writableEnded: false,
+    destroyed: false,
+    writeHead: (status: number, headers?: Record<string, string>) => {
       captured.status = status;
+      captured.headers = { ...(headers ?? {}) };
     },
     end: (chunk?: string) => {
       if (chunk) chunks += chunk;
@@ -66,47 +71,49 @@ function makeDeps(overrides: Partial<HandleSpawnCursorDeps> = {}): HandleSpawnCu
   };
 }
 
+function expectProblem(captured: CapturedResponse, status: number, type: string): void {
+  expect(captured.status).toBe(status);
+  expect(captured.headers['Content-Type']).toBe('application/problem+json');
+  expect(captured.body).toMatchObject({ type, title: expect.any(String), status });
+}
+
 describe('handleSpawnCursor — method gate', () => {
-  test('rejects non-POST methods with 405', async () => {
+  test('rejects non-POST methods with 405 method-not-allowed problem+json + Allow: POST', async () => {
     const { res, captured } = makeRes();
     await handleSpawnCursor(makeReq('GET'), res, makeDeps());
-    expect(captured.status).toBe(405);
-    expect(captured.body).toEqual({ ok: false, reason: 'method-not-allowed' });
+    expectProblem(captured, 405, 'urn:ok:error:method-not-allowed');
+    expect(captured.headers.Allow).toBe('POST');
   });
 });
 
 describe('handleSpawnCursor — body validation', () => {
-  test('malformed JSON → 400 invalid-path', async () => {
+  test('malformed JSON → 400 invalid-request', async () => {
     const { res, captured } = makeRes();
     await handleSpawnCursor(makeReq('POST', 'not-json{{'), res, makeDeps());
-    expect(captured.status).toBe(400);
-    expect(captured.body).toEqual({ ok: false, reason: 'invalid-path' });
+    expectProblem(captured, 400, 'urn:ok:error:invalid-request');
   });
 
-  test('missing path field → 400 invalid-path', async () => {
+  test('missing path field → 400 invalid-request', async () => {
     const { res, captured } = makeRes();
     await handleSpawnCursor(makeReq('POST', {}), res, makeDeps());
-    expect(captured.status).toBe(400);
-    expect(captured.body).toEqual({ ok: false, reason: 'invalid-path' });
+    expectProblem(captured, 400, 'urn:ok:error:invalid-request');
   });
 
-  test('empty path string → 400 invalid-path', async () => {
+  test('empty path string → 400 invalid-request', async () => {
     const { res, captured } = makeRes();
     await handleSpawnCursor(makeReq('POST', { path: '' }), res, makeDeps());
-    expect(captured.status).toBe(400);
-    expect(captured.body).toEqual({ ok: false, reason: 'invalid-path' });
+    expectProblem(captured, 400, 'urn:ok:error:invalid-request');
   });
 
-  test('non-string path → 400 invalid-path', async () => {
+  test('non-string path → 400 invalid-request', async () => {
     const { res, captured } = makeRes();
     await handleSpawnCursor(makeReq('POST', { path: 42 }), res, makeDeps());
-    expect(captured.status).toBe(400);
-    expect(captured.body).toEqual({ ok: false, reason: 'invalid-path' });
+    expectProblem(captured, 400, 'urn:ok:error:invalid-request');
   });
 });
 
 describe('handleSpawnCursor — path containment', () => {
-  test('rejects paths outside contentDir → 403 invalid-path', async () => {
+  test('rejects paths outside contentDir → 403 path-escape', async () => {
     const spawnDetached = mock(async () => ({ ok: true }) as SpawnCursorOutcome);
     const { res, captured } = makeRes();
     await handleSpawnCursor(
@@ -114,12 +121,11 @@ describe('handleSpawnCursor — path containment', () => {
       res,
       makeDeps({ spawnDetached }),
     );
-    expect(captured.status).toBe(403);
-    expect(captured.body).toEqual({ ok: false, reason: 'invalid-path' });
+    expectProblem(captured, 403, 'urn:ok:error:path-escape');
     expect(spawnDetached).not.toHaveBeenCalled();
   });
 
-  test('rejects parent traversal → 403 invalid-path', async () => {
+  test('rejects parent traversal → 403 path-escape', async () => {
     const spawnDetached = mock(async () => ({ ok: true }) as SpawnCursorOutcome);
     const { res, captured } = makeRes();
     await handleSpawnCursor(
@@ -127,38 +133,39 @@ describe('handleSpawnCursor — path containment', () => {
       res,
       makeDeps({ spawnDetached }),
     );
-    expect(captured.status).toBe(403);
+    expectProblem(captured, 403, 'urn:ok:error:path-escape');
     expect(spawnDetached).not.toHaveBeenCalled();
   });
 
-  test('rejects null bytes in path → 403 invalid-path', async () => {
+  test('rejects null bytes in path → 403 path-escape', async () => {
     const { res, captured } = makeRes();
     await handleSpawnCursor(
       makeReq('POST', { path: '/Users/who/dragons/\0evil' }),
       res,
       makeDeps(),
     );
-    expect(captured.status).toBe(403);
-    expect(captured.body).toEqual({ ok: false, reason: 'invalid-path' });
+    expectProblem(captured, 403, 'urn:ok:error:path-escape');
   });
 
-  test('accepts contentDir itself', async () => {
+  test('accepts contentDir itself → 200 success body', async () => {
     const { res, captured } = makeRes();
     await handleSpawnCursor(makeReq('POST', { path: VALID_PATH }), res, makeDeps());
     expect(captured.status).toBe(200);
-    expect(captured.body).toEqual({ ok: true });
+    expect(captured.headers['Content-Type']).toBe('application/json');
+    expect(captured.body).toEqual({});
   });
 
-  test('accepts nested path inside contentDir', async () => {
+  test('accepts nested path inside contentDir → 200 success body', async () => {
     const { res, captured } = makeRes();
     await handleSpawnCursor(makeReq('POST', { path: NESTED_PATH }), res, makeDeps());
     expect(captured.status).toBe(200);
-    expect(captured.body).toEqual({ ok: true });
+    expect(captured.headers['Content-Type']).toBe('application/json');
+    expect(captured.body).toEqual({});
   });
 });
 
 describe('handleSpawnCursor — binary resolution', () => {
-  test('resolveCursorBinary returns null → not-installed', async () => {
+  test('resolveCursorBinary returns null → 422 cursor-not-installed', async () => {
     const spawnDetached = mock(async () => ({ ok: true }) as SpawnCursorOutcome);
     const { res, captured } = makeRes();
     await handleSpawnCursor(
@@ -166,8 +173,7 @@ describe('handleSpawnCursor — binary resolution', () => {
       res,
       makeDeps({ resolveCursorBinary: async () => null, spawnDetached }),
     );
-    expect(captured.status).toBe(200);
-    expect(captured.body).toEqual({ ok: false, reason: 'not-installed' });
+    expectProblem(captured, 422, 'urn:ok:error:cursor-not-installed');
     expect(spawnDetached).not.toHaveBeenCalled();
   });
 });
@@ -187,7 +193,7 @@ describe('handleSpawnCursor — spawn dispatch', () => {
       }),
     );
     expect(captured.status).toBe(200);
-    expect(captured.body).toEqual({ ok: true });
+    expect(captured.body).toEqual({});
     expect(spawnDetached).toHaveBeenCalledTimes(1);
     expect(spawnDetached.mock.calls[0]?.[0]).toBe('/usr/bin/open');
     expect(spawnDetached.mock.calls[0]?.[1]).toEqual([
@@ -216,7 +222,7 @@ describe('handleSpawnCursor — spawn dispatch', () => {
     expect(spawnDetached.mock.calls[0]?.[1]).toEqual([VALID_PATH]);
   });
 
-  test('spawn-error reason propagates', async () => {
+  test('spawn-error reason → 502 cursor-spawn-failed problem+json', async () => {
     const { res, captured } = makeRes();
     await handleSpawnCursor(
       makeReq('POST', { path: VALID_PATH }),
@@ -225,11 +231,10 @@ describe('handleSpawnCursor — spawn dispatch', () => {
         spawnDetached: async () => ({ ok: false, reason: 'spawn-error' }) as SpawnCursorOutcome,
       }),
     );
-    expect(captured.status).toBe(200);
-    expect(captured.body).toEqual({ ok: false, reason: 'spawn-error' });
+    expectProblem(captured, 502, 'urn:ok:error:cursor-spawn-failed');
   });
 
-  test('timeout reason propagates', async () => {
+  test('timeout reason → 504 cursor-spawn-timeout problem+json', async () => {
     const { res, captured } = makeRes();
     await handleSpawnCursor(
       makeReq('POST', { path: VALID_PATH }),
@@ -238,8 +243,31 @@ describe('handleSpawnCursor — spawn dispatch', () => {
         spawnDetached: async () => ({ ok: false, reason: 'timeout' }) as SpawnCursorOutcome,
       }),
     );
-    expect(captured.status).toBe(200);
-    expect(captured.body).toEqual({ ok: false, reason: 'timeout' });
+    expectProblem(captured, 504, 'urn:ok:error:cursor-spawn-timeout');
+  });
+
+  test('spawn returns not-installed reason → 422 cursor-not-installed problem+json', async () => {
+    const { res, captured } = makeRes();
+    await handleSpawnCursor(
+      makeReq('POST', { path: VALID_PATH }),
+      res,
+      makeDeps({
+        spawnDetached: async () => ({ ok: false, reason: 'not-installed' }) as SpawnCursorOutcome,
+      }),
+    );
+    expectProblem(captured, 422, 'urn:ok:error:cursor-not-installed');
+  });
+
+  test('spawn returns invalid-path reason → 403 path-escape problem+json', async () => {
+    const { res, captured } = makeRes();
+    await handleSpawnCursor(
+      makeReq('POST', { path: VALID_PATH }),
+      res,
+      makeDeps({
+        spawnDetached: async () => ({ ok: false, reason: 'invalid-path' }) as SpawnCursorOutcome,
+      }),
+    );
+    expectProblem(captured, 403, 'urn:ok:error:path-escape');
   });
 });
 
@@ -264,7 +292,7 @@ describe('handleSpawnCursor — Cursor binary discovery (per-platform)', () => {
       }),
     );
     expect(captured.status).toBe(200);
-    expect(captured.body).toEqual({ ok: true });
+    expect(captured.body).toEqual({});
     expect(whichCalled).toBe(true);
   });
 
@@ -286,7 +314,7 @@ describe('handleSpawnCursor — Cursor binary discovery (per-platform)', () => {
       }),
     );
     expect(captured.status).toBe(200);
-    expect(captured.body).toEqual({ ok: true });
+    expect(captured.body).toEqual({});
   });
 
   test('linux: PATH lookup is the only viable strategy (no bundle paths registered)', async () => {
@@ -305,7 +333,7 @@ describe('handleSpawnCursor — Cursor binary discovery (per-platform)', () => {
       }),
     );
     expect(captured.status).toBe(200);
-    expect(captured.body).toEqual({ ok: true });
+    expect(captured.body).toEqual({});
     expect(spawnDetached.mock.calls[0]?.[0]).toBe('/snap/bin/cursor');
   });
 });

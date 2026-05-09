@@ -379,7 +379,9 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
   const showCreateFolder =
     !isTagMode && matchesCommandQuery('New folder', deferredQuery, ['create folder']);
   const showGraphCommand =
-    !isTagMode && matchesCommandQuery('Open graph', deferredQuery, ['graph panel network']);
+    !isTagMode &&
+    activeDocName !== null &&
+    matchesCommandQuery('Open graph', deferredQuery, ['graph panel network']);
   const showProjectOpenFolder =
     !isTagMode &&
     bridge !== null &&
@@ -407,6 +409,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
       ));
   const showAgentGroup =
     !isTagMode &&
+    handoffInput !== null &&
     (trimmedDeferredQuery === '' ||
       KNOWN_TARGETS.some((target) =>
         matchesCommandQuery(`Open in ${target.displayName}`, deferredQuery, [
@@ -623,22 +626,15 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
               {showGraphCommand ? (
                 <CommandItem
                   value="open graph graph panel network"
-                  disabled={!activeDocName}
                   onSelect={() => {
                     if (!activeDocName) return;
                     onOpenChange(false);
                     requestDocPanelTab('graph');
                   }}
                   data-testid="command-palette-open-graph"
-                  aria-label={activeDocName ? 'Open graph' : 'Open graph, No active doc'}
                 >
                   <Network />
                   <span>Open graph</span>
-                  {!activeDocName ? (
-                    <span aria-hidden="true" className="ml-auto text-muted-foreground text-xs">
-                      No active doc
-                    </span>
-                  ) : null}
                 </CommandItem>
               ) : null}
             </CommandGroup>
@@ -659,9 +655,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                     ? 'Detecting…'
                     : installState.installed === false
                       ? 'Not installed'
-                      : handoffInput === null
-                        ? 'No active doc'
-                        : null;
+                      : null;
                 const accessibleLabel = hint
                   ? `Open in ${target.displayName}, ${hint}`
                   : `Open in ${target.displayName}`;
@@ -704,7 +698,11 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                     runAction(async () => {
                       const path = await bridge.dialog.openFolder();
                       if (!path) return;
-                      await bridge.project.open({ path, target: 'new-window' });
+                      await bridge.project.open({
+                        path,
+                        target: 'new-window',
+                        entryPoint: 'pick-existing',
+                      });
                     })
                   }
                   data-testid="command-palette-open-folder"
@@ -771,7 +769,12 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                         disabled={row.missing}
                         onSelect={() =>
                           runAction(
-                            () => bridge.project.open({ path: row.path, target: 'new-window' }),
+                            () =>
+                              bridge.project.open({
+                                path: row.path,
+                                target: 'new-window',
+                                entryPoint: 'recents',
+                              }),
                             'Failed to open project.',
                           )
                         }

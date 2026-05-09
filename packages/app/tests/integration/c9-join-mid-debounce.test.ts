@@ -1,3 +1,15 @@
+/**
+ * C9: Late-joining client — joins mid-debounce, receives canonical state.
+ *
+ * Validates that a client joining while the server has pending observer
+ * debounces (50ms for Observer A XmlFragment → Y.Text) receives the
+ * correct canonical state after the debounce completes. The server-authoritative
+ * observer bridge ensures cross-CRDT state is always eventually consistent
+ * for late joiners.
+ *
+ * Per-test docName isolation. Client lifecycle in try/finally per R8a.
+ */
+
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import * as Y from 'yjs';
@@ -30,6 +42,8 @@ function appendParagraph(client: TestClient, text: string): void {
   client.fragment.push([paragraph]);
 }
 
+/** Assert convergence: polls until all markers appear in BOTH Y.Text and
+ *  XmlFragment on all clients, then verifies bridge invariant and consistency. */
 async function assertConverged(clients: TestClient[], markers: string[]): Promise<void> {
   for (const marker of markers) {
     for (let i = 0; i < clients.length; i++) {

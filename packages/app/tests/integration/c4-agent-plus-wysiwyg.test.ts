@@ -1,3 +1,17 @@
+/**
+ * C4: Agent write + concurrent WYSIWYG (XmlFragment) edits.
+ *
+ * Validates that agent writes via the HTTP API (applyAgentMarkdownWrite under
+ * AGENT_WRITE_ORIGIN) and concurrent client WYSIWYG edits both survive the
+ * server-authoritative observer bridge. The server applies agent writes to
+ * XmlFragment via updateYFragment and mirrors to Y.Text via applyByPrefixSuffix
+ * (precedent #12). Client WYSIWYG edits propagate via CRDT sync and the server
+ * observer handles cross-CRDT writes under OBSERVER_SYNC_ORIGIN.
+ *
+ * Per-test docName isolation via createTestClient/createTestClients.
+ * Client lifecycle in try/finally (not afterEach) per R8a.
+ */
+
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import * as Y from 'yjs';
@@ -31,6 +45,8 @@ function appendParagraph(client: TestClient, text: string): void {
   client.fragment.push([paragraph]);
 }
 
+/** Assert convergence: polls until all markers appear in BOTH Y.Text and
+ *  XmlFragment on all clients, then verifies bridge invariant and consistency. */
 async function assertConverged(clients: TestClient[], markers: string[]): Promise<void> {
   for (const marker of markers) {
     for (let i = 0; i < clients.length; i++) {

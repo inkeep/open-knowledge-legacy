@@ -1,13 +1,17 @@
 import type { Dialog, MenuItemConstructorOptions } from 'electron';
+import type { EntryPoint } from '../shared/entry-point.ts';
 import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '../shared/labels.ts';
 import type { CliInstallStatus } from './cli-install.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 
 export interface MenuDeps {
   appName: string;
+  /** `electron.dialog` — injected so the File → Open Folder click handler
+   *  can call `promptForFolder(dialog)` without importing `dialog` at module
+   *  scope (breaks Bun-test module load; see file header). */
   dialog: Dialog;
   openNavigator(): void;
-  openProject(projectPath: string): Promise<void>;
+  openProject(projectPath: string, entryPoint: EntryPoint): Promise<void>;
   getRecentProjects(): ReadonlyArray<{ path: string; name: string }>;
   clearRecentProjects(): void;
   openExternalUrl(url: string): void;
@@ -38,7 +42,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
             label: row.name,
             sublabel: row.path,
             click: () => {
-              void deps.openProject(row.path);
+              void deps.openProject(row.path, 'recents');
             },
           })),
           { type: 'separator' as const },
@@ -97,7 +101,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
           click: async () => {
             const picked = await promptForFolder(deps.dialog);
             if (picked) {
-              await deps.openProject(picked);
+              await deps.openProject(picked, 'pick-existing');
             }
           },
         },

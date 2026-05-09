@@ -1,5 +1,6 @@
 import type { ApplyResult, ScaffoldPlan } from '@inkeep/open-knowledge-server';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
+import type { EntryPoint } from './entry-point.ts';
 
 export type OkSeedPlanResult =
   | { ok: true; plan: ScaffoldPlan }
@@ -52,6 +53,7 @@ interface RecentProjectEntry {
 interface ProjectSessionState {
   openTabs: string[];
   activeDocName: string | null;
+  activeTabId: string | null;
   updatedAt: string | null;
 }
 
@@ -88,8 +90,11 @@ interface OkStateSnapshot {
   } | null;
 }
 
-type OkMcpWiringEditorId = 'claude' | 'claude-desktop' | 'cursor' | 'vscode' | 'windsurf' | 'codex';
+type OkMcpWiringEditorId = 'claude' | 'claude-desktop' | 'cursor' | 'codex';
 
+/** Payload passed to `onShow` subscribers. Mirrors ok:mcp-wiring:show.
+ *  `willReplace: true` signals the editor has an existing OK-managed entry
+ *  that Add would overwrite — per-editor disclosure. */
 export interface OkMcpWiringShowPayload {
   readonly detectedEditors: readonly {
     readonly id: OkMcpWiringEditorId;
@@ -100,6 +105,59 @@ export interface OkMcpWiringShowPayload {
 }
 
 type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
+
+type OkOnboardingWarningKind =
+  | 'root'
+  | 'home'
+  | 'home-documents'
+  | 'home-desktop'
+  | 'home-downloads'
+  | 'volumes-mount'
+  | 'drive-root';
+
+type OkOnboardingGitState = 'present' | 'absent' | 'shell-only';
+
+export interface OkOnboardingShowPayload {
+  readonly pickedPath: string;
+  readonly projectDir: string;
+  readonly defaultContentDir: string;
+  readonly gitState: OkOnboardingGitState;
+  readonly gitRootPromoted: boolean;
+  readonly warnings: readonly { readonly kind: OkOnboardingWarningKind }[];
+  readonly editorOptions: readonly {
+    readonly id: OkMcpWiringEditorId;
+    readonly label: string;
+    /** True when the editor exposes a per-project MCP config file (e.g.
+     *  `.mcp.json`). False when only the user-level config is writable
+     *  (e.g. Claude Desktop's `claude_desktop_config.json`). The dialog
+     *  uses this to label scope per option so the user understands which
+     *  editors will scaffold project-local config vs which will only
+     *  update their user profile. */
+    readonly hasProjectConfig: boolean;
+  }[];
+}
+
+interface OkOnboardingConfirmRequest {
+  readonly initGit: boolean;
+  readonly contentDir: string;
+  readonly additionalIgnores: string;
+  readonly editorIds: readonly OkMcpWiringEditorId[];
+}
+
+type OkOnboardingResult = { ok: true } | { ok: false; error: string };
+
+interface OkOnboardingProbeContentRequest {
+  readonly contentDir: string;
+}
+
+type OkOnboardingProbeContentResult =
+  | {
+      readonly ok: true;
+      readonly count: number;
+      readonly sample: readonly string[];
+      readonly truncated: boolean;
+    }
+  | { readonly ok: false; readonly error: string };
 
 export type OkLocalOpAuthEvent =
   | {
@@ -128,6 +186,9 @@ export interface OkLocalOpStream<E> {
   cancel(): void;
 }
 
+/** One-shot result for `localOp.auth.status()`. Also imported by
+ *  `./ipc-channels.ts` as the IPC channel result type so the wire shape
+ *  and the bridge method signature can't drift. */
 export type OkLocalOpAuthStatusResponse =
   | { authenticated: true; host: string; login: string; name?: string; email?: string }
   | { authenticated: false; host: string; error?: string };
@@ -138,6 +199,8 @@ interface OkLocalOpRepoEntry {
   private: boolean;
 }
 
+/** One-shot result for `localOp.auth.repos()`. Also imported by
+ *  `./ipc-channels.ts` — see `OkLocalOpAuthStatusResponse`. */
 export type OkLocalOpAuthReposResponse =
   | { ok: true; host: string; repos: OkLocalOpRepoEntry[] }
   | { ok: false; error: string };
@@ -155,7 +218,7 @@ export interface OkDesktopBridge {
   onDeepLink(cb: (evt: { doc: string }) => void): OkUnsubscribe;
 
   dialog: {
-    openFolder(): Promise<string | null>;
+    openFolder(opts?: { defaultPath?: string }): Promise<string | null>;
     createFolder(): Promise<string | null>;
   };
 
@@ -209,7 +272,7 @@ export interface OkDesktopBridge {
     listRecent(): Promise<RecentProjectEntry[]>;
     getSessionState(): Promise<ProjectSessionState>;
     setSessionState(state: ProjectSessionState): Promise<void>;
-    open(request: { path: string; target: 'new-window' }): Promise<void>;
+    open(request: { path: string; target: 'new-window'; entryPoint: EntryPoint }): Promise<void>;
     close(): Promise<void>;
   };
 
@@ -258,6 +321,25 @@ export interface OkDesktopBridge {
     signalReady(): void;
     confirm(editorIds: readonly OkMcpWiringEditorId[]): Promise<OkMcpWiringResult>;
     skip(): Promise<OkMcpWiringResult>;
+  };
+
+  onboarding: {
+    onShow(cb: (payload: OkOnboardingShowPayload) => void): OkUnsubscribe;
+    signalReady(): void;
+    confirm(request: OkOnboardingConfirmRequest): Promise<OkOnboardingResult>;
+    cancel(): Promise<OkOnboardingResult>;
+    probeContent(request: OkOnboardingProbeContentRequest): Promise<OkOnboardingProbeContentResult>;
+    onToast(
+      cb: (
+        payload:
+          | { readonly kind: 'ancestor-promote'; readonly ancestorPath: string }
+          | {
+              readonly kind: 'git-root-promote';
+              readonly gitRoot: string;
+              readonly contentDir: string;
+            },
+      ) => void,
+    ): OkUnsubscribe;
   };
 
   localOp: {

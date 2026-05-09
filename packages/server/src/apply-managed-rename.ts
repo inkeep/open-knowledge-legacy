@@ -72,6 +72,38 @@ export class ManagedRenameSourceTypeMismatchError extends Error {
   }
 }
 
+export class SymlinkEscapeError extends Error {
+  constructor(message: string) {
+    super(`symlink-escape: ${message}`);
+    this.name = 'SymlinkEscapeError';
+  }
+}
+
+export class BacklinkIndexRequiredError extends Error {
+  constructor() {
+    super('Managed rename requires backlink index support');
+    this.name = 'BacklinkIndexRequiredError';
+  }
+}
+
+export class ManagedRenameSnapshotMissingError extends Error {
+  readonly docName: string;
+  constructor(docName: string) {
+    super(`Cannot snapshot missing document: ${docName}`);
+    this.name = 'ManagedRenameSnapshotMissingError';
+    this.docName = docName;
+  }
+}
+
+export class ManagedRenameMissingDocumentError extends Error {
+  readonly docName: string;
+  constructor(docName: string) {
+    super(`Cannot rename missing document: ${docName}`);
+    this.name = 'ManagedRenameMissingDocumentError';
+    this.docName = docName;
+  }
+}
+
 export function buildRenameMap(
   affectedDocs: readonly ManagedRenameAffectedDocPair[],
 ): Map<string, string> {

@@ -10,10 +10,10 @@ const PRINCIPAL_FILE = 'principal.json';
 const GIT_TIMEOUT_MS = 3000;
 
 async function readGitConfig(
-  contentDir: string,
+  projectDir: string,
 ): Promise<{ name: string | null; email: string | null }> {
   try {
-    const git = simpleGit({ baseDir: contentDir, timeout: { block: GIT_TIMEOUT_MS } });
+    const git = simpleGit({ baseDir: projectDir, timeout: { block: GIT_TIMEOUT_MS } });
     const name = (await git.raw('config', '--get', 'user.name')).trim() || null;
     const email = (await git.raw('config', '--get', 'user.email')).trim() || null;
     return { name, email };
@@ -22,11 +22,11 @@ async function readGitConfig(
   }
 }
 
-export async function loadPrincipal(contentDir: string): Promise<Principal> {
-  const okDir = getLocalDir(contentDir);
+export async function loadPrincipal(projectDir: string): Promise<Principal> {
+  const okDir = getLocalDir(projectDir);
   const principalPath = resolve(okDir, PRINCIPAL_FILE);
 
-  const { name: gitName, email: gitEmail } = await readGitConfig(contentDir);
+  const { name: gitName, email: gitEmail } = await readGitConfig(projectDir);
 
   if (existsSync(principalPath)) {
     let existing: Partial<Principal>;

@@ -453,8 +453,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
 
   const currentVersion = getAppVersion();
   const state = readState();
-  const isVersionTransition =
-    state.lastSeenVersion !== null && state.lastSeenVersion !== currentVersion;
+  const shouldShowVersionNotice = state.lastSeenVersion !== currentVersion;
   const needsStateAdvance = state.lastSeenVersion !== currentVersion;
 
   if (needsStateAdvance) {
@@ -462,7 +461,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       { ...state, lastSeenVersion: currentVersion },
       'lastSeenVersion-advance',
     );
-    if (advanced && isVersionTransition) {
+    if (advanced && shouldShowVersionNotice) {
       const fireToastB = (): void => {
         broadcast('ok:update:whats-new', {
           version: currentVersion,

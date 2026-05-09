@@ -141,10 +141,8 @@ describe('Finding 1 — folder-rename enumeration races concurrent index updates
 
     expect(captured.status).toBe(200);
     const body = JSON.parse(captured.body) as {
-      ok: boolean;
       renamed: Array<{ fromDocName: string; toDocName: string }>;
     };
-    expect(body.ok).toBe(true);
     expect(body.renamed.map((r) => r.fromDocName).sort()).toEqual([
       'articles/a',
       'articles/b',
@@ -202,9 +200,9 @@ describe('Finding 2 — admission check uses on-disk source extension', () => {
     ).onRequest({ request: req, response: res });
 
     expect(captured.status).toBe(400);
-    const body = JSON.parse(captured.body) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toContain('excluded');
+    const body = JSON.parse(captured.body) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:invalid-request');
+    expect(String(body.title)).toContain('excluded');
   });
 });
 

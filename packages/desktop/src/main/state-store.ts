@@ -11,6 +11,7 @@ interface RecentProject {
 interface ProjectSessionState {
   openTabs: string[];
   activeDocName: string | null;
+  activeTabId: string | null;
   updatedAt: string | null;
 }
 
@@ -54,11 +55,12 @@ function emptyProjectSessionState(): ProjectSessionState {
   return {
     openTabs: [],
     activeDocName: null,
+    activeTabId: null,
     updatedAt: null,
   };
 }
 
-function sanitizeDocTabs(value: unknown): string[] {
+function sanitizeOpenTabs(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   const tabs: string[] = [];
@@ -75,14 +77,19 @@ function sanitizeDocTabs(value: unknown): string[] {
 function parseProjectSessionState(raw: unknown): ProjectSessionState {
   if (typeof raw !== 'object' || raw === null) return emptyProjectSessionState();
   const obj = raw as Record<string, unknown>;
-  const openTabs = sanitizeDocTabs(obj.openTabs);
+  const openTabs = sanitizeOpenTabs(obj.openTabs);
   const activeDocName =
     typeof obj.activeDocName === 'string' && openTabs.includes(obj.activeDocName)
       ? obj.activeDocName
       : null;
+  const activeTabId =
+    typeof obj.activeTabId === 'string' && openTabs.includes(obj.activeTabId)
+      ? obj.activeTabId
+      : activeDocName;
   return {
     openTabs,
     activeDocName,
+    activeTabId,
     updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : null,
   };
 }

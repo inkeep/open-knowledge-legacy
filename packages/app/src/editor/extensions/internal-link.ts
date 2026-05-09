@@ -1,4 +1,5 @@
 import {
+  assertNeverLinkTarget,
   classifyMarkdownHref,
   extractAssetExtension,
   LinkFidelity,
@@ -85,17 +86,20 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
 
           if (!newTab) return false;
           if (!target) return false;
-          if (target.kind === 'doc') {
-            openInternalHashHrefInNewTab({ docName: target.docName, anchor: target.anchor });
-            return true;
+          switch (target.kind) {
+            case 'doc':
+              openInternalHashHrefInNewTab({ docName: target.docName, anchor: target.anchor });
+              return true;
+            case 'anchor':
+              openInternalHashHrefInNewTab({ docName, anchor: target.anchor });
+              return true;
+            case 'external':
+              if (!isSafeNavigationUrl(target.url)) return false;
+              openHashHrefInNewTab(target.url);
+              return true;
+            default:
+              return assertNeverLinkTarget(target);
           }
-          if (target.kind === 'anchor') {
-            openInternalHashHrefInNewTab({ docName, anchor: target.anchor });
-            return true;
-          }
-          if (!isSafeNavigationUrl(target.url)) return false;
-          openHashHrefInNewTab(target.url);
-          return true;
         },
       }),
       linkResolutionDecorationPlugin({

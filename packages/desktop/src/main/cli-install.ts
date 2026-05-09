@@ -5,6 +5,8 @@ import type { Dialog } from 'electron';
 
 export const SYMLINK_PATHS = ['/usr/local/bin/ok', '/usr/local/bin/open-knowledge'] as const;
 
+/** Classifier result for `getInstallStatus`. Exported so `menu.ts` can type
+ *  the `cliInstallStatus` dependency it consumes from the runtime wiring. */
 export type CliInstallStatus = 'installed' | 'not-installed' | 'broken';
 
 export interface FsOps {
@@ -338,9 +340,21 @@ export async function uninstallCli(deps: CliInstallDeps): Promise<void> {
 export interface BrokenSymlinkRepairDeps {
   executablePath: string;
   platform: NodeJS.Platform | string;
+  /** `app.isPackaged` — packaging-gate. Dev mode must never offer repair
+   *  because `app.getPath('exe')` resolves to the electron dev binary and
+   *  a prior DMG's symlinks would always classify 'broken' against it;
+   *  running the repair would install dev-path symlinks into the user's
+   *  system (contamination guard). */
   isPackaged: boolean;
   dialog: Pick<Dialog, 'showMessageBox'>;
+  /** Callable-once installer for the Repair branch. Defaults to `installCli`
+   *  in production; injected as a stub in tests so we can assert it fires
+   *  without actually spawning osascript. */
   install: (deps: CliInstallDeps) => Promise<void>;
+  /** Rebuild the application menu after a successful repair so the label
+   *  flips from "Install Command-Line Tools…" to "Uninstall Command-Line
+   *  Tools". Injected so tests can assert the ordering (refresh AFTER
+   *  install resolves). */
   refreshMenu: () => void;
   getStatus?: (executablePath: string) => CliInstallStatus;
   getDismissedToken?: () => string | null;

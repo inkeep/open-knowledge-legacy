@@ -51,7 +51,7 @@ export async function resolvePreviewUrlForTool(
   const effectiveCwd = cwd ?? (await deps.resolveCwd());
   const config = await resolveConfig(deps.config, effectiveCwd);
   const contentDir = resolveContentDir(config, effectiveCwd);
-  const lockDir = resolveLockDir(contentDir);
+  const lockDir = resolveLockDir(effectiveCwd);
   return resolvePreviewUrl(docName, { config, lockDir, contentDir });
 }
 
@@ -81,7 +81,7 @@ export async function buildListResolver(
   const effectiveCwd = cwd ?? (await deps.resolveCwd());
   const config = await resolveConfig(deps.config, effectiveCwd);
   const contentDir = resolveContentDir(config, effectiveCwd);
-  const lockDir = resolveLockDir(contentDir);
+  const lockDir = resolveLockDir(effectiveCwd);
   const ctx: PreviewUrlContext = { config, lockDir, contentDir };
   return {
     resolve: (docName: string) => resolvePreviewUrl(docName, ctx),

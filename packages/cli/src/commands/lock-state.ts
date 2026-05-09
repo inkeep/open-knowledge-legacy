@@ -39,14 +39,13 @@ export function inspectLock(
   }
   const lock = parsed as ProcessLockMetadata;
 
-  const localHost = opts.host ?? hostname();
-  if (lock.hostname !== localHost) {
-    return { status: 'foreign-host', lockPath, lock };
-  }
-
   const aliveProbe = opts.isAlive ?? isProcessAlive;
   if (!aliveProbe(lock.pid)) {
     return { status: 'dead-pid', lockPath, lock };
+  }
+  const localHost = opts.host ?? hostname();
+  if (lock.hostname !== localHost) {
+    return { status: 'foreign-host', lockPath, lock };
   }
   return { status: 'alive', lockPath, lock };
 }

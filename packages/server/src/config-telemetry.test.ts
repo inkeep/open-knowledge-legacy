@@ -47,6 +47,8 @@ function attr(span: ReadableSpan, key: string): unknown {
   return span.attributes[key];
 }
 
+/** Pick the first matching span by name; throws if none — biome-friendly
+ * alternative to non-null assertions on `spansByName(...)[0]!`. */
 function requireSpan(name: string): ReadableSpan {
   const spans = spansByName(name);
   if (spans.length === 0) throw new Error(`requireSpan: no span named '${name}'`);

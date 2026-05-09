@@ -1,3 +1,5 @@
+import { ProblemDetailsSchema, UploadAssetSuccessSchema } from '@inkeep/open-knowledge-core';
+import { HttpResponseParseError } from '../http-client.ts';
 import { getCurrentDocName } from './current-doc-name.ts';
 
 interface UploadFileResult {
@@ -8,6 +10,8 @@ const UPLOAD_ENDPOINT = '/api/upload';
 
 interface UploadFileDeps {
   fetch?: typeof fetch;
+  /** Currently-open document name. Defaults to `getCurrentDocName()` from the
+   *  module singleton (set by TiptapEditor on mount). */
   docName?: string | null;
 }
 
@@ -36,27 +40,35 @@ export async function uploadFile(
     throw new Error(`Upload failed: ${message}`);
   }
 
-  if (!res.ok) {
-    let errorMessage = `Upload failed (${res.status})`;
-    try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) errorMessage = body.error;
-    } catch {}
-    throw new Error(errorMessage);
-  }
-
-  let url: string;
+  let rawBody: unknown;
   try {
-    const body = (await res.json()) as { src?: string; path?: string };
-    const resolved = body.path ?? body.src;
-    if (typeof resolved !== 'string') {
-      throw new Error('Server response missing "path"/"src" field');
-    }
-    url = resolved.startsWith('/') ? resolved : `/${resolved}`;
+    rawBody = await res.json();
   } catch (parseError) {
-    const message = parseError instanceof Error ? parseError.message : String(parseError);
-    throw new Error(`Upload response parse error: ${message}`);
+    throw new HttpResponseParseError('Upload response is not JSON.', {
+      cause: parseError,
+      status: res.status,
+    });
   }
 
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(rawBody);
+    if (!problem.success) {
+      throw new HttpResponseParseError('Upload error response did not match ProblemDetails.', {
+        cause: problem.error,
+        status: res.status,
+      });
+    }
+    throw new Error(problem.data.title);
+  }
+
+  const success = UploadAssetSuccessSchema.safeParse(rawBody);
+  if (!success.success) {
+    throw new HttpResponseParseError('Upload success response did not match UploadAssetSuccess.', {
+      cause: success.error,
+      status: res.status,
+    });
+  }
+  const resolved = success.data.path ?? success.data.src;
+  const url = resolved.startsWith('/') ? resolved : `/${resolved}`;
   return { url };
 }

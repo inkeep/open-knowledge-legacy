@@ -1,4 +1,4 @@
-import { type Config, resolveContentDir, resolveLockDir } from '@inkeep/open-knowledge-server';
+import { type Config, isProcessAlive, resolveLockDir } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { discoverLockDirs } from '../utils/process-scan.ts';
 import { inspectLock, type LockState } from './lock-state.ts';
@@ -14,13 +14,28 @@ interface StopPlan {
   targets: StopTargetPlan[];
 }
 
-export function buildStopPlan(server: LockState, ui: LockState): StopPlan {
+interface BuildStopPlanDeps {
+  /** Override for tests. Defaults to `isProcessAlive` from the server package
+   * (POSIX `process.kill(pid, 0)` existence probe — ESRCH/EPERM canonicalized). */
+  isAlive?: (pid: number) => boolean;
+}
+
+export function buildStopPlan(
+  server: LockState,
+  ui: LockState,
+  deps: BuildStopPlanDeps = {},
+): StopPlan {
+  const isAlive = deps.isAlive ?? isProcessAlive;
   const targets: StopTargetPlan[] = [];
-  if (server.status === 'alive') {
-    targets.push({ name: 'server', pid: server.lock.pid, port: server.lock.port });
-  }
-  if (ui.status === 'alive') {
-    targets.push({ name: 'ui', pid: ui.lock.pid, port: ui.lock.port });
+  for (const [name, state] of [
+    ['server', server],
+    ['ui', ui],
+  ] as const) {
+    if (state.status === 'alive') {
+      targets.push({ name, pid: state.lock.pid, port: state.lock.port });
+    } else if (state.status === 'foreign-host' && isAlive(state.lock.pid)) {
+      targets.push({ name, pid: state.lock.pid, port: state.lock.port });
+    }
   }
   return { targets };
 }
@@ -29,6 +44,7 @@ interface RunStopDeps {
   lockDir: string;
   inspect?: (name: 'server' | 'ui') => LockState;
   kill?: (pid: number, signal: NodeJS.Signals) => void;
+  isAlive?: (pid: number) => boolean;
   log?: (msg: string) => void;
   error?: (msg: string) => void;
 }
@@ -47,7 +63,7 @@ export function runStop(deps: RunStopDeps): StopOutcome {
 
   const serverState = inspect('server');
   const uiState = inspect('ui');
-  const plan = buildStopPlan(serverState, uiState);
+  const plan = buildStopPlan(serverState, uiState, { isAlive: deps.isAlive });
 
   if (plan.targets.length === 0) {
     log('No running open-knowledge processes.');
@@ -79,17 +95,29 @@ export function runStop(deps: RunStopDeps): StopOutcome {
   return { stopped, failed, hadTargets: true };
 }
 
-async function findLockDirByNumber(n: number): Promise<string | null> {
+function isStoppableState(
+  state: LockState,
+  isAlive: (pid: number) => boolean,
+): state is Extract<LockState, { status: 'alive' | 'foreign-host' }> {
+  if (state.status === 'alive') return true;
+  if (state.status === 'foreign-host') return isAlive(state.lock.pid);
+  return false;
+}
+
+async function findLockDirByNumber(
+  n: number,
+  isAlive: (pid: number) => boolean = isProcessAlive,
+): Promise<string | null> {
   const lockDirs = await discoverLockDirs();
   let pidMatch: string | null = null;
   for (const lockDir of lockDirs) {
     const server = inspectLock(lockDir, 'server');
     const ui = inspectLock(lockDir, 'ui');
-    if (server.status === 'alive' && server.lock.port === n) return lockDir;
-    if (ui.status === 'alive' && ui.lock.port === n) return lockDir;
+    if (isStoppableState(server, isAlive) && server.lock.port === n) return lockDir;
+    if (isStoppableState(ui, isAlive) && ui.lock.port === n) return lockDir;
     if (pidMatch === null) {
-      if (server.status === 'alive' && server.lock.pid === n) pidMatch = lockDir;
-      else if (ui.status === 'alive' && ui.lock.pid === n) pidMatch = lockDir;
+      if (isStoppableState(server, isAlive) && server.lock.pid === n) pidMatch = lockDir;
+      else if (isStoppableState(ui, isAlive) && ui.lock.pid === n) pidMatch = lockDir;
     }
   }
   return pidMatch;
@@ -112,8 +140,8 @@ export function stopCommand(getConfig: () => Config): Command {
       const target = parts.length === 0 ? undefined : parts.join(' ');
 
       if (target === undefined) {
-        const config = getConfig();
-        const lockDir = resolveLockDir(resolveContentDir(config, process.cwd()));
+        getConfig(); // still load config to surface any project-config errors
+        const lockDir = resolveLockDir(process.cwd());
         const outcome = runStop({ lockDir, log: () => {} });
         if (outcome.hadTargets) {
           if (outcome.stopped.length > 0) {
@@ -139,7 +167,8 @@ export function stopCommand(getConfig: () => Config): Command {
         for (const lockDir of lockDirs) {
           const server = inspectLock(lockDir, 'server');
           const ui = inspectLock(lockDir, 'ui');
-          if (server.status !== 'alive' && ui.status !== 'alive') continue;
+          if (!isStoppableState(server, isProcessAlive) && !isStoppableState(ui, isProcessAlive))
+            continue;
           executeStop(lockDir);
           stopped++;
         }

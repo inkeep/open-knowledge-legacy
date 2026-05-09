@@ -29,6 +29,15 @@ interface PsEntry {
   lockPath: string;
   binary: string | null;
   command: string | null;
+  isDesktop: boolean;
+}
+
+export function isDesktopCommand(command: string | null): boolean {
+  if (command == null) return false;
+  return (
+    command.includes('--type=utility') &&
+    command.includes('--utility-sub-type=node.mojom.NodeService')
+  );
 }
 
 export function timeAgo(isoString: string, now = Date.now()): string {
@@ -85,32 +94,46 @@ function buildEntry(
     lockPath: serverState.lockPath,
     binary: command == null ? null : extractOkBinaryPath(command),
     command,
+    isDesktop: isDesktopCommand(command),
   };
 }
 
-function statusLabel(status: LockState['status']): string {
-  switch (status) {
-    case 'alive':
-      return 'running';
-    case 'dead-pid':
-      return 'stale';
-    case 'foreign-host':
-      return 'foreign';
-    default:
-      return status;
-  }
+type DisplayStatus = 'running' | 'desktop' | 'foreign' | 'stale' | 'ui-orphan';
+
+function isUiLive(entry: PsEntry): boolean {
+  if (entry.ui == null) return false;
+  return entry.ui.status === 'alive' || entry.ui.status === 'foreign-host';
 }
 
-function colorStatus(status: LockState['status'], label: string): string {
-  switch (status) {
-    case 'alive':
+function displayStatus(entry: PsEntry): DisplayStatus {
+  const serverStatus = entry.server.status;
+  if (serverStatus === 'alive' || serverStatus === 'foreign-host') {
+    if (entry.isDesktop) return 'desktop';
+    return serverStatus === 'alive' ? 'running' : 'foreign';
+  }
+  if (serverStatus === 'dead-pid' && isUiLive(entry)) return 'ui-orphan';
+  return 'stale';
+}
+
+const DEFAULT_VISIBLE: ReadonlySet<DisplayStatus> = new Set([
+  'running',
+  'desktop',
+  'foreign',
+  'ui-orphan',
+]);
+
+function colorStatus(label: DisplayStatus): string {
+  switch (label) {
+    case 'running':
       return pc.green(label);
-    case 'dead-pid':
-      return pc.yellow(label);
-    case 'foreign-host':
+    case 'desktop':
+      return pc.blue(label);
+    case 'foreign':
       return pc.cyan(label);
-    default:
-      return label;
+    case 'ui-orphan':
+      return pc.magenta(label);
+    case 'stale':
+      return pc.yellow(label);
   }
 }
 
@@ -125,10 +148,7 @@ function formatCombinedUsage(entry: PsEntry): string {
 
 function formatPorts(entry: PsEntry): string {
   const serverPort = entry.server.port === 0 ? '(starting)' : String(entry.server.port);
-  const uiPort =
-    entry.ui == null || entry.ui.status === 'dead-pid' || entry.ui.status === 'foreign-host'
-      ? '—'
-      : String(entry.ui.port);
+  const uiPort = entry.ui == null || entry.ui.status === 'dead-pid' ? '—' : String(entry.ui.port);
   return `${serverPort} / ${uiPort}`;
 }
 
@@ -146,15 +166,19 @@ export function renderTable(entries: PsEntry[]): string {
     'STARTED',
     'BINARY',
   ];
-  const rows = entries.map((e) => [
-    e.directory,
-    formatPorts(e),
-    formatCombinedUsage(e),
-    statusLabel(e.server.status),
-    String(e.server.pid),
-    timeAgo(e.server.startedAt),
-    e.binary ?? '—',
-  ]);
+  const rows = entries.map((e) => {
+    const status = displayStatus(e);
+    const pid = status === 'ui-orphan' && e.ui != null ? e.ui.pid : e.server.pid;
+    return [
+      e.directory,
+      formatPorts(e),
+      formatCombinedUsage(e),
+      status,
+      String(pid),
+      timeAgo(e.server.startedAt),
+      e.binary ?? '—',
+    ];
+  });
 
   const colCount = headers.length;
   const widths: number[] = headers.map((h) => h.length);
@@ -176,7 +200,7 @@ export function renderTable(entries: PsEntry[]): string {
       let cell = (row[i] ?? '').padEnd(widths[i] ?? 0);
       if (i === 3) {
         const rawCell = row[i] ?? '';
-        const colored = colorStatus(entry.server.status, rawCell);
+        const colored = colorStatus(displayStatus(entry));
         const padding = ' '.repeat(Math.max(0, (widths[i] ?? 0) - rawCell.length));
         cell = colored + padding;
       }
@@ -231,18 +255,14 @@ export async function runPs(deps: RunPsDeps = {}): Promise<void> {
   }
 
   if (deps.json) {
-    log(JSON.stringify(entries, null, 2));
+    const enriched = entries.map((e) => ({ ...e, displayStatus: displayStatus(e) }));
+    log(JSON.stringify(enriched, null, 2));
     return;
   }
 
   const filtered = deps.all
-    ? entries.filter(
-        (e) =>
-          e.server.status === 'alive' ||
-          e.server.status === 'dead-pid' ||
-          e.server.status === 'foreign-host',
-      )
-    : entries.filter((e) => e.server.status === 'alive');
+    ? entries
+    : entries.filter((e) => DEFAULT_VISIBLE.has(displayStatus(e)));
 
   log(renderTable(filtered));
 }
@@ -250,8 +270,8 @@ export async function runPs(deps: RunPsDeps = {}): Promise<void> {
 export function psCommand(): Command {
   return new Command('ps')
     .description('List all running open-knowledge servers')
-    .argument('[modifier]', '"all" to include stale/foreign entries')
-    .option('--all', 'Include stale (dead-pid) and foreign-host entries')
+    .argument('[modifier]', '"all" to include stale (dead-pid) entries')
+    .option('--all', 'Include stale (dead-pid) entries (foreign-host shows by default)')
     .option('--json', 'Emit structured JSON (always includes all statuses)')
     .action(async (modifier: string | undefined, opts: { all?: boolean; json?: boolean }) => {
       const all = opts.all === true || modifier === 'all';

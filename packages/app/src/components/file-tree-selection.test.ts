@@ -157,15 +157,28 @@ describe('resolveFileTreeSelectionAction', () => {
         },
       ]),
     ).toEqual({
-      kind: 'document-or-folder',
+      kind: 'document',
       path: 'docs/guide',
     });
   });
 
-  test('drops transient unknown document selections while allowing folders', () => {
+  test('drops transient unknown document and folder selections', () => {
     expect(resolveFileTreeSelectionAction('docs/missing.md', [])).toEqual({ kind: 'none' });
-    expect(resolveFileTreeSelectionAction('docs/', [])).toEqual({
-      kind: 'document-or-folder',
+    expect(resolveFileTreeSelectionAction('docs/', [])).toEqual({ kind: 'none' });
+  });
+
+  test('routes known folder rows to folder navigation', () => {
+    expect(
+      resolveFileTreeSelectionAction('docs/', [
+        {
+          kind: 'folder',
+          path: 'docs',
+          size: 0,
+          modified: '',
+        },
+      ]),
+    ).toEqual({
+      kind: 'folder',
       path: 'docs',
     });
   });

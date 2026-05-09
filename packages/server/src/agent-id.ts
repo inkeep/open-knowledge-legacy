@@ -34,12 +34,16 @@ export function resolveAgentType(clientName: string | undefined): string {
 export const AGENT_NAME_MAX_LEN = 128;
 
 interface AgentBodyFields {
+  /** Raw agentId passed by the caller, validated against `AGENT_ID_RE`.
+   *  `undefined` when absent or invalid. */
   rawAgentId: string | undefined;
   writerId: string | undefined;
   displayName: string;
   clientName: string | undefined;
   clientVersion: string | undefined;
   label: string | undefined;
+  /** Sanitized + capped `colorSeed` from the body, or `undefined` when absent.
+   *  Callers apply their own fallback (raw agentId, broadcaster key, etc.). */
   colorSeed: string | undefined;
 }
 

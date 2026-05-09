@@ -14,7 +14,7 @@ import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 import { attachQuiescenceTracker } from './bridge-quiescence.ts';
-import { assertBridgeInvariant } from './bridge-watchdog.ts';
+import { assertBridgeInvariant, emitObserverAPathBFired } from './bridge-watchdog.ts';
 import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
 import {
   incrementBridgeMergeCheckpointCreated,
@@ -181,15 +181,18 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       }, OBSERVER_SYNC_ORIGIN);
 
       if (pathBState.mergedText !== null) {
-        incrementObserverAPathBFires();
-        console.warn(
-          JSON.stringify({
-            event: 'observer-a-path-b-fired',
-            xmlFragmentAdvanced: true,
-            ytextDiverged: true,
-            mergeBytesChanged: Math.abs(pathBState.mergedText.length - currentText.length),
-          }),
-        );
+        if (emitObserverAPathBFired(opts.docName)) {
+          incrementObserverAPathBFires();
+          console.warn(
+            JSON.stringify({
+              event: 'observer-a-path-b-fired',
+              'doc.name': opts.docName ?? null,
+              xmlFragmentAdvanced: true,
+              ytextDiverged: true,
+              mergeBytesChanged: Math.abs(pathBState.mergedText.length - currentText.length),
+            }),
+          );
+        }
       }
 
       incrementServerObserverFire('a');

@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { TAG_CLICK_EVENT, type TagClickEventDetail } from '@/editor/extensions/tag-click-plugin';
 import { hashFromDocName } from '@/lib/doc-hash';
+import { parseApiError } from '@/lib/parse-api-error';
 
 interface TagDocEntry {
   docName: string;
@@ -16,11 +17,9 @@ interface TagDocEntry {
   snippet: string | null;
 }
 
-interface TagApiResponse {
-  ok: boolean;
-  name?: string;
-  docs?: TagDocEntry[];
-  error?: string;
+interface TagApiSuccessBody {
+  name: string;
+  docs: TagDocEntry[];
 }
 
 type FetchState =
@@ -31,9 +30,11 @@ type FetchState =
 
 async function fetchTagDocs(value: string): Promise<TagDocEntry[]> {
   const res = await fetch(`/api/tags/${encodeURIComponent(value)}`);
-  if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
-  const data = (await res.json()) as TagApiResponse;
-  if (!data.ok) throw new Error(data.error ?? 'Failed to load tag membership');
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as unknown;
+    throw new Error(parseApiError(body) ?? `Server error: ${res.status} ${res.statusText}`);
+  }
+  const data = (await res.json()) as TagApiSuccessBody;
   return data.docs ?? [];
 }
 

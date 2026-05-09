@@ -31,8 +31,12 @@ export type ResolvedNavigationTarget =
       target: string;
     };
 
-function normalizeTargetPath(target: string): string {
-  return normalizeDocNameInput(target).replace(/\/+$/g, '');
+function normalizeTargetPath(target: string): { normalizedTarget: string; expectsFolder: boolean } {
+  const trimmed = target.trim();
+  return {
+    normalizedTarget: normalizeDocNameInput(trimmed).replace(/\/+$/g, ''),
+    expectsFolder: /\/+$/.test(trimmed),
+  };
 }
 
 export function deriveKnownFolderPaths(docNames: Iterable<string>): Set<string> {
@@ -63,12 +67,12 @@ export function resolveNavigationTarget(
     pagesBySlug?: ReadonlyMap<string, string>;
   },
 ): ResolvedNavigationTarget {
-  const normalizedTarget = normalizeTargetPath(target);
+  const { normalizedTarget, expectsFolder } = normalizeTargetPath(target);
   if (!normalizedTarget) {
     return { kind: 'missing', target: normalizedTarget };
   }
 
-  if (options.pages.has(normalizedTarget)) {
+  if (!expectsFolder && options.pages.has(normalizedTarget)) {
     return {
       kind: 'doc',
       target: normalizedTarget,
@@ -76,13 +80,15 @@ export function resolveNavigationTarget(
     };
   }
 
-  const slugMatchDocName = slugResolve(normalizedTarget, options.pagesBySlug);
-  if (slugMatchDocName) {
-    return {
-      kind: 'doc',
-      target: slugMatchDocName,
-      docName: slugMatchDocName,
-    };
+  if (!expectsFolder) {
+    const slugMatchDocName = slugResolve(normalizedTarget, options.pagesBySlug);
+    if (slugMatchDocName) {
+      return {
+        kind: 'doc',
+        target: slugMatchDocName,
+        docName: slugMatchDocName,
+      };
+    }
   }
 
   const canonicalIndexDocName = `${normalizedTarget}/index`;

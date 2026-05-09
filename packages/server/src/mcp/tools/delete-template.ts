@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { applyTemplateDelete } from '../../content/templates-write.ts';
+import { applyTemplateDelete, type TemplateTarget } from '../../content/templates-write.ts';
 import type { ConfigOrResolver, ServerInstance } from './shared.ts';
 import {
   ROUTED_CWD_DESCRIPTION,
@@ -8,22 +8,37 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  '[Operates on disk; no running OK server required] Delete a folder-scoped template at `<folder>/.ok/templates/<name>.md`.',
+  '[Operates on disk; no running OK server required] Delete a template.',
   '',
-  'Idempotent: deleting a template that does not exist returns success. Auto-cleans empty `<folder>/.ok/templates/` and `<folder>/.ok/` directories.',
+  '**Targets.** Mirrors `write_template`:',
+  '- `target: "project"` (default) — deletes `<folder>/.ok/templates/<name>.md` from the current project.',
+  '- `target: "user"` — deletes `~/.ok/templates/<name>.md` from the user-global library. The `folder` argument is ignored.',
+  '',
+  'Idempotent: deleting a template that does not exist returns success with `existed: false`. Auto-cleans empty `<folder>/.ok/templates/` and `<folder>/.ok/` directories.',
   '',
   '**Parameters:**',
-  '- `folder` — Project-root-relative folder. Empty / `.` means project root.',
+  '- `folder` — Project-root-relative folder. Empty / `.` means project root. Ignored when `target: "user"`.',
   '- `name` — Template filename without `.md` extension.',
+  '- `target` (optional) — `"project"` (default) or `"user"`.',
 ].join('\n');
 
 const InputSchema = {
-  folder: z.string().describe('Project-root-relative folder. Empty / `.` means project root.'),
+  folder: z
+    .string()
+    .describe(
+      'Project-root-relative folder. Empty / `.` means project root. Ignored when `target: "user"`.',
+    ),
   name: z
     .string()
     .min(1)
     .regex(/^[A-Za-z0-9_-]+$/, 'Template name must use letters, digits, `_`, or `-` only.')
     .describe('Template filename without `.md` extension.'),
+  target: z
+    .enum(['project', 'user'])
+    .optional()
+    .describe(
+      'Where the template lives. `"project"` (default) deletes from `<folder>/.ok/templates/`; `"user"` deletes from `~/.ok/templates/` (folder ignored).',
+    ),
   cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
 } as const;
 
@@ -63,7 +78,7 @@ export function register(server: ServerInstance, deps: DeleteTemplateDeps): void
         destructiveHint: true,
       },
     },
-    async (args: { folder: string; name: string; cwd?: string }) => {
+    async (args: { folder: string; name: string; target?: TemplateTarget; cwd?: string }) => {
       const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
       if (!context.ok) {
         return {
@@ -73,11 +88,13 @@ export function register(server: ServerInstance, deps: DeleteTemplateDeps): void
       }
       const { cwd } = context;
 
-      const result = applyTemplateDelete({
+      const deleteInput: Parameters<typeof applyTemplateDelete>[0] = {
         projectDir: cwd,
         folder: args.folder,
         name: args.name,
-      });
+      };
+      if (args.target !== undefined) deleteInput.target = args.target;
+      const result = applyTemplateDelete(deleteInput);
 
       if (!result.ok) {
         const payload = { result };

@@ -1,6 +1,8 @@
+import { CreatePageSuccessSchema } from '@inkeep/open-knowledge-core';
 import type { ReactNode } from 'react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { usePageList } from '@/components/PageListContext';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -12,14 +14,37 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { type TemplateMenuEntry, useFolderConfig } from '@/hooks/use-folder-config';
 import { emitDocumentsChanged } from '@/lib/documents-events';
+import { parseServerResponse } from '@/lib/parse-server-response';
 import {
   type DocExtension,
   detectExtension,
   SUPPORTED_EXTENSIONS,
   stripExt,
 } from './extension-picker-utils';
+
+const BLANK_TEMPLATE_VALUE = '__blank__';
+
+const SCOPE_ORDER: Record<TemplateMenuEntry['scope'], number> = {
+  local: 0,
+  inherited: 1,
+  user: 2,
+};
+
+export function sortTemplatesForPicker(
+  templates: readonly TemplateMenuEntry[],
+): TemplateMenuEntry[] {
+  return [...templates].sort((a, b) => {
+    const scopeDelta = SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope];
+    if (scopeDelta !== 0) return scopeDelta;
+    const aLabel = (a.title ?? a.name).toLowerCase();
+    const bLabel = (b.title ?? b.name).toLowerCase();
+    return aLabel.localeCompare(bLabel);
+  });
+}
 
 interface NewItemDialogProps {
   open: boolean;
@@ -101,15 +126,18 @@ export function NewItemDialog({
   onCreated,
 }: NewItemDialogProps) {
   const { addPage } = usePageList();
+  const folderConfig = useFolderConfig(initialDir);
   const [fileName, setFileName] = useState('');
   const [folderName, setFolderName] = useState('');
   const [fileExtension, setFileExtension] = useState<DocExtension>('.md');
+  const [selectedTemplate, setSelectedTemplate] = useState<string>(BLANK_TEMPLATE_VALUE);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [errorField, setErrorField] = useState<'folder' | 'file' | 'form' | null>(null);
   const errorId = useId();
   const folderInputId = useId();
   const fileInputId = useId();
+  const templatePickerLabelId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -119,12 +147,22 @@ export function NewItemDialog({
       setErrorField(null);
       setBusy(false);
       setFolderName('');
+      setSelectedTemplate(BLANK_TEMPLATE_VALUE);
       const initial = kind === 'file' ? (suggestedName ?? 'untitled') : 'index';
       const sniffed = detectExtension(initial);
       setFileExtension(sniffed ?? '.md');
       setFileName(sniffed ? stripExt(initial) : initial);
     }
   }, [open, kind, suggestedName]);
+
+  const templates: TemplateMenuEntry[] =
+    folderConfig.state.status === 'ready'
+      ? sortTemplatesForPicker(folderConfig.state.data.folder.templates_available ?? [])
+      : [];
+  const showTemplatePicker = kind === 'file';
+  const templatesLoading =
+    folderConfig.state.status === 'loading' || folderConfig.state.status === 'idle';
+  const templatesError = folderConfig.state.status === 'error' ? folderConfig.state.message : null;
 
   function handleFileNameChange(next: string) {
     const sniffed = detectExtension(next);
@@ -171,32 +209,32 @@ export function NewItemDialog({
     setError(null);
     setErrorField(null);
     const path = composePath();
+    const templateParam =
+      kind === 'file' && selectedTemplate !== BLANK_TEMPLATE_VALUE ? selectedTemplate : undefined;
+    const requestBody: { path: string; template?: string } = { path };
+    if (templateParam !== undefined) requestBody.template = templateParam;
 
     try {
       const res = await fetch('/api/create-page', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
+        body: JSON.stringify(requestBody),
       });
-      if (!res.ok) {
-        let msg = `Server error (HTTP ${res.status})`;
-        try {
-          const d = (await res.json()) as { error?: string };
-          if (d?.error) msg = d.error;
-        } catch {}
+      const parsed = await parseServerResponse(res, `Server error (HTTP ${res.status})`);
+      if (!parsed.ok) {
         setBusy(false);
-        setError(msg);
+        setError(parsed.title);
         setErrorField('form');
         return;
       }
-      const data = (await res.json()) as { ok: boolean; docName?: string; error?: string };
+      const success = CreatePageSuccessSchema.safeParse(parsed.body);
       setBusy(false);
-      if (!data.ok) {
-        setError(data.error ?? `Failed to create ${kind}`);
+      if (!success.success) {
+        setError(`Failed to create ${kind}`);
         setErrorField('form');
         return;
       }
-      const docName = data.docName ?? path.replace(/\.(mdx|md)$/, '');
+      const docName = success.data.docName;
       onOpenChange(false);
       window.location.hash = `#/${docName}`;
       addPage(docName);
@@ -236,6 +274,57 @@ export function NewItemDialog({
 
         <DialogBody>
           <div className="space-y-3">
+            {showTemplatePicker && (
+              <div>
+                <p id={templatePickerLabelId} className="mb-1.5 text-sm font-medium">
+                  Start from
+                </p>
+                {templatesLoading ? (
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                    Loading templates…
+                  </div>
+                ) : (
+                  <>
+                    {templatesError ? (
+                      <p role="alert" className="mb-1.5 text-xs text-destructive">
+                        Could not load templates: {templatesError}. You can still create a blank
+                        note.
+                      </p>
+                    ) : null}
+                    <RadioGroup
+                      value={selectedTemplate}
+                      onValueChange={setSelectedTemplate}
+                      aria-labelledby={templatePickerLabelId}
+                      className="max-h-56 overflow-y-auto rounded-md border border-border bg-card subtle-scrollbar"
+                    >
+                      <TemplatePickerRow
+                        value={BLANK_TEMPLATE_VALUE}
+                        title="Blank note"
+                        description="Empty starting content"
+                      />
+                      {templates.length === 0 && !templatesError ? (
+                        <p className="px-3 pb-2 text-xs text-muted-foreground">
+                          No templates resolve here. Add one in this folder's Templates section, or
+                          in Settings → User templates.
+                        </p>
+                      ) : (
+                        templates.map((tpl) => (
+                          <TemplatePickerRow
+                            key={`${tpl.scope}:${tpl.source_folder}:${tpl.name}`}
+                            value={tpl.name}
+                            title={tpl.title ?? tpl.name}
+                            subName={tpl.title && tpl.title !== tpl.name ? tpl.name : undefined}
+                            description={tpl.description}
+                            scope={tpl.scope}
+                            sourceFolder={tpl.source_folder}
+                          />
+                        ))
+                      )}
+                    </RadioGroup>
+                  </>
+                )}
+              </div>
+            )}
             {kind === 'folder' && (
               <div>
                 <label className="mb-1.5 block text-sm font-medium" htmlFor={folderInputId}>
@@ -335,10 +424,59 @@ export function NewItemDialog({
             Cancel
           </Button>
           <Button onClick={handleCreate} disabled={isSubmitDisabled}>
-            {busy ? 'Creating...' : 'Create'}
+            {busy ? 'Creating…' : 'Create'}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface TemplatePickerRowProps {
+  value: string;
+  title: string;
+  subName?: string;
+  description?: string;
+  scope?: TemplateMenuEntry['scope'];
+  sourceFolder?: string;
+}
+
+function TemplatePickerRow({
+  value,
+  title,
+  subName,
+  description,
+  scope,
+  sourceFolder,
+}: TemplatePickerRowProps) {
+  const id = useId();
+  return (
+    <label
+      htmlFor={id}
+      className="flex cursor-pointer items-start gap-3 px-3 py-2 transition-colors hover:bg-muted/50 has-data-[state=checked]:bg-muted/70"
+    >
+      <RadioGroupItem id={id} value={value} className="mt-1" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium">{title}</span>
+          {subName ? (
+            <code className="font-mono text-2xs text-muted-foreground shrink-0">{subName}</code>
+          ) : null}
+          {scope === 'inherited' && sourceFolder ? (
+            <Badge variant="gray" className="ml-auto shrink-0 text-2xs">
+              {sourceFolder || 'root'}
+            </Badge>
+          ) : null}
+          {scope === 'user' ? (
+            <Badge variant="primary" className="ml-auto shrink-0 text-2xs">
+              user
+            </Badge>
+          ) : null}
+        </div>
+        {description ? (
+          <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{description}</p>
+        ) : null}
+      </div>
+    </label>
   );
 }

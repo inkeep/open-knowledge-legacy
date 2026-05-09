@@ -40,6 +40,8 @@ afterEach(async () => {
   }
 });
 
+/** Run a git command in `cwd`. Forces empty global config so test identity
+ *  doesn't leak into test-created commits. */
 function git(cwd: string, args: string): string {
   return execSync(`git ${args}`, {
     cwd,
@@ -56,6 +58,11 @@ function git(cwd: string, args: string): string {
   }).trim();
 }
 
+/** Build a git repo in `contentDir` with:
+ *   - `main` branch containing `${docName}.md` = contentA
+ *   - `feature` branch containing `${docName}.md` = contentB
+ *   - HEAD currently on `main`
+ */
 async function setupGitRepoWithBranches(
   contentDir: string,
   docName: string,

@@ -1,3 +1,43 @@
+/**
+ * Unified pipeline factory.
+ *
+ * Parse direction (post-R17 chain, wired in `createParseProcessor` below):
+ *   [R23 `protectFromMdx` pre-pass on source bytes]
+ *     → remark-parse → remark-frontmatter → remarkMdxAgnostic
+ *     → remark-gfm → remarkWikiLink
+ *     → remarkGithubAlerts → `calloutTransformerPlugin`
+ *        (US-010 / FR-7: GFM-alerts + Obsidian foldable → Callout mdxJsxFlow)
+ *     → `restoreFromMdx` (Phase A: PUA sentinel → literal char)
+ *     → `detailsAccordionPromoterPlugin`
+ *        (US-011 / FR-8: HTML5 <details> → Accordion mdxJsxFlow)
+ *     → `imagePromoterPlugin`
+ *        (CommonMark `![alt](src)` → `<CommonMarkImage>` mdxJsxFlow compat)
+ *     → `mergedPostParseWalkerPlugin` (Phase B: autolink promotion +
+ *        doc-start thematic fix + position slice + unknown-mdast guard)
+ *     → `ensureNonEmptyDoc` → remarkProseMirror
+ *
+ * Serialize direction:
+ *   fromProseMirror → remark-stringify (with custom mdast-util-to-markdown handlers)
+ *
+ * Plugin order for parser extensions is empirically commutative (see
+ * tech-probes/plugin-ordering/REPORT.md), but transformer ordering matters:
+ * Phase A must run before Phase B (Phase B's autolink regex reads the literal
+ * `<`/`>` that Phase A restores — see `merged-walker.ts` header + precedent
+ * #16 in CLAUDE.md). Inside Phase B, position-slice runs AFTER all syntax
+ * extensions produce their mdast (so positions are final) and the final
+ * `remarkProseMirror` step reads `node.data.*` written by position-slice.
+ *
+ * R16 caching (spec 2026-04-16 markdown-pipeline-engineering-health):
+ * processors are built once per MarkdownManager instance via
+ * `createParseProcessor` / `createSerializeProcessor`, then reused across
+ * every `parse()` / `serialize()` call. `parseMd` / `serializeMd` accept
+ * the pre-built processor and run the stateless per-document work
+ * (protectFromMdx, VFile binding, PM↔mdast conversion). The attacher for
+ * `remarkMdxAgnostic` and `remarkWikiLink` is made idempotent under
+ * re-entry via module-level singleton extension values, which means
+ * pathological re-attach would not duplicate entries in `data()` arrays.
+ */
+
 import {
   type FromProseMirrorOptions,
   fromProseMirror,
@@ -40,6 +80,9 @@ interface PipelineOptions {
   toMarkdownHandlers?: Record<string, unknown>;
 }
 
+/** Options needed by `serializeMd` for the PM→mdast pre-pass. Kept separate
+ * from the (pre-baked) processor so one cached serialize processor can serve
+ * calls that share schema/handler registrations. */
 interface SerializeMdOptions {
   schema: Schema;
   pmNodeHandlers: FromProseMirrorOptions<string, string>['nodeHandlers'];
@@ -58,33 +101,54 @@ function ensureNonEmptyDoc(tree: MdastRoot): MdastRoot {
   };
 }
 
+export const ACTIVE_MDAST_PLUGINS = [
+  { name: 'remark-parse', plugin: remarkParse },
+  { name: 'remark-frontmatter', plugin: remarkFrontmatter, options: ['yaml'] },
+  { name: 'remark-mdx-agnostic', plugin: remarkMdxAgnostic },
+  { name: 'remark-gfm', plugin: remarkGfm },
+  { name: 'remark-math', plugin: remarkMath, options: { singleDollarTextMath: false } },
+  { name: 'remark-wiki-link', plugin: remarkWikiLink },
+  {
+    name: 'remark-github-alerts',
+    plugin: remarkGithubAlerts,
+    options: REMARK_GITHUB_ALERTS_OPTIONS,
+  },
+  { name: 'callout-transformer', plugin: calloutTransformerPlugin },
+  { name: 'restore-from-mdx', plugin: restoreFromMdx },
+  { name: 'details-accordion-promoter', plugin: detailsAccordionPromoterPlugin },
+  { name: 'image-promoter', plugin: imagePromoterPlugin },
+  { name: 'indented-code-promoter', plugin: indentedCodePromoterPlugin },
+  { name: 'math-promoter', plugin: mathPromoterPlugin },
+  { name: 'single-dollar-math-promoter', plugin: singleDollarMathPromoterPlugin },
+  { name: 'highlight-promoter', plugin: highlightPromoterPlugin },
+  { name: 'mermaid-promoter', plugin: mermaidPromoterPlugin },
+  { name: 'comment-promoter', plugin: commentPromoterPlugin },
+  { name: 'merged-post-parse-walker', plugin: mergedPostParseWalkerPlugin },
+  { name: 'ensure-non-empty-doc', plugin: () => ensureNonEmptyDoc },
+] as const;
+
 export function createParseProcessor(opts: PipelineOptions): Processor {
-  const processor = unified()
-    .use(remarkParse)
-    .use(remarkFrontmatter, ['yaml'])
-    .use(remarkMdxAgnostic)
-    .use(remarkGfm)
-    .use(remarkMath, { singleDollarTextMath: false })
-    .use(remarkWikiLink)
-    .use(remarkGithubAlerts, REMARK_GITHUB_ALERTS_OPTIONS)
-    .use(calloutTransformerPlugin)
-    .use(restoreFromMdx) // Phase A
-    .use(detailsAccordionPromoterPlugin)
-    .use(imagePromoterPlugin)
-    .use(indentedCodePromoterPlugin)
-    .use(mathPromoterPlugin)
-    .use(singleDollarMathPromoterPlugin)
-    .use(highlightPromoterPlugin)
-    .use(mermaidPromoterPlugin)
-    .use(commentPromoterPlugin)
-    .use(mergedPostParseWalkerPlugin) // Phase B
-    .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
-    .use(remarkProseMirror, {
-      schema: opts.schema,
-      handlers: opts.handlers,
-    } as RemarkProseMirrorOptions);
+  let processor = unified() as unknown as Processor;
+  for (const entry of ACTIVE_MDAST_PLUGINS) {
+    const hasOptions = 'options' in entry && entry.options !== undefined;
+    processor = (
+      hasOptions
+        ? // biome-ignore lint/suspicious/noExplicitAny: heterogeneous plugin entries can't be narrowed in iteration
+          (processor as any).use(entry.plugin, entry.options)
+        : // biome-ignore lint/suspicious/noExplicitAny: same
+          (processor as any).use(entry.plugin)
+    ) as Processor;
+  }
+  processor = (
+    processor as unknown as {
+      use(plugin: typeof remarkProseMirror, opts: RemarkProseMirrorOptions): Processor;
+    }
+  ).use(remarkProseMirror, {
+    schema: opts.schema,
+    handlers: opts.handlers,
+  } as RemarkProseMirrorOptions);
   processor.freeze();
-  return processor as unknown as Processor;
+  return processor;
 }
 
 export function createSerializeProcessor(opts: PipelineOptions): Processor {
