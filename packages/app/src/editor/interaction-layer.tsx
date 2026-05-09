@@ -174,7 +174,7 @@ const InteractionLayerRoot: FC<InteractionLayerRootProps> = ({ store }) => {
 };
 
 function getEditorDom(editor: InteractionLayerEditor): HTMLElement | null {
-  return editor.editorView?.dom ?? editor.view?.dom ?? null;
+  return editor.editorView?.dom ?? null;
 }
 
 function isPotentialChipElement(el: HTMLElement | null, nodeId: string): boolean {

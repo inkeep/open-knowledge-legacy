@@ -892,6 +892,11 @@ Homepage: https://mozilla.github.io/pdf.js/
 
 _(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
+### `scheduler-polyfill@1.3.0`
+Homepage: https://github.com/GoogleChromeLabs/scheduler-polyfill
+
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
+
 ### `tunnel-agent@0.6.0`
 Homepage: https://github.com/mikeal/tunnel-agent
 

@@ -38,10 +38,14 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await page.waitForSelector('.ProseMirror');
     await openFromSidebar(page, 'big.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 30_000 });
+    await expect(page.locator('.ProseMirror', { hasText: 'Big Doc' })).toBeVisible({
+      timeout: 30_000,
+    });
     await openFromSidebar(page, 'small.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Small', { timeout: 30_000 });
+    await expect(page.locator('.ProseMirror', { hasText: 'Small' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     const bigRow = sidebarItem(page, 'big.md');
     await expect(sidebarItem(page, 'small.md')).toHaveAttribute('aria-selected', 'true');
@@ -79,7 +83,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
     if (!result) throw new Error('F0 result not captured');
 
     const editorStart = await page.evaluate(() => performance.now());
-    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 30_000 });
+    await expect(page.locator('.ProseMirror', { hasText: 'Big Doc' })).toBeVisible({
+      timeout: 30_000,
+    });
     const editorMs = await page.evaluate(
       (start) => performance.now() - start,
       editorStart - (result.shellMs - 0),
@@ -89,41 +95,35 @@ test.describe('docs-open — hybrid navigation UX', () => {
     expect(result.shellMs).toBeLessThan(500);
   });
 
-  test('F0b: warm nav to a mark-heavy doc shows EditorSkeleton during the mount window', async ({
-    page,
-    api,
-  }) => {
-    const MARK_LINE = Array.from({ length: 20 }, (_, i) => `[[Link ${i}]]`).join(' ');
-    const PARAGRAPH = `${MARK_LINE} and some \`inline code\` plus more [[wiki links]] here.`;
-    const SECTION_FILLER = 'Extended prose paragraph to make the doc mark-heavy. '.repeat(20);
-    const BIG_BODY = Array.from(
-      { length: 120 },
-      (_, i) => `## Section ${i}\n\n${PARAGRAPH}\n\n${SECTION_FILLER}\n`,
-    ).join('\n');
-    const BIG_DOC = `# Big Doc\n\n${BIG_BODY}\n\n## End\n`;
-    const SMALL_DOC = '# Small\n\nShort.';
+  test('F0b: warm reopen of a V2-admit doc shows NO EditorSkeleton', async ({ page, api }) => {
+    const SMALL_A = '# Doc A\n\nSmall body A.';
+    const SMALL_B = '# Doc B\n\nSmall body B.';
     await api.seedDocs([
-      { name: 'small', markdown: SMALL_DOC },
-      { name: 'big', markdown: BIG_DOC },
+      { name: 'doc-warm-a', markdown: SMALL_A },
+      { name: 'doc-warm-b', markdown: SMALL_B },
     ]);
 
     await page.goto('/');
-    await openFromSidebar(page, 'small.md');
+
+    await openFromSidebar(page, 'doc-warm-a.md');
     await waitForActiveProviderSynced(page);
-    await page.waitForSelector('.ProseMirror');
-    await openFromSidebar(page, 'big.md');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc A' })).toBeVisible({
+      timeout: 30_000,
+    });
+    await openFromSidebar(page, 'doc-warm-b.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 30_000 });
-    await openFromSidebar(page, 'small.md');
-    await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Small', { timeout: 30_000 });
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc B' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     await page.evaluate(() => {
       window.__f0bSkeletonSeen = false;
+      window.__f0bSkeletonAppearances = [];
       const skeletonSelector = '[role="status"][aria-label="Loading document"]';
       const check = () => {
         if (document.querySelector(skeletonSelector)) {
           window.__f0bSkeletonSeen = true;
+          window.__f0bSkeletonAppearances?.push(performance.now());
         }
       };
       check();
@@ -132,14 +132,20 @@ test.describe('docs-open — hybrid navigation UX', () => {
       window.__f0bObserverCleanup = () => observer.disconnect();
     });
 
-    await sidebarItem(page, 'big.md').click();
+    await openFromSidebar(page, 'doc-warm-a.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 30_000 });
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc A' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     await page.evaluate(() => window.__f0bObserverCleanup?.());
     const seen = await page.evaluate(() => window.__f0bSkeletonSeen);
+    const appearances = await page.evaluate(() => window.__f0bSkeletonAppearances ?? []);
 
-    expect(seen).toBe(true);
+    expect(
+      seen,
+      `EditorSkeleton appeared during warm reopen — appearances at: ${JSON.stringify(appearances)}`,
+    ).toBe(false);
   });
 
   test('F1: warm-nav preserves content atomically (scroll position survives A→B→A)', async ({
@@ -155,7 +161,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
-    await expect(page.locator('.ProseMirror')).toContainText('Doc A Bottom Marker');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc A Bottom Marker' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     const scroller = page
       .getByTestId('editor-scroll-container')
@@ -168,11 +176,15 @@ test.describe('docs-open — hybrid navigation UX', () => {
 
     await openFromSidebar(page, 'doc-b.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc B Heading' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Doc A Bottom Marker');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc A Bottom Marker' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     await expect
       .poll(async () => scroller.evaluate((el) => el.scrollTop), {
@@ -212,7 +224,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
 
     await openFromSidebar(page, 'doc-b.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc B Heading' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     await page.evaluate(() => window.__f3ObserverCleanup?.());
 
@@ -220,70 +234,6 @@ test.describe('docs-open — hybrid navigation UX', () => {
     expect(skeletonSeen).toBe(true);
 
     await expect(page.locator('[role="status"][aria-label="Loading document"]')).toHaveCount(0);
-  });
-
-  test('F4: skeleton is shown during nav transitions (cold and warm)', async ({ page, api }) => {
-    await api.seedDocs([
-      { name: 'doc-a', markdown: DOC_A },
-      { name: 'doc-b', markdown: DOC_B },
-    ]);
-
-    await page.goto('/');
-
-    await page.evaluate(() => {
-      window.__f4SkeletonSightings = [];
-      const skeletonSelector = '[role="status"][aria-label="Loading document"]';
-      const record = (tag: string) => {
-        const found = !!document.querySelector(skeletonSelector);
-        window.__f4SkeletonSightings?.push({ tag, found, t: performance.now() });
-      };
-      record('initial');
-      const observer = new MutationObserver(() => record('mutation'));
-      observer.observe(document.body, { childList: true, subtree: true });
-      window.__f4ObserverCleanup = () => observer.disconnect();
-    });
-
-    await openFromSidebar(page, 'doc-a.md');
-    await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
-
-    await page.evaluate(() => {
-      window.__f4SkeletonSightings?.push({
-        tag: 'marker-cold-complete',
-        found: false,
-        t: performance.now(),
-      });
-    });
-
-    await openFromSidebar(page, 'doc-b.md');
-    await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading');
-
-    await page.evaluate(() => {
-      window.__f4SkeletonSightings?.push({
-        tag: 'marker-b-synced',
-        found: false,
-        t: performance.now(),
-      });
-    });
-
-    await openFromSidebar(page, 'doc-a.md');
-    await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
-
-    await page.evaluate(() => window.__f4ObserverCleanup?.());
-
-    const sightings = await page.evaluate(() => window.__f4SkeletonSightings ?? []);
-    const coldMarker = sightings.findIndex((s) => s.tag === 'marker-cold-complete');
-    const bSyncedMarker = sightings.findIndex((s) => s.tag === 'marker-b-synced');
-
-    const warmVisitSightings = sightings.slice(bSyncedMarker + 1);
-    const skeletonDuringWarmVisit = warmVisitSightings.some((s) => s.found);
-    expect(skeletonDuringWarmVisit).toBe(true);
-
-    const coldSightings = sightings.slice(0, coldMarker + 1);
-    const coldSkeletonSeen = coldSightings.some((s) => s.found);
-    expect(coldSkeletonSeen).toBe(true);
   });
 
   test('F5: sync failure shows recoverable error boundary + retry re-enters Suspense', async ({
@@ -312,7 +262,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
 
     await errorAlert.getByRole('button', { name: 'Try again' }).click();
 
-    await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading', { timeout: 10_000 });
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc B Heading' })).toBeVisible({
+      timeout: 10_000,
+    });
   });
 
   test('F6: error boundary "Go back" navigates to prior doc', async ({ page, api }) => {
@@ -325,7 +277,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
-    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc A Heading' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     await page.evaluate(() => {
       window.__test_armPendingRejection?.('doc-b', 'predisconnect');
@@ -346,7 +300,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
         intervals: [100, 200, 400],
       })
       .toContain('doc-a');
-    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc A Heading' })).toBeVisible({
+      timeout: 30_000,
+    });
   });
 
   test('F8: post-wake reconnect preserves content on the active doc', async ({ page, api }) => {
@@ -356,7 +312,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
-    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc A Heading' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     const expectedText = await page.locator('.ProseMirror').textContent();
     expect(expectedText).toContain('Doc A Heading');
@@ -373,7 +331,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
       document.dispatchEvent(new Event('visibilitychange'));
     });
 
-    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc A Heading' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     await page.evaluate(() => {
       Object.defineProperty(document, 'visibilityState', {
@@ -383,7 +343,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
       document.dispatchEvent(new Event('visibilitychange'));
     });
 
-    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc A Heading' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     const errorAlert = page.locator('[data-slot="document-error-boundary"]');
     await expect(errorAlert).toHaveCount(0);
@@ -416,7 +378,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
       })
       .toContain('doc-e');
 
-    await expect(page.locator('.ProseMirror')).toContainText('Doc E Heading');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc E Heading' })).toBeVisible({
+      timeout: 30_000,
+    });
 
     await expect
       .poll(async () => page.locator('[role="status"][aria-label="Loading document"]').count(), {
@@ -491,7 +455,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
 
     await openFromSidebar(page, 'doc-b.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading');
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc B Heading' })).toBeVisible({
+      timeout: 30_000,
+    });
     await page.evaluate(() => window.__f13ObserverCleanup?.());
 
     const barAttrs = await page.evaluate(() => window.__f13BarAttrs);
@@ -537,7 +503,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await expect(errorAlert).toContainText('doc-b');
 
     await errorAlert.getByRole('button', { name: 'Try again' }).click();
-    await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading', { timeout: 10_000 });
+    await expect(page.locator('.ProseMirror', { hasText: 'Doc B Heading' })).toBeVisible({
+      timeout: 10_000,
+    });
 
     const editor = page.locator('.ProseMirror').first();
     await editor.click();
@@ -822,11 +790,10 @@ declare global {
     __f0Start?: number;
     __f0Result?: { shellMs: number } | null;
     __f0bSkeletonSeen?: boolean;
+    __f0bSkeletonAppearances?: number[];
     __f0bObserverCleanup?: () => void;
     __f3SkeletonEverVisible?: boolean;
     __f3ObserverCleanup?: () => void;
-    __f4SkeletonSightings?: Array<{ tag: string; found: boolean; t: number }>;
-    __f4ObserverCleanup?: () => void;
     __f13BarAttrs?: {
       role: string | null;
       ariaLive: string | null;

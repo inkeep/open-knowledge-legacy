@@ -15,7 +15,7 @@ interface WysiwygSerializerDeps {
   mdManager: MarkdownManager;
 }
 
-interface ClipboardHtmlSerializerHandle {
+export interface ClipboardHtmlSerializerHandle {
   serializer: DOMSerializer;
   setView: (view: EditorView) => void;
 }

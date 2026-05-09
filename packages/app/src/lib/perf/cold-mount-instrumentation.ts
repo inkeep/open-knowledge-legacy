@@ -24,9 +24,13 @@
  * collector's data stream alongside the monkey-patched spans.
  *
  * The patch is a DIAGNOSTIC artifact — called ONCE from `main.tsx` before
- * any editor constructs (DEV/test only — the install site is gated).
- * Per-component extensions add a defense-in-depth `import.meta.env.PROD`
- * check inside their hot paths so accidental PROD invocation is also a no-op.
+ * any editor constructs. Default DEV/test only; can also install in PROD
+ * builds by setting `VITE_OK_PERF_INSTRUMENT=1` so ship-gate measurement can
+ * re-baseline against the true user-visible attack surface (single source
+ * of truth: `shouldInstallColdMountInstrumentation`). Per-component
+ * extensions delegate to the same gate via `instrumentationDisabled()` so
+ * accidental hot-path invocation in disabled-PROD is a no-op with zero
+ * overhead.
  */
 
 import { type AnyExtension, Editor } from '@tiptap/core';
@@ -38,7 +42,7 @@ import { mark } from './mark';
 
 let installed = false;
 
-function wrapMethod<T extends Record<string, unknown>>(
+export function wrapMethod<T extends Record<string, unknown>>(
   target: T,
   key: keyof T & string,
   markName: string,
@@ -58,18 +62,31 @@ function wrapMethod<T extends Record<string, unknown>>(
   const wrapped = function patched(this: T, ...args: unknown[]): unknown {
     const start = performance.now();
     let result: unknown;
+    let succeeded = false;
     try {
       result = original.apply(this, args);
+      succeeded = true;
       return result;
     } finally {
       const now = performance.now();
       const durationMs = now - start;
-      const extraProps = propsBuilder ? propsBuilder(this, result, start, durationMs) : undefined;
-      mark(
-        markName,
-        { durationMs: Math.round(durationMs * 1000) / 1000, ...extraProps },
-        { startTime: start, duration: durationMs },
-      );
+      let extraProps: Record<string, unknown> | undefined;
+      if (succeeded && propsBuilder) {
+        try {
+          extraProps = propsBuilder(this, result, start, durationMs);
+        } catch (err) {
+          extraProps = {
+            'instrumentation-error': err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+      try {
+        mark(
+          markName,
+          { durationMs: Math.round(durationMs * 1000) / 1000, threw: !succeeded, ...extraProps },
+          { startTime: start, duration: durationMs },
+        );
+      } catch {}
     }
   };
   // biome-ignore lint/suspicious/noExplicitAny: prototype patch
@@ -126,8 +143,13 @@ function lowerDash(s: string): string {
   return s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
 }
 
+export function shouldInstallColdMountInstrumentation(): boolean {
+  if (import.meta.env?.VITE_OK_PERF_INSTRUMENT === '1') return true;
+  return import.meta.env?.PROD !== true;
+}
+
 function instrumentationDisabled(): boolean {
-  return import.meta.env?.PROD === true;
+  return !shouldInstallColdMountInstrumentation();
 }
 
 function wrapNodeViewFactory(nodeName: string, factory: NodeViewConstructor): NodeViewConstructor {

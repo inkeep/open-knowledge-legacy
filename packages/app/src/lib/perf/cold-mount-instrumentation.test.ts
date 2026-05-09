@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Extension } from '@tiptap/core';
-import { wrapExtensionsWithTiming } from './cold-mount-instrumentation';
+import {
+  shouldInstallColdMountInstrumentation,
+  wrapExtensionsWithTiming,
+  wrapMethod,
+} from './cold-mount-instrumentation';
 import { getCollector } from './collector';
 
 interface ParentScope {
@@ -165,5 +169,178 @@ describe('wrapExtensionsWithTiming', () => {
     expect(() => onCreate?.call({ parent: null })).not.toThrow();
     const names = getMarkNames();
     expect(names).toContain('ok/cold/ext-no-hook-on-create');
+  });
+});
+
+describe('shouldInstallColdMountInstrumentation (D18 PROD-build override)', () => {
+  type EnvSlot = 'PROD' | 'DEV' | 'VITE_OK_PERF_INSTRUMENT';
+  const ENV_SLOTS: readonly EnvSlot[] = ['PROD', 'DEV', 'VITE_OK_PERF_INSTRUMENT'];
+  let originalEnv: Partial<Record<EnvSlot, unknown>>;
+
+  beforeEach(() => {
+    originalEnv = {};
+    const env = import.meta.env as Record<string, unknown>;
+    for (const slot of ENV_SLOTS) {
+      originalEnv[slot] = env[slot];
+      delete env[slot];
+    }
+  });
+
+  afterEach(() => {
+    const env = import.meta.env as Record<string, unknown>;
+    for (const slot of ENV_SLOTS) {
+      const original = originalEnv[slot];
+      if (original === undefined) {
+        delete env[slot];
+      } else {
+        env[slot] = original;
+      }
+    }
+  });
+
+  test('DEV without override → installs (existing DEV behavior preserved)', () => {
+    (import.meta.env as Record<string, unknown>).DEV = true;
+    expect(shouldInstallColdMountInstrumentation()).toBe(true);
+  });
+
+  test('PROD without override → skips (existing PROD short-circuit preserved as default)', () => {
+    (import.meta.env as Record<string, unknown>).PROD = true;
+    expect(shouldInstallColdMountInstrumentation()).toBe(false);
+  });
+
+  test('PROD with VITE_OK_PERF_INSTRUMENT=1 → installs (D18 override)', () => {
+    (import.meta.env as Record<string, unknown>).PROD = true;
+    (import.meta.env as Record<string, unknown>).VITE_OK_PERF_INSTRUMENT = '1';
+    expect(shouldInstallColdMountInstrumentation()).toBe(true);
+  });
+
+  test('DEV with VITE_OK_PERF_INSTRUMENT=1 → installs (override is additive, never restrictive)', () => {
+    (import.meta.env as Record<string, unknown>).DEV = true;
+    (import.meta.env as Record<string, unknown>).VITE_OK_PERF_INSTRUMENT = '1';
+    expect(shouldInstallColdMountInstrumentation()).toBe(true);
+  });
+
+  test('PROD with VITE_OK_PERF_INSTRUMENT empty string → skips (only literal "1" enables)', () => {
+    (import.meta.env as Record<string, unknown>).PROD = true;
+    (import.meta.env as Record<string, unknown>).VITE_OK_PERF_INSTRUMENT = '';
+    expect(shouldInstallColdMountInstrumentation()).toBe(false);
+  });
+
+  test('PROD with VITE_OK_PERF_INSTRUMENT="true" → skips (only literal "1" enables)', () => {
+    (import.meta.env as Record<string, unknown>).PROD = true;
+    (import.meta.env as Record<string, unknown>).VITE_OK_PERF_INSTRUMENT = 'true';
+    expect(shouldInstallColdMountInstrumentation()).toBe(false);
+  });
+
+  test('PROD with VITE_OK_PERF_INSTRUMENT=0 → skips', () => {
+    (import.meta.env as Record<string, unknown>).PROD = true;
+    (import.meta.env as Record<string, unknown>).VITE_OK_PERF_INSTRUMENT = '0';
+    expect(shouldInstallColdMountInstrumentation()).toBe(false);
+  });
+
+  test('neither PROD nor DEV set (bun test default shape) → installs', () => {
+    expect(shouldInstallColdMountInstrumentation()).toBe(true);
+  });
+
+  test('per-component patches honor the gate end-to-end (PROD without override → identity)', () => {
+    (import.meta.env as Record<string, unknown>).PROD = true;
+    const ext = Extension.create({ name: 'gateProbe' });
+    const out = wrapExtensionsWithTiming([ext]);
+    expect(out[0]).toBe(ext);
+  });
+
+  test('per-component patches honor the gate end-to-end (PROD with override → wraps)', () => {
+    (import.meta.env as Record<string, unknown>).PROD = true;
+    (import.meta.env as Record<string, unknown>).VITE_OK_PERF_INSTRUMENT = '1';
+    const ext = Extension.create({ name: 'gateProbe' });
+    const out = wrapExtensionsWithTiming([ext]);
+    expect(out[0]).not.toBe(ext);
+    expect(out[0].name).toBe('gateProbe');
+  });
+});
+
+describe('wrapMethod — error propagation contract', () => {
+  beforeEach(() => {
+    getCollector()?.reset();
+    clearMeasures();
+  });
+
+  afterEach(() => {
+    clearMeasures();
+  });
+
+  test('original error propagates verbatim when original method throws', () => {
+    class OriginalError extends Error {
+      constructor() {
+        super('synthetic original failure');
+        this.name = 'OriginalError';
+      }
+    }
+    const target: Record<string, unknown> = {
+      method() {
+        throw new OriginalError();
+      },
+    };
+    wrapMethod(target, 'method', 'ok/cold/test-throw-prop');
+    expect(() => (target.method as () => void)()).toThrow(OriginalError);
+  });
+
+  test('propsBuilder is NOT invoked on the throw path', () => {
+    let propsBuilderInvocations = 0;
+    const target: Record<string, unknown> = {
+      method() {
+        throw new Error('original failure');
+      },
+    };
+    wrapMethod(target, 'method', 'ok/cold/test-throw-no-props', () => {
+      propsBuilderInvocations += 1;
+      return { wasCalled: true };
+    });
+    try {
+      (target.method as () => void)();
+    } catch {}
+    expect(propsBuilderInvocations).toBe(0);
+  });
+
+  test('propsBuilder throw on success path is swallowed; original return value propagates', () => {
+    const target: Record<string, unknown> = {
+      method() {
+        return 'original-success-return';
+      },
+    };
+    wrapMethod(target, 'method', 'ok/cold/test-success-props-throw', () => {
+      throw new Error('synthetic propsBuilder failure');
+    });
+    const ret = (target.method as () => string)();
+    expect(ret).toBe('original-success-return');
+
+    const collected = getCollector()?.marks.find(
+      (m) => m.name === 'ok/cold/test-success-props-throw',
+    );
+    expect(collected).toBeDefined();
+    expect(collected?.properties?.['instrumentation-error']).toBe('synthetic propsBuilder failure');
+  });
+
+  test('timing mark is emitted on both success and throw paths with `threw` discriminator', () => {
+    const successTarget: Record<string, unknown> = { ok: () => 42 };
+    const throwTarget: Record<string, unknown> = {
+      bad: () => {
+        throw new Error('x');
+      },
+    };
+    wrapMethod(successTarget, 'ok', 'ok/cold/test-mark-success');
+    wrapMethod(throwTarget, 'bad', 'ok/cold/test-mark-throw');
+
+    (successTarget.ok as () => number)();
+    try {
+      (throwTarget.bad as () => void)();
+    } catch {}
+
+    const successMark = getCollector()?.marks.find((m) => m.name === 'ok/cold/test-mark-success');
+    const throwMark = getCollector()?.marks.find((m) => m.name === 'ok/cold/test-mark-throw');
+    expect(successMark).toBeDefined();
+    expect(throwMark).toBeDefined();
+    expect(successMark?.properties?.threw).toBe(false);
+    expect(throwMark?.properties?.threw).toBe(true);
   });
 });

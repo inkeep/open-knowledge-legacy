@@ -18,6 +18,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
+import { mountPromiseHasResolved } from '@/editor/mount-promise';
+import { syncPromiseHasResolved } from '@/editor/sync-promise';
 import type { EditorModeValue } from '@/editor/use-editor-mode.ts';
 import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
 import { useDocumentStats } from '@/hooks/use-document-stats';
@@ -28,6 +30,7 @@ import { useSyncStatus } from '@/presence/use-sync-status';
 import { EditorActivityPool } from './EditorActivityPool';
 import { EditorFooter } from './EditorFooter';
 import type { EditorMode } from './EditorPane';
+import { shouldPaintOverlay } from './editor-area-overlay';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
 
@@ -314,18 +317,39 @@ function EditorAreaInner({
           {/* Nav-pending skeleton overlay. Rendered when the urgent
             `activeDocName` (shell state — driving sidebar highlight +
             header title) has moved past `deferredActiveDocName` (editor
-            subtree prop). That delta window is exactly the interval
+            subtree prop), AND the upcoming deferred commit will pay a
+            real Suspense suspension. The delta window is the interval
             between shell-snap and the editor subtree's deferred commit
             completing — 1-3s on mark-heavy docs that refuse V2 cache
-            admission. Without this overlay the user sees the PREVIOUS
-            doc's editor linger through the mount window, which looks
-            like a "flash of the old editor" and contradicts the
-            sidebar's now-updated highlight. The overlay is absolute +
-            inset-0 on the positioned parent so it paints over the pool
-            without unmounting it — Activity state (scroll, selection,
-            editor instances) survives underneath. Regression test:
-            docs-open.e2e.ts F0b. */}
-          {activeDocName && activeDocName !== deferredActiveDocName ? (
+            admission, sub-frame on warm reopens (NG7 Pattern D + Q21
+            with both mount-promise and sync-promise resolved).
+            Without this overlay the user sees the PREVIOUS doc's editor
+            linger through a slow mount window, which looks like a
+            "flash of the old editor" and contradicts the sidebar's
+            now-updated highlight. The overlay is absolute + inset-0 on
+            the positioned parent so it paints over the pool without
+            unmounting it — Activity state (scroll, selection, editor
+            instances) survives underneath.
+            Warm-reopen bypass: skip the overlay when both the mount-
+            promise and sync-promise caches have resolved entries for
+            the new docName. In that state `use()` short-circuits
+            synchronously, the deferred commit lands in 1 frame, and
+            painting a skeleton during the urgent-paint → deferred-
+            commit gap creates a perceptible "cold load" flash on a
+            genuinely warm reopen. Reading module state during render
+            is safe because resolution is a terminal cache-entry state
+            (only invalidate clears it, and invalidate runs from
+            park-uncached / evict effects that have already committed
+            before this render reads the flag).
+            Regression tests: docs-open.e2e.ts F0b (skeleton on V2-
+            refuse warm nav), ng7-warm-tab-switch.e2e.ts (no skeleton
+            on V2-admit warm reopen with NG7 flags ON). */}
+          {shouldPaintOverlay({
+            activeDocName,
+            deferredActiveDocName,
+            mountResolved: activeDocName !== null && mountPromiseHasResolved(activeDocName),
+            syncResolved: activeDocName !== null && syncPromiseHasResolved(activeDocName),
+          }) ? (
             <div className="absolute inset-0 z-10 bg-background">
               <EditorSkeleton />
             </div>

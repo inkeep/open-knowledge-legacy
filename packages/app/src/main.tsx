@@ -2,6 +2,8 @@ import { initFrontendTelemetry } from './telemetry';
 
 initFrontendTelemetry();
 
+import '@/lib/perf/scheduler-polyfill-shim';
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from 'next-themes';
 import { StrictMode } from 'react';
@@ -16,7 +18,10 @@ import { installDeepLinkListener } from '@/lib/install-deep-link-listener';
 import { installOnboardingToastListener } from '@/lib/install-onboarding-toast';
 import { installMcpConsentListener } from '@/lib/mcp-consent-store';
 import { initWebVitals } from '@/lib/perf';
-import { installColdMountInstrumentation } from '@/lib/perf/cold-mount-instrumentation';
+import {
+  installColdMountInstrumentation,
+  shouldInstallColdMountInstrumentation,
+} from '@/lib/perf/cold-mount-instrumentation';
 import { installUpdateNoticesBridge } from '@/lib/update-notices-store';
 import { App } from './App';
 import '@fontsource-variable/inter';
@@ -29,8 +34,10 @@ if (typeof window !== 'undefined' && window.okDesktop?.config.apiOrigin) {
   installDesktopFetchRewrite({ apiOrigin: window.okDesktop.config.apiOrigin });
 }
 
-if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
+if (shouldInstallColdMountInstrumentation()) {
   installColdMountInstrumentation();
+}
+if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   initWebVitals();
 }
 

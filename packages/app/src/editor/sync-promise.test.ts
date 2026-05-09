@@ -1,3 +1,10 @@
+/**
+ * Unit tests for sync-promise: module-level cache + timeout + invalidation.
+ *
+ * These tests drive a real HocuspocusProvider pointed at a dummy WS URL
+ * (same pattern as provider-pool.test.ts). The provider never connects,
+ * but emitting `synced` / `close` directly exercises the listener wiring.
+ */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
@@ -14,6 +21,7 @@ import {
   SYNC_TIMEOUT_MS,
   SyncTimeoutError,
   syncPromise,
+  syncPromiseHasResolved,
 } from './sync-promise';
 
 const DUMMY_WS = 'ws://localhost:1/collab';
@@ -336,6 +344,57 @@ describe('rejectSyncPromise (BridgeSetupError surface)', () => {
 
     const ok = rejectSyncPromise('doc1', new BridgeSetupError('doc1'));
     expect(ok).toBe(false);
+  });
+});
+
+describe('syncPromiseHasResolved (warm-reopen overlay gate)', () => {
+  test('returns false when no entry exists', () => {
+    expect(syncPromiseHasResolved('never-mounted')).toBe(false);
+  });
+
+  test('returns true on warm-provider sentinel (provider.synced=true at create-time)', () => {
+    const provider = track(makeProvider('warm-doc'));
+    Object.defineProperty(provider, 'synced', { value: true, configurable: true });
+    syncPromise('warm-doc', provider);
+    expect(syncPromiseHasResolved('warm-doc')).toBe(true);
+  });
+
+  test('returns false while pending, true after onSynced fires', () => {
+    const provider = track(makeProvider('cold-doc'));
+    Object.defineProperty(provider, 'synced', { value: false, configurable: true });
+    syncPromise('cold-doc', provider);
+    expect(syncPromiseHasResolved('cold-doc')).toBe(false);
+    // biome-ignore lint/suspicious/noExplicitAny: protected emit() needs reach for tests
+    (provider as any).emit('synced', { state: false });
+    expect(syncPromiseHasResolved('cold-doc')).toBe(true);
+  });
+
+  test('returns false on rejected promise (settled but not resolved)', () => {
+    const provider = track(makeProvider('rejected-doc'));
+    Object.defineProperty(provider, 'synced', { value: false, configurable: true });
+    const promise = syncPromise('rejected-doc', provider);
+    rejectSyncPromise('rejected-doc', new BridgeSetupError('rejected-doc'));
+    promise.catch(() => {}); // Suppress unhandled-rejection.
+    expect(__syncPromiseSettled('rejected-doc')).toBe(true);
+    expect(syncPromiseHasResolved('rejected-doc')).toBe(false);
+  });
+
+  test('returns false on armed-rejection sentinel', () => {
+    __test_armPendingRejection('armed-doc', 'timeout');
+    const provider = track(makeProvider('armed-doc'));
+    Object.defineProperty(provider, 'synced', { value: false, configurable: true });
+    const promise = syncPromise('armed-doc', provider);
+    promise.catch(() => {});
+    expect(syncPromiseHasResolved('armed-doc')).toBe(false);
+  });
+
+  test('returns false after invalidate (entry removed)', () => {
+    const provider = track(makeProvider('invalidated-doc'));
+    Object.defineProperty(provider, 'synced', { value: true, configurable: true });
+    syncPromise('invalidated-doc', provider);
+    expect(syncPromiseHasResolved('invalidated-doc')).toBe(true);
+    invalidateSyncPromise('invalidated-doc');
+    expect(syncPromiseHasResolved('invalidated-doc')).toBe(false);
   });
 });
 

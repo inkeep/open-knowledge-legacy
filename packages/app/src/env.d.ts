@@ -1,6 +1,19 @@
 /// <reference types="vite/client" />
 /// <reference types="bun-types" />
 
+interface ImportMetaEnv {
+  /**
+   * PROD-build override for `installColdMountInstrumentation()`. Set to the
+   * literal string `'1'` to install the prototype monkey-patches and per-
+   * component instrumentation in PROD builds; any other value (including
+   * unset) leaves the existing PROD short-circuit intact. Matches Vite's
+   * env-var serialization (string, not boolean). Lives under the default
+   * `VITE_` envPrefix alongside the other `VITE_OK_PERF_*` rollout flags so
+   * no custom prefix entry is needed in `vite.config.ts`.
+   */
+  readonly VITE_OK_PERF_INSTRUMENT?: string;
+}
+
 declare module 'lucide-react/dist/esm/icons/bot' {
   export const __iconNode: [string, Record<string, string>][];
 }

@@ -87,6 +87,7 @@ interface CacheEntry {
   onSynced: () => void;
   onClose: (data: onCloseParameters) => void;
   settled: boolean;
+  resolved: boolean;
   detached: boolean;
 }
 
@@ -195,6 +196,7 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     const entry = cache.get(docName);
     if (!entry || entry.settled) return;
     entry.settled = true;
+    entry.resolved = true;
     const elapsed = Date.now() - entry.createdAt;
     console.log(`[syncPromise] ${docName} resolved in ${elapsed}ms`);
     mark('ok/sync/resolve', { docName, elapsedMs: elapsed, warm: false });
@@ -238,6 +240,7 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     onSynced,
     onClose,
     settled: false,
+    resolved: false,
     detached: false,
   };
 
@@ -263,6 +266,7 @@ function makeSentinelEntry(promise: Promise<void>, provider: HocuspocusProvider)
     onSynced: () => {},
     onClose: () => {},
     settled: true,
+    resolved: true,
     detached: true,
   };
 }
@@ -293,8 +297,13 @@ function makeRejectedSentinelEntry(
     onSynced: () => {},
     onClose: () => {},
     settled: true,
+    resolved: false,
     detached: true,
   };
+}
+
+export function syncPromiseHasResolved(docName: string): boolean {
+  return cache.get(docName)?.resolved === true;
 }
 
 export function invalidateSyncPromise(docName: string): void {
