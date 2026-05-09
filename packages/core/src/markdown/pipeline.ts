@@ -1,43 +1,3 @@
-/**
- * Unified pipeline factory.
- *
- * Parse direction (post-R17 chain, wired in `createParseProcessor` below):
- *   [R23 `protectFromMdx` pre-pass on source bytes]
- *     → remark-parse → remark-frontmatter → remarkMdxAgnostic
- *     → remark-gfm → remarkWikiLink
- *     → remarkGithubAlerts → `calloutTransformerPlugin`
- *        (US-010 / FR-7: GFM-alerts + Obsidian foldable → Callout mdxJsxFlow)
- *     → `restoreFromMdx` (Phase A: PUA sentinel → literal char)
- *     → `detailsAccordionPromoterPlugin`
- *        (US-011 / FR-8: HTML5 <details> → Accordion mdxJsxFlow)
- *     → `imagePromoterPlugin`
- *        (CommonMark `![alt](src)` → `<CommonMarkImage>` mdxJsxFlow compat)
- *     → `mergedPostParseWalkerPlugin` (Phase B: autolink promotion +
- *        doc-start thematic fix + position slice + unknown-mdast guard)
- *     → `ensureNonEmptyDoc` → remarkProseMirror
- *
- * Serialize direction:
- *   fromProseMirror → remark-stringify (with custom mdast-util-to-markdown handlers)
- *
- * Plugin order for parser extensions is empirically commutative (see
- * tech-probes/plugin-ordering/REPORT.md), but transformer ordering matters:
- * Phase A must run before Phase B (Phase B's autolink regex reads the literal
- * `<`/`>` that Phase A restores — see `merged-walker.ts` header + precedent
- * #16 in CLAUDE.md). Inside Phase B, position-slice runs AFTER all syntax
- * extensions produce their mdast (so positions are final) and the final
- * `remarkProseMirror` step reads `node.data.*` written by position-slice.
- *
- * R16 caching (spec 2026-04-16 markdown-pipeline-engineering-health):
- * processors are built once per MarkdownManager instance via
- * `createParseProcessor` / `createSerializeProcessor`, then reused across
- * every `parse()` / `serialize()` call. `parseMd` / `serializeMd` accept
- * the pre-built processor and run the stateless per-document work
- * (protectFromMdx, VFile binding, PM↔mdast conversion). The attacher for
- * `remarkMdxAgnostic` and `remarkWikiLink` is made idempotent under
- * re-entry via module-level singleton extension values, which means
- * pathological re-attach would not duplicate entries in `data()` arrays.
- */
-
 import {
   type FromProseMirrorOptions,
   fromProseMirror,
@@ -57,9 +17,11 @@ import { VFile } from 'vfile';
 
 import './mdast-augmentation.ts';
 import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
+import { encodeBackslashEscapes, restoreBackslashEscapesPlugin } from './backslash-escape-guard.ts';
 import { calloutTransformerPlugin, REMARK_GITHUB_ALERTS_OPTIONS } from './callout-transformer.ts';
 import { commentPromoterPlugin } from './comment-promoter.ts';
 import { detailsAccordionPromoterPlugin } from './details-accordion-promoter.ts';
+import { encodeEntityRefs, restoreEntityRefsPlugin } from './entity-ref-guard.ts';
 import { highlightPromoterPlugin } from './highlight-promoter.ts';
 import { imagePromoterPlugin } from './image-promoter.ts';
 import { indentedCodePromoterPlugin } from './indented-code-promoter.ts';
@@ -115,6 +77,8 @@ export const ACTIVE_MDAST_PLUGINS = [
   },
   { name: 'callout-transformer', plugin: calloutTransformerPlugin },
   { name: 'restore-from-mdx', plugin: restoreFromMdx },
+  { name: 'restore-entity-refs', plugin: restoreEntityRefsPlugin },
+  { name: 'restore-backslash-escapes', plugin: restoreBackslashEscapesPlugin },
   { name: 'details-accordion-promoter', plugin: detailsAccordionPromoterPlugin },
   { name: 'image-promoter', plugin: imagePromoterPlugin },
   { name: 'indented-code-promoter', plugin: indentedCodePromoterPlugin },
@@ -171,7 +135,9 @@ export function createSerializeProcessor(opts: PipelineOptions): Processor {
 }
 
 export function parseMd(source: string, processor: Processor): PmNode {
-  const protected_ = protectFromMdx(source);
+  const protectedFr14 = encodeBackslashEscapes(source);
+  const protectedR23 = protectFromMdx(protectedFr14);
+  const protected_ = encodeEntityRefs(protectedR23);
 
   const file = new VFile(protected_);
   const tree = processor.parse(file);
@@ -181,7 +147,7 @@ export function parseMd(source: string, processor: Processor): PmNode {
 }
 
 export function parseMdToMdast(source: string, processor: Processor): MdastRoot {
-  const protected_ = protectFromMdx(source);
+  const protected_ = encodeEntityRefs(protectFromMdx(encodeBackslashEscapes(source)));
   const file = new VFile(protected_);
   const tree = processor.parse(file);
   file.value = source;

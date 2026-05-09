@@ -59,35 +59,6 @@ import { usePageList } from './PageListContext';
 import { PropertyPanel } from './PropertyPanel';
 import { Button } from './ui/button';
 
-/**
- * Large-doc threshold in Y.Text characters. Above this, the non-active editor
- * is defer-mounted on cold load instead of pre-mounting both per
- * precedent #18(b)'s small-to-medium-doc default. Once the user toggles to
- * the deferred mode, that editor mounts and stays mounted — so subsequent
- * toggles remain CSS-only and cost nothing.
- *
- * Value rationale (500_000 chars ≈ 500 KB plain text):
- *   - README.md / AGENTS.md / CLAUDE.md (≤150 KB) — BELOW. No change from
- *     pre-mount-both default; toggle stays instant.
- *   - PROJECT.md (multi-MB) — ABOVE. Cold load skips the non-active
- *     editor's initial mount+parse; first toggle pays the cost; subsequent
- *     toggles are instant.
- *
- * The threshold is a tuning knob, not a contract. Moving it UP regresses
- * the fix for smaller "large" docs; moving it DOWN unnecessarily delays
- * first-toggle UX for medium docs where pre-mount-both was already fast
- * enough.
- *
- * FIRST-TOGGLE COST: On a 3.25 MB doc, the first mode toggle after cold
- * load pays the deferred editor's cold mount — measured at
- * `toSourceMs ≈ 223 ms`. Proportional scaling to a ~9.7 MB doc puts first
- * toggle in the 500–800 ms range. Perceptible but well below the ~1 s
- * hang threshold. Subsequent toggles remain CSS-only. Future engineers:
- * do not assume defer-mount is free at the toggle boundary; it trades
- * cold-load latency for one-time first-toggle latency on the deferred
- * mode. See `ACTIVITY_MOUNT_LIMIT` below — both constants are parts of
- * the same Activity-mount hygiene pattern.
- */
 export const LARGE_DOC_CHAR_THRESHOLD = readNumericOverride('LARGE_DOC_CHAR_THRESHOLD', 500_000);
 
 interface EditorMountGateArgs {
@@ -128,6 +99,49 @@ export function shouldEmitFirstToggle(args: ShouldEmitFirstToggleArgs): boolean 
   return args.renderSource && args.renderVisual;
 }
 
+/**
+ * Maximum number of editors mounted concurrently inside `<Activity>` boundaries.
+ * Decoupled from `MAX_POOL` (exported from `provider-pool.ts`, default 10) per
+ * precedent #18(c) — pool-resident-but-not-Activity-mounted docs keep their
+ * warm provider (so revisiting is fast via Suspense-gated remount with
+ * `syncPromise` resolving immediately from `hasSynced=true`) but skip the
+ * per-editor memory + observer-CPU cost of keeping the TipTap + CodeMirror
+ * instances alive.
+ *
+ * 3 covers the "alt-tab between recent docs" pattern dominant for the
+ * primary personas.
+ *
+ * Changing either this value or `MAX_POOL` is an ASK_FIRST boundary — they're
+ * coupled by design. If one moves, audit the other for sympathetic impact.
+ *
+ * **LIMIT=3 is a stable decision, not a temporary holdpoint.** Both the
+ * TipTap-editor-cost argument (LIMIT=1 doesn't avoid `createEditor` cost
+ * because `@tiptap/react`'s `useEditor` destroys on effect-cleanup anyway)
+ * and the scroll-state argument (scroll preservation requires refs to
+ * survive, which requires Activity hidden not full unmount) stand
+ * independently of the V2 editor cache. A module-level editor cache changes
+ * the first argument's mechanics but not the second — LIMIT stays at 3 to
+ * keep ScrollPreservingContainer's `useRef` alive across navigation.
+ *
+ * Reducing this value to 1 was attempted as a warm-switch fix, then
+ * REVERTED — LIMIT=1 broke scroll-position survival across A→B→A because
+ * `ScrollPreservingContainer` stores its saved scrollTop in a `useRef`, and
+ * refs persist across `<Activity>` mode flips but are lost on full unmount.
+ * With LIMIT=3, ScrollPreservingContainer stays mounted for non-active docs
+ * (effects paused via Activity-hidden; ref state preserved), so revisiting
+ * restores scroll position. With LIMIT=1, the container unmounts on nav and
+ * the ref is destroyed. TipTap editor state WAS being destroyed regardless
+ * (its `useEditor` schedules destroy on effect-cleanup, so LIMIT=3 + hidden
+ * transition = same destroy path as LIMIT=1 + unmount), but scroll state was
+ * load-bearing. Conclusion: warm-switch latency is architecturally bounded
+ * by TipTap's `createEditor` overhead (~350 ms schema + Yjs bind + DOM attach,
+ * fixed cost regardless of doc size or `ACTIVITY_MOUNT_LIMIT`); unlocking
+ * <100 ms warm-switch requires a module-level Editor cache outside React's
+ * lifecycle.
+ *
+ * See `LARGE_DOC_CHAR_THRESHOLD` above — both constants are parts of the same
+ * Activity-mount hygiene pattern (precedent #18(c) / precedent #24).
+ */
 export const ACTIVITY_MOUNT_LIMIT = readNumericOverride('ACTIVITY_MOUNT_LIMIT', 3);
 
 export function loadSourceEditorModule() {

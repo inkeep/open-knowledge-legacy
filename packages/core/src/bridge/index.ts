@@ -37,6 +37,7 @@ export {
   readFmMap,
   readFmRegionWithError,
 } from './frontmatter-region.ts';
+export { fnv1aDigest } from './hash-util.ts';
 export {
   assertContentPreservation,
   BridgeMergeContentLossError,

@@ -1,32 +1,3 @@
-/**
- * Error-envelope coverage meta-test (FR17, D36 a) — fail-on-any-occurrence mode.
- *
- * Mirrors the precedent #20 / `attribution-sweep-coverage.test.ts` style:
- * static AST scan over `packages/server/src/api-extension.ts` enforcing that
- *
- *   1. Every handler emits errors via `errorResponse(...)` and never via an
- *      inline `json(res, NNN, { ok: false, ... })` envelope.
- *   2. No handler emits an inline `json(res, NNN, { ok: true, ... })` success
- *      wrapper either (D22 drops the `ok: true` wrapper from success bodies).
- *   3. No handler emits a bare `json(res, 2xx, ...)` success body — every
- *      success emit must flow through `successResponse(...)` so the
- *      schema-vs-server drift class is closed structurally at the wire
- *      boundary regardless of fixture coverage.
- *
- * Allowlist history (now retired):
- *   - PR1 (US-004) seeded an allowlist with 56 handlers (every handler except
- *     `handleUploadAsset`, the canonical migrated example).
- *   - Each cluster PR (US-006 through US-013) removed its handlers from the
- *     allowlist as it migrated them.
- *   - US-014 (this revision) removes the allowlist entirely; the test is now
- *     "no inline error envelopes anywhere" — fail-on-any-occurrence.
- *   - The successResponse migration (separate spec, this revision) extended
- *     the same fail-on-any-occurrence ratchet to bare `json(res, 2xx, ...)`
- *     success emits (no allowlist, no shrink — fail from day one).
- *
- * Failure mode: file:line + handler name + the offending pattern.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

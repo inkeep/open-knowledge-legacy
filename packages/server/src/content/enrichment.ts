@@ -1,18 +1,3 @@
-/**
- * Shared `enrichPath()` — single source of truth for per-path metadata
- * assembly used by `read_document`, `search`, and `exec`.
- *
- * Returns a **single unified `EnrichedMeta` shape** with nullable fields
- * (D20 / FR14). Multi-path callers (ls/grep/find enrichment) pass
- * `{ includeRichFields: false }` and get `backlinkCount`, `history`, and
- * `historySource` as `null` to avoid N-amplification. Single-path callers
- * (cat) pass `{ includeRichFields: true }` and get all fields populated.
- *
- * `catalogCategory` was removed per D19 (folder INDEX.md frontmatter
- * deprecated across OK; catalog is an on-demand view, not a stored artifact).
- *
- * See SPEC.md FR7 + FR14 + FR15 + D13 + D19 + D20.
- */
 import type { Dirent } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, relative, resolve } from 'node:path';

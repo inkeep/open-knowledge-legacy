@@ -1,40 +1,3 @@
-/**
- * Playwright fixture helpers for the `handoff.e2e.ts` matrix (US-013).
- *
- * Goal: drive the Open-in-Agent dispatch flow across 8 cells per SPEC §13.3
- * without dependencies on what Claude / Codex / Cursor is actually installed
- * on the CI runner, and without triggering real cross-app URL dispatch.
- *
- * Two host modes:
- *   - `host: 'electron'` — installs a mock `window.okDesktop` bridge via
- *     `page.addInitScript`. Every shell method is a capturing stub. The
- *     initial probe + on-open refresh both consult `shell.detectProtocol`
- *     which reads from the injected mock state.
- *   - `host: 'web'` — leaves `window.okDesktop` undefined so the app falls
- *     through to the web path. `GET /api/installed-agents` is intercepted
- *     via `page.route` and served from the injected mock state.
- *
- * Anchor-click capture (both hosts):
- *   Handoff URL dispatch on web host uses a short-lived `<a href=... click>`
- *   pattern (per TQ7 LOCKED in the spec). Without interception, Chromium
- *   would either navigate away (for `https://claude.ai/...`) or hit a
- *   protocol-handler dialog (for `claude://`, `codex://`, `cursor://`). This
- *   file patches `HTMLAnchorElement.prototype.click` to capture clicks on
- *   anchors whose href matches a known handoff scheme / host, record the
- *   URL into `window.__handoffMocks__.anchorClicks`, and swallow the click.
- *   All other anchor clicks (sidebar nav, install-affordance `<button>`s in
- *   tooltips when dispatched via Electron) fall through unchanged.
- *
- * Time control:
- *   The install-detect coordinator throttles `refresh()` to once per 10s per
- *   scheme. For cell 3 (install-state flip) the test must advance past the
- *   throttle window without stalling the run for 10s wall-time. The init
- *   script patches `Date.now` only (not `setTimeout` / `setInterval`) so
- *   WebSocket heartbeats + sonner toast lifecycles keep running on real
- *   time while the handoff hook's lastProbedAt check sees future-time on
- *   `advanceHandoffFakeTime(ms)`.
- */
-
 import type { OkDesktopBridge } from '@inkeep/open-knowledge-core';
 import type { Page } from '@playwright/test';
 
@@ -364,12 +327,6 @@ export async function readCapturedHandoff(page: Page): Promise<CapturedHandoff> 
   });
 }
 
-/**
- * Swap the Electron-host install map mid-test. After calling, the next
- * `shell.detectProtocol(scheme)` returns the new value. Pair with
- * `advanceHandoffFakeTime(11_000)` to bypass the 10s throttle so the
- * next `refresh()` actually probes.
- */
 export async function updateElectronInstallMap(page: Page, install: InstallMap): Promise<void> {
   await page.evaluate((next) => {
     // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.
@@ -389,11 +346,6 @@ export async function updateWebInstallMap(page: Page, install: InstallMap): Prom
   });
 }
 
-/**
- * Advance the page's `Date.now()` view by `ms` milliseconds. Only affects
- * `Date.now` (the install-detect coordinator's throttle check reads this).
- * Real `setTimeout` / `setInterval` fire on wall-clock time.
- */
 export async function advanceHandoffFakeTime(page: Page, ms: number): Promise<void> {
   await page.evaluate((delta) => {
     // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.

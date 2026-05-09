@@ -1,26 +1,3 @@
-/**
- * `useActivityPanel` — data layer for the Agent Activity Panel.
- *
- * Responsibilities (SPEC §5 + FR-P6, FR-P10, FR-P11, FR-P17, FR-P23):
- *   1. On `connectionId` set: fetch `GET /api/agent-activity?agentId=…`.
- *   2. Subscribe to CC1 `'session-activity'` via `subscribeToDocumentsChanged`
- *      and re-fetch after a 500 ms trailing-edge debounce (FR-P23).
- *   3. Subscribe to `__system__` awareness for `agentPresence` and expose a
- *      `writingDocs` set so file rows can show a "writing…" indicator
- *      (FR-P17).
- *   4. Provide `fetchBurstDiff(docName, stackIndex)` — lazy per-burst diff
- *      fetch (FR-P11) with a component-scoped cache so re-expand doesn't
- *      re-fetch (FR-P15).
- *   5. Cancelled-flag semantics: an in-flight fetch that completes AFTER the
- *      connectionId swapped or the component unmounted must NOT update state.
- *
- * Inert mode: `connectionId === null` → no fetches, no subscriptions. Returns
- * `{ data: null, status: 'idle', error: null }` and no-op callbacks.
- *
- * Data source rationale (D-P1 LOCKED) lives in `packages/server/src/agent-
- * activity.ts`. This hook is a pure consumer — never mutates Y.Doc state
- * (NF-P3).
- */
 import {
   type ActivityAgentHeader,
   type ActivityBurst,

@@ -1,19 +1,3 @@
-/**
- * C8: Triple concurrent write surfaces — file-watcher + agent + WYSIWYG.
- *
- * Validates that three independent write surfaces firing concurrently all
- * survive the server-authoritative observer bridge:
- *   1. File-watcher external change (writeFileSync to contentDir)
- *   2. Agent write via HTTP API (agentWriteMd)
- *   3. Human WYSIWYG typing via XmlFragment mutation
- *
- * Each test seeds initial content, then applies three independent changes
- * with distinct markers to verify full-body preservation. The server observer
- * handles cross-CRDT writes under OBSERVER_SYNC_ORIGIN.
- *
- * Per-test docName isolation. Client lifecycle in try/finally per R8a.
- */
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';

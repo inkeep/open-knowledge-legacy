@@ -1,10 +1,3 @@
-/**
- * fast-check arbitraries for structured markdown generation.
- *
- * Generates syntactically valid markdown constructs for PBT invariant tests.
- * Each generator produces markdown strings that should survive round-trip.
- */
-
 import * as fc from 'fast-check';
 
 const safeWord = fc.stringMatching(/^[a-zA-Z0-9]{1,12}$/);

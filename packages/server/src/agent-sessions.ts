@@ -3,13 +3,11 @@ import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-cor
 
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
 
-import { updateYFragment } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
-import { composeAndWriteRawBody } from './bridge-intake.ts';
+import { composeAndWriteRawBody, deriveFragmentFromYtext } from './bridge-intake.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
 import { getLogger } from './logger.ts';
-import { mdManager, schema } from './md-manager.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
 import { setActiveSpanAttributes, withSpanSync } from './telemetry.ts';
 
@@ -131,8 +129,6 @@ function applyAgentUndoInner(
 ): boolean {
   const { dc, um, undoOrigin } = session;
   const document = dc.document;
-  const xmlFragment = document.getXmlFragment('default');
-  const ytext = document.getText('source');
 
   let undone = false;
   document.transact(() => {
@@ -146,14 +142,7 @@ function applyAgentUndoInner(
         undone = true;
       }
     }
-
-    const fullMd = ytext.toString();
-    const { body } = stripFrontmatter(fullMd);
-
-    const parsedJson = mdManager.parseWithFallback(body, embedResolver);
-    const pmNode = schema.nodeFromJSON(parsedJson);
-    const meta = { mapping: new Map(), isOMark: new Map() };
-    updateYFragment(document, xmlFragment, pmNode, meta);
+    deriveFragmentFromYtext(document, embedResolver);
   }, undoOrigin);
 
   return undone;

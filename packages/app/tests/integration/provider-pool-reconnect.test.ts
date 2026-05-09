@@ -83,8 +83,6 @@ async function seedAndSyncSingleClient(
 }
 
 describe('ProviderPool reconnects', () => {
-  /**
-   */
   test('browser reload against same server keeps server Y.Doc loaded and avoids IDB duplication', async () => {
     const server = await createRestartableServer();
     cleanups.push(() => server.shutdown());
@@ -214,8 +212,6 @@ describe('ProviderPool reconnects', () => {
     expect((afterRestart.match(/\[\[asdf\]\]/g) ?? []).length).toBe(1);
   }, 60_000);
 
-  /**
-   */
   test('REPRO: fast server restart (<4s) keeps the same provider and duplicates content', async () => {
     let server = await createRestartableServer();
     cleanups.push(() => server.shutdown());

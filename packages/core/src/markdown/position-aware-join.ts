@@ -2,8 +2,17 @@ import type { Join } from 'mdast-util-to-markdown';
 import type { Position } from 'unist';
 
 type MaybePositioned = { position?: Position };
+type MaybeTyped = { type?: string; data?: { sourceContiguousNext?: boolean } };
+type FlowNode = Parameters<Join>[0];
+
+function isContiguousSetextWithParagraph(left: FlowNode, right: FlowNode): boolean {
+  const lt = left as MaybeTyped;
+  const rt = right as MaybeTyped;
+  return lt.type === 'heading' && lt.data?.sourceContiguousNext === true && rt.type === 'paragraph';
+}
 
 export const positionAwareBlankLineJoin: Join = (left, right) => {
+  if (isContiguousSetextWithParagraph(left, right)) return 0;
   const lp = (left as MaybePositioned).position;
   const rp = (right as MaybePositioned).position;
   if (!lp || !rp) return undefined;

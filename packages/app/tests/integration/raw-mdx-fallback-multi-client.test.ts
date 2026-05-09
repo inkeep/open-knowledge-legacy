@@ -1,27 +1,3 @@
-/**
- * US-011: Multi-client Y.Item identity regression test for rawMdxFallback.
- *
- * Verifies content-based shape (D10: atom:false, content:'text*') preserves
- * Y.XmlElement identity when the inner text of a rawMdxFallback region is
- * edited character-by-character via source mode, with a second client
- * observing in WYSIWYG.
- *
- * Key assertions:
- *   - rawMdxFallback Y.XmlElement identity is stable across all keystrokes
- *     (same _item reference — no delete+reinsert)
- *   - Client B's WYSIWYG cursor (RelativePosition) in a non-fallback paragraph
- *     resolves to the same absolute position throughout
- *   - Per-keystroke Y.Doc update payloads are small (char-level delta, not
- *     whole-node replacement)
- *   - Y.Text edits propagate via CRDT sync between clients
- *
- * Note on bridge invariant: During active editing of broken MDX content,
- * Observer B freezes (preserves last valid XmlFragment). This means Y.Text
- * and XmlFragment diverge intentionally — the bridge invariant is temporarily
- * suspended until the content becomes valid again. This is by design per
- * SPEC §5 P3 client-path.
- */
-
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';

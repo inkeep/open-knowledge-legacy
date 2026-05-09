@@ -1,16 +1,3 @@
-/**
- * Conversion fidelity tests.
- *
- * Verifies that every supported markdown construct survives the format
- * conversions in the stack:
- *   1. Markdown round-trip: serialize(parse(md))
- *   2. Tree round-trip: pmJSON → nodeFromJSON → updateYFragment → yXmlFragmentToProsemirrorJSON → pmJSON
- *   3. Disk round-trip: XmlFragment → persistence → disk → onLoadDocument → XmlFragment
- *   4. Agent-as-file-editor: agent writes file → disk → CRDT → all surfaces
- *
- * Documents which constructs are stable vs which normalize.
- */
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';

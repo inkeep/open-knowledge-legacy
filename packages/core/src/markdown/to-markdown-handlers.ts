@@ -1,16 +1,3 @@
-/**
- * Custom mdast-util-to-markdown handlers for source-form fidelity.
- *
- * These handlers override remark-stringify defaults to preserve authoring
- * form — delimiters, fence chars, bullet markers, etc. — by reading
- * node.data.* fields populated by the PM→mdast reverse handlers.
- *
- * Key overrides from R1 probe (§19.7):
- * - text handler strips `&` and `<` from the unsafe list (NG5 storage-layer contract)
- * - link handler writes URLs verbatim (no `&` escaping)
- * - escapeMark: text with data.escapedChars re-emits backslash sequences
- */
-
 import type { Nodes, Parents } from 'mdast';
 import type { MdxJsxAttribute, MdxJsxExpressionAttribute, MdxJsxFlowElement } from 'mdast-util-mdx';
 import type { Info, State } from 'mdast-util-to-markdown';
@@ -351,10 +338,12 @@ export const toMarkdownHandlers = {
     const tableExit = state.enter('table');
 
     const matrix: string[][] = [];
+    const paddingMatrix: Array<Array<{ left: number; right: number } | null>> = [];
     const rows = node.children ?? [];
     for (const row of rows) {
       const cellNodes = row.children ?? [];
       const cells: string[] = [];
+      const cellPaddings: Array<{ left: number; right: number } | null> = [];
       for (const cell of cellNodes) {
         const cellExit = state.enter('tableCell');
         const phrasingExit = state.enter('phrasing');
@@ -366,8 +355,17 @@ export const toMarkdownHandlers = {
         phrasingExit();
         cellExit();
         cells.push(value);
+        const pad = cell.data?.sourcePadding;
+        cellPaddings.push(
+          pad &&
+            typeof (pad as { left?: unknown }).left === 'number' &&
+            typeof (pad as { right?: unknown }).right === 'number'
+            ? { left: (pad as { left: number }).left, right: (pad as { right: number }).right }
+            : null,
+        );
       }
       matrix.push(cells);
+      paddingMatrix.push(cellPaddings);
     }
     tableExit();
 
@@ -395,21 +393,33 @@ export const toMarkdownHandlers = {
       alignmentCells.push(before + '-'.repeat(dashCount) + after);
     }
 
-    const formatRow = (cells: string[]): string => {
-      const padded = [...cells];
-      while (padded.length < mostCellsPerRow) padded.push('');
-      return `| ${padded.join(' | ')} |`;
+    const formatRow = (
+      cells: string[],
+      paddings: Array<{ left: number; right: number } | null>,
+    ): string => {
+      const out: string[] = [];
+      for (let i = 0; i < mostCellsPerRow; i++) {
+        const content = cells[i] ?? '';
+        const pad = paddings[i] ?? { left: 1, right: 1 };
+        out.push(' '.repeat(pad.left) + content + ' '.repeat(pad.right));
+      }
+      return `|${out.join('|')}|`;
     };
 
+    const alignmentPaddings: Array<{ left: number; right: number } | null> = Array.from(
+      { length: mostCellsPerRow },
+      () => null,
+    );
+
     if (matrix.length === 0) {
-      return formatRow(alignmentCells);
+      return formatRow(alignmentCells, alignmentPaddings);
     }
 
     const lines: string[] = [];
-    lines.push(formatRow(matrix[0]));
-    lines.push(formatRow(alignmentCells));
+    lines.push(formatRow(matrix[0], paddingMatrix[0] ?? []));
+    lines.push(formatRow(alignmentCells, alignmentPaddings));
     for (let i = 1; i < matrix.length; i++) {
-      lines.push(formatRow(matrix[i]));
+      lines.push(formatRow(matrix[i], paddingMatrix[i] ?? []));
     }
     return lines.join('\n');
   },
@@ -463,37 +473,6 @@ export const toMarkdownHandlers = {
     return value;
   },
 
-  /**
-   * comment (literal authoring annotation, hidden in WYSIWYG): branch
-   * on `data.sourceForm` to preserve the authored delimiter form on
-   * round-trip. `'html'` emits `<!-- text -->`; `'percent'` (default)
-   * emits `%%text%%`.
-   *
-   * Source-form preservation matters for two reasons:
-   *
-   *   1. Author intent: `<!--` is the universal HTML comment form
-   *      familiar to anyone who's edited HTML or markdown that targets
-   *      HTML rendering; `%%` is Obsidian-specific. Authors who type
-   *      one shouldn't see it silently rewritten to the other.
-   *
-   *   2. Round-trip safety: HTML comments whose body contains literal
-   *      `%%` produce invalid byte sequences when canonicalised to
-   *      `%%body%%`. The inline `%%` walker re-claims part of the span
-   *      on re-parse (e.g. `%%text with %%X%% inside%%` matches as one
-   *      comment with body `text with %%X` plus orphan trailing `%%`),
-   *      splitting one comment into two and leaving leftover prose.
-   *      Preserving `<!--` form sidesteps this entirely — `<!--` /
-   *      `-->` delimiters never collide with `%%` body content.
-   *
-   * Whitespace note: post-relaxation, the `%%` parser accepts
-   * whitespace inside the delimiters (`%% text %%` matches with body
-   * ` text `; rule 4 only requires at least one non-whitespace char
-   * somewhere in the body). The serializer preserves the body bytes
-   * verbatim — leading/trailing whitespace inside the body survives
-   * round-trip. The `<!--` form has no flanking rules either; the
-   * parser trims one inner space on either side, so we re-emit with
-   * the same `<!-- text -->` spacing.
-   */
   comment(node, _parent, state, info) {
     const sourceForm = node.data?.sourceForm;
     const open = sourceForm === 'html' ? '<!-- ' : '%%';

@@ -1,35 +1,3 @@
-/**
- * Live-DOM clipboard walker — captures whatever React rendered + whatever CSS
- * resolved into a DocumentFragment suitable for cross-app text/html outbound.
- *
- * Design summary:
- *   1. Iterate top-level nodes in `view.state.selection`.
- *   2. For each, call `view.nodeDOM(pos)` to retrieve the LIVE styled DOM
- *      element from the editor.
- *   3. `cloneNode(true)` to detach a copy.
- *   4. Walk live + clone trees pairwise; on every element copy allowlisted
- *      computed styles inline and strip editor-only classes / attributes.
- *
- * This replaces a per-descriptor `toClipboardHast` contract for the v1 5-pack:
- * the React render IS the cross-app HTML shape. Future descriptors with hidden
- * state (Tabs / Carousel / Canvas) opt in to a `descriptor.toClipboardHast`
- * override.
- *
- * Activity-hidden edge: `view.nodeDOM(pos)` returns null when the slice is in
- * an `<Activity mode="hidden">` subtree whose DOM was unmounted. The walker
- * delegates to the per-descriptor static palette in
- * `clipboard-walker-fallback-palette.ts`.
- *
- * Opt-out: a descriptor can mark a subtree with `data-clipboard-omit="true"`
- * on its React render root. The walker drops that subtree from the output.
- *
- * Cardinality discipline: the style allowlist is hand-curated to email-safe
- * properties (Notion / Slack / Gmail rich-paste profiles all preserve them).
- * The class blocklist strips selection halo / drag chrome / ProseMirror
- * internals. The attribute blocklist strips `contenteditable` and PM-internal
- * markers so destinations don't see editor-only state.
- */
-
 import { normalizeNullableString, wikiLinkHref } from '@inkeep/open-knowledge-core';
 import type { Node as PmNode, Slice } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';

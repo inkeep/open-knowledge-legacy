@@ -4,6 +4,7 @@ import { getSchema } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { ROLLBACK_ORIGIN } from './api-extension.ts';
+import { replaceRawBody } from './bridge-intake.ts';
 import { mdManager } from './md-manager.ts';
 import { setupServerObservers } from './server-observers.ts';
 
@@ -57,7 +58,22 @@ describe('ROLLBACK_ORIGIN — paired-write order property', () => {
     }, ROLLBACK_ORIGIN);
   });
 
-  test('Y.Text is mutated before XmlFragment under ROLLBACK_ORIGIN', () => {
+  test('PRODUCTION PRIMITIVE: Y.Text is mutated before XmlFragment when handleRollback uses replaceRawBody under ROLLBACK_ORIGIN', () => {
+    const events: string[] = [];
+    const xmlFragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+    xmlFragment.observeDeep(() => events.push('xml'));
+    ytext.observe(() => events.push('ytext'));
+
+    doc.transact(() => {
+      replaceRawBody(doc, '# Historical\n\nRestored body content\n');
+    }, ROLLBACK_ORIGIN);
+
+    expect(events.length).toBeGreaterThanOrEqual(2);
+    expect(events.indexOf('ytext')).toBeLessThan(events.indexOf('xml'));
+  });
+
+  test('Y.Text is mutated before XmlFragment under ROLLBACK_ORIGIN (inline twin parity check)', () => {
     const events: string[] = [];
     const xmlFragment = doc.getXmlFragment('default');
     const ytext = doc.getText('source');

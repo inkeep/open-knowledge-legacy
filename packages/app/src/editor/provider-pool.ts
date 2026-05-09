@@ -22,11 +22,6 @@ import { isSystemDoc } from './is-system-doc';
 import { setupObservers } from './observers';
 import { BridgeSetupError, invalidateSyncPromise, rejectSyncPromise } from './sync-promise';
 
-/**
- * Opaque Y.Doc transaction origin applied when the pool replays a buffered
- * update onto a freshly-recycled provider. Lets tests and future observers
- * distinguish replay writes from user edits / server sync deliveries.
- */
 export const TAB_REPLAY_ORIGIN = Object.freeze({ kind: 'tab-replay' } as const);
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
@@ -138,18 +133,24 @@ const FORCE_SYNC_INTERVAL_MS = 5_000;
 
 const MAX_BUFFER_BYTES = 1 * 1024 * 1024;
 
+/**
+ * Default pool capacity. Exported so the single point of truth lives in this
+ * module (the pool that owns the constraint), and so callers that construct
+ * a `ProviderPool` can reference the same name rather than a magic literal.
+ *
+ * Coupled to `ACTIVITY_MOUNT_LIMIT = 3` (exported from `EditorActivityPool.tsx`)
+ * per SPEC.md §10 DX9 / precedent #18(c): `MAX_POOL` bounds how many warm
+ * providers we keep; `ACTIVITY_MOUNT_LIMIT` bounds how many editor subtrees
+ * are Activity-mounted inside those providers. The two constraints are
+ * intentionally independent — pool-resident-but-not-Activity-mounted docs
+ * keep their warm provider (≈5–10 MB) for fast Suspense-gated remount
+ * without paying per-editor memory or observer-CPU cost.
+ *
+ * Changing either constant is an ASK_FIRST boundary (spec §16 / CLAUDE.md
+ * scope). If one moves, audit the other for sympathetic impact.
+ */
 export const MAX_POOL = readNumericOverride('MAX_POOL', 10);
 
-/**
- * Build the stringified JSON `token` HocuspocusProvider sends on every
- * connect, or `undefined` when no claim is set. Returning `undefined`
- * (rather than `'{}'`) keeps the wire shape identical for anonymous
- * connections — older servers that don't parse the token see no change.
- *
- * Exported for the mechanism-only unit tests in `provider-pool.test.ts`.
- * Callers inside this module pass the current pool state; external
- * callers should not depend on this symbol.
- */
 export function buildAuthToken(
   tabIdentity: { principalId: string; tabSessionId: string } | null,
   expectedServerInstanceId: string | null,
@@ -170,14 +171,32 @@ export function buildAuthToken(
   return JSON.stringify(claim);
 }
 
+/**
+ * LRU pool of HocuspocusProvider instances. Plain TS class — not a React hook.
+ * Owns WebSocket connections, survives React re-renders.
+ *
+ * **Contract — `wsUrl` is frozen at construction ("first-URL wins").**
+ * `DocumentContext` instantiates the module-level singleton the first time
+ * `useCollabUrl()` resolves a non-null URL. If `/api/config` later reports a
+ * different URL (e.g. `ok start` crashed and was respawned on a different
+ * kernel-allocated port, OR the user clicks the ConnectingBanner's Retry
+ * after a terminal-state transition and `/api/config` now returns a new
+ * port), this pool continues targeting the original URL.
+ *
+ * Why we accept this today: the built-in HocuspocusProvider exponential
+ * backoff + our 4s recycle debounce handle server-restart-on-same-port
+ * transparently, which is the common case. Port-change-on-restart is rare
+ * enough that a full page reload is an acceptable recovery path — and
+ * tearing down live providers mid-session would require deciding about
+ * unsaved-CRDT-state preservation, which is out of scope for the
+ * Zero-Ceremony Resume bet.
+ *
+ * The next maintainer who wants dynamic `wsUrl` updates must: (a) add a
+ * tear-down + rebuild step keyed on `wsUrl` changes, (b) decide how to
+ * reconcile any pending CRDT ops buffered during the disconnect, and (c)
+ * extend the multi-client test harness with a port-change scenario.
+ */
 export class ProviderPool {
-  /**
-   * Internal mutable map. External callers see the read-only `entries`
-   * getter below — `readonly` on the field would prevent reassignment
-   * but not Map-level mutation (`set`/`delete`/`clear`). The getter
-   * widens the type to `ReadonlyMap` so accidental external writes fail
-   * compile.
-   */
   private readonly _entries = new Map<string, PoolEntry>();
   get entries(): ReadonlyMap<string, PoolEntry> {
     return this._entries;

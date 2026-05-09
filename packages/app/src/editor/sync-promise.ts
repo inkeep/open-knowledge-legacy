@@ -1,25 +1,3 @@
-/**
- * syncPromise — React-19-idiomatic subscription-to-event primitive that bridges
- * HocuspocusProvider's `synced` event to React Suspense via `use(promise)`.
- *
- * Module-level cache by docName. Promise identity is stable across renders —
- * React Compiler-safe because module state is out of compiler scope, and
- * `use(promise)` requires the same reference across remounts / StrictMode
- * double-invoke to avoid infinite suspension.
- *
- * Lifecycle:
- *   - `syncPromise(docName, provider)` creates or returns the cached promise.
- *     Attaches `synced` + `close` listeners and starts a 30s timeout.
- *   - On `synced`: resolve + auto-cleanup (listeners off, timeout cleared, cache entry removed).
- *   - On pre-sync `close`: reject with PreSyncDisconnectError + cleanup.
- *   - On 30s timeout: reject with SyncTimeoutError + cleanup.
- *   - `invalidateSyncPromise(docName)` tears the entry down without rejecting
- *     (provider-pool calls this on destroy/recycle; the next `syncPromise` call
- *     creates a fresh promise).
- *
- * See SPEC.md §9 (Proposed solution) + §10 D2 (hand-rolled use(promise) rationale).
- */
-
 import type { HocuspocusProvider, onCloseParameters } from '@hocuspocus/provider';
 import { mark } from '@/lib/perf';
 
@@ -156,6 +134,47 @@ function detach(entry: CacheEntry): void {
   entry.provider.off('close', entry.onClose);
 }
 
+/**
+ * Returns the cached promise for `docName`, creating one if absent.
+ *
+ * **Cache lifecycle:** entries persist across resolution and rejection — they
+ * are removed only by `invalidateSyncPromise` (or by `ProviderPool.destroyEntry`
+ * which calls invalidate). This is load-bearing for two distinct correctness
+ * properties:
+ *
+ *   1. **Rejection survives React re-render.** When a syncPromise rejects, the
+ *      DocumentBoundary's `use()` re-throws and the React error boundary
+ *      schedules a re-render. During that re-render, DocumentBoundary calls
+ *      `syncPromise(docName, provider)` again. If the cache had been cleared
+ *      on rejection, syncPromise would create a NEW promise — and for a
+ *      warm provider (`provider.synced=true`), the warm-path would resolve
+ *      immediately, masking the prior rejection. The boundary would never
+ *      catch and the user would see a broken editor instead of the error UI.
+ *      Keeping the rejected promise in cache means React's `use()` sees the
+ *      same `.status='rejected'` thenable and throws synchronously.
+ *
+ *   2. **Warm-path stability.** Repeat calls return the same resolved promise
+ *      reference — once React has marked it `.status='fulfilled'`, subsequent
+ *      `use()` calls short-circuit without a Suspense cycle.
+ *
+ * The promise resolves when the given provider next emits `synced`, rejects
+ * with `PreSyncDisconnectError` if the provider emits `close` before `synced`,
+ * and rejects with `SyncTimeoutError` after 30s. Call `invalidateSyncPromise`
+ * to tear down (drops the entry; the orphaned promise neither resolves nor
+ * rejects further).
+ *
+ * **Warm-provider fast path:** if the provider has already synced (e.g.
+ * pool-resident from a prior mount), `provider.synced` is true and the
+ * `'synced'` event has already fired and will not fire again — Hocuspocus's
+ * `set synced(value)` is a no-op when the value is unchanged
+ * (`@hocuspocus/provider/src/HocuspocusProvider.ts:387-397`). Returning a
+ * pre-resolved promise here is what makes the "cold mount, warm content" path
+ * (precedent #18(c), spec G1+G5) work — without this gate, every
+ * Activity-evicted-but-pool-resident revisit would hang for 30s waiting on a
+ * listener that can never fire. The first call still pays one Suspense cycle
+ * (Promise.resolve has no React `.status` field initially); subsequent calls
+ * return the same cached reference and short-circuit.
+ */
 export function syncPromise(docName: string, provider: HocuspocusProvider): Promise<void> {
   const existing = cache.get(docName);
   if (existing) return existing.promise;

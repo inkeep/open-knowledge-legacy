@@ -5,10 +5,10 @@ const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import simpleGit from 'simple-git';
 import { __resetQuiescenceForTests, __setQuiescentOverrideForTests } from './bridge-quiescence.ts';
 import { __resetBridgeWatchdogForTests } from './bridge-watchdog.ts';
-import { mdManager } from './md-manager.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
 import { getReconciledBase } from './persistence.ts';
 import { createServer } from './server-factory.ts';
@@ -486,7 +486,6 @@ describe('Quiescence gate via direct counter manipulation', () => {
 describe('Pre-write sanity check: divergence at persistence-fire time', () => {
   let fixture: Fixture;
   let originalNodeEnv: string | undefined;
-  let serializeSpy: ReturnType<typeof spyOn> | undefined;
 
   beforeEach(async () => {
     fixture = await setupFixture();
@@ -495,7 +494,6 @@ describe('Pre-write sanity check: divergence at persistence-fire time', () => {
   });
 
   afterEach(() => {
-    serializeSpy?.mockRestore();
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = originalNodeEnv;
     fixture.cleanup();
@@ -513,14 +511,8 @@ describe('Pre-write sanity check: divergence at persistence-fire time', () => {
       warnings.push(msg);
     };
 
-    const realSerialize = mdManager.serialize.bind(mdManager);
-    serializeSpy = spyOn(mdManager, 'serialize').mockImplementation((json: unknown) => {
-      const stack = new Error().stack ?? '';
-      if (stack.includes('storeDocumentNow')) {
-        return 'INJECTED-DIVERGENT-CANONICAL\n';
-      }
-      return realSerialize(json as never);
-    });
+    const testMdManager = new MarkdownManager({ extensions: sharedExtensions });
+    spyOn(testMdManager, 'serialize').mockImplementation(() => 'INJECTED-DIVERGENT-CANONICAL\n');
 
     const server = createServer({
       contentDir: fixture.contentDir,
@@ -529,6 +521,7 @@ describe('Pre-write sanity check: divergence at persistence-fire time', () => {
       debounce: 100,
       maxDebounce: 500,
       gitEnabled: false,
+      mdManager: testMdManager,
     });
     try {
       await server.ready;
@@ -582,13 +575,9 @@ describe('Pre-write sanity check: divergence at persistence-fire time', () => {
       warnings.push(msg);
     };
 
-    const realSerialize = mdManager.serialize.bind(mdManager);
-    serializeSpy = spyOn(mdManager, 'serialize').mockImplementation((json: unknown) => {
-      const stack = new Error().stack ?? '';
-      if (stack.includes('storeDocumentNow')) {
-        throw new Error('synthetic schema-rejection: invalid Y.XmlElement type');
-      }
-      return realSerialize(json as never);
+    const testMdManager = new MarkdownManager({ extensions: sharedExtensions });
+    spyOn(testMdManager, 'serialize').mockImplementation(() => {
+      throw new Error('synthetic schema-rejection: invalid Y.XmlElement type');
     });
 
     const server = createServer({
@@ -598,6 +587,7 @@ describe('Pre-write sanity check: divergence at persistence-fire time', () => {
       debounce: 100,
       maxDebounce: 500,
       gitEnabled: false,
+      mdManager: testMdManager,
     });
     try {
       await server.ready;

@@ -1,38 +1,3 @@
-/**
- * Cold-mount instrumentation — prototype-level monkey-patches that emit
- * `ok/cold/*` perf marks around the synchronous cost centers of the
- * `<TiptapEditor>` cold-mount call chain on large docs.
- *
- * Wrapped entry points:
- *   - `Editor.prototype.mount`                → `ok/cold/editor-mount`
- *   - `Editor.prototype.createView`           → `ok/cold/editor-create-view`
- *   - `Editor.prototype.createNodeViews`      → `ok/cold/create-node-views`
- *   - `EditorView.prototype.updateState`      → `ok/cold/pm-update-state` (per call)
- *   - `EditorView.prototype.setProps`         → `ok/cold/pm-set-props` (per call)
- *   - `ProsemirrorBinding.prototype._forceRerender` → `ok/cold/force-rerender`
- *   - `PureEditorContent.prototype.init`      → `ok/cold/ec-init`
- *
- * Per-component extensions — gated by `instrumentationDisabled()` (PROD
- * short-circuit, same shape as `__okPerfCounters` elsewhere):
- *   - Per-NodeView-factory          → `ok/cold/nodeview-factory-{nodeType}` (per call)
- *   - Per-decoration-plugin         → `ok/cold/decoration-{key}` (per call)
- *   - appendChild → first paint     → `ok/cold/append-to-paint` (once per cold mount)
- *   - Per-extension lifecycle hooks → `ok/cold/ext-{name}-{hook}` via wrapExtensionsWithTiming
- *
- * Also installs a PerformanceObserver for `paint` entries that re-emits
- * first-paint / first-contentful-paint via marks so they land in the
- * collector's data stream alongside the monkey-patched spans.
- *
- * The patch is a DIAGNOSTIC artifact — called ONCE from `main.tsx` before
- * any editor constructs. Default DEV/test only; can also install in PROD
- * builds by setting `VITE_OK_PERF_INSTRUMENT=1` so ship-gate measurement can
- * re-baseline against the true user-visible attack surface (single source
- * of truth: `shouldInstallColdMountInstrumentation`). Per-component
- * extensions delegate to the same gate via `instrumentationDisabled()` so
- * accidental hot-path invocation in disabled-PROD is a no-op with zero
- * overhead.
- */
-
 import { type AnyExtension, Editor } from '@tiptap/core';
 import type { Plugin } from '@tiptap/pm/state';
 import { EditorView, type NodeViewConstructor } from '@tiptap/pm/view';

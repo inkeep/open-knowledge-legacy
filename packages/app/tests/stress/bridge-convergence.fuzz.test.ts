@@ -110,15 +110,6 @@ type Op =
 
 const WORDS = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'];
 
-/**
- * Each content-producing op carries a unique marker string (e.g., `M7-delta golf`)
- * so the content-preservation oracle can distinguish "user's op-7 text survived"
- * from "another op produced the same `delta golf` phrase by coincidence."
- *
- * Markers use format `M<opIdx>-<text>` so `find`/`replace` strings in agent-patch
- * never accidentally match another op's marker prefix (agent-patch generators
- * use raw WORDS entries without the `M<N>-` prefix).
- */
 function randomShortText(rng: Rng): string {
   const count = rng.nextInt(3) + 1;
   const words: string[] = [];
@@ -446,8 +437,6 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       ? [FIXED_SEED]
       : Array.from({ length: SEED_COUNT }, (_, i) => Date.now() + i);
 
-  /**
-   */
   test.each(seeds)('bridge-convergence seed %d', async (seed) => {
     let setupOk = false;
     let clients: Awaited<ReturnType<typeof createTestClients>> = [] as never;

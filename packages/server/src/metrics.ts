@@ -197,6 +197,17 @@ export interface ReconciliationMetrics {
    *  fragment side is producing values the canonical serializer rejects —
    *  worth investigating before the divergence becomes systemic. */
   persistenceSanityCheckSerializeFailures: number;
+  /** Audit-framework phase 2 spec FR-9 — count of deferred-drain cycles in
+   *  `flushDeferredStores` where `storeDocumentNow` threw past its inner
+   *  catches. The deferred drain runs after a quiescence-gate timeout post-
+   *  burst; the worst-case frequency is tens-per-day, so there is no rate-
+   *  limit gate (suppressing real signal during a disk-failure outage would
+   *  be the wrong default). Bounded-cardinality `errorClass` lives on the
+   *  structured `deferred-store-failed` event, not on a per-class counter
+   *  fan-out. Steady-state target ~0; non-zero growth on the `disk-write`
+   *  class is the operator-visible signal of an unhealthy filesystem; growth
+   *  on `unknown` warrants triage on whether the classifier needs a new bin. */
+  deferredStoreFailures: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -240,6 +251,7 @@ const counters: ReconciliationMetrics = {
   persistenceReconciliationFailures: 0,
   externalChangeHandlerErrors: 0,
   persistenceSanityCheckSerializeFailures: 0,
+  deferredStoreFailures: 0,
 };
 
 export function incrementReconcile(): void {
@@ -369,6 +381,10 @@ export function incrementPersistenceSanityCheckSerializeFailures(): void {
   counters.persistenceSanityCheckSerializeFailures++;
 }
 
+export function incrementDeferredStoreFailures(): void {
+  counters.deferredStoreFailures++;
+}
+
 export function incrementCollabSocketFilteredError(code: 'EPIPE' | 'ECONNRESET'): void {
   if (code === 'EPIPE') counters.collabSocketEpipeCount++;
   else counters.collabSocketEconnresetCount++;
@@ -451,4 +467,5 @@ export function resetMetrics(): void {
   counters.persistenceReconciliationFailures = 0;
   counters.externalChangeHandlerErrors = 0;
   counters.persistenceSanityCheckSerializeFailures = 0;
+  counters.deferredStoreFailures = 0;
 }

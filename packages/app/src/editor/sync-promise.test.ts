@@ -1,10 +1,3 @@
-/**
- * Unit tests for sync-promise: module-level cache + timeout + invalidation.
- *
- * These tests drive a real HocuspocusProvider pointed at a dummy WS URL
- * (same pattern as provider-pool.test.ts). The provider never connects,
- * but emitting `synced` / `close` directly exercises the listener wiring.
- */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {

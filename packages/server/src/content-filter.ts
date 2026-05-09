@@ -1,23 +1,3 @@
-/**
- * Unified content filter — encapsulates exclusion logic in one module.
- *
- * Pattern sources, all unioned in a single `ignore`-lib instance so cross-source
- * `!`-negation works (e.g. a `!secret.md` line in `.okignore` re-includes a
- * file that `.gitignore` excluded):
- *   - root `.gitignore` (project-relative)
- *   - root `.okignore`  (project-relative)
- *   - nested `.gitignore` and `.okignore` files at any folder depth
- *   - the `.git` directory (always excluded — `node-ignore` does not auto-add it)
- *
- * Extension gating happens upstream via `isSupportedDocFile()`
- * (`packages/server/src/doc-extensions.ts`); exclusions live in `.okignore`
- * (no YAML include/exclude keys).
- *
- * Used by the file watcher to decide which files belong in the content index
- * and by the CLI preview helper to enumerate the same set without booting the
- * server.
- */
-
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readdir, readFile as readFileAsync } from 'node:fs/promises';
 import { dirname, extname, join, relative } from 'node:path';
@@ -28,6 +8,37 @@ import { isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import { getLogger } from './logger.ts';
 import { withSpan } from './telemetry.ts';
 
+/**
+ * Directories that are always skipped during traversal, independent of
+ * `.gitignore` / `.okignore`.
+ *
+ * Criteria: never contains user-authored markdown AND either (a) uses symlinks
+ * aggressively, (b) is a massive tree, or (c) is a framework/tool cache.
+ *
+ * Package managers / language runtimes:
+ *   node_modules  — pnpm broken symlinks crash statSync; massive tree
+ *   .venv / venv / env — Python virtualenvs
+ *   __pycache__   — Python bytecode
+ *   vendor        — Go / PHP / Ruby vendored deps
+ *
+ * Build output:
+ *   dist / build / out / output — compiled assets
+ *   .next / .nuxt / .svelte-kit / .astro — framework build caches
+ *   .turbo / .cache / .parcel-cache     — build tool caches
+ *   coverage                            — test coverage reports
+ *
+ * VCS / per-project state:
+ *   .git — already in the ig instance; hardcoded here for the fast-path
+ *   .ok  — per-project state dir; the committed `.ok/.gitignore` already
+ *          self-ignores its contents for git, but adding it here lets the
+ *          walker skip the descent entirely
+ *
+ * OS-managed directories (macOS):
+ *   Library     — application data, caches, preferences; ~macOS only but safe
+ *                 to skip on all platforms (no project ever authors markdown here)
+ *   Applications — macOS app bundles; never user markdown
+ *   .Trash      — OS recycle bin; symlink-heavy, contents irrelevant
+ */
 const BUILTIN_SKIP_DIRS = new Set([
   'node_modules',
   '.venv',

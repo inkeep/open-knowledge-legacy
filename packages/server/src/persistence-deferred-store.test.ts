@@ -1,11 +1,15 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { BridgeInvariantViolationError } from '@inkeep/open-knowledge-core';
 import * as Y from 'yjs';
 import { composeAndWriteRawBody } from './bridge-intake.ts';
 import { __setQuiescentOverrideForTests } from './bridge-quiescence.ts';
+import * as fsTraced from './fs-traced.ts';
+import { getMetrics, resetMetrics } from './metrics.ts';
 import {
+  classifyDeferredStoreError,
   createPersistenceExtension,
   getReconciledBase,
   setBatchInProgress,
@@ -427,5 +431,315 @@ describe('Y.Text-is-truth wiring (FR-33 / FR-35)', () => {
     expect(base).toBe('__cold__\n');
     expect(base).not.toContain('**cold**');
     document.destroy();
+  });
+});
+
+describe('FR-9 — deferred-store-failed event + counter', () => {
+  let tmpDir: string;
+  let warnSpy: ReturnType<typeof spyOn>;
+  let warnings: string[];
+
+  function findEventLines(eventName: string): Array<Record<string, unknown>> {
+    const matches: Array<Record<string, unknown>> = [];
+    for (const line of warnings) {
+      if (!line.includes(`"event":"${eventName}"`)) continue;
+      try {
+        matches.push(JSON.parse(line) as Record<string, unknown>);
+      } catch {}
+    }
+    return matches;
+  }
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'ok-fr9-deferred-drain-'));
+    mkdirSync(tmpDir, { recursive: true });
+    setBatchInProgress(false);
+    switchReconciledBaseScope('main');
+    resetMetrics();
+    warnings = [];
+    warnSpy = spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    });
+  });
+
+  afterEach(() => {
+    setBatchInProgress(false);
+    switchReconciledBaseScope('main');
+    warnSpy.mockRestore();
+    delete process.env.OK_TELEMETRY_VERBOSE;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('emits deferred-store-failed with errorClass=disk-write under default redaction', async () => {
+    const docName = 'fr9-disk-write-default';
+    const docPath = join(tmpDir, `${docName}.md`);
+    writeFileSync(docPath, 'initial\n', 'utf-8');
+    const persistence = createPersistenceExtension({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      gitEnabled: false,
+    });
+    const document = new Y.Doc();
+    await loadDocument(persistence, document, docName);
+    document.transact(() => replaceDocParagraph(document, 'queued edit'), BROWSER_ORIGIN);
+
+    setBatchInProgress(true);
+    await storeDocument(persistence, document, docName);
+    setBatchInProgress(false);
+
+    rmSync(docPath, { force: true });
+    mkdirSync(docPath);
+
+    const before = getMetrics().deferredStoreFailures;
+    await persistence.flushDeferredStores('within-branch');
+    const after = getMetrics().deferredStoreFailures;
+
+    expect(after).toBe(before + 1);
+
+    const events = findEventLines('deferred-store-failed');
+    expect(events).toHaveLength(1);
+    const ev = events[0] as Record<string, unknown>;
+    expect(ev.event).toBe('deferred-store-failed');
+    expect(ev['doc.name']).toBe(docName);
+    expect(ev.errorClass).toMatch(/^(disk-write|traced-rename)$/);
+    expect(typeof ev.errorMessageHash).toBe('string');
+    expect((ev.errorMessageHash as string).length).toBe(8); // FNV-1a 32-bit hex
+    expect(typeof ev.timestamp).toBe('string');
+    expect(ev.errorMessage).toBeUndefined();
+
+    document.destroy();
+  });
+
+  test('OK_TELEMETRY_VERBOSE=1 surfaces raw errorMessage on the event', async () => {
+    process.env.OK_TELEMETRY_VERBOSE = '1';
+    const docName = 'fr9-disk-write-verbose';
+    const docPath = join(tmpDir, `${docName}.md`);
+    writeFileSync(docPath, 'initial\n', 'utf-8');
+    const persistence = createPersistenceExtension({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      gitEnabled: false,
+    });
+    const document = new Y.Doc();
+    await loadDocument(persistence, document, docName);
+    document.transact(() => replaceDocParagraph(document, 'queued edit'), BROWSER_ORIGIN);
+
+    setBatchInProgress(true);
+    await storeDocument(persistence, document, docName);
+    setBatchInProgress(false);
+
+    rmSync(docPath, { force: true });
+    mkdirSync(docPath);
+
+    await persistence.flushDeferredStores('within-branch');
+
+    const events = findEventLines('deferred-store-failed');
+    expect(events).toHaveLength(1);
+    const ev = events[0] as Record<string, unknown>;
+    expect(typeof ev.errorMessage).toBe('string');
+    expect((ev.errorMessage as string).length).toBeGreaterThan(0);
+    expect(typeof ev.errorMessageHash).toBe('string');
+
+    document.destroy();
+  });
+
+  test('classifier failure emits deferred-store-classifier-failed and outer event with errorClass=unknown', async () => {
+    const docName = 'fr9-classifier-fail';
+    const docPath = join(tmpDir, `${docName}.md`);
+    writeFileSync(docPath, 'initial\n', 'utf-8');
+    const persistence = createPersistenceExtension({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      gitEnabled: false,
+    });
+    const document = new Y.Doc();
+    await loadDocument(persistence, document, docName);
+    document.transact(() => replaceDocParagraph(document, 'queued edit'), BROWSER_ORIGIN);
+
+    setBatchInProgress(true);
+    await storeDocument(persistence, document, docName);
+    setBatchInProgress(false);
+
+    const renameSpy = spyOn(fsTraced, 'tracedRename').mockImplementation(async () => {
+      const malformed = Object.create(Error.prototype) as Error & { name: string };
+      Object.defineProperty(malformed, 'message', { value: 'malformed-error', enumerable: true });
+      Object.defineProperty(malformed, 'name', { value: 'MalformedError', enumerable: true });
+      Object.defineProperty(malformed, 'code', {
+        get: () => {
+          throw new Error('classifier-trip getter');
+        },
+        enumerable: true,
+      });
+      throw malformed;
+    });
+
+    try {
+      const before = getMetrics().deferredStoreFailures;
+      await persistence.flushDeferredStores('within-branch');
+      const after = getMetrics().deferredStoreFailures;
+      expect(after).toBe(before + 1);
+
+      const classifierEvents = findEventLines('deferred-store-classifier-failed');
+      expect(classifierEvents.length).toBeGreaterThanOrEqual(1);
+      const cev = classifierEvents[0] as Record<string, unknown>;
+      expect(cev['doc.name']).toBe(docName);
+      expect(typeof cev.classifyErrorHash).toBe('string');
+      expect((cev.classifyErrorHash as string).length).toBe(8);
+      expect(cev.classifyErrorMessage).toBeUndefined();
+
+      const outerEvents = findEventLines('deferred-store-failed');
+      expect(outerEvents.length).toBeGreaterThanOrEqual(1);
+      const oev = outerEvents[0] as Record<string, unknown>;
+      expect(oev['doc.name']).toBe(docName);
+      expect(oev.errorClass).toBe('unknown');
+      expect(typeof cev.errorMessageHash).toBe('string');
+      expect((cev.errorMessageHash as string).length).toBe(8);
+      expect(cev.errorMessageHash).toBe(oev.errorMessageHash);
+    } finally {
+      renameSpy.mockRestore();
+      document.destroy();
+    }
+  });
+
+  test('throwing `.message` getter is caught by the rawMessage extraction guard (mirror of classifier `.code`-throws path)', async () => {
+    const docName = 'fr9-message-getter-throws';
+    const docPath = join(tmpDir, `${docName}.md`);
+    writeFileSync(docPath, 'initial\n', 'utf-8');
+    const persistence = createPersistenceExtension({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      gitEnabled: false,
+    });
+    const document = new Y.Doc();
+    await loadDocument(persistence, document, docName);
+    document.transact(() => replaceDocParagraph(document, 'queued edit'), BROWSER_ORIGIN);
+
+    setBatchInProgress(true);
+    await storeDocument(persistence, document, docName);
+    setBatchInProgress(false);
+
+    const renameSpy = spyOn(fsTraced, 'tracedRename').mockImplementation(async () => {
+      const malformed = Object.create(Error.prototype) as Error & { name: string };
+      Object.defineProperty(malformed, 'name', { value: 'MalformedError', enumerable: true });
+      Object.defineProperty(malformed, 'message', {
+        get: () => {
+          throw new Error('message-trip getter');
+        },
+        enumerable: true,
+      });
+      throw malformed;
+    });
+
+    try {
+      const before = getMetrics().deferredStoreFailures;
+      await persistence.flushDeferredStores('within-branch');
+      const after = getMetrics().deferredStoreFailures;
+      expect(after).toBe(before + 1);
+
+      const outerEvents = findEventLines('deferred-store-failed');
+      expect(outerEvents.length).toBeGreaterThanOrEqual(1);
+      const oev = outerEvents[0] as Record<string, unknown>;
+      expect(oev['doc.name']).toBe(docName);
+      expect(typeof oev.errorMessageHash).toBe('string');
+      expect((oev.errorMessageHash as string).length).toBe(8);
+    } finally {
+      renameSpy.mockRestore();
+      document.destroy();
+    }
+  });
+
+  test('classifier failure with OK_TELEMETRY_VERBOSE=1 surfaces raw classifyErrorMessage', async () => {
+    process.env.OK_TELEMETRY_VERBOSE = '1';
+    const docName = 'fr9-classifier-fail-verbose';
+    const docPath = join(tmpDir, `${docName}.md`);
+    writeFileSync(docPath, 'initial\n', 'utf-8');
+    const persistence = createPersistenceExtension({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      gitEnabled: false,
+    });
+    const document = new Y.Doc();
+    await loadDocument(persistence, document, docName);
+    document.transact(() => replaceDocParagraph(document, 'queued edit'), BROWSER_ORIGIN);
+
+    setBatchInProgress(true);
+    await storeDocument(persistence, document, docName);
+    setBatchInProgress(false);
+
+    const renameSpy = spyOn(fsTraced, 'tracedRename').mockImplementation(async () => {
+      const malformed = Object.create(Error.prototype) as Error & { name: string };
+      Object.defineProperty(malformed, 'message', {
+        value: 'malformed-error-verbose',
+        enumerable: true,
+      });
+      Object.defineProperty(malformed, 'name', { value: 'MalformedError', enumerable: true });
+      Object.defineProperty(malformed, 'code', {
+        get: () => {
+          throw new Error('classifier-trip getter');
+        },
+        enumerable: true,
+      });
+      throw malformed;
+    });
+
+    try {
+      await persistence.flushDeferredStores('within-branch');
+
+      const classifierEvents = findEventLines('deferred-store-classifier-failed');
+      expect(classifierEvents.length).toBeGreaterThanOrEqual(1);
+      const cev = classifierEvents[0] as Record<string, unknown>;
+      expect(typeof cev.classifyErrorMessage).toBe('string');
+      expect(cev.classifyErrorMessage).toBe('classifier-trip getter');
+      expect(typeof cev.classifyErrorHash).toBe('string');
+      expect((cev.classifyErrorHash as string).length).toBe(8);
+    } finally {
+      renameSpy.mockRestore();
+      document.destroy();
+    }
+  });
+});
+
+describe('FR-9 — classifyDeferredStoreError behavior', () => {
+  test('symlink-escape errors classify as disk-write', () => {
+    const err = new Error('symlink-escape: /a resolves to /etc/passwd outside /content');
+    expect(classifyDeferredStoreError(err)).toBe('disk-write');
+  });
+
+  test('ErrnoException with rename in message classifies as traced-rename', () => {
+    const err = Object.assign(new Error('EISDIR: illegal operation on a directory, rename'), {
+      code: 'EISDIR',
+    });
+    expect(classifyDeferredStoreError(err)).toBe('traced-rename');
+  });
+
+  test('ErrnoException without rename in message classifies as disk-write', () => {
+    const err = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    expect(classifyDeferredStoreError(err)).toBe('disk-write');
+  });
+
+  test('BridgeInvariantViolationError instances classify as serialize', () => {
+    const err = new BridgeInvariantViolationError({
+      site: 'persistence',
+      ytextSnapshot: '',
+      fragmentMdSnapshot: '',
+      unifiedDiff: '',
+      stack: undefined,
+    });
+    expect(classifyDeferredStoreError(err)).toBe('serialize');
+  });
+
+  test('non-instance error with matching name classifies as unknown (instanceof contract)', () => {
+    const err = Object.assign(new Error('bridge'), { name: 'BridgeInvariantViolationError' });
+    expect(classifyDeferredStoreError(err)).toBe('unknown');
+  });
+
+  test('plain Error classifies as unknown', () => {
+    expect(classifyDeferredStoreError(new Error('something else'))).toBe('unknown');
+  });
+
+  test('null and non-object throws classify as unknown', () => {
+    expect(classifyDeferredStoreError(null)).toBe('unknown');
+    expect(classifyDeferredStoreError('string-throw')).toBe('unknown');
+    expect(classifyDeferredStoreError(42)).toBe('unknown');
   });
 });
