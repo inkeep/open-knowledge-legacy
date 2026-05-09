@@ -5381,11 +5381,6 @@ Homepage: https://yjs.dev
 
 Copyright (c) 2014 - Kevin Jahns <kevin.jahns@rwth-aachen.de>. - Chair of Computer Science 5 (Databases & Information Systems), RWTH Aachen University, Germany
 
-### `y-prosemirror@1.3.7`
-Homepage: https://github.com/yjs/y-prosemirror#readme
-
-Copyright (c) 2019 Kevin Jahns <kevin.jahns@protonmail.com>.
-
 ### `y-protocols@1.0.7`
 Homepage: https://github.com/yjs/y-protocols#readme
 

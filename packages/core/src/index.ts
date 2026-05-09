@@ -236,6 +236,7 @@ export {
   withFences,
 } from './frontmatter/yaml-codec.ts';
 export {
+  assertNeverUrnIpcLookup,
   buildClaudeAiWebUrl,
   buildClaudeUrl,
   buildCodexUrl,
@@ -247,7 +248,13 @@ export {
   type HandoffPayload,
   type HandoffTarget,
   type InstallState,
+  type IpcChannelReason,
+  type IpcChannelWithUrn,
+  lookupUrnInRegistry,
   type TargetData,
+  URN_HTTP_ONLY,
+  URN_IPC_REGISTRY,
+  type UrnIpcLookup,
 } from './handoff/index.ts';
 export {
   HTML_MAX_BYTES,

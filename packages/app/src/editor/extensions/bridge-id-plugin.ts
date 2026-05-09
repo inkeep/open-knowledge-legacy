@@ -1,7 +1,7 @@
 import { Extension } from '@tiptap/core';
 import type { EditorState } from '@tiptap/pm/state';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
-import { ySyncPluginKey } from 'y-prosemirror';
+import { ySyncPluginKey } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 
 interface BridgeIdState {

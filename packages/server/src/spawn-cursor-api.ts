@@ -306,7 +306,8 @@ export function isPathWithinDir(
     }
     if (platform !== 'win32' && rel.startsWith('/')) return false;
     return true;
-  } catch {
+  } catch (err) {
+    console.warn('[spawn-cursor] unexpected path-resolution error:', err);
     return false;
   }
 }

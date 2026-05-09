@@ -141,6 +141,8 @@ describe('errorResponse — defense-in-depth branches', () => {
     });
     expect(writeHeadCalls.length).toBe(1);
     expect(writeHeadCalls[0].status).toBe(400);
+    expect(writeHeadCalls[0].headers['Content-Type']).toBe('application/problem+json');
+    expect(writeHeadCalls[0].headers['X-Content-Type-Options']).toBe('nosniff');
     const body = JSON.parse(endCalls[0]);
     expect(body.type).toBe('urn:ok:error:invalid-request');
     expect(body.title).toBe('Bad input.');
@@ -219,12 +221,15 @@ describe('errorResponse — defense-in-depth branches', () => {
       handler: 'test',
       instance: fixedInstance,
       extensions: { circular },
+      extraHeaders: { Allow: 'GET, POST', 'Retry-After': '5' },
     });
 
     expect(writeHeadCalls.length).toBe(1);
     expect(writeHeadCalls[0].status).toBe(500);
     expect(writeHeadCalls[0].headers['Content-Type']).toBe('application/problem+json');
     expect(writeHeadCalls[0].headers['X-Content-Type-Options']).toBe('nosniff');
+    expect(writeHeadCalls[0].headers).not.toHaveProperty('Allow');
+    expect(writeHeadCalls[0].headers).not.toHaveProperty('Retry-After');
     expect(endCalls.length).toBe(1);
     const body = JSON.parse(endCalls[0]);
     expect(body.type).toBe('urn:ok:error:internal-server-error');
