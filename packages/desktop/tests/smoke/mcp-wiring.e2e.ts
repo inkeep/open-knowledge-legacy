@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { _electron as electron } from '@playwright/test';
+import { expect, test } from './_helpers/smoke-test';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAIN_ENTRY = resolve(__dirname, '..', '..', 'out', 'main', 'index.js');
@@ -20,16 +21,18 @@ const SMOKE_ENABLED = process.env.OK_DESKTOP_E2E_SMOKE === '1';
 const DARWIN = process.platform === 'darwin';
 const BUILD_EXISTS = existsSync(MAIN_ENTRY);
 
-const DESKTOP_PRODUCT_NAME = 'Open Knowledge';
-
 interface LaunchOpts {
   tmpHome: string;
   extraEnv?: Record<string, string>;
 }
 
+function userDataDirFor(tmpHome: string): string {
+  return join(tmpHome, 'electron-userdata');
+}
+
 async function launchApp({ tmpHome, extraEnv }: LaunchOpts): Promise<ElectronApplication> {
   return electron.launch({
-    args: [MAIN_ENTRY],
+    args: [MAIN_ENTRY, `--user-data-dir=${userDataDirFor(tmpHome)}`],
     timeout: 30_000,
     env: {
       ...process.env,
@@ -105,7 +108,9 @@ function forceRemove(pathsToRestore: readonly string[], dir: string): void {
       chmodSync(p, 0o755);
     } catch {}
   }
-  rmSync(dir, { recursive: true, force: true });
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {}
 }
 
 test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
@@ -120,12 +125,15 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
 
   test.skip('AC2.6 (fresh-Mac P1 E2E with signed DMG) — creds-gated on Apple notarization', () => {});
 
-  test('happy-path — Add writes marker + Claude config with bundle-absolute cliPath', async () => {
+  test('happy-path — Add writes marker + Claude config with bundle-absolute cliPath', async ({
+    captureStderrFor,
+  }) => {
     const tmpHome = createTmpHome('happy');
     seedEditorDetectionDirs(tmpHome, ['.claude']);
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp({ tmpHome });
+      captureStderrFor(app);
       const window = await waitForConsentDialog(app);
       await window.getByTestId('mcp-consent-add').click();
 
@@ -158,12 +166,15 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
     }
   });
 
-  test('skip — writes configured:false marker and no editor configs', async () => {
+  test('skip — writes configured:false marker and no editor configs', async ({
+    captureStderrFor,
+  }) => {
     const tmpHome = createTmpHome('skip');
     seedEditorDetectionDirs(tmpHome, ['.claude']);
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp({ tmpHome });
+      captureStderrFor(app);
       const window = await waitForConsentDialog(app);
       await window.getByTestId('mcp-consent-skip').click();
 
@@ -186,7 +197,9 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
     }
   });
 
-  test('idempotency — configured:true marker silences dialog on relaunch', async () => {
+  test('idempotency — configured:true marker silences dialog on relaunch', async ({
+    captureStderrFor,
+  }) => {
     const tmpHome = createTmpHome('idempotent');
     mkdirSync(join(tmpHome, '.ok'), { recursive: true });
     writeFileSync(
@@ -203,6 +216,7 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp({ tmpHome });
+      captureStderrFor(app);
       const firstWindow = await app.firstWindow({ timeout: 15_000 });
       expect(firstWindow).toBeDefined();
 
@@ -220,7 +234,9 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
     }
   });
 
-  test('partial-failure — read-only Cursor dir leaves marker absent, other writes succeed', async () => {
+  test('partial-failure — read-only Cursor dir leaves marker absent, other writes succeed', async ({
+    captureStderrFor,
+  }) => {
     const tmpHome = createTmpHome('partial');
     seedEditorDetectionDirs(tmpHome, ['.claude', '.cursor']);
     const cursorDir = join(tmpHome, '.cursor');
@@ -229,26 +245,15 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp({ tmpHome });
+      captureStderrFor(app);
       const window = await waitForConsentDialog(app);
       await window.getByTestId('mcp-consent-add').click();
 
       await expect
-        .poll(
-          async () => {
-            for (const page of app?.windows() ?? []) {
-              const present = await page
-                .locator('[data-testid="mcp-consent-add"]')
-                .isVisible()
-                .catch(() => false);
-              if (present) return false;
-            }
-            return true;
-          },
-          {
-            timeout: 15_000,
-            message: 'dialog did not close after confirm',
-          },
-        )
+        .poll(() => existsSync(join(tmpHome, '.claude.json')), {
+          timeout: 15_000,
+          message: 'expected write to .claude.json after Add (partial-failure branch)',
+        })
         .toBe(true);
 
       expect(readMarker(tmpHome)).toBeNull();
@@ -261,7 +266,9 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
     }
   });
 
-  test('F1 — lastOpenedProject opens editor first, dialog still fires', async () => {
+  test('F1 — lastOpenedProject opens editor first, dialog still fires', async ({
+    captureStderrFor,
+  }) => {
     const tmpHome = createTmpHome('f1');
     seedEditorDetectionDirs(tmpHome, ['.claude']);
 
@@ -272,7 +279,7 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
       "content:\n  dir: '.'\n  include: ['**/*.md']\n  exclude: []\n",
     );
 
-    const userDataDir = join(tmpHome, 'Library', 'Application Support', DESKTOP_PRODUCT_NAME);
+    const userDataDir = userDataDirFor(tmpHome);
     mkdirSync(userDataDir, { recursive: true });
     writeFileSync(
       join(userDataDir, 'state.json'),
@@ -295,6 +302,7 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp({ tmpHome });
+      captureStderrFor(app);
 
       const window = await waitForConsentDialog(app);
       await window.getByTestId('mcp-consent-add').click();

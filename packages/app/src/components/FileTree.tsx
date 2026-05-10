@@ -623,6 +623,8 @@ export interface FileTreeHandle {
   startCreatingFromTemplate(parentDir: string): void;
   expandAll(): void;
   collapseAll(): void;
+  getFolderState(): { folderCount: number; expandedCount: number };
+  subscribe(listener: () => void): () => void;
 }
 
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
@@ -1519,36 +1521,70 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, [model]);
 
-  useImperativeHandle(ref, () => ({
-    startCreating(kind, parentDir) {
-      void startCreating(kind, parentDir);
-    },
-    startCreatingFromTemplate(parentDir) {
-      startCreatingFromTemplate(parentDir);
-    },
-    expandAll() {
-      startTransition(() => {
-        for (const folderPath of folderTreePathsRef.current) {
-          const item = asDirectoryHandle(model.getItem(folderPath));
-          if (item) {
-            item.expand();
+  const folderStateCacheRef = useRef<{ folderCount: number; expandedCount: number }>({
+    folderCount: 0,
+    expandedCount: 0,
+  });
+
+  const startCreatingRef = useRef(startCreating);
+  const startCreatingFromTemplateRef = useRef(startCreatingFromTemplate);
+  useEffect(() => {
+    startCreatingRef.current = startCreating;
+    startCreatingFromTemplateRef.current = startCreatingFromTemplate;
+  });
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      startCreating(kind, parentDir) {
+        void startCreatingRef.current(kind, parentDir);
+      },
+      startCreatingFromTemplate(parentDir) {
+        startCreatingFromTemplateRef.current(parentDir);
+      },
+      expandAll() {
+        startTransition(() => {
+          for (const folderPath of folderTreePathsRef.current) {
+            const item = asDirectoryHandle(model.getItem(folderPath));
+            if (item) {
+              item.expand();
+            }
           }
-        }
-      });
-    },
-    collapseAll() {
-      const activeAncestors = new Set(activeAncestorTreePathsRef.current);
-      startTransition(() => {
-        for (const folderPath of [...folderTreePathsRef.current].reverse()) {
-          if (activeAncestors.has(folderPath)) continue;
-          const item = asDirectoryHandle(model.getItem(folderPath));
-          if (item) {
-            item.collapse();
+        });
+      },
+      collapseAll() {
+        const activeAncestors = new Set(activeAncestorTreePathsRef.current);
+        startTransition(() => {
+          for (const folderPath of [...folderTreePathsRef.current].reverse()) {
+            if (activeAncestors.has(folderPath)) continue;
+            const item = asDirectoryHandle(model.getItem(folderPath));
+            if (item) {
+              item.collapse();
+            }
           }
+        });
+      },
+      getFolderState() {
+        const paths = folderTreePathsRef.current;
+        let expandedCount = 0;
+        for (const p of paths) {
+          if (asDirectoryHandle(model.getItem(p))?.isExpanded()) expandedCount++;
         }
-      });
-    },
-  }));
+        const folderCount = paths.length;
+        const cached = folderStateCacheRef.current;
+        if (cached.folderCount === folderCount && cached.expandedCount === expandedCount) {
+          return cached;
+        }
+        const next = { folderCount, expandedCount };
+        folderStateCacheRef.current = next;
+        return next;
+      },
+      subscribe(listener: () => void) {
+        return model.subscribe(listener);
+      },
+    }),
+    [model],
+  );
 
   async function handleDeleteTargets(targets: FileTreeTarget[]) {
     const firstTarget = targets[0];

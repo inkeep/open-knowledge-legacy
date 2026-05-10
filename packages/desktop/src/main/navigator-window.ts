@@ -1,3 +1,4 @@
+import type { ShowGateRegistry } from './show-gate.ts';
 import type { BrowserWindowLike, WindowManagerDeps } from './window-manager.ts';
 
 export function tryCloseNavigator(
@@ -23,6 +24,7 @@ interface NavigatorDeps {
    *  When set, main uses `loadURL` for HMR; otherwise falls back to `loadFile`. */
   rendererDevUrl?: string | null;
   appVersion: string;
+  showGate: ShowGateRegistry;
 }
 
 export function createNavigatorWindow(deps: NavigatorDeps): BrowserWindowLike {
@@ -37,18 +39,21 @@ export function createNavigatorWindow(deps: NavigatorDeps): BrowserWindowLike {
     ],
     title: 'Open Knowledge',
   });
-  window.once('ready-to-show', () => {
-    window.show?.();
+  const disposeShowGate = deps.showGate.register(window, { kind: 'navigator' });
+  window.on('closed', () => {
+    disposeShowGate();
   });
-  setTimeout(() => {
-    if (window.isDestroyed?.() || window.isVisible?.()) return;
-    console.warn('[main] ready-to-show did not fire within 5s — falling back');
-    window.show?.();
-  }, 5000);
-  if (deps.rendererDevUrl) {
-    void window.loadURL(deps.rendererDevUrl);
-  } else {
-    void window.loadFile(deps.rendererEntryPath);
-  }
+  const loadPromise = deps.rendererDevUrl
+    ? window.loadURL(deps.rendererDevUrl)
+    : window.loadFile(deps.rendererEntryPath);
+  loadPromise.catch((err: unknown) => {
+    console.warn(
+      JSON.stringify({
+        event: 'navigator-load-failed',
+        target: deps.rendererDevUrl ?? deps.rendererEntryPath,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  });
   return window;
 }

@@ -142,6 +142,8 @@ async function installDelayedDesktopSessionBridge(
           authStatus: async () => ({ authenticated: false, host: 'github.com' }),
           authRepos: async () => ({ ok: true, host: 'github.com', repos: [] }),
         },
+        setThemeSource: async () => ({ ok: true as const }),
+        signalThemeApplied: () => {},
       };
       (window as unknown as { okDesktop: typeof okDesktop }).okDesktop = okDesktop;
     },

@@ -12,7 +12,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { _electron as electron } from '@playwright/test';
+import { expect, test } from './_helpers/smoke-test';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAIN_ENTRY = resolve(__dirname, '..', '..', 'out', 'main', 'index.js');
@@ -141,7 +142,9 @@ test.describe('Consent-dialog smoke', () => {
     }
   });
 
-  test('Start Fresh on a non-git folder silently scaffolds .ok/ + .git/ at the picked path', async () => {
+  test('Start Fresh on a non-git folder silently scaffolds .ok/ + .git/ at the picked path', async ({
+    captureStderrFor,
+  }) => {
     const tmpHome = seedTmpHome('start-fresh');
     const projectDir = seedFreshNonGitProject('start-fresh');
     trackForCleanup(tmpHome, projectDir);
@@ -149,6 +152,7 @@ test.describe('Consent-dialog smoke', () => {
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp(tmpHome, { pickedPath: projectDir });
+      captureStderrFor(app);
       const navigator = await findWindowByMode(app, 'navigator');
 
       await navigator.locator('[data-testid="nav-fresh"]').click();
@@ -169,7 +173,7 @@ test.describe('Consent-dialog smoke', () => {
     }
   });
 
-  test('Enter on a focused dialog input fires Start', async () => {
+  test('Enter on a focused dialog input fires Start', async ({ captureStderrFor }) => {
     const tmpHome = seedTmpHome('enter-to-start');
     const projectDir = seedFreshNonGitProject('enter-to-start');
     trackForCleanup(tmpHome, projectDir);
@@ -177,6 +181,7 @@ test.describe('Consent-dialog smoke', () => {
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp(tmpHome, { pickedPath: projectDir });
+      captureStderrFor(app);
       const navigator = await findWindowByMode(app, 'navigator');
 
       await navigator.locator('[data-testid="nav-open"]').click();
@@ -199,7 +204,9 @@ test.describe('Consent-dialog smoke', () => {
     }
   });
 
-  test('Browse button populates content.dir with project-relative path', async () => {
+  test('Browse button populates content.dir with project-relative path', async ({
+    captureStderrFor,
+  }) => {
     const tmpHome = seedTmpHome('browse');
     const projectDir = seedFreshNonGitProject('browse');
     trackForCleanup(tmpHome, projectDir);
@@ -207,6 +214,7 @@ test.describe('Consent-dialog smoke', () => {
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp(tmpHome, { pickedPath: projectDir });
+      captureStderrFor(app);
       const navigator = await findWindowByMode(app, 'navigator');
 
       await navigator.locator('[data-testid="nav-open"]').click();
@@ -227,7 +235,9 @@ test.describe('Consent-dialog smoke', () => {
     }
   });
 
-  test('Pick Existing on a sub-folder of a git repo lands .ok/ at the git root', async () => {
+  test('Pick Existing on a sub-folder of a git repo lands .ok/ at the git root', async ({
+    captureStderrFor,
+  }) => {
     const tmpHome = seedTmpHome('git-root-promote');
     const { repoRoot, subFolder } = seedGitRepoWithSubFolder(tmpHome, 'git-root-promote');
     trackForCleanup(tmpHome);
@@ -235,6 +245,7 @@ test.describe('Consent-dialog smoke', () => {
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp(tmpHome, { pickedPath: subFolder });
+      captureStderrFor(app);
       const navigator = await findWindowByMode(app, 'navigator');
 
       await navigator.locator('[data-testid="nav-open"]').click();

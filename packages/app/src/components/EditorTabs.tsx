@@ -263,10 +263,15 @@ export function EditorTabs() {
 
   if (openTabs.length === 0) return null;
 
+  const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
+
   return (
     <div
       ref={tabListRef}
-      className="ml-2 flex h-12 min-w-0 touch-manipulation flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-fade-mask-x [scrollbar-width:none]"
+      className={cn(
+        'ml-2 flex h-12 min-w-0 touch-manipulation flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-fade-mask-x [scrollbar-width:none]',
+        isElectronHost && '[-webkit-app-region:drag]',
+      )}
       onWheel={scrollTabListOnWheel}
     >
       {openTabs.map((tabId) => {
@@ -285,6 +290,7 @@ export function EditorTabs() {
                 isActive
                   ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
                   : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+                isElectronHost && '[-webkit-app-region:no-drag]',
               )}
               onAuxClick={(event) => {
                 if (event.button !== 1) return;
@@ -354,6 +360,7 @@ export function EditorTabs() {
                 ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
                 : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
               isRenaming && renameError && 'border-destructive',
+              isElectronHost && '[-webkit-app-region:no-drag]',
             )}
             onAuxClick={(event) => {
               if (event.button !== 1) return;

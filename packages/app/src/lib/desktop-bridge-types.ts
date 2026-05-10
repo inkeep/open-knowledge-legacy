@@ -100,6 +100,8 @@ interface OkUpdateStuckHintInfo {
 
 type OkUpdateChannel = 'latest' | 'beta';
 
+type OkThemeSource = 'system' | 'light' | 'dark';
+
 interface OkUpdateDowngradeWarningInfo {
   readonly currentVersion: string;
   readonly targetVersion: string;
@@ -244,6 +246,8 @@ export interface OkDesktopBridge {
   onUpdateDowngradeWarning(cb: (info: OkUpdateDowngradeWarningInfo) => void): OkUnsubscribe;
   onChannelChanged(cb: (info: OkChannelChangedInfo) => void): OkUnsubscribe;
   onDeepLink(cb: (evt: { doc: string }) => void): OkUnsubscribe;
+  setThemeSource(source: OkThemeSource): Promise<{ ok: true }>;
+  signalThemeApplied(opts?: { reducedTransparency?: boolean }): void;
   dialog: {
     openFolder(opts?: { defaultPath?: string }): Promise<string | null>;
     createFolder(): Promise<string | null>;

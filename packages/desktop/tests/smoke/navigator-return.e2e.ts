@@ -33,7 +33,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { _electron as electron } from '@playwright/test';
+import { expect, test } from './_helpers/smoke-test';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAIN_ENTRY = resolve(__dirname, '..', '..', 'out', 'main', 'index.js');
@@ -42,11 +43,14 @@ const SMOKE_ENABLED = process.env.OK_DESKTOP_E2E_SMOKE === '1';
 const DARWIN = process.platform === 'darwin';
 const BUILD_EXISTS = existsSync(MAIN_ENTRY);
 
-const DESKTOP_PRODUCT_NAME = 'Open Knowledge';
-
 interface SeededHome {
   tmpHome: string;
+  userDataDir: string;
   projectDir: string;
+}
+
+function userDataDirFor(tmpHome: string): string {
+  return join(tmpHome, 'electron-userdata');
 }
 
 function seedHomeWithLastOpenedProject(prefix: string): SeededHome {
@@ -57,7 +61,7 @@ function seedHomeWithLastOpenedProject(prefix: string): SeededHome {
     join(projectDir, '.ok', 'config.yml'),
     "content:\n  dir: '.'\n  include: ['**/*.md']\n  exclude: []\n",
   );
-  const userDataDir = join(tmpHome, 'Library', 'Application Support', DESKTOP_PRODUCT_NAME);
+  const userDataDir = userDataDirFor(tmpHome);
   mkdirSync(userDataDir, { recursive: true });
   writeFileSync(
     join(userDataDir, 'state.json'),
@@ -76,12 +80,12 @@ function seedHomeWithLastOpenedProject(prefix: string): SeededHome {
       stuckHintShown: false,
     }),
   );
-  return { tmpHome, projectDir };
+  return { tmpHome, userDataDir, projectDir };
 }
 
 async function launchApp(tmpHome: string): Promise<ElectronApplication> {
   return electron.launch({
-    args: [MAIN_ENTRY],
+    args: [MAIN_ENTRY, `--user-data-dir=${userDataDirFor(tmpHome)}`],
     timeout: 30_000,
     env: {
       ...process.env,
@@ -159,6 +163,12 @@ async function closeAppSafely(app: ElectronApplication | null): Promise<void> {
   } catch {}
 }
 
+function rmTmpHomeSafely(tmpHome: string): void {
+  try {
+    rmSync(tmpHome, { recursive: true, force: true });
+  } catch {}
+}
+
 test.describe('Project Navigator return-affordance smoke', () => {
   test.skip(!SMOKE_ENABLED, 'Set OK_DESKTOP_E2E_SMOKE=1 to run Electron smoke tests.');
   test.skip(!DARWIN, 'Smoke harness is darwin-only in v0.');
@@ -167,11 +177,14 @@ test.describe('Project Navigator return-affordance smoke', () => {
     `Main build missing at ${MAIN_ENTRY} — run "bun run build:desktop" first.`,
   );
 
-  test('bridge.navigator.open() opens navigator from editor; re-invokes never spawn a duplicate', async () => {
+  test('bridge.navigator.open() opens navigator from editor; re-invokes never spawn a duplicate', async ({
+    captureStderrFor,
+  }) => {
     const { tmpHome, projectDir } = seedHomeWithLastOpenedProject('happy');
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp(tmpHome);
+      captureStderrFor(app);
 
       const editor = await findEditorWindow(app);
       await expect.poll(() => countNavigatorWindows(app as ElectronApplication)).toBe(0);
@@ -202,16 +215,19 @@ test.describe('Project Navigator return-affordance smoke', () => {
         .toBe(1);
     } finally {
       await closeAppSafely(app);
-      rmSync(tmpHome, { recursive: true, force: true });
+      rmTmpHomeSafely(tmpHome);
       rmSync(projectDir, { recursive: true, force: true });
     }
   });
 
-  test('FR5(d) — closing the navigator window leaves the editor window alive', async () => {
+  test('FR5(d) — closing the navigator window leaves the editor window alive', async ({
+    captureStderrFor,
+  }) => {
     const { tmpHome, projectDir } = seedHomeWithLastOpenedProject('close');
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp(tmpHome);
+      captureStderrFor(app);
 
       const editor = await findEditorWindow(app);
       await expect.poll(() => countEditorWindows(app as ElectronApplication)).toBe(1);
@@ -242,7 +258,7 @@ test.describe('Project Navigator return-affordance smoke', () => {
       expect(stillEditorMode).toBe('editor');
     } finally {
       await closeAppSafely(app);
-      rmSync(tmpHome, { recursive: true, force: true });
+      rmTmpHomeSafely(tmpHome);
       rmSync(projectDir, { recursive: true, force: true });
     }
   });

@@ -69,3 +69,18 @@ describe('ConfigProvider — mergeLayered call', () => {
     );
   });
 });
+
+describe('ConfigProvider — Electron theme bridge wiring', () => {
+  test('delegates the theme bridge wiring to the shared useThemeBridge hook', () => {
+    expect(src).toMatch(
+      /import\s*\{\s*useThemeBridge\s*\}\s*from\s*['"]@\/hooks\/use-theme-bridge['"]/,
+    );
+    expect(src).toMatch(/useThemeBridge\(/);
+    expect(src).toContain('window.okDesktop');
+    expect(src).toMatch(/themeValue/);
+  });
+
+  test('falls back to "system" when CRDT theme is unset (cold-launch show-gate release)', () => {
+    expect(src).toMatch(/themeValue\s*\?\?\s*['"]system['"]/);
+  });
+});

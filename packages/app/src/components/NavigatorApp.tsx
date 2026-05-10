@@ -1,5 +1,7 @@
 import { FolderOpenIcon, Loader2Icon, PlusIcon } from 'lucide-react';
+import { useTheme } from 'next-themes';
 import { type ComponentType, useEffect, useState } from 'react';
+import { useThemeBridge } from '@/hooks/use-theme-bridge';
 import { useUpdateChannel } from '@/hooks/use-update-channel';
 import type {
   OkDesktopBridge,
@@ -40,6 +42,9 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
   const { channel } = useUpdateChannel();
+  const { theme: themeValue } = useTheme();
+
+  useThemeBridge(bridge, themeValue ?? 'system');
 
   useEffect(() => {
     let cancelled = false;
@@ -87,92 +92,94 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
     }, 'Failed to open project.');
 
   return (
-    <div
-      className={`flex h-screen w-screen flex-col overflow-hidden bg-primary-foreground dark:bg-background p-12 text-foreground max-w-5xl space-y-10 mx-auto ${
-        !loading && recents.length === 0 ? 'justify-center' : ''
-      }`}
-    >
-      <header className="shrink-0 flex-wrap flex items-center gap-2.5">
-        <OkIcon className="size-12 shrink-0" />
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <h1 className="font-medium text-xl tracking-tight">Open Knowledge</h1>
-            <BetaBadge />
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-primary-foreground dark:bg-background text-foreground">
+      <div
+        className={`mx-auto flex w-full max-w-5xl flex-1 flex-col overflow-hidden p-12 space-y-10 ${
+          !loading && recents.length === 0 ? 'justify-center' : ''
+        }`}
+      >
+        <header className="shrink-0 flex-wrap flex items-center gap-2.5">
+          <OkIcon className="size-12 shrink-0" />
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <h1 className="font-medium text-xl tracking-tight">Open Knowledge</h1>
+              <BetaBadge />
+            </div>
+            <div className="flex items-center gap-2">
+              <p className="text-muted-foreground text-xs font-mono">v{bridge.appVersion}</p>
+              {channel !== null && (
+                <Badge variant="gray" className="text-2xs font-mono">
+                  {channel === 'beta' ? 'Beta' : 'Stable'}
+                </Badge>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <p className="text-muted-foreground text-xs font-mono">v{bridge.appVersion}</p>
-            {channel !== null && (
-              <Badge variant="gray" className="text-2xs font-mono">
-                {channel === 'beta' ? 'Beta' : 'Stable'}
-              </Badge>
-            )}
-          </div>
-        </div>
-      </header>
+        </header>
 
-      <section className="grid shrink-0 sm:grid-cols-3 gap-3">
-        <NavigatorCard
-          title="Clone from GitHub"
-          description="Bring a remote repository onto this machine."
-          onClick={onClone}
-          dataTestId="nav-clone"
-          Icon={GithubIcon}
-        />
-        <NavigatorCard
-          title="Open folder on disk"
-          description="Open an existing folder as a project."
-          onClick={onOpenFolder}
-          dataTestId="nav-open"
-          Icon={FolderOpenIcon}
-        />
-        <NavigatorCard
-          title="Start fresh"
-          description="Create a new folder for a brand-new project."
-          onClick={onStartFresh}
-          dataTestId="nav-fresh"
-          Icon={PlusIcon}
-        />
-      </section>
-
-      {error !== null ? (
-        <div
-          className="mb-3 flex shrink-0 items-start justify-between gap-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2"
-          data-testid="nav-error-banner"
-          role="alert"
-        >
-          <span className="text-red-700 text-xs dark:text-red-300">{error}</span>
-          <button
-            type="button"
-            onClick={() => setError(null)}
-            className="text-red-700 text-xs underline hover:no-underline dark:text-red-300"
-            data-testid="nav-error-dismiss"
-          >
-            Dismiss
-          </button>
-        </div>
-      ) : null}
-
-      {loading ? (
-        <section className="flex min-h-0 flex-1 flex-col">
-          <div className="flex items-center justify-center h-full">
-            <Loader2Icon className="size-4 animate-spin text-muted-foreground/60" />
-          </div>
+        <section className="grid shrink-0 sm:grid-cols-3 gap-3">
+          <NavigatorCard
+            title="Clone from GitHub"
+            description="Bring a remote repository onto this machine."
+            onClick={onClone}
+            dataTestId="nav-clone"
+            Icon={GithubIcon}
+          />
+          <NavigatorCard
+            title="Open folder on disk"
+            description="Open an existing folder as a project."
+            onClick={onOpenFolder}
+            dataTestId="nav-open"
+            Icon={FolderOpenIcon}
+          />
+          <NavigatorCard
+            title="Start fresh"
+            description="Create a new folder for a brand-new project."
+            onClick={onStartFresh}
+            dataTestId="nav-fresh"
+            Icon={PlusIcon}
+          />
         </section>
-      ) : recents.length > 0 ? (
-        <section className="flex min-h-0 flex-1 flex-col">
-          <h2 className="mb-2 shrink-0 font-medium text-muted-foreground font-mono text-xs uppercase tracking-wide">
-            Recent
-          </h2>
-          <ul
-            className="min-h-0 flex-1 subtle-scrollbar overflow-y-auto scroll-fade-mask space-y-0.5 -mx-4"
-            data-testid="nav-recent-list"
+
+        {error !== null ? (
+          <div
+            className="mb-3 flex shrink-0 items-start justify-between gap-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2"
+            data-testid="nav-error-banner"
+            role="alert"
           >
-            {recents.map((r) => (
-              <RecentRow key={r.path} project={r} onOpen={() => onOpenRecent(r.path)} />
-            ))}
-          </ul>
-        </section>
-      ) : null}
+            <span className="text-red-700 text-xs dark:text-red-300">{error}</span>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="text-red-700 text-xs underline hover:no-underline dark:text-red-300"
+              data-testid="nav-error-dismiss"
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
+
+        {loading ? (
+          <section className="flex min-h-0 flex-1 flex-col">
+            <div className="flex items-center justify-center h-full">
+              <Loader2Icon className="size-4 animate-spin text-muted-foreground/60" />
+            </div>
+          </section>
+        ) : recents.length > 0 ? (
+          <section className="flex min-h-0 flex-1 flex-col">
+            <h2 className="mb-2 shrink-0 font-medium text-muted-foreground font-mono text-xs uppercase tracking-wide">
+              Recent
+            </h2>
+            <ul
+              className="min-h-0 flex-1 subtle-scrollbar overflow-y-auto space-y-0.5 -mx-4"
+              data-testid="nav-recent-list"
+            >
+              {recents.map((r) => (
+                <RecentRow key={r.path} project={r} onOpen={() => onOpenRecent(r.path)} />
+              ))}
+            </ul>
+          </section>
+        ) : null}
+      </div>
 
       {/* M6b first-launch consent dialog — self-gates on the shared
           `mcpConsentStore` snapshot, renders nothing until main fires

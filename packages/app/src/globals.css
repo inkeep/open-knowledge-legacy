@@ -1664,6 +1664,89 @@ button:active:not(:disabled) {
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/*
+  Electron-mode outer-canvas alpha-aware retrofit.
+
+  Triggered by the `electron-mode` class added to <html> by the FOUC inline
+  script in index.html when `window.okDesktop` is present (preload bridge
+  runs before any inline page script). Web mode (no class) leaves the
+  outer canvas solid — visually unchanged from baseline.
+
+  Scope is narrow: ONLY the outer canvas surfaces become alpha-aware
+  so the BrowserWindow's `vibrancy: 'sidebar'` material shows through.
+  Inner editor surfaces (sidebar-inset, card, popover, dialog, tooltip-card,
+  --background) STAY OPAQUE — the visual depth cue. Vibrancy is exposed only
+  through the outer canvas; the inner main island floats opaquely above it.
+
+  The relative-color syntax `oklch(from var(--sidebar) l c h / <alpha>)`
+  reads --sidebar's cascaded value (set in :root for light, .dark for dark)
+  and produces the alpha-aware tint without duplicating OKLCH literals.
+  Single source of truth — when --sidebar moves, the alpha-aware tint moves
+  with it. No drift, no cycle (we override background-color, NOT --sidebar).
+
+  Browser support: relative-color syntax is Chromium 119+ / WebKit 16.4+ /
+  Firefox 128+. Electron 41 ships Chromium 134+ — fully supported.
+
+  prefers-reduced-transparency has its own dedicated fallback path below
+  (the @media (prefers-reduced-transparency: reduce) block) and is
+  intentionally NOT handled here.
+*/
+html.electron-mode {
+  background-color: transparent;
+}
+
+html.electron-mode body {
+  background-color: oklch(from var(--sidebar) l c h / 0.85);
+}
+
+html.electron-mode [data-slot="sidebar-wrapper"] {
+  background-color: oklch(from var(--sidebar) l c h / 0.85);
+}
+
+html.electron-mode [data-slot="sidebar-inner"] {
+  background-color: oklch(from var(--sidebar) l c h / 0.85);
+}
+
+/*
+  prefers-reduced-transparency revert.
+
+  When the user has enabled macOS System Settings → Accessibility → Display →
+  Reduce transparency, the alpha-aware outer canvas above is rolled back to
+  solid `var(--sidebar)`. Pairs with the main-side runtime path
+  (reduced-transparency-handler.ts) which calls `setVibrancy(null)` on every
+  BrowserWindow — both sides converge on solid surfaces, so the user sees
+  neither vibrancy material nor alpha-aware tints. Accessibility compliance
+  with no degraded readability.
+
+  Inner editor surfaces (sidebar-inset, card, popover, dialog, tooltip-card,
+  --background) are opaque always — the @media block has no business
+  redeclaring them. The cascade only touches what the cascade above touched.
+
+  Specificity: the un-mediaed alpha-aware rules above and these solid
+  reverts have identical (0,1,2) specificity; @media-takes-precedence is
+  what ranks them when the user-agent supports the media query. Browsers
+  without prefers-reduced-transparency (older WebKit / Gecko) ignore the
+  @media block entirely and fall through to the alpha-aware rules — same
+  result as a user who hasn't toggled the OS preference.
+*/
+@media (prefers-reduced-transparency: reduce) {
+  html.electron-mode {
+    background-color: var(--sidebar);
+  }
+
+  html.electron-mode body {
+    background-color: var(--sidebar);
+  }
+
+  html.electron-mode [data-slot="sidebar-wrapper"] {
+    background-color: var(--sidebar);
+  }
+
+  html.electron-mode [data-slot="sidebar-inner"] {
+    background-color: var(--sidebar);
+  }
+}
+
 /* prose-no-margin — margin reset for first/last children inside wrappers.
    Applied to the jsx-component-wrapper's nested editable region so block
    children don't carry their natural top/bottom prose margins into the

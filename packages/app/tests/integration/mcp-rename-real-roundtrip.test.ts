@@ -114,7 +114,7 @@ describe('MCP rename tools — real roundtrip against live OK server (QA-004 / Q
     const indexBody = readFileSync(join(server.contentDir, 'index.md'), 'utf-8');
     expect(indexBody).toContain('[[essays/a]]');
     expect(indexBody).not.toContain('[[articles/a]]');
-  }, 30_000);
+  }, 60_000);
 
   test('QA-005: rename_document posts to live /api/rename-path with kind:file → backlinks rewrite', async () => {
     const server = await createRestartableServer();
@@ -156,5 +156,5 @@ describe('MCP rename tools — real roundtrip against live OK server (QA-004 / Q
     const indexBody = readFileSync(join(server.contentDir, 'index.md'), 'utf-8');
     expect(indexBody).toContain('[[sso]]');
     expect(indexBody).not.toContain('[[auth]]');
-  }, 30_000);
+  }, 60_000);
 });

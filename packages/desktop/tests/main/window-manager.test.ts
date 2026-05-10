@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
+import type { ShowGateRegistry } from '../../src/main/show-gate.ts';
 import {
   type BrowserWindowLike,
   type ServerLockMetadataLike,
@@ -72,12 +73,19 @@ function makeWindow(opts?: { minimized?: boolean }): BrowserWindowLike & {
   };
 }
 
+interface ShowGateRegistration {
+  window: BrowserWindowLike;
+  kind: 'editor' | 'navigator';
+  disposed: boolean;
+}
+
 interface TestEnv {
   utilities: MockUtility[];
   windows: Array<ReturnType<typeof makeWindow>>;
   createWindowOpts: Array<{ additionalArguments: string[]; title: string }>;
   timers: Array<{ cb: () => void; ms: number }>;
   killProbe: ReturnType<typeof mock>;
+  showGateRegistrations: ShowGateRegistration[];
   deps: WindowManagerDeps;
 }
 
@@ -87,6 +95,21 @@ function buildEnv(): TestEnv {
   const createWindowOpts: Array<{ additionalArguments: string[]; title: string }> = [];
   const timers: Array<{ cb: () => void; ms: number }> = [];
   const killProbe = mock(() => {});
+  const showGateRegistrations: ShowGateRegistration[] = [];
+  const showGate: ShowGateRegistry = {
+    register: (window, opts) => {
+      const reg: ShowGateRegistration = {
+        window,
+        kind: opts?.kind ?? 'editor',
+        disposed: false,
+      };
+      showGateRegistrations.push(reg);
+      return () => {
+        reg.disposed = true;
+      };
+    },
+    fireThemeApplied: () => {},
+  };
   let pidCounter = 10000;
   return {
     utilities,
@@ -94,6 +117,7 @@ function buildEnv(): TestEnv {
     createWindowOpts,
     timers,
     killProbe,
+    showGateRegistrations,
     deps: {
       createWindow: (opts) => {
         createWindowOpts.push(opts);
@@ -113,6 +137,7 @@ function buildEnv(): TestEnv {
         return null;
       },
       killProbe,
+      showGate,
     },
   };
 }
@@ -1103,5 +1128,97 @@ describe('WindowManager.getWindowFor — canonicalization symmetry with focusWin
     const ctx = await p;
 
     expect(wm.getWindowFor('/tmp/canon-get/.')).toBe(ctx);
+  });
+});
+
+describe('WindowManager — show-gate integration', () => {
+  let env: TestEnv;
+
+  beforeEach(() => {
+    env = buildEnv();
+  });
+
+  test('spawn-path createProjectWindow registers the new window with showGate (kind=editor)', async () => {
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/show-gate-spawn' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51400, apiOrigin: 'http://localhost:51400' });
+    const ctx = await p;
+
+    expect(env.showGateRegistrations).toHaveLength(1);
+    const reg = env.showGateRegistrations[0];
+    expect(reg?.window).toBe(ctx.window);
+    expect(reg?.kind).toBe('editor');
+    expect(reg?.disposed).toBe(false);
+  });
+
+  test('attach-path createProjectWindow registers the new window with showGate (kind=editor)', async () => {
+    env.deps.readServerLock = () => ({
+      pid: 9001,
+      hostname: 'test-host',
+      port: 51500,
+      startedAt: '2026-05-07T00:00:00Z',
+      worktreeRoot: '/tmp/attach-gate',
+      kind: 'interactive',
+      capabilities: ['http', 'ws'],
+    });
+    env.deps.isProcessAlive = () => true;
+    env.deps.hostname = () => 'test-host';
+    env.deps.probeWsUpgrade = () => Promise.resolve(true);
+
+    const wm = new WindowManager(env.deps);
+    const ctx = await wm.createProjectWindow({ projectPath: '/tmp/attach-gate' });
+
+    expect(env.utilities).toHaveLength(0);
+    expect(env.showGateRegistrations).toHaveLength(1);
+    const reg = env.showGateRegistrations[0];
+    expect(reg?.window).toBe(ctx.window);
+    expect(reg?.kind).toBe('editor');
+  });
+
+  test('show-gate registration is disposed when the window closes (spawn path)', async () => {
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/dispose-spawn' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51410, apiOrigin: 'http://localhost:51410' });
+    await p;
+
+    const win = env.windows[0];
+    if (!win) throw new Error('window not created');
+    expect(env.showGateRegistrations[0]?.disposed).toBe(false);
+    win.fireClose();
+    expect(env.showGateRegistrations[0]?.disposed).toBe(true);
+  });
+
+  test('show-gate registration is disposed when the window closes (attach path)', async () => {
+    env.deps.readServerLock = () => ({
+      pid: 9002,
+      hostname: 'test-host',
+      port: 51510,
+      startedAt: '2026-05-07T00:00:00Z',
+      worktreeRoot: '/tmp/dispose-attach',
+      kind: 'interactive',
+      capabilities: ['http', 'ws'],
+    });
+    env.deps.isProcessAlive = () => true;
+    env.deps.hostname = () => 'test-host';
+    env.deps.probeWsUpgrade = () => Promise.resolve(true);
+
+    const wm = new WindowManager(env.deps);
+    await wm.createProjectWindow({ projectPath: '/tmp/dispose-attach' });
+
+    const win = env.windows[0];
+    if (!win) throw new Error('window not created');
+    expect(env.showGateRegistrations[0]?.disposed).toBe(false);
+    win.fireClose();
+    expect(env.showGateRegistrations[0]?.disposed).toBe(true);
+  });
+
+  test('window-manager no longer schedules its own ready-to-show 5_000ms timer (gate owns timeout)', async () => {
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/no-direct-timer' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51420, apiOrigin: 'http://localhost:51420' });
+    await p;
+
+    const fiveSecondTimers = env.timers.filter((t) => t.ms === 5_000);
+    expect(fiveSecondTimers).toHaveLength(0);
   });
 });

@@ -38,7 +38,12 @@ export default {
       ignoreFiles: ['src/server/agent-sim.ts'],
     },
     'packages/core': {
-      entry: ['src/**/*.test.ts', 'tests/**/*.ts', 'src/markdown/fixtures/perf/generate.ts'],
+      entry: [
+        'src/**/*.test.ts',
+        'tests/**/*.ts',
+        'src/markdown/fixtures/perf/generate.ts',
+        'scripts/*.ts',
+      ],
       project: 'src/**',
     },
     docs: {

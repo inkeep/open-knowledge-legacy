@@ -16,6 +16,7 @@ import { useTheme } from 'next-themes';
 import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import * as Y from 'yjs';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { useThemeBridge } from '@/hooks/use-theme-bridge';
 
 interface ConfigContextValue {
   userBinding: ConfigBinding | null;
@@ -166,6 +167,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       setTheme(themeValue);
     }
   }, [themeValue, setTheme]);
+
+  useThemeBridge(
+    typeof window !== 'undefined' ? window.okDesktop : undefined,
+    themeValue ?? 'system',
+  );
 
   const value: ConfigContextValue = {
     userBinding: userState?.binding ?? null,

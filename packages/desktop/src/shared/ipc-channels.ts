@@ -6,6 +6,7 @@ import type {
   OkDesktopConfig,
   OkLocalOpAuthReposResponse,
   OkLocalOpAuthStatusResponse,
+  OkThemeSource,
   OkUpdateChannel,
 } from './bridge-contract.ts';
 import type { EntryPoint } from './entry-point.ts';
@@ -228,6 +229,11 @@ export interface RequestChannels {
     };
   };
   'ok:state:reset-incompatible': { args: []; result: undefined };
+  'ok:theme:set-source': { args: [params: { source: OkThemeSource }]; result: { ok: true } };
+  'ok:theme:applied': {
+    args: [opts?: { reducedTransparency?: boolean }];
+    result: undefined;
+  };
   'ok:debug:keyring-smoke': { args: []; result: KeyringSmokeResult };
   'ok:seed:plan': { args: [rootDir?: string]; result: SeedPlanResult };
   'ok:seed:apply': { args: [plan: ScaffoldPlan]; result: SeedApplyResult };
