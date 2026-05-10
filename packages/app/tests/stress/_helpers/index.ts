@@ -14,6 +14,7 @@ export {
   type WaitForProviderOptions,
   waitForActiveProviderSynced,
 } from './provider.ts';
+export { getFreePort, killGracefully, waitForHttpReady } from './server-process.ts';
 export { sidebarFileButton } from './sidebar.ts';
 export {
   getSelectedItemSnapshot,

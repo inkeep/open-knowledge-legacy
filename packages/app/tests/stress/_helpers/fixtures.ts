@@ -1,14 +1,13 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { type AddressInfo, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
 import { test as base } from '@playwright/test';
 import * as Y from 'yjs';
+import { getFreePort, killGracefully, waitForHttpReady } from './server-process.ts';
 
 const HELPERS_DIR = dirname(fileURLToPath(import.meta.url));
 const APP_PACKAGE_ROOT = resolve(HELPERS_DIR, '..', '..', '..');
@@ -41,35 +40,6 @@ type WorkerFixtures = {
 type TestFixtures = {
   api: ApiHelpers;
 };
-
-async function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createNetServer();
-    s.once('error', reject);
-    s.listen(0, () => {
-      const port = (s.address() as AddressInfo).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
-
-async function waitForHttpReady(baseURL: string, timeoutMs = 30_000): Promise<void> {
-  const start = Date.now();
-  let lastErr: unknown;
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const res = await fetch(`${baseURL}/`, { signal: AbortSignal.timeout(1000) });
-      if (res.status === 200 || res.status === 404) return;
-      lastErr = new Error(`unexpected status ${res.status}`);
-    } catch (err) {
-      lastErr = err;
-    }
-    await wait(250);
-  }
-  throw new Error(
-    `Worker server at ${baseURL} did not become ready within ${timeoutMs}ms. Last error: ${String(lastErr)}`,
-  );
-}
 
 async function checkApiConfig(baseURL: string, timeoutMs = 2_000): Promise<void> {
   let res: Response;
@@ -130,7 +100,7 @@ async function checkCollabSync(port: number, timeoutMs = 10_000): Promise<void> 
 }
 
 async function waitForServerReady(baseURL: string, port: number): Promise<void> {
-  await waitForHttpReady(baseURL);
+  await waitForHttpReady(baseURL, 30_000);
   await checkApiConfig(baseURL);
   await checkCollabSync(port);
 }
@@ -139,20 +109,6 @@ function seedRequiredFixtureFiles(contentDir: string): void {
   writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
   mkdirSync(join(contentDir, 'sidebar-folder'), { recursive: true });
   writeFileSync(join(contentDir, 'sidebar-folder', 'nested-doc.md'), '', 'utf-8');
-}
-
-async function killGracefully(proc: ChildProcess, timeoutMs = 5000): Promise<void> {
-  if (proc.exitCode !== null || proc.signalCode !== null) return;
-  const exited = new Promise<void>((resolve) => {
-    proc.once('exit', () => resolve());
-  });
-  proc.kill('SIGTERM');
-  const timer = wait(timeoutMs);
-  await Promise.race([exited, timer]);
-  if (proc.exitCode === null && proc.signalCode === null) {
-    proc.kill('SIGKILL');
-    await exited;
-  }
 }
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
