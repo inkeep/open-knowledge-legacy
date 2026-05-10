@@ -54,9 +54,21 @@ export interface WebVitalsMark {
   attribution?: Record<string, unknown>;
 }
 
+import type { CircularBuffer } from './circular-buffer';
+import type { Histogram } from './hdr-histogram';
+
+export interface PerfCounter {
+  total: number;
+  byProp: Record<string, Record<string, number>>;
+}
+
+export type { HistogramSnapshot } from './hdr-histogram';
+
 export interface PerfCollector {
-  marks: PerfMark[];
-  vitals: WebVitalsMark[];
+  marks: CircularBuffer<PerfMark>;
+  vitals: CircularBuffer<WebVitalsMark>;
+  counters: Record<string, PerfCounter>;
+  histograms: Record<string, Histogram>;
   startedAt: number;
   reset(): void;
 }

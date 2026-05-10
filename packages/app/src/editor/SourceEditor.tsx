@@ -17,12 +17,14 @@ import {
 import type { RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { createSourceClipboardExtension } from './clipboard/index.ts';
 import { type CmCacheEntry, mountCmEditor, parkCmEditor } from './editor-cache';
+import { getMountId } from './mount-id-registry';
 import { markUserTyping } from './observers';
 import {
   clearPendingSourceNavigation,
   consumePendingSourceNavigation,
 } from './source-editor-navigation';
 import { createSourcePolishExtension } from './source-polish';
+import { attachTypingBurstDetector } from './typing-burst-detector';
 
 interface SourceEditorProps {
   docName: string;
@@ -166,6 +168,35 @@ export function SourceEditor({
       viewRef.current = null;
     };
   }, [ytext, provider]);
+
+  useEffect(() => {
+    if (import.meta.env.PROD) return;
+    const view = viewRef.current;
+    if (!view) return;
+    const mountId = getMountId(docName);
+    if (!mountId) return;
+    const sampler = attachTypingBurstDetector({
+      mode: 'Source',
+      docName,
+      mountId,
+    });
+    const updateExtension = EditorView.updateListener.of((update) => {
+      if (!update.docChanged) return;
+      let charsDelta = 0;
+      update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+        charsDelta += inserted.length - (toA - fromA);
+      });
+      if (charsDelta === 0) return;
+      sampler.recordUserInput(0, charsDelta);
+    });
+    const onInput = () => sampler.recordUserInput(0, 1);
+    view.dom.addEventListener('input', onInput);
+    void updateExtension;
+    return () => {
+      view.dom.removeEventListener('input', onInput);
+      sampler.detach();
+    };
+  }, [docName]);
 
   useEffect(() => {
     if (!viewRef.current) return;

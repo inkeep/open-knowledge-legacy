@@ -1,4 +1,4 @@
-import { recordMark } from './collector';
+import { recordCounter, recordHistogram, recordMark } from './collector';
 import type { DevToolsTrackEntry, PerfMarkDetail } from './types';
 
 const NAME_RE = /^ok\/[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*$/;
@@ -37,7 +37,17 @@ interface MarkOptions {
   tooltipText?: string;
 }
 
-export function mark(name: string, props?: Record<string, unknown>, opts?: MarkOptions): void {
+export interface MarkFn {
+  (name: string, props?: Record<string, unknown>, opts?: MarkOptions): void;
+  count(name: string, props?: Record<string, string | number | boolean>): void;
+  histogram(
+    name: string,
+    props: Record<string, string | number | boolean>,
+    durationMs: number,
+  ): void;
+}
+
+function markImpl(name: string, props?: Record<string, unknown>, opts?: MarkOptions): void {
   if (!import.meta.env?.PROD && !validatePerfMarkName(name)) {
     // eslint-disable-next-line no-console -- dev-only lint
     console.warn(`[perf] mark name "${name}" does not match ok/<subsystem>/<event>`);
@@ -75,3 +85,29 @@ export function mark(name: string, props?: Record<string, unknown>, opts?: MarkO
     ...(props ? { properties: props } : {}),
   });
 }
+
+function countImpl(name: string, props?: Record<string, string | number | boolean>): void {
+  if (!import.meta.env?.PROD && !validatePerfMarkName(name)) {
+    // eslint-disable-next-line no-console -- dev-only lint
+    console.warn(`[perf] mark.count name "${name}" does not match ok/<subsystem>/<event>`);
+  }
+  recordCounter(name, props);
+}
+
+function histogramImpl(
+  name: string,
+  props: Record<string, string | number | boolean>,
+  durationMs: number,
+): void {
+  if (!import.meta.env?.PROD && !validatePerfMarkName(name)) {
+    // eslint-disable-next-line no-console -- dev-only lint
+    console.warn(`[perf] mark.histogram name "${name}" does not match ok/<subsystem>/<event>`);
+  }
+  markImpl(name, { ...props, durationMs }, { duration: durationMs });
+  recordHistogram(name, durationMs);
+}
+
+export const mark: MarkFn = Object.assign(markImpl, {
+  count: countImpl,
+  histogram: histogramImpl,
+});

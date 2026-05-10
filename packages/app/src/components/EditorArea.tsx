@@ -10,6 +10,7 @@ import {
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { EmptyEditorState } from '@/components/EmptyEditorState';
 import { FolderOverview } from '@/components/FolderOverview';
+import { MountStalledAffordance } from '@/components/MountStalledAffordance';
 import { PropertyProvider, useProperties } from '@/components/PropertyContext';
 import { Button } from '@/components/ui/button.tsx';
 import { ButtonGroup } from '@/components/ui/button-group.tsx';
@@ -352,6 +353,13 @@ function EditorAreaInner({
           }) ? (
             <div className="absolute inset-0 z-10 bg-background">
               <EditorSkeleton />
+              {/* FW13 affordance — surfaces a "Cancel" link when the
+                  mount-promise substrate emits `ok/mount/stalled` past
+                  MOUNT_STALLED_THRESHOLD_MS (10s default). Only shown
+                  when the skeleton is already overlay-active, so a fast
+                  mount never sees the affordance. NG9 retracted in the
+                  substrate consolidation. */}
+              {activeDocName !== null ? <MountStalledAffordance docName={activeDocName} /> : null}
             </div>
           ) : null}
         </div>

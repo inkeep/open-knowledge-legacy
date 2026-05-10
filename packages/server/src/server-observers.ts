@@ -24,6 +24,7 @@ import {
   incrementServerObserverFire,
 } from './metrics.ts';
 import { type ShadowHandle, saveInMemoryCheckpoint } from './shadow-repo.ts';
+import { withSpanSync } from './telemetry.ts';
 
 export const OBSERVER_SYNC_ORIGIN = {
   source: 'local',
@@ -145,7 +146,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     lastSyncedXmlMd = '';
   }
 
-  const runObserverASync = (): void => {
+  const runObserverASyncImpl = (): void => {
     try {
       const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
       const body = mdManager.serialize(json);
@@ -209,6 +210,14 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     }
   };
 
+  const runObserverASync = (): void => {
+    withSpanSync(
+      'observer.runASync',
+      { attributes: { 'doc.name': opts.docName ?? '' } },
+      runObserverASyncImpl,
+    );
+  };
+
   const observerA = (_events: Y.YEvent<Y.XmlFragment>[], transaction: Y.Transaction) => {
     if (transaction.origin === OBSERVER_SYNC_ORIGIN) return;
 
@@ -249,7 +258,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
   }
 
   let priorFmForTelemetry = readCurrentFm();
-  const runObserverBSync = (): void => {
+  const runObserverBSyncImpl = (): void => {
     try {
       const md = ytext.toString();
       const { frontmatter, body } = stripFrontmatter(md);
@@ -324,6 +333,14 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     }
   };
 
+  const runObserverBSync = (): void => {
+    withSpanSync(
+      'observer.runBSync',
+      { attributes: { 'doc.name': opts.docName ?? '' } },
+      runObserverBSyncImpl,
+    );
+  };
+
   const observerB = (_event: Y.YTextEvent, transaction: Y.Transaction) => {
     if (transaction.origin === OBSERVER_SYNC_ORIGIN) return;
 
@@ -347,27 +364,41 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
   };
 
   const afterAll = (_doc: Y.Doc, transactions: Y.Transaction[]): void => {
-    if (!xmlDirty && !textDirty) {
-      opts.onDispatch?.('none');
-      return;
-    }
-    if (transactions.every((t) => t.origin === OBSERVER_SYNC_ORIGIN)) {
-      xmlDirty = false;
-      textDirty = false;
-      opts.onDispatch?.('none');
-      return;
-    }
+    withSpanSync(
+      'observer.dispatch',
+      { attributes: { 'doc.name': opts.docName ?? '' } },
+      (span) => {
+        if (!xmlDirty && !textDirty) {
+          span.setAttribute('observer.dispatch', 'none');
+          opts.onDispatch?.('none');
+          return;
+        }
+        if (transactions.every((t) => t.origin === OBSERVER_SYNC_ORIGIN)) {
+          xmlDirty = false;
+          textDirty = false;
+          span.setAttribute('observer.dispatch', 'none');
+          opts.onDispatch?.('none');
+          return;
+        }
 
-    if (xmlDirty) {
-      xmlDirty = false;
-      opts.onDispatch?.('a');
-      runObserverASync();
-    }
-    if (textDirty) {
-      textDirty = false;
-      opts.onDispatch?.('b');
-      runObserverBSync();
-    }
+        const ranA = xmlDirty;
+        const ranB = textDirty;
+        if (xmlDirty) {
+          xmlDirty = false;
+          opts.onDispatch?.('a');
+          runObserverASync();
+        }
+        if (textDirty) {
+          textDirty = false;
+          opts.onDispatch?.('b');
+          runObserverBSync();
+        }
+        span.setAttribute(
+          'observer.dispatch',
+          ranA && ranB ? 'a-then-b' : ranA ? 'a' : ranB ? 'b' : 'none',
+        );
+      },
+    );
   };
 
   xmlFragment.observeDeep(observerA);

@@ -4,6 +4,7 @@ import { PrincipalSuccessSchema } from '@inkeep/open-knowledge-core';
 import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
+import { consumePrewarmClick } from '@/components/prewarm-correlation';
 import { docNameFromHash, hashFromDocName, hashFromFolderPath } from '@/lib/doc-hash';
 import { mark } from '@/lib/perf';
 import { refreshServerInfo } from '@/lib/server-info-refresh';
@@ -42,6 +43,7 @@ export interface PoolEntrySnapshot {
   docName: string;
   provider: HocuspocusProvider;
   lastAccessedAt: number;
+  poolEventId: string;
 }
 
 interface DocumentContextValue {
@@ -72,7 +74,7 @@ interface DocumentContextValue {
   ) => void;
   closeAndClearForRename: (docName: string) => Promise<void>;
   recycleDocument: (docName: string) => void;
-  prewarm: (docName: string) => void;
+  prewarm: (docName: string) => string | null;
   systemProvider: HocuspocusProvider | null;
   setSystemProvider: (provider: HocuspocusProvider | null) => void;
   updateServerInstanceId: (id: string | null) => void;
@@ -185,6 +187,7 @@ function takeSnapshot(p: ProviderPool): Snapshot {
       docName: entry.docName,
       provider: entry.provider,
       lastAccessedAt: entry.lastAccessedAt,
+      poolEventId: entry.poolEventId,
     });
   }
   poolEntries.sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
@@ -370,6 +373,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     const p = getPool(collabUrl);
     const entry = p.open(docName);
     if (!entry) return; // reserved doc (e.g. __system__) — pool refused admission
+    consumePrewarmClick(docName, entry.poolEventId);
     setOpenTabs((current) => addOpenTab(current, docTabId(docName), MAX_POOL));
     p.setActive(docName);
     setActiveTarget({ kind: 'doc', target: docName, docName });
@@ -390,6 +394,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     if (docName) {
       const entry = p.open(docName);
       if (!entry) return;
+      consumePrewarmClick(docName, entry.poolEventId);
       setOpenTabs((current) => addOpenTab(current, docTabId(docName), MAX_POOL));
       p.setActive(docName);
     } else {
@@ -587,10 +592,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       const p = getPool(collabUrl);
       p.recycle(docName);
     },
-    prewarm: (docName: string) => {
-      if (collabUrl === null) return;
+    prewarm: (docName: string): string | null => {
+      if (collabUrl === null) return null;
       const p = getPool(collabUrl);
-      p.prewarm(docName);
+      const entry = p.prewarm(docName);
+      return entry?.poolEventId ?? null;
     },
     systemProvider,
     setSystemProvider,

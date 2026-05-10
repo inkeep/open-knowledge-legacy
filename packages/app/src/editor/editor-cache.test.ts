@@ -31,7 +31,6 @@ import {
   __mountPromiseCacheSize,
   __mountPromiseSettled,
   __resetMountPromiseCache,
-  MountAbortError,
   mountTiptapEditorPromise,
 } from './mount-promise';
 
@@ -1715,6 +1714,7 @@ describe('US-004: D20 mount-promise cancellation wired into park', () => {
 
     const firstPromise = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct,
     });
     const entry = await firstPromise;
@@ -1733,6 +1733,7 @@ describe('US-004: D20 mount-promise cancellation wired into park', () => {
 
     const secondPromise = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct,
     });
     expect(secondPromise).toBe(firstPromise);
@@ -1748,6 +1749,7 @@ describe('US-004: D20 mount-promise cancellation wired into park', () => {
     });
     const entry = await mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct,
     });
 
@@ -1761,7 +1763,7 @@ describe('US-004: D20 mount-promise cancellation wired into park', () => {
     expect(h.spies.destroyCalls).toBe(0);
   });
 
-  test('__uncached park: invalidates mount-promise BEFORE the kill-switch destroy fires', async () => {
+  test('__uncached park: invalidates mount-promise BEFORE the kill-switch destroy fires (silent — no rejection)', async () => {
     const h = makeTiptapHarness('doc-uncached-park');
     h.container.appendChild(h.editorDom);
     const entry: TiptapCacheEntry = {
@@ -1782,8 +1784,11 @@ describe('US-004: D20 mount-promise cancellation wired into park', () => {
       ytext: primer.ytext,
       provider: primer.provider,
     });
-    const pending = mountTiptapEditorPromise({ docName: h.docName, construct });
-    const settled = pending.catch(() => {});
+    const pending = mountTiptapEditorPromise({ docName: h.docName, mountId: 'test-id', construct });
+    let primerRejected = false;
+    pending.catch(() => {
+      primerRejected = true;
+    });
     expect(__mountPromiseCacheSize()).toBe(1);
 
     expect(h.spies.destroyCalls).toBe(0);
@@ -1791,7 +1796,8 @@ describe('US-004: D20 mount-promise cancellation wired into park', () => {
     expect(__mountPromiseCacheSize()).toBe(0);
     expect(h.spies.destroyCalls).toBe(1);
 
-    await settled;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(primerRejected).toBe(false);
   });
 });
 
@@ -1815,7 +1821,7 @@ describe('US-004: D20 mount-promise cancellation wired into evict', () => {
       ytext: h.ytext,
       provider: h.provider,
     });
-    await mountTiptapEditorPromise({ docName: h.docName, construct });
+    await mountTiptapEditorPromise({ docName: h.docName, mountId: 'test-id', construct });
 
     expect(__mountPromiseCacheSize()).toBe(1);
     expect(__getCacheSize('tiptap')).toBe(1);
@@ -1829,7 +1835,7 @@ describe('US-004: D20 mount-promise cancellation wired into evict', () => {
     expect(h.providerSpies.destroyCalls).toBe(1);
   });
 
-  test('evict-during-yield-window: aborts in-flight body, rejects with MountAbortError, destroys pre-mount editor', async () => {
+  test('evict-during-yield-window: tears down silently, body short-circuits, pre-mount editor destroyed (no rejection)', async () => {
     const h = makeTiptapHarness('doc-evict-during-yield');
     let constructed = false;
     const construct = () => {
@@ -1842,7 +1848,11 @@ describe('US-004: D20 mount-promise cancellation wired into evict', () => {
       };
     };
 
-    const pending = mountTiptapEditorPromise({ docName: h.docName, construct });
+    const pending = mountTiptapEditorPromise({ docName: h.docName, mountId: 'test-id', construct });
+    let consumerRejected = false;
+    pending.catch(() => {
+      consumerRejected = true;
+    });
     expect(__mountPromiseCacheSize()).toBe(1);
     expect(__getCacheSize('tiptap')).toBe(0);
 
@@ -1850,13 +1860,8 @@ describe('US-004: D20 mount-promise cancellation wired into evict', () => {
     expect(result).toBe(false); // V2 had no entry to evict
     expect(__mountPromiseCacheSize()).toBe(0);
 
-    let caught: unknown = null;
-    try {
-      await pending;
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(MountAbortError);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(consumerRejected).toBe(false);
     expect(constructed).toBe(true);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(h.spies.destroyCalls).toBe(1);

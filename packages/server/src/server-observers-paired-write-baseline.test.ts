@@ -33,7 +33,7 @@ describe('Observer A paired-write baseline — raw ytext, not canonical fragment
     const fixturePayload = '## Section 1\n\nLorem ipsum dolor sit amet.\n';
     const composedAppend = `\n\n${fixturePayload}`;
     doc.transact(() => {
-      composeAndWriteRawBody(doc, composedAppend);
+      composeAndWriteRawBody(doc, composedAppend, 'agent');
     }, AGENT_WRITE_ORIGIN);
 
     const ytextAfterAgent = ytext.toString();

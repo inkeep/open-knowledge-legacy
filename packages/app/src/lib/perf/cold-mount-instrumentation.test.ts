@@ -314,9 +314,9 @@ describe('wrapMethod — error propagation contract', () => {
     const ret = (target.method as () => string)();
     expect(ret).toBe('original-success-return');
 
-    const collected = getCollector()?.marks.find(
-      (m) => m.name === 'ok/cold/test-success-props-throw',
-    );
+    const collected = getCollector()
+      ?.marks.toArray()
+      .find((m) => m.name === 'ok/cold/test-success-props-throw');
     expect(collected).toBeDefined();
     expect(collected?.properties?.['instrumentation-error']).toBe('synthetic propsBuilder failure');
   });
@@ -336,8 +336,12 @@ describe('wrapMethod — error propagation contract', () => {
       (throwTarget.bad as () => void)();
     } catch {}
 
-    const successMark = getCollector()?.marks.find((m) => m.name === 'ok/cold/test-mark-success');
-    const throwMark = getCollector()?.marks.find((m) => m.name === 'ok/cold/test-mark-throw');
+    const successMark = getCollector()
+      ?.marks.toArray()
+      .find((m) => m.name === 'ok/cold/test-mark-success');
+    const throwMark = getCollector()
+      ?.marks.toArray()
+      .find((m) => m.name === 'ok/cold/test-mark-throw');
     expect(successMark).toBeDefined();
     expect(throwMark).toBeDefined();
     expect(successMark?.properties?.threw).toBe(false);

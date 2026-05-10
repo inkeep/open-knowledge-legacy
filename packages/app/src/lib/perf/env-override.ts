@@ -4,7 +4,18 @@ type PerfOverrideKey =
   | 'MAX_CACHE'
   | 'ACTIVITY_MOUNT_LIMIT'
   | 'LARGE_DOC_CHAR_THRESHOLD'
-  | 'MAX_POOL';
+  | 'MAX_POOL'
+  | 'SYNC_TIMEOUT_MS'
+  | 'MAX_BUFFER_BYTES'
+  | 'MOUNT_STALLED_THRESHOLD_MS'
+  | 'HOVER_INTENT_MS'
+  | 'MAX_RING_ENTRIES'
+  | 'MAX_VITALS_RING_ENTRIES'
+  | 'MAX_HISTOGRAM_PRECISION'
+  | 'BURST_DEBOUNCE_MS'
+  | 'PREWARM_CORRELATION_WINDOW_MS';
+
+export type { PerfOverrideKey };
 
 declare global {
   interface Window {

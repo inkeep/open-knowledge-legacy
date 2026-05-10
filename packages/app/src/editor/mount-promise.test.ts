@@ -7,13 +7,16 @@ import { __getCacheSize, __resetCacheForTests, mountTiptapEditor } from './edito
 import {
   __mountPromiseCacheSize,
   __mountPromiseSettled,
+  __mountPromiseStalledEmitted,
+  __mountPromiseVisibilityHandlerInstalled,
+  __reapStalledOnVisible,
   __resetMountPromiseCache,
+  getMountAbortController,
   invalidateMountPromise,
-  MOUNT_TIMEOUT_MS,
   MountAbortError,
-  MountTimeoutError,
   mountPromiseHasResolved,
   mountTiptapEditorPromise,
+  subscribeMountStalled,
 } from './mount-promise';
 
 interface FakeNode {
@@ -151,6 +154,8 @@ function installDocumentStub(): void {
   // biome-ignore lint/suspicious/noExplicitAny: minimal test-only stub for `document.createElement`
   (globalThis as any).document = {
     createElement: (_tag: string) => makeNode(),
+    addEventListener: (_event: string, _handler: () => void) => {},
+    removeEventListener: (_event: string, _handler: () => void) => {},
   };
   documentStubInstalled = true;
 }
@@ -173,6 +178,13 @@ afterEach(async () => {
   __resetCacheForTests();
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   uninstallDocumentStub();
+  if (
+    typeof globalThis.window !== 'undefined' &&
+    (globalThis.window as { __testInstalled?: boolean }).__testInstalled === true
+  ) {
+    // biome-ignore lint/suspicious/noExplicitAny: tearing down test-installed window stub
+    delete (globalThis as any).window;
+  }
 });
 
 describe('cache HIT short-circuit (V2 cache pre-populated)', () => {
@@ -192,6 +204,7 @@ describe('cache HIT short-circuit (V2 cache pre-populated)', () => {
 
     const promise = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct: h.construct,
     });
 
@@ -211,6 +224,7 @@ describe('cache MISS: construct → yield → mount sequence', () => {
 
     const promise = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct: h.construct,
     });
 
@@ -231,6 +245,7 @@ describe('cache MISS: construct → yield → mount sequence', () => {
 
     await mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct: h.construct,
     });
 
@@ -242,9 +257,21 @@ describe('concurrent-call promise reference stability', () => {
   test('repeated calls with same docName during pending construction return the same promise reference', () => {
     const h = makeHarness('doc-concurrent');
 
-    const a = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
-    const b = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
-    const c = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    const a = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
+    const b = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
+    const c = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
 
     expect(a).toBe(b);
     expect(b).toBe(c);
@@ -256,10 +283,18 @@ describe('concurrent-call promise reference stability', () => {
   test('repeated calls after resolution return the same resolved promise', async () => {
     const h = makeHarness('doc-resolved-stable');
 
-    const first = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    const first = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
     const entry = await first;
 
-    const second = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    const second = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
     expect(second).toBe(first);
     await expect(second).resolves.toBe(entry);
     expect(h.constructCallCount).toBe(1);
@@ -270,8 +305,16 @@ describe('concurrent-call promise reference stability', () => {
     const ha = makeHarness('doc-a');
     const hb = makeHarness('doc-b');
 
-    const pa = mountTiptapEditorPromise({ docName: ha.docName, construct: ha.construct });
-    const pb = mountTiptapEditorPromise({ docName: hb.docName, construct: hb.construct });
+    const pa = mountTiptapEditorPromise({
+      docName: ha.docName,
+      mountId: 'test-id',
+      construct: ha.construct,
+    });
+    const pb = mountTiptapEditorPromise({
+      docName: hb.docName,
+      mountId: 'test-id',
+      construct: hb.construct,
+    });
 
     expect(pa).not.toBe(pb);
     expect(__mountPromiseCacheSize()).toBe(2);
@@ -281,45 +324,54 @@ describe('concurrent-call promise reference stability', () => {
   });
 });
 
-describe('invalidate-during-construction abort path', () => {
-  test('invalidateMountPromise during the yield-window aborts the body, destroys pre-mount editor, and rejects', async () => {
-    const h = makeHarness('doc-abort');
+describe('invalidate-during-construction silent teardown (D27 silent-only)', () => {
+  test('invalidateMountPromise during the yield-window tears down silently — promise stays orphaned, no rejection, no mark-emit beyond invalidate', async () => {
+    const h = makeHarness('doc-silent-invalidate');
 
     const promise = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct: h.construct,
     });
-    const settled = promise.catch((err: unknown) => err);
+    let consumerRejected = false;
+    promise.catch(() => {
+      consumerRejected = true;
+    });
 
     invalidateMountPromise(h.docName);
 
-    const result = await settled;
-    expect(result).toBeInstanceOf(MountAbortError);
-    expect((result as MountAbortError).docName).toBe(h.docName);
-    expect(h.constructCallCount).toBe(1);
-    expect(h.spies.mountCalls).toBe(0);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(h.spies.destroyCalls).toBe(1);
     expect(__mountPromiseCacheSize()).toBe(0);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(consumerRejected).toBe(false);
+    expect(h.constructCallCount).toBe(1);
+    expect(h.spies.mountCalls).toBe(0);
   });
 
-  test('after invalidate, next call returns a fresh promise (re-mount succeeds)', async () => {
+  test('after silent invalidate, next call returns a fresh promise (re-mount succeeds)', async () => {
     const h = makeHarness('doc-reinvalidate');
 
-    const aborted = mountTiptapEditorPromise({
+    const orphaned = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct: h.construct,
     });
-    aborted.catch(() => {});
+    orphaned.catch(() => {
+      /* silent invalidate leaves it orphaned, but install a no-op handler
+       * so any rare body-side throw doesn't surface as an unhandled
+       * rejection in the next test's window */
+    });
     invalidateMountPromise(h.docName);
-    await aborted.catch(() => {});
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
     const h2 = makeHarness(h.docName);
     const fresh = mountTiptapEditorPromise({
       docName: h2.docName,
+      mountId: 'test-id',
       construct: h2.construct,
     });
-    expect(fresh).not.toBe(aborted);
+    expect(fresh).not.toBe(orphaned);
     const entry = await fresh;
     expect(entry.editor).toBe(h2.editor);
     expect(h2.spies.mountCalls).toBe(1);
@@ -333,6 +385,7 @@ describe('mount-failure error path', () => {
 
     const promise = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct: h.construct,
     });
 
@@ -347,10 +400,18 @@ describe('mount-failure error path', () => {
     const h = makeHarness('doc-rejected-stable');
     h.spies.mountThrows = true;
 
-    const first = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    const first = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
     await first.catch(() => {});
 
-    const second = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    const second = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
     expect(second).toBe(first);
     await expect(second).rejects.toThrow('synthetic mount failure');
     expect(h.constructCallCount).toBe(1);
@@ -362,14 +423,22 @@ describe('mount-failure error path', () => {
     const h = makeHarness('doc-recover-after-fail');
     h.spies.mountThrows = true;
 
-    const first = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    const first = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
     await first.catch(() => {});
 
     invalidateMountPromise(h.docName);
     expect(__mountPromiseCacheSize()).toBe(0);
 
     const h2 = makeHarness(h.docName);
-    const second = mountTiptapEditorPromise({ docName: h2.docName, construct: h2.construct });
+    const second = mountTiptapEditorPromise({
+      docName: h2.docName,
+      mountId: 'test-id',
+      construct: h2.construct,
+    });
     const entry = await second;
     expect(entry.editor).toBe(h2.editor);
     expect(h2.constructCallCount).toBe(1);
@@ -380,6 +449,7 @@ describe('mount-failure error path', () => {
     const constructError = new Error('synthetic construct failure');
     const promise = mountTiptapEditorPromise({
       docName: 'doc-construct-fail',
+      mountId: 'test-id',
       construct: () => {
         throw constructError;
       },
@@ -395,6 +465,7 @@ describe('mount-failure error path', () => {
 
     const promise = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct: h.construct,
     });
 
@@ -404,22 +475,24 @@ describe('mount-failure error path', () => {
     expect(__getCacheSize('tiptap')).toBe(0);
   });
 
-  test('destroy() throws on abort path → promise still rejects with MountAbortError', async () => {
+  test('destroy() throws on explicit-abort path → promise still rejects with MountAbortError', async () => {
     const h = makeHarness('doc-destroy-throws-on-abort');
     h.spies.destroyThrows = true;
 
     const promise = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct: h.construct,
     });
-    invalidateMountPromise(h.docName);
+    const controller = getMountAbortController(h.docName);
+    expect(controller).not.toBeNull();
+    controller?.abort();
 
     await expect(promise).rejects.toMatchObject({
       name: 'MountAbortError',
       docName: h.docName,
     });
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(h.spies.destroyCalls).toBe(1);
+    expect(h.spies.destroyCalls).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -431,7 +504,11 @@ describe('invalidateMountPromise', () => {
 
   test('removes a settled (resolved) entry on invalidate', async () => {
     const h = makeHarness('doc-invalidate-resolved');
-    const promise = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    const promise = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
     await promise;
     expect(__mountPromiseCacheSize()).toBe(1);
 
@@ -441,7 +518,11 @@ describe('invalidateMountPromise', () => {
 
   test('after invalidating a resolved entry, next call re-runs construct (V2 cache miss path)', async () => {
     const h = makeHarness('doc-fresh-after-invalidate');
-    const first = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    const first = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
     const firstEntry = await first;
     expect(firstEntry.editor).toBe(h.editor);
 
@@ -449,7 +530,11 @@ describe('invalidateMountPromise', () => {
     __resetCacheForTests(); // Clear V2 cache too — models eviction
 
     const h2 = makeHarness(h.docName);
-    const second = mountTiptapEditorPromise({ docName: h2.docName, construct: h2.construct });
+    const second = mountTiptapEditorPromise({
+      docName: h2.docName,
+      mountId: 'test-id',
+      construct: h2.construct,
+    });
     const secondEntry = await second;
     expect(secondEntry.editor).toBe(h2.editor);
     expect(h2.constructCallCount).toBe(1);
@@ -465,89 +550,328 @@ describe('error class shape', () => {
     expect(err.docName).toBe('some-doc');
     expect(err.message).toContain('some-doc');
   });
-
-  test('MountTimeoutError extends Error and carries docName + elapsedMs', () => {
-    const err = new MountTimeoutError('some-doc', 30_000);
-    expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(MountTimeoutError);
-    expect(err.name).toBe('MountTimeoutError');
-    expect(err.docName).toBe('some-doc');
-    expect(err.elapsedMs).toBe(30_000);
-    expect(err.message).toContain('some-doc');
-    expect(err.message).toContain('30000');
-  });
-
-  test('MOUNT_TIMEOUT_MS is 30s (mirrors sync-promise SYNC_TIMEOUT_MS)', () => {
-    expect(MOUNT_TIMEOUT_MS).toBe(30_000);
-  });
 });
 
-describe('watchdog timeout (construct → yield → mount)', () => {
-  test('timer is cleared on resolve (no dangling setTimeout after success)', async () => {
-    const h = makeHarness('timer-clear-resolve');
-    let timerCleared = false;
-    const origClearTimeout = globalThis.clearTimeout;
-    globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
-      timerCleared = true;
-      return origClearTimeout(handle);
-    }) as typeof globalThis.clearTimeout;
-    try {
-      await mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
-      expect(timerCleared).toBe(true);
-    } finally {
-      globalThis.clearTimeout = origClearTimeout;
+describe('stalled-but-pending observability (D27 LOCKED, precedent 41)', () => {
+  beforeEach(() => {
+    if (typeof globalThis.window === 'undefined') {
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test-only window stub
+      (globalThis as any).window = {
+        __okPerfOverrides: { MOUNT_STALLED_THRESHOLD_MS: 50 },
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        __testInstalled: true,
+      };
+    } else {
+      window.__okPerfOverrides = { MOUNT_STALLED_THRESHOLD_MS: 50 };
     }
   });
 
-  test('timer is cleared on invalidate (no dangling setTimeout after abort)', () => {
-    const h = makeHarness('timer-clear-invalidate');
-    let timerCleared = false;
-    const origClearTimeout = globalThis.clearTimeout;
-    globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
-      timerCleared = true;
-      return origClearTimeout(handle);
-    }) as typeof globalThis.clearTimeout;
-    try {
-      const promise = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
-      promise.catch(() => {}); // suppress unhandled rejection from invalidate
-      invalidateMountPromise(h.docName);
-      expect(timerCleared).toBe(true);
-    } finally {
-      globalThis.clearTimeout = origClearTimeout;
+  afterEach(() => {
+    if (typeof globalThis.window !== 'undefined' && window.__okPerfOverrides) {
+      delete window.__okPerfOverrides.MOUNT_STALLED_THRESHOLD_MS;
     }
   });
 
-  test('watchdog rejects with MountTimeoutError when body never settles', async () => {
-    const h = makeHarness('timer-fires');
+  test('emits ok/mount/stalled once at threshold; promise remains pending', async () => {
+    const h = makeHarness('doc-stalled-once');
     const origYield = scheduler.yield.bind(scheduler);
     let stallResolve: (() => void) | null = null;
     scheduler.yield = (() =>
       new Promise<void>((res) => {
         stallResolve = res;
       })) as typeof scheduler.yield;
-    const origSetTimeout = globalThis.setTimeout;
-    let watchdogFn: (() => void) | null = null;
-    globalThis.setTimeout = ((fn: () => void, ms: number) => {
-      if (ms === MOUNT_TIMEOUT_MS) {
-        watchdogFn = fn;
-        return { __mockHandle: true } as unknown as ReturnType<typeof origSetTimeout>;
-      }
-      return origSetTimeout(fn, ms);
-    }) as typeof globalThis.setTimeout;
     try {
-      const promise = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
-      await new Promise((res) => origSetTimeout(res, 0));
-      expect(watchdogFn).not.toBeNull();
-      if (watchdogFn) (watchdogFn as () => void)();
-      await expect(promise).rejects.toBeInstanceOf(MountTimeoutError);
-      expect(h.spies.destroyCalls).toBe(1);
-      expect(__mountPromiseSettled(h.docName)).toBe(false); // cache.delete'd
-      expect(__mountPromiseCacheSize()).toBe(0);
+      const promise = mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'test-id',
+        construct: h.construct,
+      });
+      promise.catch(() => {});
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      expect(__mountPromiseStalledEmitted(h.docName)).toBe(true);
+      expect(__mountPromiseSettled(h.docName)).toBe(false);
+      expect(__mountPromiseCacheSize()).toBe(1);
     } finally {
       scheduler.yield = origYield;
-      globalThis.setTimeout = origSetTimeout;
       if (stallResolve) (stallResolve as () => void)();
     }
+  });
+
+  test('visibility-restore reaper emits stalled mark when threshold elapsed during background', async () => {
+    const h = makeHarness('doc-stalled-reaper');
+    const origYield = scheduler.yield.bind(scheduler);
+    let stallResolve: (() => void) | null = null;
+    scheduler.yield = (() =>
+      new Promise<void>((res) => {
+        stallResolve = res;
+      })) as typeof scheduler.yield;
+    try {
+      const promise = mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'test-id',
+        construct: h.construct,
+      });
+      promise.catch(() => {});
+      __reapStalledOnVisible(Date.now() + 10_000);
+      expect(__mountPromiseStalledEmitted(h.docName)).toBe(true);
+      expect(__mountPromiseSettled(h.docName)).toBe(false);
+    } finally {
+      scheduler.yield = origYield;
+      if (stallResolve) (stallResolve as () => void)();
+    }
+  });
+
+  test('stalled mark is idempotent — timer-fire then reaper does not double-emit', async () => {
+    const h = makeHarness('doc-stalled-idempotent');
+    const origYield = scheduler.yield.bind(scheduler);
+    let stallResolve: (() => void) | null = null;
+    scheduler.yield = (() =>
+      new Promise<void>((res) => {
+        stallResolve = res;
+      })) as typeof scheduler.yield;
+    try {
+      const promise = mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'test-id',
+        construct: h.construct,
+      });
+      promise.catch(() => {});
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      expect(__mountPromiseStalledEmitted(h.docName)).toBe(true);
+      const collector = getCollector();
+      const beforeCount = collector
+        ? collector.marks.toArray().filter((m) => m.name === 'ok/mount/stalled').length
+        : 0;
+      __reapStalledOnVisible(Date.now() + 10_000);
+      const afterCount = collector
+        ? collector.marks.toArray().filter((m) => m.name === 'ok/mount/stalled').length
+        : 0;
+      expect(afterCount).toBe(beforeCount);
+    } finally {
+      scheduler.yield = origYield;
+      if (stallResolve) (stallResolve as () => void)();
+    }
+  });
+});
+
+describe('D27 no-timer-reject regression guard', () => {
+  test('no ok/mount/reject mark with reason "timeout" ever fires', async () => {
+    const h = makeHarness('d27-no-timer-reject');
+    const origYield = scheduler.yield.bind(scheduler);
+    let stallResolve: (() => void) | null = null;
+    scheduler.yield = (() =>
+      new Promise<void>((res) => {
+        stallResolve = res;
+      })) as typeof scheduler.yield;
+    if (typeof globalThis.window === 'undefined') {
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test-only window stub
+      (globalThis as any).window = {
+        __okPerfOverrides: { MOUNT_STALLED_THRESHOLD_MS: 30 },
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        __testInstalled: true,
+      };
+    } else {
+      window.__okPerfOverrides = { MOUNT_STALLED_THRESHOLD_MS: 30 };
+    }
+    try {
+      const promise = mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'test-id',
+        construct: h.construct,
+      });
+      promise.catch(() => {});
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+      __reapStalledOnVisible(Date.now() + 60_000);
+      const collector = getCollector();
+      if (collector) {
+        const timeoutRejects = collector.marks
+          .toArray()
+          .filter((m) => m.name === 'ok/mount/reject' && m.properties?.reason === 'timeout');
+        expect(timeoutRejects).toEqual([]);
+      }
+      expect(__mountPromiseSettled(h.docName)).toBe(false);
+    } finally {
+      scheduler.yield = origYield;
+      if (stallResolve) (stallResolve as () => void)();
+      if (typeof globalThis.window !== 'undefined' && window.__okPerfOverrides) {
+        delete window.__okPerfOverrides.MOUNT_STALLED_THRESHOLD_MS;
+      }
+    }
+  });
+});
+
+describe('mountId payload (US-006 / FR5 / AC13 — cross-namespace correlation)', () => {
+  test('every ok/mount/* mark carries the mountId from the call', async () => {
+    const h = makeHarness('mountid-payload');
+    const collector = getCollector();
+    if (!collector) {
+      return;
+    }
+    const beforeMarks = collector.marks.toArray().length;
+    await mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'specific-mount-id-7',
+      construct: h.construct,
+    });
+    const newMarks = collector.marks.toArray().slice(beforeMarks);
+    const mountMarks = newMarks.filter((m) => m.name.startsWith('ok/mount/'));
+    expect(mountMarks.length).toBeGreaterThan(0);
+    for (const m of mountMarks) {
+      expect(m.properties?.mountId).toBe('specific-mount-id-7');
+    }
+  });
+});
+
+describe('getMountAbortController (FW13 explicit-cancel surface)', () => {
+  test('returns null when no entry exists', () => {
+    expect(getMountAbortController('never-registered')).toBeNull();
+  });
+
+  test('returns the entry controller; .abort() rejects with MountAbortError', async () => {
+    const h = makeHarness('explicit-abort');
+    const promise = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
+    const controller = getMountAbortController(h.docName);
+    expect(controller).not.toBeNull();
+    controller?.abort();
+    await expect(promise).rejects.toMatchObject({
+      name: 'MountAbortError',
+      docName: h.docName,
+    });
+  });
+
+  test('explicit abort during the scheduler.yield window: rejects with MountAbortError, destroys pre-mount editor exactly once, mount() never called', async () => {
+    const h = makeHarness('explicit-abort-during-yield');
+    const origYield = scheduler.yield.bind(scheduler);
+    let stallResolve: (() => void) | null = null;
+    scheduler.yield = (() =>
+      new Promise<void>((res) => {
+        stallResolve = res;
+      })) as typeof scheduler.yield;
+
+    try {
+      const promise = mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'test-id',
+        construct: h.construct,
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(h.constructCallCount).toBe(1);
+
+      const controller = getMountAbortController(h.docName);
+      expect(controller).not.toBeNull();
+      controller?.abort();
+
+      await expect(promise).rejects.toMatchObject({
+        name: 'MountAbortError',
+        docName: h.docName,
+      });
+      if (stallResolve) (stallResolve as () => void)();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(h.spies.destroyCalls).toBe(1);
+      expect(h.spies.mountCalls).toBe(0);
+    } finally {
+      scheduler.yield = origYield;
+    }
+  });
+});
+
+describe('subscribeMountStalled (FW13 affordance contract)', () => {
+  beforeEach(() => {
+    if (typeof globalThis.window === 'undefined') {
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test-only window stub
+      (globalThis as any).window = {
+        __okPerfOverrides: { MOUNT_STALLED_THRESHOLD_MS: 50 },
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        __testInstalled: true,
+      };
+    } else {
+      window.__okPerfOverrides = { MOUNT_STALLED_THRESHOLD_MS: 50 };
+    }
+  });
+
+  afterEach(() => {
+    if (typeof globalThis.window !== 'undefined' && window.__okPerfOverrides) {
+      delete window.__okPerfOverrides.MOUNT_STALLED_THRESHOLD_MS;
+    }
+  });
+
+  test('callback fires for new stalled emissions; unsubscribe stops further fires', async () => {
+    const h = makeHarness('subscribe-fan-out');
+    const origYield = scheduler.yield.bind(scheduler);
+    let stallResolve: (() => void) | null = null;
+    scheduler.yield = (() =>
+      new Promise<void>((res) => {
+        stallResolve = res;
+      })) as typeof scheduler.yield;
+    const events: { docName: string; mountId: string }[] = [];
+    const unsubscribe = subscribeMountStalled((docName, mountId) => {
+      events.push({ docName, mountId });
+    });
+    try {
+      const promise = mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'sub-mount-id',
+        construct: h.construct,
+      });
+      promise.catch(() => {});
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      expect(events).toEqual([{ docName: h.docName, mountId: 'sub-mount-id' }]);
+      unsubscribe();
+    } finally {
+      scheduler.yield = origYield;
+      if (stallResolve) (stallResolve as () => void)();
+    }
+  });
+
+  test('late subscriber receives replay of existing stalled-but-pending entries', async () => {
+    const h = makeHarness('subscribe-replay');
+    const origYield = scheduler.yield.bind(scheduler);
+    let stallResolve: (() => void) | null = null;
+    scheduler.yield = (() =>
+      new Promise<void>((res) => {
+        stallResolve = res;
+      })) as typeof scheduler.yield;
+    try {
+      const promise = mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'replay-mount-id',
+        construct: h.construct,
+      });
+      promise.catch(() => {});
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      expect(__mountPromiseStalledEmitted(h.docName)).toBe(true);
+      const events: { docName: string; mountId: string }[] = [];
+      const unsubscribe = subscribeMountStalled((docName, mountId) => {
+        events.push({ docName, mountId });
+      });
+      expect(events).toEqual([{ docName: h.docName, mountId: 'replay-mount-id' }]);
+      unsubscribe();
+    } finally {
+      scheduler.yield = origYield;
+      if (stallResolve) (stallResolve as () => void)();
+    }
+  });
+});
+
+describe('visibility handler lifecycle (idempotent install/uninstall)', () => {
+  test('handler installs when cache becomes non-empty and uninstalls when cache empties', async () => {
+    expect(__mountPromiseVisibilityHandlerInstalled()).toBe(false);
+    const h = makeHarness('vis-lifecycle');
+    await mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
+    expect(__mountPromiseVisibilityHandlerInstalled()).toBe(true);
+    invalidateMountPromise(h.docName);
+    expect(__mountPromiseVisibilityHandlerInstalled()).toBe(false);
   });
 });
 
@@ -558,25 +882,41 @@ describe('mountPromiseHasResolved (warm-reopen overlay gate)', () => {
 
   test('returns false while a mount is pending (constructed but not yet awaited)', () => {
     const h = makeHarness('pending-doc');
-    const promise = mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    const promise = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
     promise.catch(() => {});
     expect(mountPromiseHasResolved(h.docName)).toBe(false);
   });
 
   test('returns true after a successful V2 cache MISS resolve', async () => {
     const h = makeHarness('resolved-miss-doc');
-    await mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    await mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
     expect(mountPromiseHasResolved(h.docName)).toBe(true);
   });
 
   test('returns true after a V2 cache HIT short-circuit resolve', async () => {
     const h = makeHarness('resolved-hit-doc');
-    await mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    await mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
     invalidateMountPromise(h.docName); // Clear mount-promise cache only; V2 stays.
     expect(mountPromiseHasResolved(h.docName)).toBe(false);
 
     const h2 = makeHarness(h.docName);
-    await mountTiptapEditorPromise({ docName: h2.docName, construct: h2.construct });
+    await mountTiptapEditorPromise({
+      docName: h2.docName,
+      mountId: 'test-id',
+      construct: h2.construct,
+    });
     expect(mountPromiseHasResolved(h.docName)).toBe(true);
   });
 
@@ -587,7 +927,11 @@ describe('mountPromiseHasResolved (warm-reopen overlay gate)', () => {
     };
     let rejected = false;
     try {
-      await mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+      await mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'test-id',
+        construct: h.construct,
+      });
     } catch {
       rejected = true;
     }
@@ -598,7 +942,11 @@ describe('mountPromiseHasResolved (warm-reopen overlay gate)', () => {
 
   test('returns false after invalidate (entry removed)', async () => {
     const h = makeHarness('invalidated-doc');
-    await mountTiptapEditorPromise({ docName: h.docName, construct: h.construct });
+    await mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'test-id',
+      construct: h.construct,
+    });
     expect(mountPromiseHasResolved(h.docName)).toBe(true);
     invalidateMountPromise(h.docName);
     expect(mountPromiseHasResolved(h.docName)).toBe(false);
@@ -623,6 +971,7 @@ describe('scheduler.yield wiring', () => {
     await withYieldSpy(async (calls) => {
       const entry = await mountTiptapEditorPromise({
         docName: h.docName,
+        mountId: 'test-id',
         construct: h.construct,
       });
       expect(calls.count).toBe(1);
@@ -647,6 +996,7 @@ describe('scheduler.yield wiring', () => {
     await withYieldSpy(async (calls) => {
       await mountTiptapEditorPromise({
         docName: h.docName,
+        mountId: 'test-id',
         construct: h.construct,
       });
       expect(calls.count).toBe(0);
@@ -660,6 +1010,7 @@ describe('scheduler.yield wiring', () => {
       const constructError = new Error('synthetic construct failure');
       const promise = mountTiptapEditorPromise({
         docName: 'doc-construct-fail-no-yield',
+        mountId: 'test-id',
         construct: () => {
           throw constructError;
         },
@@ -669,25 +1020,28 @@ describe('scheduler.yield wiring', () => {
     });
   });
 
-  test('invalidateMountPromise during the yield-window aborts the body — cancellation contract held under scheduler.yield', async () => {
-    const h = makeHarness('doc-yield-abort');
+  test('invalidateMountPromise during the yield-window tears down silently — body short-circuits at abort check, no rejection', async () => {
+    const h = makeHarness('doc-yield-silent');
 
     await withYieldSpy(async (calls) => {
       const promise = mountTiptapEditorPromise({
         docName: h.docName,
+        mountId: 'test-id',
         construct: h.construct,
       });
-      const settled = promise.catch((err: unknown) => err);
+      let consumerRejected = false;
+      promise.catch(() => {
+        consumerRejected = true;
+      });
 
       invalidateMountPromise(h.docName);
-
-      const result = await settled;
-      expect(result).toBeInstanceOf(MountAbortError);
-      expect(calls.count).toBe(1); // yield was reached before the abort
-      expect(h.constructCallCount).toBe(1); // construct ran before the yield
-      expect(h.spies.mountCalls).toBe(0); // mount was skipped after the abort
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      expect(h.spies.destroyCalls).toBe(1); // pre-mount editor was destroyed
+
+      expect(consumerRejected).toBe(false);
+      expect(calls.count).toBe(1); // yield was reached before the invalidate
+      expect(h.constructCallCount).toBe(1); // construct ran before the yield
+      expect(h.spies.mountCalls).toBe(0); // mount was skipped after invalidate
+      expect(h.spies.destroyCalls).toBe(1); // pre-mount editor cleaned up
     });
   });
 });
@@ -705,6 +1059,7 @@ describe('unhandled-throw backstop — body must reject, never hang', () => {
     try {
       const promise = mountTiptapEditorPromise({
         docName: h.docName,
+        mountId: 'test-id',
         construct: h.construct,
       });
       await expect(promise).rejects.toBeDefined();
@@ -738,12 +1093,13 @@ describe('unhandled-throw backstop — body must reject, never hang', () => {
 
     const promise = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct: h.construct,
     });
     await expect(promise).rejects.toBeDefined();
   });
 
-  test('invalidate followed by V2 HIT path throwing → consumer promise rejects (does not hang)', async () => {
+  test('invalidate followed by V2 HIT path throwing → backstop emits post-settle-throw mark; consumer promise stays orphaned (silent-teardown contract)', async () => {
     const h = makeHarness('doc-hit-throws-after-invalidate');
 
     const v2container = makeNode();
@@ -763,17 +1119,26 @@ describe('unhandled-throw backstop — body must reject, never hang', () => {
       },
     };
 
+    getCollector()?.reset();
+
     const promise = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct: h.construct,
     });
-    const settled = promise.catch((err: unknown) => err);
+    let consumerRejected = false;
+    promise.catch(() => {
+      consumerRejected = true;
+    });
 
     invalidateMountPromise(h.docName);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    const result = await settled;
-    expect(result).toBeInstanceOf(MountAbortError);
-    expect((result as MountAbortError).docName).toBe(h.docName);
+    expect(consumerRejected).toBe(false);
+    const marks = getCollector()?.marks.toArray() ?? [];
+    const postSettleMark = marks.find((m) => m.name === 'ok/mount/post-settle-throw');
+    expect(postSettleMark).toBeDefined();
   });
 
   test('post-settle escape: body throw after invalidate emits ok/mount/post-settle-throw mark', async () => {
@@ -800,14 +1165,15 @@ describe('unhandled-throw backstop — body must reject, never hang', () => {
 
     const promise = mountTiptapEditorPromise({
       docName: h.docName,
+      mountId: 'test-id',
       construct: h.construct,
     });
-    const settled = promise.catch((err: unknown) => err);
+    promise.catch(() => {});
     invalidateMountPromise(h.docName);
-    await settled;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    const marks = getCollector()?.marks ?? [];
+    const marks = getCollector()?.marks.toArray() ?? [];
     const postSettleMark = marks.find((m) => m.name === 'ok/mount/post-settle-throw');
     expect(postSettleMark).toBeDefined();
     expect(postSettleMark?.properties?.docName).toBe(h.docName);

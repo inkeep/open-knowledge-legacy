@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseHocuspocusAuthToken } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
+import { __resetCardinalityWarnings, getCollector } from '../lib/perf/collector';
 import type { ClientPersistenceProvider } from './client-persistence';
 import { buildAuthToken, ProviderPool } from './provider-pool';
 import {
@@ -88,6 +89,97 @@ describe('ProviderPool basics', () => {
     pool = new ProviderPool(3, DUMMY_WS);
     pool.close('nonexistent'); // should not throw
     expect(pool.entries.size).toBe(0);
+  });
+
+  test('open() mints a fresh poolEventId on cold construct + emits hit:false', () => {
+    getCollector()?.reset();
+    __resetCardinalityWarnings();
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open(uniqueDocName());
+    expect(entry).not.toBeNull();
+    expect(typeof entry?.poolEventId).toBe('string');
+    expect(entry?.poolEventId.length).toBeGreaterThan(0);
+    const c = getCollector();
+    const counter = c?.counters['ok/pool/open'];
+    expect(counter?.byProp.hit?.false).toBe(1);
+    expect(counter?.byProp.hit?.true).toBeUndefined();
+    const openMark = c?.marks
+      .toArray()
+      .find((m) => m.name === 'ok/pool/open' && m.properties?.docName === entry?.docName);
+    expect(openMark?.properties?.hit).toBe(false);
+    expect(openMark?.properties?.poolEventId).toBe(entry?.poolEventId);
+  });
+
+  test('open() warm-back emits hit:true with previous lastAccessedAt and stable poolEventId', async () => {
+    getCollector()?.reset();
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName();
+    const fresh = pool.open(docName);
+    expect(fresh).not.toBeNull();
+    const previousAccessedAt = fresh?.lastAccessedAt ?? 0;
+    const stableId = fresh?.poolEventId ?? '';
+    await wait(2);
+    const second = pool.open(docName);
+    expect(second).toBe(fresh); // identity preserved
+    expect(second?.poolEventId).toBe(stableId);
+    expect((second?.lastAccessedAt ?? 0) >= previousAccessedAt).toBe(true);
+    const c = getCollector();
+    const counter = c?.counters['ok/pool/open'];
+    expect(counter?.byProp.hit?.false).toBe(1);
+    expect(counter?.byProp.hit?.true).toBe(1);
+    const hitMark = c?.marks
+      .toArray()
+      .find(
+        (m) =>
+          m.name === 'ok/pool/open' &&
+          m.properties?.docName === docName &&
+          m.properties?.hit === true,
+      );
+    expect(hitMark?.properties?.lastAccessedAt).toBe(previousAccessedAt);
+    expect(hitMark?.properties?.poolEventId).toBe(stableId);
+  });
+
+  test('open() returns null and emits no marks for system docs', () => {
+    getCollector()?.reset();
+    pool = new ProviderPool(3, DUMMY_WS);
+    const result = pool.open('__system__');
+    expect(result).toBeNull();
+    const c = getCollector();
+    const openMarks = c?.marks.toArray().filter((m) => m.name === 'ok/pool/open') ?? [];
+    expect(openMarks.length).toBe(0);
+    expect(c?.counters['ok/pool/open']).toBeUndefined();
+  });
+
+  test('peek() returns the entry without affecting LRU or emitting marks', () => {
+    getCollector()?.reset();
+    pool = new ProviderPool(3, DUMMY_WS);
+    const a = uniqueDocName();
+    const b = uniqueDocName();
+    pool.open(a);
+    pool.open(b);
+    const c = getCollector();
+    const beforeMarks = c?.marks.length ?? 0;
+    const peeked = pool.peek(a);
+    expect(peeked).not.toBeNull();
+    expect(peeked?.docName).toBe(a);
+    expect(c?.marks.length).toBe(beforeMarks);
+    pool.open(uniqueDocName());
+    pool.open(uniqueDocName()); // overflow → evicts `a`
+    expect(pool.has(a)).toBe(false);
+    expect(pool.has(b)).toBe(true);
+  });
+
+  test('prewarm() inherits open()-path poolEventId mint', () => {
+    getCollector()?.reset();
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName();
+    const entry = pool.prewarm(docName);
+    expect(entry).not.toBeNull();
+    expect(typeof entry?.poolEventId).toBe('string');
+    expect(entry?.poolEventId.length).toBeGreaterThan(0);
+    const c = getCollector();
+    const counter = c?.counters['ok/pool/open'];
+    expect(counter?.byProp.hit?.false).toBe(1);
   });
 
   test('has() returns false for unknown documents', () => {

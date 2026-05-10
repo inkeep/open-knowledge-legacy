@@ -5,6 +5,7 @@ import { yUndoPluginKey } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 import { mark } from '@/lib/perf';
 import { readNumericOverride } from '@/lib/perf/env-override';
+import { getMountId } from './mount-id-registry';
 import { invalidateMountPromise } from './mount-promise';
 
 export function readEditorUndoManager(editor: Editor): { restore?: unknown } | null {
@@ -128,6 +129,7 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
     const fresh = factory(container);
     mark('ok/cache/miss', {
       docName,
+      mountId: getMountId(docName),
       viewCount: sizeStats?.viewCount ?? -1,
       bytes: sizeStats?.bytes ?? -1,
       reason: !CACHE_ENABLED ? 'kill-switch' : 'size-gate',
@@ -148,6 +150,7 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
   if (existing) {
     mark('ok/cache/reparent-start', {
       docName,
+      mountId: getMountId(docName),
       kind: 'tiptap',
       viewCount: sizeStats?.viewCount ?? -1,
       bytes: sizeStats?.bytes ?? -1,
@@ -163,14 +166,16 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
     }
     mark('ok/cache/reparent-end', {
       docName,
+      mountId: getMountId(docName),
       kind: 'tiptap',
       viewCount: sizeStats?.viewCount ?? -1,
       bytes: sizeStats?.bytes ?? -1,
     });
-    mark('ok/cache/hit', { docName, kind: 'tiptap' });
+    mark('ok/cache/hit', { docName, mountId: getMountId(docName), kind: 'tiptap' });
     if (sizeStats) {
       mark('ok/cold/editor-mount-stats', {
         docName,
+        mountId: getMountId(docName),
         viewCount: sizeStats.viewCount,
         bytes: sizeStats.bytes,
         cacheHit: true,
@@ -200,6 +205,7 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
   touchLru(tiptapLru, docName);
   mark('ok/cache/miss', {
     docName,
+    mountId: getMountId(docName),
     viewCount: sizeStats?.viewCount ?? -1,
     bytes: sizeStats?.bytes ?? -1,
     reason: 'cold',
@@ -208,6 +214,7 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
   if (sizeStats) {
     mark('ok/cold/editor-mount-stats', {
       docName,
+      mountId: getMountId(docName),
       viewCount: sizeStats.viewCount,
       bytes: sizeStats.bytes,
       cacheHit: false,
@@ -313,6 +320,7 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
     const fresh = factory(container);
     mark('ok/cache/miss', {
       docName,
+      mountId: getMountId(docName),
       viewCount: sizeStats?.viewCount ?? -1,
       bytes: sizeStats?.bytes ?? -1,
       reason: !CACHE_ENABLED ? 'kill-switch' : 'size-gate',
@@ -334,6 +342,7 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
   if (existing) {
     mark('ok/cache/reparent-start', {
       docName,
+      mountId: getMountId(docName),
       kind: 'cm',
       viewCount: sizeStats?.viewCount ?? -1,
       bytes: sizeStats?.bytes ?? -1,
@@ -349,14 +358,16 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
     }
     mark('ok/cache/reparent-end', {
       docName,
+      mountId: getMountId(docName),
       kind: 'cm',
       viewCount: sizeStats?.viewCount ?? -1,
       bytes: sizeStats?.bytes ?? -1,
     });
-    mark('ok/cache/hit', { docName, kind: 'cm' });
+    mark('ok/cache/hit', { docName, mountId: getMountId(docName), kind: 'cm' });
     if (sizeStats) {
       mark('ok/cold/editor-mount-stats', {
         docName,
+        mountId: getMountId(docName),
         viewCount: sizeStats.viewCount,
         bytes: sizeStats.bytes,
         cacheHit: true,
@@ -386,6 +397,7 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
   touchLru(cmLru, docName);
   mark('ok/cache/miss', {
     docName,
+    mountId: getMountId(docName),
     viewCount: sizeStats?.viewCount ?? -1,
     bytes: sizeStats?.bytes ?? -1,
     reason: 'cold',
@@ -394,6 +406,7 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
   if (sizeStats) {
     mark('ok/cold/editor-mount-stats', {
       docName,
+      mountId: getMountId(docName),
       viewCount: sizeStats.viewCount,
       bytes: sizeStats.bytes,
       cacheHit: false,

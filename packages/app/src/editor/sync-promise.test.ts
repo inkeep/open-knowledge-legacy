@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { HocuspocusProvider } from '@hocuspocus/provider';
+import { getCollector } from '../lib/perf/collector';
+import { __resetMountIdRegistry, setMountId } from './mount-id-registry';
 import {
   __reapTimedOutEntries,
   __resetSyncPromiseCache,
@@ -8,10 +10,10 @@ import {
   __test_armPendingRejection,
   __test_clearArmedRejection,
   BridgeSetupError,
+  getSyncTimeoutMs,
   invalidateSyncPromise,
   PreSyncDisconnectError,
   rejectSyncPromise,
-  SYNC_TIMEOUT_MS,
   SyncTimeoutError,
   syncPromise,
   syncPromiseHasResolved,
@@ -34,11 +36,13 @@ function track<T extends HocuspocusProvider>(p: T): T {
 
 beforeEach(() => {
   __resetSyncPromiseCache();
+  __resetMountIdRegistry();
   providers = [];
 });
 
 afterEach(() => {
   __resetSyncPromiseCache();
+  __resetMountIdRegistry();
   for (const p of providers) {
     try {
       p.destroy();
@@ -185,7 +189,7 @@ describe('syncPromise timeout', () => {
     let capturedTimer: (() => void) | null = null;
     // @ts-expect-error — intentional override for test
     globalThis.setTimeout = ((fn: () => void, ms: number) => {
-      if (ms === SYNC_TIMEOUT_MS) {
+      if (ms === getSyncTimeoutMs()) {
         capturedTimer = fn;
         return { __dummy: true } as unknown as ReturnType<typeof origSetTimeout>;
       }
@@ -209,7 +213,7 @@ describe('syncPromise timeout', () => {
     let capturedTimer: (() => void) | null = null;
     // @ts-expect-error — intentional override for test
     globalThis.setTimeout = ((fn: () => void, ms: number) => {
-      if (ms === SYNC_TIMEOUT_MS) {
+      if (ms === getSyncTimeoutMs()) {
         capturedTimer = fn;
         return { __dummy: true } as unknown as ReturnType<typeof origSetTimeout>;
       }
@@ -498,7 +502,7 @@ describe('tab-sleep resilience (__reapTimedOutEntries)', () => {
     const settled = promise.catch((e: unknown) => e);
 
     const createdAt = Date.now();
-    const rejected = __reapTimedOutEntries(createdAt + SYNC_TIMEOUT_MS + 1_000);
+    const rejected = __reapTimedOutEntries(createdAt + getSyncTimeoutMs() + 1_000);
 
     expect(rejected).toBe(1);
     const result = await settled;
@@ -523,9 +527,46 @@ describe('tab-sleep resilience (__reapTimedOutEntries)', () => {
     queueMicrotask(() => p.emit('synced', { state: true }));
     await promise;
 
-    const rejected = __reapTimedOutEntries(Date.now() + SYNC_TIMEOUT_MS * 2);
+    const rejected = __reapTimedOutEntries(Date.now() + getSyncTimeoutMs() * 2);
 
     expect(rejected).toBe(0);
     expect(__syncPromiseSettled('synced-doc')).toBe(true);
+  });
+});
+
+describe('mountId payload (US-006 / FR5 / AC13 — cross-namespace correlation)', () => {
+  test('every ok/sync/* mark carries the mountId from the registry (warm-path resolve)', async () => {
+    const collector = getCollector();
+    if (!collector) {
+      return;
+    }
+    setMountId('mid-sync-doc', 'specific-sync-mount-id');
+    const beforeMarks = collector.marks.toArray().length;
+    const p = track(makeProvider('mid-sync-doc'));
+    p.synced = true; // warm-path: synchronous create + resolve
+    await syncPromise('mid-sync-doc', p);
+    const newMarks = collector.marks.toArray().slice(beforeMarks);
+    const syncMarks = newMarks.filter((m) => m.name.startsWith('ok/sync/'));
+    expect(syncMarks.length).toBeGreaterThan(0);
+    for (const m of syncMarks) {
+      expect(m.properties?.mountId).toBe('specific-sync-mount-id');
+    }
+  });
+
+  test('every ok/sync/* mark carries the mountId across cold-path resolve', async () => {
+    const collector = getCollector();
+    if (!collector) return;
+    setMountId('cold-sync-doc', 'cold-sync-mount-id');
+    const beforeMarks = collector.marks.toArray().length;
+    const p = track(makeProvider('cold-sync-doc'));
+    const promise = syncPromise('cold-sync-doc', p);
+    queueMicrotask(() => p.emit('synced', { state: true }));
+    await promise;
+    const newMarks = collector.marks.toArray().slice(beforeMarks);
+    const syncMarks = newMarks.filter((m) => m.name.startsWith('ok/sync/'));
+    expect(syncMarks.length).toBeGreaterThan(0);
+    for (const m of syncMarks) {
+      expect(m.properties?.mountId).toBe('cold-sync-mount-id');
+    }
   });
 });

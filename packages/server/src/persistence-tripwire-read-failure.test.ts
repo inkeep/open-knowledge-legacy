@@ -61,7 +61,7 @@ describe('tripwire reset readFileSync failure', () => {
     });
 
     const document = new Y.Doc();
-    composeAndWriteRawBody(document, doubledMarkdown);
+    composeAndWriteRawBody(document, doubledMarkdown, 'agent');
     setReconciledBase(docName, baseMarkdown);
 
     const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
@@ -71,7 +71,7 @@ describe('tripwire reset readFileSync failure', () => {
       const ytextAfter = document.getText('source').toString();
       expect(ytextAfter).toBe(baseMarkdown);
 
-      composeAndWriteRawBody(document, doubledMarkdown);
+      composeAndWriteRawBody(document, doubledMarkdown, 'agent');
       await storeDocument(persistence, document, docName);
 
       expect(document.getText('source').toString()).toBe(baseMarkdown);

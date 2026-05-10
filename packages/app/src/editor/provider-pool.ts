@@ -49,6 +49,7 @@ interface PoolEntryBase {
   provider: HocuspocusProvider;
   docName: string;
   lastAccessedAt: number;
+  poolEventId: string;
   syncState: SyncState;
   hasSynced: boolean;
   bridgeSetupFailed: boolean;
@@ -131,7 +132,7 @@ const LAST_OBSERVED_BRANCH_KEY = 'ok-last-observed-branch';
 
 const FORCE_SYNC_INTERVAL_MS = 5_000;
 
-const MAX_BUFFER_BYTES = 1 * 1024 * 1024;
+const MAX_BUFFER_BYTES = readNumericOverride('MAX_BUFFER_BYTES', 1 * 1024 * 1024);
 
 /**
  * Default pool capacity. Exported so the single point of truth lives in this
@@ -541,9 +542,17 @@ export class ProviderPool {
 
     const existing = this.entries.get(docName);
     if (existing) {
+      const previousAccessedAt = existing.lastAccessedAt;
       existing.lastAccessedAt = Date.now();
       this.touch(docName);
       this.notify();
+      mark('ok/pool/open', {
+        docName,
+        hit: true,
+        lastAccessedAt: previousAccessedAt,
+        poolEventId: existing.poolEventId,
+      });
+      mark.count('ok/pool/open', { hit: true });
       return existing;
     }
 
@@ -594,6 +603,7 @@ export class ProviderPool {
       }
     }
 
+    const poolEventId = crypto.randomUUID();
     const entry: ActivePoolEntry = {
       kind: 'active',
       provider,
@@ -605,10 +615,13 @@ export class ProviderPool {
       syncState: 'connecting',
       docName,
       lastAccessedAt: Date.now(),
+      poolEventId,
       hasSynced: false,
       pendingRecycleTimer: null,
       bridgeSetupFailed: false,
     };
+    mark('ok/pool/open', { docName, hit: false, poolEventId });
+    mark.count('ok/pool/open', { hit: false });
 
     const onStatus = ({ status }: { status: string }) => {
       if (entry.kind !== 'active' || this.entries.get(docName) !== entry) return;
@@ -988,6 +1001,10 @@ export class ProviderPool {
 
   has(docName: string): boolean {
     return this.entries.has(docName);
+  }
+
+  peek(docName: string): PoolEntry | null {
+    return this.entries.get(docName) ?? null;
   }
 
   recycle(docName: string): void {

@@ -122,6 +122,62 @@ describe('readNumericOverride', () => {
     expect(warnSpy).toHaveBeenCalledTimes(2);
   });
 
+  test('exposes 9 new substrate dials with documented defaults', () => {
+    expect(readNumericOverride('SYNC_TIMEOUT_MS', 30_000)).toBe(30_000);
+    expect(readNumericOverride('MAX_BUFFER_BYTES', 1_048_576)).toBe(1_048_576);
+    expect(readNumericOverride('MOUNT_STALLED_THRESHOLD_MS', 10_000)).toBe(10_000);
+    expect(readNumericOverride('HOVER_INTENT_MS', 80)).toBe(80);
+    expect(readNumericOverride('MAX_RING_ENTRIES', 5000)).toBe(5000);
+    expect(readNumericOverride('MAX_VITALS_RING_ENTRIES', 200)).toBe(200);
+    expect(readNumericOverride('MAX_HISTOGRAM_PRECISION', 3)).toBe(3);
+    expect(readNumericOverride('BURST_DEBOUNCE_MS', 400)).toBe(400);
+    expect(readNumericOverride('PREWARM_CORRELATION_WINDOW_MS', 5_000)).toBe(5_000);
+  });
+
+  test('window override reaches every new substrate dial', () => {
+    window.__okPerfOverrides = {
+      SYNC_TIMEOUT_MS: 1,
+      MAX_BUFFER_BYTES: 2,
+      MOUNT_STALLED_THRESHOLD_MS: 3,
+      HOVER_INTENT_MS: 4,
+      MAX_RING_ENTRIES: 5,
+      MAX_VITALS_RING_ENTRIES: 6,
+      MAX_HISTOGRAM_PRECISION: 7,
+      BURST_DEBOUNCE_MS: 8,
+      PREWARM_CORRELATION_WINDOW_MS: 9,
+    };
+    expect(readNumericOverride('SYNC_TIMEOUT_MS', 30_000)).toBe(1);
+    expect(readNumericOverride('MAX_BUFFER_BYTES', 1_048_576)).toBe(2);
+    expect(readNumericOverride('MOUNT_STALLED_THRESHOLD_MS', 10_000)).toBe(3);
+    expect(readNumericOverride('HOVER_INTENT_MS', 80)).toBe(4);
+    expect(readNumericOverride('MAX_RING_ENTRIES', 5000)).toBe(5);
+    expect(readNumericOverride('MAX_VITALS_RING_ENTRIES', 200)).toBe(6);
+    expect(readNumericOverride('MAX_HISTOGRAM_PRECISION', 3)).toBe(7);
+    expect(readNumericOverride('BURST_DEBOUNCE_MS', 400)).toBe(8);
+    expect(readNumericOverride('PREWARM_CORRELATION_WINDOW_MS', 5_000)).toBe(9);
+  });
+
+  test('env override reaches every new substrate dial', () => {
+    (import.meta.env as Record<string, string>).VITE_OK_PERF_SYNC_TIMEOUT_MS = '11';
+    (import.meta.env as Record<string, string>).VITE_OK_PERF_MAX_BUFFER_BYTES = '12';
+    (import.meta.env as Record<string, string>).VITE_OK_PERF_MOUNT_STALLED_THRESHOLD_MS = '13';
+    (import.meta.env as Record<string, string>).VITE_OK_PERF_HOVER_INTENT_MS = '14';
+    (import.meta.env as Record<string, string>).VITE_OK_PERF_MAX_RING_ENTRIES = '15';
+    (import.meta.env as Record<string, string>).VITE_OK_PERF_MAX_VITALS_RING_ENTRIES = '16';
+    (import.meta.env as Record<string, string>).VITE_OK_PERF_MAX_HISTOGRAM_PRECISION = '17';
+    (import.meta.env as Record<string, string>).VITE_OK_PERF_BURST_DEBOUNCE_MS = '18';
+    (import.meta.env as Record<string, string>).VITE_OK_PERF_PREWARM_CORRELATION_WINDOW_MS = '19';
+    expect(readNumericOverride('SYNC_TIMEOUT_MS', 30_000)).toBe(11);
+    expect(readNumericOverride('MAX_BUFFER_BYTES', 1_048_576)).toBe(12);
+    expect(readNumericOverride('MOUNT_STALLED_THRESHOLD_MS', 10_000)).toBe(13);
+    expect(readNumericOverride('HOVER_INTENT_MS', 80)).toBe(14);
+    expect(readNumericOverride('MAX_RING_ENTRIES', 5000)).toBe(15);
+    expect(readNumericOverride('MAX_VITALS_RING_ENTRIES', 200)).toBe(16);
+    expect(readNumericOverride('MAX_HISTOGRAM_PRECISION', 3)).toBe(17);
+    expect(readNumericOverride('BURST_DEBOUNCE_MS', 400)).toBe(18);
+    expect(readNumericOverride('PREWARM_CORRELATION_WINDOW_MS', 5_000)).toBe(19);
+  });
+
   test('PROD short-circuit returns default ignoring all override channels', () => {
     const original = (import.meta.env as Record<string, unknown>).PROD;
     try {
