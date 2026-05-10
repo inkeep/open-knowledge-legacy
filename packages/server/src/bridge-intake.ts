@@ -2,6 +2,7 @@ import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 import { mdManager, schema } from './md-manager.ts';
+import { withSpanSync } from './telemetry.ts';
 
 interface EmbedResolverContext {
   resolveEmbed: (basename: string, sourcePath: string) => string | null;
@@ -27,25 +28,49 @@ function buildParseOpts(embedResolver: EmbedResolverArg):
     : undefined;
 }
 
+export type ComposeWriteSurface =
+  | 'agent'
+  | 'file-watcher'
+  | 'managed-rename'
+  | 'undo'
+  | 'frontmatter';
+
 export function composeAndWriteRawBody(
   document: Y.Doc,
   rawContent: string,
+  surface: ComposeWriteSurface,
   embedResolver?: EmbedResolverArg,
 ): void {
-  const xmlFragment = document.getXmlFragment('default');
-  const ytext = document.getText('source');
-  const currentYText = ytext.toString();
+  withSpanSync(
+    'bridge.composeAndWriteRawBody',
+    {
+      attributes: {
+        surface,
+        'body.bytes': rawContent.length,
+        'doc.name': document.guid,
+      },
+    },
+    () => {
+      const xmlFragment = document.getXmlFragment('default');
+      const ytext = document.getText('source');
+      const currentYText = ytext.toString();
 
-  const { body } = stripFrontmatter(rawContent);
-  const parsedJson = mdManager.parseWithFallback(body, buildParseOpts(embedResolver));
-  const pmNode = schema.nodeFromJSON(parsedJson);
+      const { body } = stripFrontmatter(rawContent);
+      const parsedJson = withSpanSync(
+        'md.parseWithFallback',
+        { attributes: { 'body.bytes': body.length, 'doc.name': document.guid } },
+        () => mdManager.parseWithFallback(body, buildParseOpts(embedResolver)),
+      );
+      const pmNode = schema.nodeFromJSON(parsedJson);
 
-  if (currentYText !== rawContent) {
-    applyFastDiff(ytext, currentYText, rawContent);
-  }
+      if (currentYText !== rawContent) {
+        applyFastDiff(ytext, currentYText, rawContent);
+      }
 
-  const meta = { mapping: new Map(), isOMark: new Map() };
-  updateYFragment(document, xmlFragment, pmNode, meta);
+      const meta = { mapping: new Map(), isOMark: new Map() };
+      updateYFragment(document, xmlFragment, pmNode, meta);
+    },
+  );
 }
 
 export function replaceRawBody(

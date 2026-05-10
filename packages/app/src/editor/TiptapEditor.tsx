@@ -12,7 +12,7 @@ import { type AnyExtension, Editor, type EditorOptions, Extension, getSchema } f
 import Collaboration from '@tiptap/extension-collaboration';
 import Placeholder from '@tiptap/extension-placeholder';
 import { EditorContent } from '@tiptap/react';
-import { initProseMirrorDoc, yCursorPlugin } from '@tiptap/y-tiptap';
+import { initProseMirrorDoc, yCursorPlugin, ySyncPluginKey } from '@tiptap/y-tiptap';
 import { type FC, use, useEffect, useRef, useState } from 'react';
 import { Breadcrumb } from '@/components/editor/Breadcrumb';
 import { SelectionAnnouncer } from '@/components/editor/SelectionAnnouncer';
@@ -39,9 +39,11 @@ import { useDocumentContext } from './DocumentContext';
 import { setEditorDocName } from './extensions/doc-context.ts';
 import { sharedExtensions } from './extensions/shared.ts';
 import { uploadDecorationPlugin } from './image-upload/index.ts';
+import { getMountId } from './mount-id-registry';
 import { mountTiptapEditorPromise } from './mount-promise';
 import { markUserTyping } from './observers';
 import { TableControlsMenu } from './table-controls/TableControlsMenu';
+import { attachTypingBurstDetector } from './typing-burst-detector';
 import { getEditorView } from './utils/get-editor-view';
 
 function renderCursor(user: Record<string, string>): HTMLElement {
@@ -240,7 +242,8 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
   const bytes = provider.document.getText('source').length;
   const sizeStats = { viewCount: 0, bytes };
 
-  const entry = use(mountTiptapEditorPromise({ docName, construct, sizeStats }));
+  const mountId = getMountId(docName) ?? crypto.randomUUID();
+  const entry = use(mountTiptapEditorPromise({ docName, mountId, construct, sizeStats }));
   const editor = entry.editor;
 
   useEffect(() => {
@@ -301,6 +304,34 @@ const TiptapEditorChrome: FC<TiptapEditorChromeProps> = ({
     if (!docName) return;
     registerEditor(docName, editor);
     return () => unregisterEditor(docName, editor);
+  }, [editor, provider]);
+
+  useEffect(() => {
+    if (import.meta.env.PROD) return;
+    if (!editor) return;
+    const docName = provider.configuration.name;
+    if (!docName) return;
+    const mountId = getMountId(docName);
+    if (!mountId) return;
+    const sampler = attachTypingBurstDetector({
+      mode: 'WYSIWYG',
+      docName,
+      mountId,
+    });
+    type TxArg = {
+      transaction: { docChanged: boolean; getMeta: (key: typeof ySyncPluginKey) => unknown };
+    };
+    const onTransaction = (arg: unknown) => {
+      const transaction = (arg as TxArg).transaction;
+      if (!transaction.docChanged) return;
+      if (transaction.getMeta(ySyncPluginKey)) return;
+      sampler.recordUserInput(0, 1);
+    };
+    editor.on('transaction', onTransaction);
+    return () => {
+      editor.off('transaction', onTransaction);
+      sampler.detach();
+    };
   }, [editor, provider]);
 
   useEffect(() => {

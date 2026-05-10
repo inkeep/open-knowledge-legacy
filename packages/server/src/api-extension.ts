@@ -1338,7 +1338,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (result.rewrites === 0) {
         return;
       }
-      composeAndWriteRawBody(document, result.markdown, false);
+      composeAndWriteRawBody(document, result.markdown, 'managed-rename', false);
     }, MANAGED_RENAME_ORIGIN);
     return result;
   }

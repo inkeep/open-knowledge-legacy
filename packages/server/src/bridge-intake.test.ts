@@ -20,7 +20,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
 
   test('writes raw bytes to Y.Text verbatim — no canonicalization', () => {
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '# Heading\n\nbody\n');
+      composeAndWriteRawBody(doc, '# Heading\n\nbody\n', 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(doc.getText('source').toString()).toBe('# Heading\n\nbody\n');
@@ -28,7 +28,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
 
   test('preserves source-form delimiter `__foo__` (NOT canonicalized to `**foo**`)', () => {
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '__foo__\n');
+      composeAndWriteRawBody(doc, '__foo__\n', 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(doc.getText('source').toString()).toBe('__foo__\n');
@@ -36,7 +36,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
 
   test('preserves source-form delimiter `_foo_` (NOT canonicalized to `*foo*`)', () => {
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '_emphasis_\n');
+      composeAndWriteRawBody(doc, '_emphasis_\n', 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(doc.getText('source').toString()).toBe('_emphasis_\n');
@@ -44,7 +44,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
 
   test('preserves source-form fence `~~~` (NOT canonicalized to ``` `)', () => {
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '~~~js\nconst x = 1;\n~~~\n');
+      composeAndWriteRawBody(doc, '~~~js\nconst x = 1;\n~~~\n', 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(doc.getText('source').toString()).toBe('~~~js\nconst x = 1;\n~~~\n');
@@ -52,7 +52,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
 
   test('preserves doc-start `---` thematic break (was: canonicalized to `***`)', () => {
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '---\n');
+      composeAndWriteRawBody(doc, '---\n', 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(doc.getText('source').toString()).toBe('---\n');
@@ -61,7 +61,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
   test('preserves frontmatter region byte-equal (no FM canonicalization)', () => {
     const content = '---\ntags:\n  - characters\n  - air-nomads\n---\n# Aang\n';
     doc.transact(() => {
-      composeAndWriteRawBody(doc, content);
+      composeAndWriteRawBody(doc, content, 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(doc.getText('source').toString()).toBe(content);
@@ -72,7 +72,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
   test('preserves CRLF line endings verbatim', () => {
     const content = '# Heading\r\n\r\nbody\r\n';
     doc.transact(() => {
-      composeAndWriteRawBody(doc, content);
+      composeAndWriteRawBody(doc, content, 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(doc.getText('source').toString()).toBe(content);
@@ -81,7 +81,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
   test('preserves UTF-8 BOM verbatim', () => {
     const content = '﻿# Heading\n';
     doc.transact(() => {
-      composeAndWriteRawBody(doc, content);
+      composeAndWriteRawBody(doc, content, 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(doc.getText('source').toString()).toBe(content);
@@ -89,7 +89,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
 
   test('XmlFragment derives from parse(body) — fragment matches structural form', () => {
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '# Heading\n\nbody\n');
+      composeAndWriteRawBody(doc, '# Heading\n\nbody\n', 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     const xmlFragment = doc.getXmlFragment('default');
@@ -100,7 +100,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
   test('XmlFragment does NOT contain frontmatter content', () => {
     const content = '---\ntitle: Test\n---\n# Heading\n';
     doc.transact(() => {
-      composeAndWriteRawBody(doc, content);
+      composeAndWriteRawBody(doc, content, 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     const xmlFragment = doc.getXmlFragment('default');
@@ -112,7 +112,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
   test('bridge invariant holds: normalizeBridge(ytext) === normalizeBridge(serialize(fragment) + fm)', () => {
     const content = '---\ntitle: Test\n---\n# Heading\n\nbody\n';
     doc.transact(() => {
-      composeAndWriteRawBody(doc, content);
+      composeAndWriteRawBody(doc, content, 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     const ytext = doc.getText('source').toString();
@@ -129,7 +129,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
   test('idempotent — second call with same content does not mutate Y.Text', () => {
     const content = '# Heading\n\nbody\n';
     doc.transact(() => {
-      composeAndWriteRawBody(doc, content);
+      composeAndWriteRawBody(doc, content, 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     let textMutations = 0;
@@ -140,7 +140,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
     ytext.observe(observer);
 
     doc.transact(() => {
-      composeAndWriteRawBody(doc, content);
+      composeAndWriteRawBody(doc, content, 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     ytext.unobserve(observer);
@@ -149,10 +149,10 @@ describe('composeAndWriteRawBody — primitive contract', () => {
 
   test('overwrites existing content — replace semantics from caller', () => {
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '# Old\n');
+      composeAndWriteRawBody(doc, '# Old\n', 'agent');
     }, FILE_WATCHER_ORIGIN);
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '# New\n');
+      composeAndWriteRawBody(doc, '# New\n', 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(doc.getText('source').toString()).toBe('# New\n');
@@ -165,7 +165,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
     });
 
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '# Test\n');
+      composeAndWriteRawBody(doc, '# Test\n', 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(tx).toBe(1);
@@ -179,7 +179,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
     ytext.observe(() => events.push('ytext'));
 
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '# Test\n');
+      composeAndWriteRawBody(doc, '# Test\n', 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(events.length).toBeGreaterThanOrEqual(2);
@@ -203,7 +203,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
     });
 
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '# Test\n');
+      composeAndWriteRawBody(doc, '# Test\n', 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(xmlObserved).toBe(true);
@@ -214,7 +214,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
   test('preserves intentional leading whitespace (no .trim() per FR-30 D8)', () => {
     const content = '\n\n# Heading\n';
     doc.transact(() => {
-      composeAndWriteRawBody(doc, content);
+      composeAndWriteRawBody(doc, content, 'agent');
     }, FILE_WATCHER_ORIGIN);
 
     expect(doc.getText('source').toString()).toBe(content);
@@ -223,7 +223,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
   test('handles empty content without throwing', () => {
     expect(() => {
       doc.transact(() => {
-        composeAndWriteRawBody(doc, '');
+        composeAndWriteRawBody(doc, '', 'agent');
       }, FILE_WATCHER_ORIGIN);
     }).not.toThrow();
 
@@ -243,7 +243,7 @@ describe('composeAndWriteRawBody — primitive contract', () => {
     };
 
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '![[photo.png]]\n', embedResolver);
+      composeAndWriteRawBody(doc, '![[photo.png]]\n', 'file-watcher', embedResolver);
     }, FILE_WATCHER_ORIGIN);
 
     expect(calledWithBasename).toBe('photo.png');
@@ -440,7 +440,7 @@ describe('deriveFragmentFromYtext — primitive contract', () => {
 
   test('writes ZERO bytes to Y.Text — distinguishing-feature pin', () => {
     doc.transact(() => {
-      composeAndWriteRawBody(doc, '# Heading\n\nbody\n');
+      composeAndWriteRawBody(doc, '# Heading\n\nbody\n', 'file-watcher');
     }, FILE_WATCHER_ORIGIN);
 
     let textMutations = 0;
@@ -461,7 +461,7 @@ describe('deriveFragmentFromYtext — primitive contract', () => {
   test('preserves Y.Text bytes verbatim across the call', () => {
     const seed = '# Heading\n\nbody\n';
     doc.transact(() => {
-      composeAndWriteRawBody(doc, seed);
+      composeAndWriteRawBody(doc, seed, 'file-watcher');
     }, FILE_WATCHER_ORIGIN);
 
     doc.transact(() => {

@@ -131,12 +131,12 @@ export default defineScenario({
         duration: number;
         properties?: { kind?: string; viewCount?: number; bytes?: number; docName?: string };
       };
-      const buf =
-        (
-          globalThis as unknown as {
-            __ok_perf?: { marks?: PmMark[] };
-          }
-        ).__ok_perf?.marks ?? [];
+      const ring = (
+        globalThis as unknown as {
+          __ok_perf?: { marks?: { toArray(): PmMark[] } };
+        }
+      ).__ok_perf?.marks;
+      const buf: PmMark[] = ring ? ring.toArray() : [];
       return buf
         .filter((m) => m.startTime >= boundary)
         .filter((m) => m.name === 'ok/cache/reparent-start' || m.name === 'ok/cache/reparent-end')

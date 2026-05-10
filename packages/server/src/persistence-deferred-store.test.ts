@@ -403,7 +403,7 @@ describe('Y.Text-is-truth wiring (FR-33 / FR-35)', () => {
     await loadDocument(persistence, document, docName);
 
     document.transact(() => {
-      composeAndWriteRawBody(document, '__foo__\n');
+      composeAndWriteRawBody(document, '__foo__\n', 'agent');
     });
 
     await storeDocument(persistence, document, docName);

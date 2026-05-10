@@ -30,7 +30,7 @@ export function applyDiskContentToDoc(
 ): void {
   const embedResolver =
     resolveEmbed && sourcePath ? { resolveEmbed, resolveSize, sourcePath } : undefined;
-  composeAndWriteRawBody(document, content, embedResolver);
+  composeAndWriteRawBody(document, content, 'file-watcher', embedResolver);
 }
 
 export function applyExternalChange(

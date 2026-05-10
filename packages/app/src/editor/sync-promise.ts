@@ -1,7 +1,11 @@
 import type { HocuspocusProvider, onCloseParameters } from '@hocuspocus/provider';
 import { mark } from '@/lib/perf';
+import { readNumericOverride } from '@/lib/perf/env-override';
+import { getMountId } from './mount-id-registry';
 
-export const SYNC_TIMEOUT_MS = 30_000;
+export function getSyncTimeoutMs(): number {
+  return readNumericOverride('SYNC_TIMEOUT_MS', 30_000);
+}
 
 export class SyncTimeoutError extends Error {
   readonly docName: string;
@@ -91,7 +95,7 @@ export function __reapTimedOutEntries(now: number): number {
   for (const [docName, entry] of cache) {
     if (entry.settled) continue;
     const elapsed = now - entry.createdAt;
-    if (elapsed < SYNC_TIMEOUT_MS) continue;
+    if (elapsed < getSyncTimeoutMs()) continue;
     entry.settled = true;
     const error = new SyncTimeoutError(docName, elapsed);
     detach(entry);
@@ -187,8 +191,8 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     console.warn(
       `[syncPromise] ${docName} rejected on creation (test hook, armed ${armed}): ${error.message}`,
     );
-    mark('ok/sync/create', { docName, warm: false, armed });
-    mark('ok/sync/reject', { docName, reason: `armed-${armed}` });
+    mark('ok/sync/create', { docName, mountId: getMountId(docName), warm: false, armed });
+    mark('ok/sync/reject', { docName, mountId: getMountId(docName), reason: `armed-${armed}` });
     const promise = createRejectedThenable<void>(error);
     cache.set(docName, makeRejectedSentinelEntry(promise, provider));
     return promise;
@@ -196,8 +200,8 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
 
   if (provider.synced) {
     console.log(`[syncPromise] ${docName} resolved synchronously (warm provider)`);
-    mark('ok/sync/create', { docName, warm: true });
-    mark('ok/sync/resolve', { docName, elapsedMs: 0, warm: true });
+    mark('ok/sync/create', { docName, mountId: getMountId(docName), warm: true });
+    mark('ok/sync/resolve', { docName, mountId: getMountId(docName), elapsedMs: 0, warm: true });
     const promise = Promise.resolve();
     cache.set(docName, makeSentinelEntry(promise, provider));
     return promise;
@@ -218,7 +222,12 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     entry.resolved = true;
     const elapsed = Date.now() - entry.createdAt;
     console.log(`[syncPromise] ${docName} resolved in ${elapsed}ms`);
-    mark('ok/sync/resolve', { docName, elapsedMs: elapsed, warm: false });
+    mark('ok/sync/resolve', {
+      docName,
+      mountId: getMountId(docName),
+      elapsedMs: elapsed,
+      warm: false,
+    });
     detach(entry);
     if (!hasPendingEntries()) uninstallVisibilityHandler();
     entry.resolve();
@@ -230,7 +239,11 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     entry.settled = true;
     const error = new PreSyncDisconnectError(docName);
     console.warn(`[syncPromise] ${docName} rejected: ${error.message}`);
-    mark('ok/sync/reject', { docName, reason: 'pre-sync-disconnect' });
+    mark('ok/sync/reject', {
+      docName,
+      mountId: getMountId(docName),
+      reason: 'pre-sync-disconnect',
+    });
     detach(entry);
     if (!hasPendingEntries()) uninstallVisibilityHandler();
     entry.reject(error);
@@ -243,11 +256,16 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     const elapsed = Date.now() - entry.createdAt;
     const error = new SyncTimeoutError(docName, elapsed);
     console.warn(`[syncPromise] ${docName} rejected: ${error.message}`);
-    mark('ok/sync/reject', { docName, reason: 'timeout', elapsedMs: elapsed });
+    mark('ok/sync/reject', {
+      docName,
+      mountId: getMountId(docName),
+      reason: 'timeout',
+      elapsedMs: elapsed,
+    });
     detach(entry);
     if (!hasPendingEntries()) uninstallVisibilityHandler();
     entry.reject(error);
-  }, SYNC_TIMEOUT_MS);
+  }, getSyncTimeoutMs());
 
   const entry: CacheEntry = {
     promise,
@@ -269,7 +287,7 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
 
   installVisibilityHandler();
 
-  mark('ok/sync/create', { docName, warm: false });
+  mark('ok/sync/create', { docName, mountId: getMountId(docName), warm: false });
 
   return promise;
 }

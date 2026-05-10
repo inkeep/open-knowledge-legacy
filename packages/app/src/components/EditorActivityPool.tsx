@@ -48,6 +48,7 @@ import {
 import { type PoolEntrySnapshot, useDocumentContext } from '@/editor/DocumentContext';
 import { setActivityMountList } from '@/editor/editor-cache';
 import { isSystemDoc } from '@/editor/is-system-doc';
+import { clearMountId, getMountId, setMountId } from '@/editor/mount-id-registry';
 import type { ServerRestartRecoveryState } from '@/editor/provider-pool';
 import { TiptapEditor } from '@/editor/TiptapEditor';
 import { mark, ProfilerBoundary } from '@/lib/perf';
@@ -248,11 +249,25 @@ function EditorActivityPoolInner({
 
   const priorMountKeyRef = useRef<string>('');
   const mountKey = mountList.map((e) => e.docName).join(',');
+  const poolEntriesRef = useRef(poolEntries);
+  useLayoutEffect(() => {
+    poolEntriesRef.current = poolEntries;
+  }, [poolEntries]);
   useLayoutEffect(() => {
     if (priorMountKeyRef.current === mountKey) return;
     const prior = priorMountKeyRef.current ? priorMountKeyRef.current.split(',') : [];
     const mounted = mountKey ? mountKey.split(',') : [];
     const evicted = prior.filter((d) => !mounted.includes(d));
+    const newlyMounted = mounted.filter((d) => !prior.includes(d));
+    for (const docName of evicted) {
+      clearMountId(docName);
+    }
+    for (const docName of newlyMounted) {
+      const entry = poolEntriesRef.current.find((e) => e.docName === docName);
+      const adopted = entry?.poolEventId;
+      const mountId = adopted && adopted.length > 0 ? adopted : crypto.randomUUID();
+      setMountId(docName, mountId);
+    }
     mark('ok/activity/mount-list-change', {
       active: activeDocName,
       mounted,
@@ -492,6 +507,7 @@ function ActivityEntry({
     }
     mark('ok/cold/first-toggle', {
       docName: entry.docName,
+      mountId: getMountId(entry.docName),
       ytextLength,
       modeEnteredFirst: isSourceMode ? 'source' : 'visual',
     });

@@ -1710,9 +1710,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     if (hoveredPrewarmDocRef.current === docName) return;
     cancelCurrentHoverPrewarm();
     hoveredPrewarmDocRef.current = docName;
-    scheduleHoverPrewarm(docName, (nextDocName) => {
-      prewarm(nextDocName);
-    });
+    scheduleHoverPrewarm(docName, (nextDocName) => prewarm(nextDocName));
   }
 
   if (loading) {

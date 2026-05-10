@@ -1,11 +1,13 @@
 import { isSystemDoc } from '@/editor/is-system-doc';
 import { mark } from '@/lib/perf';
+import { readNumericOverride } from '@/lib/perf/env-override';
+import { recordPrewarm } from './prewarm-correlation';
 
-const HOVER_INTENT_MS = 80;
+const HOVER_INTENT_MS = readNumericOverride('HOVER_INTENT_MS', 80);
 const MAX_CONCURRENT_PREWARMS = 3;
 const MAX_ALREADY_PREWARMED = 20;
 
-type PrewarmFn = (docName: string) => void;
+type PrewarmFn = (docName: string) => string | null;
 
 interface PendingEntry {
   timer: ReturnType<typeof setTimeout>;
@@ -32,6 +34,12 @@ function finishInflight(docName: string): void {
   drainQueue();
 }
 
+function emitPrewarmSuccess(docName: string, poolEventId: string): void {
+  const t = Date.now();
+  mark('ok/sidebar/prewarm-success', { docName, t, poolEventId });
+  recordPrewarm(docName, poolEventId, t);
+}
+
 function drainQueue(): void {
   while (inflight.size < MAX_CONCURRENT_PREWARMS && queued.length > 0) {
     const next = queued.shift();
@@ -40,7 +48,8 @@ function drainQueue(): void {
     inflight.add(next.docName);
     markAlreadyPrewarmed(next.docName);
     try {
-      next.prewarm(next.docName);
+      const poolEventId = next.prewarm(next.docName);
+      if (poolEventId) emitPrewarmSuccess(next.docName, poolEventId);
     } catch (err) {
       mark('ok/sidebar/prewarm-failed', {
         docName: next.docName,
@@ -67,7 +76,8 @@ export function scheduleHoverPrewarm(docName: string, prewarm: PrewarmFn): void 
     markAlreadyPrewarmed(docName);
     inflight.add(docName);
     try {
-      prewarm(docName);
+      const poolEventId = prewarm(docName);
+      if (poolEventId) emitPrewarmSuccess(docName, poolEventId);
     } catch (err) {
       mark('ok/sidebar/prewarm-failed', {
         docName,

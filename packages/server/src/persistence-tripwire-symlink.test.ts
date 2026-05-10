@@ -76,7 +76,7 @@ describe('tripwire reset symlink-escape', () => {
     });
 
     const document = new Y.Doc();
-    composeAndWriteRawBody(document, doubledMarkdown);
+    composeAndWriteRawBody(document, doubledMarkdown, 'agent');
     setReconciledBase(docName, baseMarkdown);
 
     const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});

@@ -85,7 +85,7 @@ function applyAgentMarkdownWriteInner(
     }
 
     const newContent = prependFrontmatter(finalFm, newBody);
-    composeAndWriteRawBody(document, newContent, embedResolver);
+    composeAndWriteRawBody(document, newContent, 'agent', embedResolver);
   } catch (err) {
     log.error(
       { err, docName: document.name, position, markdownLen: markdown.length },

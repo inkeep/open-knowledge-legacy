@@ -38,7 +38,7 @@ import { useEffect, useRef } from 'react';
 import { ErrorBoundary, type FallbackProps } from 'react-error-boundary';
 import { OkBlob } from '@/components/OkBlob';
 import { Button } from '@/components/ui/button';
-import { MountAbortError, MountTimeoutError } from '@/editor/mount-promise';
+import { MountAbortError } from '@/editor/mount-promise';
 import {
   BridgeSetupError,
   DocumentNotFoundError,
@@ -62,8 +62,7 @@ export function errorDocName(error: unknown): string | null {
     error instanceof DocumentNotFoundError ||
     error instanceof BridgeSetupError ||
     error instanceof ServerCapabilityMismatchError ||
-    error instanceof MountAbortError ||
-    error instanceof MountTimeoutError
+    error instanceof MountAbortError
   ) {
     return error.docName;
   }
@@ -103,14 +102,8 @@ export function errorCopy(error: unknown): ErrorCopy {
   }
   if (error instanceof MountAbortError) {
     return {
-      title: "Couldn't open document",
-      summary: `Loading "${error.docName}" was interrupted.`,
-    };
-  }
-  if (error instanceof MountTimeoutError) {
-    return {
-      title: "Couldn't load document",
-      summary: `"${error.docName}" took too long. Check your connection.`,
+      title: 'Cancelled',
+      summary: `You cancelled loading "${error.docName}".`,
     };
   }
   const message =

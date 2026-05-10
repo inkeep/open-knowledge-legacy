@@ -281,14 +281,14 @@ async function drainCollector(page: Page): Promise<{
       const c = g.__ok_perf;
       if (!c) return { marks: [], vitals: [] };
       return {
-        marks: c.marks.map((m) => ({
+        marks: c.marks.toArray().map((m) => ({
           name: m.name,
           startTime: m.startTime,
           duration: m.duration,
           track: m.track,
           properties: m.properties,
         })),
-        vitals: c.vitals.map((v) => ({
+        vitals: c.vitals.toArray().map((v) => ({
           name: v.name,
           value: v.value,
           rating: v.rating,

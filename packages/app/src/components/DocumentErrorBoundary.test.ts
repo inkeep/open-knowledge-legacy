@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { MountAbortError, MountTimeoutError } from '@/editor/mount-promise';
+import { MountAbortError } from '@/editor/mount-promise';
 import {
   BridgeSetupError,
   DocumentNotFoundError,
@@ -67,20 +67,11 @@ describe('errorCopy', () => {
     expect(copy.summary).toMatch(/unexpected/i);
   });
 
-  test('MountAbortError → "Couldn\'t open document" + interrupted + doc name', () => {
+  test('MountAbortError → "Cancelled" + user-action framing + doc name', () => {
     const copy = errorCopy(new MountAbortError('docs/abc'));
-    expect(copy.title).toBe("Couldn't open document");
+    expect(copy.title).toBe('Cancelled');
     expect(copy.summary).toContain('docs/abc');
-    expect(copy.summary).toMatch(/interrupted/i);
-    expect(copy.summary).not.toMatch(/\babort/i);
-  });
-
-  test('MountTimeoutError → "Couldn\'t load document" + took too long + doc name', () => {
-    const copy = errorCopy(new MountTimeoutError('docs/slowdoc', 30_000));
-    expect(copy.title).toBe("Couldn't load document");
-    expect(copy.summary).toContain('docs/slowdoc');
-    expect(copy.summary).toMatch(/too long/i);
-    expect(copy.summary).not.toMatch(/\bmount\b/i);
+    expect(copy.summary).toMatch(/cancelled/i);
   });
 });
 
@@ -109,10 +100,6 @@ describe('errorDocName', () => {
 
   test('MountAbortError → docName', () => {
     expect(errorDocName(new MountAbortError('docs/abort'))).toBe('docs/abort');
-  });
-
-  test('MountTimeoutError → docName', () => {
-    expect(errorDocName(new MountTimeoutError('docs/timeout', 30_000))).toBe('docs/timeout');
   });
 
   test('untyped Error → null', () => {
