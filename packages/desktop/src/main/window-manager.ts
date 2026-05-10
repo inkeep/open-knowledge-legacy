@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { getLocalDir } from '@inkeep/open-knowledge-server';
 import { sendToRenderer } from '../shared/ipc-send.ts';
+import type { ShowGateRegistry } from './show-gate.ts';
 
 async function pollLockReleasedDefault(lockDir: string, deadlineMs: number): Promise<boolean> {
   const lockPath = resolve(lockDir, 'server.lock');
@@ -125,6 +126,7 @@ export interface WindowManagerDeps {
   rendererDevUrl?: string | null;
   setTimeout(cb: () => void, ms: number): unknown;
   killProbe(pid: number, signal: number | NodeJS.Signals): void;
+  showGate: ShowGateRegistry;
   runClean?(opts: { lockDir: string }): Promise<void>;
   realpathSync?(p: string): string;
   readServerLock?(lockDir: string): ServerLockMetadataLike | null;
@@ -454,17 +456,7 @@ export class WindowManager {
       });
     }
 
-    window.once('ready-to-show', () => {
-      window.show?.();
-    });
-    this.deps.setTimeout(() => {
-      if (window.isDestroyed?.() || window.isVisible?.()) return;
-      this.deps.log?.warn(
-        { event: 'ready-to-show-timeout' },
-        'ready-to-show did not fire within 5s — falling back',
-      );
-      window.show?.();
-    }, 5000);
+    const disposeShowGate = this.deps.showGate.register(window, { kind: 'editor' });
 
     if (this.deps.rendererDevUrl) {
       await window.loadURL(this.deps.rendererDevUrl);
@@ -473,6 +465,7 @@ export class WindowManager {
     }
 
     window.on('closed', () => {
+      disposeShowGate();
       try {
         utility.postMessage({ type: 'shutdown' });
       } catch (err) {
@@ -593,17 +586,7 @@ export class WindowManager {
       });
     }
 
-    window.once('ready-to-show', () => {
-      window.show?.();
-    });
-    this.deps.setTimeout(() => {
-      if (window.isDestroyed?.() || window.isVisible?.()) return;
-      this.deps.log?.warn(
-        { event: 'ready-to-show-timeout' },
-        'ready-to-show did not fire within 5s — falling back',
-      );
-      window.show?.();
-    }, 5000);
+    const disposeShowGate = this.deps.showGate.register(window, { kind: 'editor' });
 
     if (this.deps.rendererDevUrl) {
       await window.loadURL(this.deps.rendererDevUrl);
@@ -612,6 +595,7 @@ export class WindowManager {
     }
 
     window.on('closed', () => {
+      disposeShowGate();
       this.windowsByPath.delete(canonicalKey);
     });
 

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { _electron as electron } from '@playwright/test';
+import { expect, test } from './_helpers/smoke-test';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAIN_ENTRY = resolve(__dirname, '..', '..', 'out', 'main', 'index.js');
@@ -11,8 +12,6 @@ const MAIN_ENTRY = resolve(__dirname, '..', '..', 'out', 'main', 'index.js');
 const SMOKE_ENABLED = process.env.OK_DESKTOP_E2E_SMOKE === '1';
 const DARWIN = process.platform === 'darwin';
 const BUILD_EXISTS = existsSync(MAIN_ENTRY);
-
-const DESKTOP_PRODUCT_NAME = 'Open Knowledge';
 
 interface SeededHome {
   tmpHome: string;
@@ -23,6 +22,10 @@ interface SeededHomeWithEditor {
   tmpHome: string;
   projectAPath: string;
   projectBPath: string;
+}
+
+function userDataDirFor(tmpHome: string): string {
+  return join(tmpHome, 'electron-userdata');
 }
 
 function createProjectDir(prefix: string): string {
@@ -38,7 +41,7 @@ function createProjectDir(prefix: string): string {
 function seedHomeWithoutLastOpenedProject(prefix: string): SeededHome {
   const tmpHome = mkdtempSync(join(tmpdir(), `ok-navigator-close-${prefix}-`));
   const projectDir = createProjectDir(prefix);
-  const userDataDir = join(tmpHome, 'Library', 'Application Support', DESKTOP_PRODUCT_NAME);
+  const userDataDir = userDataDirFor(tmpHome);
   mkdirSync(userDataDir, { recursive: true });
   writeFileSync(
     join(userDataDir, 'state.json'),
@@ -58,7 +61,7 @@ function seedHomeWithLastOpenedProjectAndExtra(prefix: string): SeededHomeWithEd
   const tmpHome = mkdtempSync(join(tmpdir(), `ok-navigator-close-${prefix}-`));
   const projectAPath = createProjectDir(`${prefix}-A`);
   const projectBPath = createProjectDir(`${prefix}-B`);
-  const userDataDir = join(tmpHome, 'Library', 'Application Support', DESKTOP_PRODUCT_NAME);
+  const userDataDir = userDataDirFor(tmpHome);
   mkdirSync(userDataDir, { recursive: true });
   writeFileSync(
     join(userDataDir, 'state.json'),
@@ -82,7 +85,7 @@ function seedHomeWithLastOpenedProjectAndExtra(prefix: string): SeededHomeWithEd
 
 async function launchApp(tmpHome: string): Promise<ElectronApplication> {
   return electron.launch({
-    args: [MAIN_ENTRY],
+    args: [MAIN_ENTRY, `--user-data-dir=${userDataDirFor(tmpHome)}`],
     timeout: 30_000,
     env: {
       ...process.env,
@@ -126,6 +129,12 @@ async function closeAppSafely(app: ElectronApplication | null): Promise<void> {
   } catch {}
 }
 
+function rmTmpHomeSafely(tmpHome: string): void {
+  try {
+    rmSync(tmpHome, { recursive: true, force: true });
+  } catch {}
+}
+
 test.describe('Project Navigator close-on-project-open smoke', () => {
   test.skip(!SMOKE_ENABLED, 'Set OK_DESKTOP_E2E_SMOKE=1 to run Electron smoke tests.');
   test.skip(!DARWIN, 'Smoke harness is darwin-only in v0.');
@@ -134,11 +143,14 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
     `Main build missing at ${MAIN_ENTRY} — run "bun run build:desktop" first.`,
   );
 
-  test('Navigator boots first, closes once a project window resolves', async () => {
+  test('Navigator boots first, closes once a project window resolves', async ({
+    captureStderrFor,
+  }) => {
     const { tmpHome, projectDir } = seedHomeWithoutLastOpenedProject('happy');
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp(tmpHome);
+      captureStderrFor(app);
 
       await expect
         .poll(() => countWindowsByMode(app as ElectronApplication, 'navigator'), {
@@ -172,16 +184,19 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       expect(await countWindowsByMode(app, 'navigator')).toBe(0);
     } finally {
       await closeAppSafely(app);
-      rmSync(tmpHome, { recursive: true, force: true });
+      rmTmpHomeSafely(tmpHome);
       rmSync(projectDir, { recursive: true, force: true });
     }
   });
 
-  test('Switch-Project flow: Editor A summons Navigator, picks Project B, both editors persist', async () => {
+  test('Switch-Project flow: Editor A summons Navigator, picks Project B, both editors persist', async ({
+    captureStderrFor,
+  }) => {
     const { tmpHome, projectAPath, projectBPath } = seedHomeWithLastOpenedProjectAndExtra('switch');
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp(tmpHome);
+      captureStderrFor(app);
 
       await expect
         .poll(() => countWindowsByMode(app as ElectronApplication, 'editor'), {
@@ -225,18 +240,20 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       expect(await countWindowsByMode(app, 'editor')).toBe(2);
     } finally {
       await closeAppSafely(app);
-      rmSync(tmpHome, { recursive: true, force: true });
+      rmTmpHomeSafely(tmpHome);
       rmSync(projectAPath, { recursive: true, force: true });
       rmSync(projectBPath, { recursive: true, force: true });
     }
   });
 
-  test('Navigator stays visible when project open fails', async () => {
+  test('Navigator stays visible when project open fails', async ({ captureStderrFor }) => {
     const { tmpHome, projectDir } = seedHomeWithoutLastOpenedProject('failure');
-    const bogusProjectPath = join(tmpHome, 'no-such-project');
+    const bogusProjectPath = join(tmpHome, 'a-file-not-a-dir');
+    writeFileSync(bogusProjectPath, 'this is a file, not a directory\n');
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp(tmpHome);
+      captureStderrFor(app);
 
       await expect
         .poll(() => countWindowsByMode(app as ElectronApplication, 'navigator'), {
@@ -261,7 +278,11 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       });
 
       await navigator.evaluate(async (path) => {
-        await window.okDesktop?.project.open({ path, target: 'new-window', entryPoint: 'recents' });
+        await window.okDesktop?.project.open({
+          path,
+          target: 'new-window',
+          entryPoint: 'start-fresh',
+        });
       }, bogusProjectPath);
 
       await expect
@@ -286,7 +307,7 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       expect(dialogState.title).toBe('Unable to open project');
     } finally {
       await closeAppSafely(app);
-      rmSync(tmpHome, { recursive: true, force: true });
+      rmTmpHomeSafely(tmpHome);
       rmSync(projectDir, { recursive: true, force: true });
     }
   });

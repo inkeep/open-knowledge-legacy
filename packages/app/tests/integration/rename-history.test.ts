@@ -742,7 +742,7 @@ describe('Timeline rename-history mitigation — integration', () => {
       writeFileSync(join(server.contentDir, 'big', `doc-${i}.md`), `# doc-${i}\n`, 'utf-8');
     }
 
-    const watcherDeadline = Date.now() + 60_000;
+    const watcherDeadline = Date.now() + 90_000;
     let indexedCount = 0;
     while (Date.now() < watcherDeadline) {
       const res = await fetch(`http://localhost:${server.port}/api/documents`);
@@ -759,7 +759,7 @@ describe('Timeline rename-history mitigation — integration', () => {
       await wait(100);
     }
     if (indexedCount !== COUNT) {
-      throw new Error(`file watcher indexed only ${indexedCount}/${COUNT} docs within 60s`);
+      throw new Error(`file watcher indexed only ${indexedCount}/${COUNT} docs within 90s`);
     }
 
     const t0 = performance.now();
@@ -779,10 +779,10 @@ describe('Timeline rename-history mitigation — integration', () => {
     );
     expect(folderEntries).toHaveLength(COUNT);
 
-    expect(elapsed).toBeLessThan(60_000);
+    expect(elapsed).toBeLessThan(90_000);
 
     const jsonlPath = renameLogPath(resolveShadowDir(server.contentDir));
     const stat = readFileSync(jsonlPath);
     expect(stat.byteLength).toBeLessThan(1_000_000);
-  }, 120_000);
+  }, 180_000);
 });

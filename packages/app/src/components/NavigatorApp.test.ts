@@ -210,6 +210,26 @@ describe('NavigatorApp launcher-header channel surface', () => {
   });
 });
 
+describe('NavigatorApp — Electron theme bridge wiring', () => {
+  test('imports useTheme from next-themes for the user-intent value', () => {
+    expect(NAVIGATOR_SRC).toMatch(
+      /import\s*\{[^}]*\buseTheme\b[^}]*\}\s*from\s*['"]next-themes['"]/,
+    );
+    expect(NAVIGATOR_SRC).toMatch(/useTheme\(\)/);
+  });
+
+  test('delegates the theme bridge wiring to the shared useThemeBridge hook', () => {
+    expect(NAVIGATOR_SRC).toMatch(
+      /import\s*\{\s*useThemeBridge\s*\}\s*from\s*['"]@\/hooks\/use-theme-bridge['"]/,
+    );
+    expect(NAVIGATOR_SRC).toMatch(/useThemeBridge\(\s*bridge\s*,\s*themeValue/);
+  });
+
+  test('falls back to "system" for symmetry with ConfigProvider', () => {
+    expect(NAVIGATOR_SRC).toMatch(/themeValue\s*\?\?\s*['"]system['"]/);
+  });
+});
+
 describe('NavigatorApp entry-point propagation', () => {
   test('Open folder on disk → openProject(..., "pick-existing")', () => {
     expect(NAVIGATOR_SRC).toMatch(/onOpenFolder\s*=[\s\S]*?openProject\([^)]*,\s*'pick-existing'/);

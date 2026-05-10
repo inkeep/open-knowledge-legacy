@@ -2,6 +2,7 @@ import babel from '@rolldown/plugin-babel';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import type { PluginOptions } from 'babel-plugin-react-compiler';
 import { defineConfig } from 'vite';
+import { chromeTokensVitePlugin } from './src/build/chrome-tokens-vite-plugin';
 import { hocuspocusPlugin } from './src/server/hocuspocus-plugin';
 import { RENDERER_DEDUPE } from './vite.dedupe';
 
@@ -18,6 +19,7 @@ const vitePort = process.env.VITE_PORT ? Number.parseInt(process.env.VITE_PORT, 
 export default defineConfig({
   base: './',
   plugins: [
+    chromeTokensVitePlugin(),
     react(),
     babel({
       presets: [reactCompilerPreset(reactCompilerConfig)],

@@ -17,7 +17,7 @@ const SIDEBAR_WIDTH = '18rem';
 const SIDEBAR_WIDTH_ICON = '3rem';
 const SIDEBAR_KEYBOARD_SHORTCUT = '\\';
 const SIDEBAR_ID = 'app-file-sidebar';
-const MIN_SIDEBAR_WIDTH = '14rem';
+const MIN_SIDEBAR_WIDTH = '14.625rem';
 const MAX_SIDEBAR_WIDTH = '22rem';
 const SIDEBAR_WIDTH_COOKIE_NAME = 'sidebar_width';
 const SIDEBAR_WIDTH_VALUE_PATTERN = /^\d+(?:\.\d+)?(?:rem|px)$/;
@@ -357,15 +357,18 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
 function SidebarRail({
   className,
   enableDrag = true,
+  enableToggle = true,
   onMouseDown,
   ...props
 }: React.ComponentProps<'button'> & {
   enableDrag?: boolean;
+  enableToggle?: boolean;
 }) {
   const { toggleSidebar, setWidth, state, width, setIsDraggingRail } = useSidebar();
   const { dragRef, handleMouseDown } = useSidebarResize({
     direction: 'right',
     enableDrag,
+    enableToggle,
     onResize: setWidth,
     onToggle: toggleSidebar,
     currentWidth: width,
@@ -398,6 +401,7 @@ function SidebarRail({
         'group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:left-full hover:group-data-[collapsible=offcanvas]:bg-sidebar',
         '[[data-side=left][data-collapsible=offcanvas]_&]:-right-2',
         '[[data-side=right][data-collapsible=offcanvas]_&]:-left-2',
+        'md:group-data-[variant=inset]:after:inset-y-5',
         className,
       )}
       {...props}
@@ -437,7 +441,7 @@ function SidebarInset({
       onClick={handleClick}
       onAnimationEnd={handleAnimationEnd}
       className={cn(
-        'relative flex w-full flex-1 flex-col bg-background md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2',
+        'relative flex w-full flex-1 flex-col bg-background peer-data-[variant=inset]:m-2 peer-data-[variant=inset]:ml-0 peer-data-[variant=inset]:rounded-xl peer-data-[variant=inset]:shadow-sm peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2',
         'transition-transform duration-200 ease-linear motion-reduce:transition-none',
         'peer-data-[mobile=true]:peer-data-[state=expanded]:translate-x-(--sidebar-width)',
         className,

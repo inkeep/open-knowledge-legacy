@@ -3,6 +3,7 @@ import babel from '@rolldown/plugin-babel';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import type { PluginOptions } from 'babel-plugin-react-compiler';
 import { defineConfig } from 'electron-vite';
+import { chromeTokensVitePlugin } from '../app/src/build/chrome-tokens-vite-plugin';
 import { RENDERER_DEDUPE } from '../app/vite.dedupe';
 
 const reactCompilerConfig: PluginOptions = {
@@ -46,6 +47,7 @@ export default defineConfig({
   renderer: {
     root: appRoot,
     plugins: [
+      chromeTokensVitePlugin({ globalsCssPath: resolve(appRoot, 'src/globals.css') }),
       react(),
       await babel({
         presets: [reactCompilerPreset(reactCompilerConfig)],

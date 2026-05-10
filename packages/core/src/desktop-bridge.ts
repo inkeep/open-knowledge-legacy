@@ -59,6 +59,8 @@ interface OkUpdateStuckHintInfo {
 
 type OkUpdateChannel = 'latest' | 'beta';
 
+type OkThemeSource = 'system' | 'light' | 'dark';
+
 interface OkUpdateDowngradeWarningInfo {
   readonly currentVersion: string;
   readonly targetVersion: string;
@@ -231,6 +233,10 @@ export interface OkDesktopBridge {
   onChannelChanged(cb: (info: OkChannelChangedInfo) => void): OkUnsubscribe;
   onDeepLink(cb: (evt: { doc: string }) => void): OkUnsubscribe;
 
+  setThemeSource(source: OkThemeSource): Promise<{ ok: true }>;
+
+  signalThemeApplied(opts?: { reducedTransparency?: boolean }): void;
+
   dialog: {
     /** `dialog.showOpenDialog({ properties: ['openDirectory'] })`. Resolves to the selected path or `null` on cancel.
      *  `defaultPath` seeds the initial directory shown to the user. */
@@ -303,8 +309,15 @@ export interface OkDesktopBridge {
 
   skill: {
     detectClaudeDesktop(): Promise<boolean>;
-    buildAndOpen(): Promise<
-      | { ok: true; path: string }
+    buildAndOpen(opts?: { force?: boolean }): Promise<
+      | { ok: true; path: string; skipped?: false; version?: string }
+      | {
+          ok: true;
+          path?: undefined;
+          skipped: true;
+          version: string;
+          recordedAt?: string;
+        }
       | {
           ok: false;
           reason: 'build-failed' | 'open-failed' | 'no-downloads-dir';

@@ -9,6 +9,7 @@ import type {
   OkMcpWiringShowPayload,
   OkMenuAction,
   OkOnboardingShowPayload,
+  OkThemeSource,
   OkUpdateChannel,
   OkUpdateDowngradeWarningInfo,
   OkUpdateDownloadedInfo,
@@ -202,6 +203,19 @@ const bridge: OkDesktopBridge = {
     const listener = (_event: IpcRendererEvent, evt: { doc: string }) => cb(evt);
     ipcRenderer.on('ok:deep-link', listener);
     return () => ipcRenderer.removeListener('ok:deep-link', listener);
+  },
+
+  setThemeSource: (source: OkThemeSource) => invoke('ok:theme:set-source', { source }),
+
+  signalThemeApplied: (opts?: { reducedTransparency?: boolean }) => {
+    invoke('ok:theme:applied', opts).catch((err: unknown) => {
+      console.warn(
+        JSON.stringify({
+          event: 'signal-theme-applied-failed',
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    });
   },
 
   dialog: {

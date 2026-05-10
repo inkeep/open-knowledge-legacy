@@ -247,6 +247,44 @@ describe('M1 smoke', () => {
     }
   });
 
+  test('M1 invariant: OkThemeSource literal-union drift catcher', async () => {
+    const desktopPath = join(__dirname, '..', '..', 'src', 'shared', 'bridge-contract.ts');
+    const corePath = join(__dirname, '..', '..', '..', 'core', 'src', 'desktop-bridge.ts');
+    const appPath = join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'app',
+      'src',
+      'lib',
+      'desktop-bridge-types.ts',
+    );
+    const { readFileSync } = await import('node:fs');
+
+    const extractLiteralUnion = (src: string, typeName: string): Set<string> => {
+      const declRegex = new RegExp(`type\\s+${typeName}\\s*=([^;]+);`, 'm');
+      const match = src.match(declRegex);
+      if (!match?.[1]) return new Set();
+      const body = match[1];
+      const literals = body.match(/'([^']+)'/g) ?? [];
+      return new Set(literals.map((l) => l.slice(1, -1)));
+    };
+
+    const desktopMembers = extractLiteralUnion(readFileSync(desktopPath, 'utf-8'), 'OkThemeSource');
+    const coreMembers = extractLiteralUnion(readFileSync(corePath, 'utf-8'), 'OkThemeSource');
+    const appMembers = extractLiteralUnion(readFileSync(appPath, 'utf-8'), 'OkThemeSource');
+
+    expect(desktopMembers.size).toBeGreaterThan(0);
+    expect(coreMembers.size).toBeGreaterThan(0);
+    expect(appMembers.size).toBeGreaterThan(0);
+
+    expect(desktopMembers.size).toBe(3);
+
+    expect(desktopMembers).toEqual(coreMembers);
+    expect(desktopMembers).toEqual(appMembers);
+  });
+
   test('M1 invariant: SWITCH_PROJECT_LABEL_WITH_ELLIPSIS drift catcher', async () => {
     const [desktop, app] = await Promise.all([
       import('../../src/shared/labels.ts'),

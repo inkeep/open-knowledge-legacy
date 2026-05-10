@@ -25,6 +25,7 @@ import {
   isProcessAlive,
   readServerLock,
 } from '@inkeep/open-knowledge-server';
+import type { BrowserWindowConstructorOptions } from 'electron';
 import {
   app,
   BrowserWindow,
@@ -33,6 +34,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  nativeTheme,
   session,
   shell,
   utilityProcess,
@@ -50,6 +52,7 @@ import { openAssetSafely, revealAssetSafely } from './asset-allowlist.ts';
 import { popAssetMenu } from './asset-menu.ts';
 import { attachAssetSafetyNet } from './asset-safety-net.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
+import { runBootstrap } from './bootstrap.ts';
 import {
   createBrokenSymlinkRepairHandler,
   getInstallStatus,
@@ -93,7 +96,14 @@ import {
 import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow, tryCloseNavigator } from './navigator-window.ts';
 import { type OnboardingFlowKind, recordOnboardingFlow } from './onboarding-telemetry.ts';
+import {
+  applyReducedTransparency,
+  type BrowserWindowVibrancyTarget,
+  type ReducedTransparencyDeps,
+  type VibrancyMaterial,
+} from './reduced-transparency-handler.ts';
 import { handleShellOpenExternal } from './shell-allowlist.ts';
+import { createShowGateRegistry, type ShowGateRegistry } from './show-gate.ts';
 import {
   type AppState,
   addRecentProject,
@@ -107,6 +117,8 @@ import {
   saveAppStateToDir,
   setProjectSessionState,
 } from './state-store.ts';
+import { applyThemeApplied } from './theme-applied-handler.ts';
+import { applyThemeSource, isOkThemeSource } from './theme-handler.ts';
 import {
   applyConfirmDowngrade,
   applyResetIncompatible,
@@ -122,11 +134,21 @@ import {
   WindowManager,
 } from './window-manager.ts';
 
-const DEFAULT_WIN_OPTS = {
+const VIBRANCY_DEFAULT: VibrancyMaterial = 'sidebar';
+
+const DEFAULT_WIN_OPTS: BrowserWindowConstructorOptions = {
   width: 1280,
   height: 800,
   show: false,
-  backgroundColor: '#171717',
+  ...(process.platform === 'darwin'
+    ? {
+        titleBarStyle: 'hiddenInset',
+        trafficLightPosition: { x: 22, y: 24 },
+        vibrancy: VIBRANCY_DEFAULT,
+        visualEffectState: 'followWindow',
+        transparent: true,
+      }
+    : {}),
   webPreferences: {
     contextIsolation: true,
     nodeIntegration: false,
@@ -204,6 +226,24 @@ export function clearPendingSchemaIncompatibility(): void {
 }
 let navigatorWindow: BrowserWindowLike | null = null;
 let wm: WindowManager;
+const showGate: ShowGateRegistry = createShowGateRegistry({
+  log: {
+    warn: (obj, msg) => {
+      console.warn(JSON.stringify({ ...obj, msg }));
+    },
+  },
+  setTimeout: (cb, ms) => setTimeout(cb, ms),
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+});
+
+const reducedTransparencyDeps: ReducedTransparencyDeps = {
+  getAllWindows: () =>
+    BrowserWindow.getAllWindows() as unknown as readonly BrowserWindowVibrancyTarget[],
+  defaultVibrancy: VIBRANCY_DEFAULT,
+  warn: (line) => {
+    console.warn(line);
+  },
+};
 let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
 let debugIpc: DebugIpcHandle | null = null;
 let mcpWiringHandle: RunMcpWiringHandle | null = null;
@@ -295,6 +335,7 @@ function ensureWindowManager() {
     onUtilityExit: (utility) => {
       ensureDebugIpc().cancelPendingForUtility(utility);
     },
+    showGate,
   });
 }
 
@@ -325,6 +366,7 @@ function openNavigator() {
       : join(__dirname, '../renderer/index.html'),
     rendererDevUrl,
     appVersion: app.getVersion(),
+    showGate,
   });
 }
 
@@ -949,6 +991,35 @@ function registerIpcHandlers() {
     return undefined;
   });
 
+  handle('ok:theme:set-source', async (_event, { source }) => {
+    return applyThemeSource(
+      {
+        getThemeSource: () =>
+          isOkThemeSource(nativeTheme.themeSource) ? nativeTheme.themeSource : 'system',
+        setThemeSource: (s) => {
+          nativeTheme.themeSource = s;
+        },
+        warn: (line) => console.warn(line),
+      },
+      source,
+    );
+  });
+
+  handle('ok:theme:applied', async (event, opts) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    applyThemeApplied(
+      {
+        fireThemeApplied: (w) => showGate.fireThemeApplied(w as BrowserWindowLike),
+        applyReducedTransparency: (reduced) =>
+          applyReducedTransparency(reducedTransparencyDeps, reduced),
+        warn: (line) => console.warn(line),
+      },
+      win as unknown as object | null,
+      opts,
+    );
+    return undefined;
+  });
+
   handle('ok:project:get-info', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('webContents has no parent BrowserWindow');
@@ -1245,128 +1316,137 @@ function bootPrimaryInstance(): void {
     },
   });
 
-  app.whenReady().then(async () => {
-    appState = loadAppState();
-    const compat = evaluateSchemaCompatibility(
-      appState,
-      MAX_SUPPORTED_SCHEMA_VERSION,
-      app.getVersion(),
-    );
-    if (compat.status === 'incompatible') {
-      pendingSchemaIncompatibility = compat.diagnostic;
-      console.warn('[main] schemaVersion incompatibility detected', compat.diagnostic);
-    }
-    installLocalhostCorsInjector();
-    registerIpcHandlers();
-    refreshApplicationMenu();
-    installDockIcon();
-
-    void maybeOfferBrokenSymlinkRepair().catch((err) => {
-      console.error('[main] broken-symlink repair prompt failed', {
-        err: (err as Error).message,
+  app
+    .whenReady()
+    .then(async () => {
+      const result = await runBootstrap({
+        loadAppState,
+        evaluateSchemaCompatibility,
+        installLocalhostCorsInjector,
+        registerIpcHandlers,
+        setNativeThemeSource: (source) => {
+          nativeTheme.themeSource = source;
+        },
+        refreshApplicationMenu,
+        installDockIcon,
+        log: { warn: (msg, obj) => console.warn(msg, obj) },
+        appVersion: app.getVersion(),
+        maxSupportedSchemaVersion: MAX_SUPPORTED_SCHEMA_VERSION,
       });
-    });
+      appState = result.appState;
+      pendingSchemaIncompatibility = result.pendingSchemaIncompatibility;
 
-    mcpWiringHandle = armMcpWiring();
+      void maybeOfferBrokenSymlinkRepair().catch((err) => {
+        console.error('[main] broken-symlink repair prompt failed', {
+          err: (err as Error).message,
+        });
+      });
 
-    const optionHeld = process.argv.includes('--navigator');
-    if (appState.lastOpenedProject && !optionHeld && existsSync(appState.lastOpenedProject)) {
-      void openProjectOrFallbackToNavigator(appState.lastOpenedProject, 'recents');
-    } else {
-      openNavigator();
-    }
+      mcpWiringHandle = armMcpWiring();
 
-    void installUserSkill({
-      logger: {
-        warn: (data, message) => console.warn(message, data),
-        info: (data, message) => console.info(message, data),
-      },
-      surface: 'desktop-direct',
-    }).catch(() => {
-      /* installUserSkill is documented as never-throws; this is defense
+      const optionHeld = process.argv.includes('--navigator');
+      if (appState.lastOpenedProject && !optionHeld && existsSync(appState.lastOpenedProject)) {
+        void openProjectOrFallbackToNavigator(appState.lastOpenedProject, 'recents');
+      } else {
+        openNavigator();
+      }
+
+      void installUserSkill({
+        logger: {
+          warn: (data, message) => console.warn(message, data),
+          info: (data, message) => console.info(message, data),
+        },
+        surface: 'desktop-direct',
+      }).catch(() => {
+        /* installUserSkill is documented as never-throws; this is defense
          against a future regression that would otherwise crash the main
          process during the floating microtask. */
-    });
+      });
 
-    autoUpdaterHandle = await bootAutoUpdater(() => import('electron-updater'), {
-      ipcMain,
-      readState: () => appState,
-      writeState: (next) => {
-        const prev = appState;
-        appState = next;
-        const ok = saveAppState(appState);
-        if (!ok) {
-          appState = prev;
-          throw new Error('saveAppState failed — rolled back in-memory state');
-        }
-      },
-      getPrimaryWindow: () => {
-        const focused = BrowserWindow.getFocusedWindow();
-        if (focused) return focused;
-        const all = BrowserWindow.getAllWindows();
-        return all[0] ?? null;
-      },
-      getAllWindows: () => BrowserWindow.getAllWindows(),
-      getAppVersion: () => app.getVersion(),
-      isPackaged: app.isPackaged,
-      forceDevBypass: process.env.OK_UPDATER_FORCE_DEV === '1',
-      feedUrl: process.env.OK_UPDATER_FEED_URL || undefined,
-      whenRendererReady: (fn) => {
-        const tryFire = (win: BrowserWindow): void => {
-          if (win.webContents.isLoading()) {
-            win.webContents.once('did-finish-load', fn);
-          } else {
-            fn();
+      autoUpdaterHandle = await bootAutoUpdater(() => import('electron-updater'), {
+        ipcMain,
+        readState: () => appState,
+        writeState: (next) => {
+          const prev = appState;
+          appState = next;
+          const ok = saveAppState(appState);
+          if (!ok) {
+            appState = prev;
+            throw new Error('saveAppState failed — rolled back in-memory state');
           }
-        };
-        const focused = BrowserWindow.getFocusedWindow();
-        const existing = focused ?? BrowserWindow.getAllWindows()[0] ?? null;
-        if (existing) {
-          tryFire(existing);
-          return;
-        }
-        app.once('browser-window-created', (_event, createdWin) => {
-          tryFire(createdWin as BrowserWindow);
-        });
-      },
-      prepareForRelaunch: () => {
-        wm?.killAllUtilities();
-      },
-      showCheckNowResult: (result) => {
-        const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-        if (!target) return;
-        if (result.kind === 'not-available') {
-          void dialog.showMessageBox(target, {
-            type: 'info',
-            buttons: ['OK'],
-            defaultId: 0,
-            title: 'Up to Date',
-            message: "You're on the latest version of Open Knowledge.",
-            detail: `Open Knowledge ${result.currentVersion} is the most current version available.`,
+        },
+        getPrimaryWindow: () => {
+          const focused = BrowserWindow.getFocusedWindow();
+          if (focused) return focused;
+          const all = BrowserWindow.getAllWindows();
+          return all[0] ?? null;
+        },
+        getAllWindows: () => BrowserWindow.getAllWindows(),
+        getAppVersion: () => app.getVersion(),
+        isPackaged: app.isPackaged,
+        forceDevBypass: process.env.OK_UPDATER_FORCE_DEV === '1',
+        feedUrl: process.env.OK_UPDATER_FEED_URL || undefined,
+        whenRendererReady: (fn) => {
+          const tryFire = (win: BrowserWindow): void => {
+            if (win.webContents.isLoading()) {
+              win.webContents.once('did-finish-load', fn);
+            } else {
+              fn();
+            }
+          };
+          const focused = BrowserWindow.getFocusedWindow();
+          const existing = focused ?? BrowserWindow.getAllWindows()[0] ?? null;
+          if (existing) {
+            tryFire(existing);
+            return;
+          }
+          app.once('browser-window-created', (_event, createdWin) => {
+            tryFire(createdWin as BrowserWindow);
           });
-        } else if (result.kind === 'available') {
-          void dialog.showMessageBox(target, {
-            type: 'info',
-            buttons: ['OK'],
-            defaultId: 0,
-            title: 'Update Available',
-            message: `Open Knowledge ${result.latestVersion} is available.`,
-            detail: `It's downloading in the background. You'll be prompted to relaunch when the install is ready.`,
-          });
-        } else {
-          void dialog.showMessageBox(target, {
-            type: 'warning',
-            buttons: ['OK'],
-            defaultId: 0,
-            title: "Couldn't Check for Updates",
-            message: "Open Knowledge couldn't check for updates right now.",
-            detail: result.message,
-          });
-        }
-      },
+        },
+        prepareForRelaunch: () => {
+          wm?.killAllUtilities();
+        },
+        showCheckNowResult: (result) => {
+          const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+          if (!target) return;
+          if (result.kind === 'not-available') {
+            void dialog.showMessageBox(target, {
+              type: 'info',
+              buttons: ['OK'],
+              defaultId: 0,
+              title: 'Up to Date',
+              message: "You're on the latest version of Open Knowledge.",
+              detail: `Open Knowledge ${result.currentVersion} is the most current version available.`,
+            });
+          } else if (result.kind === 'available') {
+            void dialog.showMessageBox(target, {
+              type: 'info',
+              buttons: ['OK'],
+              defaultId: 0,
+              title: 'Update Available',
+              message: `Open Knowledge ${result.latestVersion} is available.`,
+              detail: `It's downloading in the background. You'll be prompted to relaunch when the install is ready.`,
+            });
+          } else {
+            void dialog.showMessageBox(target, {
+              type: 'warning',
+              buttons: ['OK'],
+              defaultId: 0,
+              title: "Couldn't Check for Updates",
+              message: "Open Knowledge couldn't check for updates right now.",
+              detail: result.message,
+            });
+          }
+        },
+      });
+      refreshApplicationMenu();
+    })
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? (err.stack ?? '') : '';
+      console.error(JSON.stringify({ event: 'whenReady-unhandled-rejection', message, stack }));
     });
-    refreshApplicationMenu();
-  });
 
   app.on('will-quit', () => {
     autoUpdaterHandle?.destroy();

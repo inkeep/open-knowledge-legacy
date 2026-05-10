@@ -5,6 +5,7 @@ import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { useWorkspace } from '@/lib/use-workspace';
+import { cn } from '@/lib/utils';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { BetaBadge } from './BetaBadge';
 import { EditorTabs } from './EditorTabs';
@@ -41,12 +42,38 @@ export function EditorHeader({
   const assetPrefix = assetSlash === -1 ? '' : assetPath.slice(0, assetSlash);
   const assetFileName = assetSlash === -1 ? assetPath : assetPath.slice(assetSlash + 1);
 
+  const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
+  const isCollapsed = sidebarState === 'collapsed';
+
   return (
-    <header className="flex h-12 shrink-0 items-center bg-muted/20 shadow-[inset_0_-1px_0_var(--border)]">
+    <header
+      className={cn(
+        'flex h-12 shrink-0 items-center bg-muted/20 shadow-[inset_0_-1px_0_var(--border)]',
+        isElectronHost && '[-webkit-app-region:drag]',
+        isElectronHost && isCollapsed && 'pl-[78px]',
+        isElectronHost &&
+          'motion-safe:transition-[padding] motion-safe:duration-200 motion-safe:ease-linear',
+      )}
+    >
+      {/*
+        Left zone uses per-child `no-drag` opt-outs (instead of the
+        right zone's `[&>*]:` child-combinator) because EditorTabs is a
+        direct child whose own root MUST stay draggable so the empty
+        space inside the tab strip continues to drag the window. Adding
+        a future interactive control here? Apply `[-webkit-app-region:
+        no-drag]` (gated on `isElectronHost`) explicitly on the new
+        element — the right zone's blanket opt-out is intentionally
+        scoped to its zone.
+      */}
       <div className="flex min-w-0 flex-1 items-center gap-1 px-3">
         <Tooltip>
           <TooltipTrigger asChild>
-            <SidebarTrigger className="-ml-1 shrink-0 text-muted-foreground" />
+            <SidebarTrigger
+              className={cn(
+                '-ml-1 shrink-0 text-muted-foreground',
+                isElectronHost && '[-webkit-app-region:no-drag]',
+              )}
+            />
           </TooltipTrigger>
           <TooltipContent>
             {sidebarState === 'expanded' ? 'Hide Files' : 'Show Files'}
@@ -69,7 +96,12 @@ export function EditorHeader({
         <EditorTabs />
       </div>
 
-      <div className="flex shrink-0 items-center justify-end gap-2 px-3">
+      <div
+        className={cn(
+          'flex shrink-0 items-center justify-end gap-2 px-3',
+          isElectronHost && '[&>*]:[-webkit-app-region:no-drag]',
+        )}
+      >
         {activeDocName && (
           <Tooltip>
             <TooltipTrigger asChild>

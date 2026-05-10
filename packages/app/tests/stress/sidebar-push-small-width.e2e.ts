@@ -173,15 +173,26 @@ test.describe('sidebar push-mode (small width)', () => {
   test('ESC defers to an open Radix DropdownMenu instead of closing sidebar', async ({
     page,
     api,
+    workerServer,
   }) => {
     await api.seedDocs([{ name: 'i', markdown: '# Doc I\n\nBody.' }]);
+    const folderRes = await fetch(`${workerServer.baseURL}/api/create-folder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: 'sidebar-folder' }),
+    });
+    if (!folderRes.ok && folderRes.status !== 409) {
+      throw new Error(`create-folder failed: ${folderRes.status}`);
+    }
     await page.setViewportSize(SMALL_VIEWPORT);
     await page.goto('/#/i');
 
     await trigger(page).click();
     await expect.poll(() => isSidebarOpen(page, 'mobile')).toBe(true);
 
-    await page.getByRole('button', { name: 'Tree view options' }).click();
+    const treeOpts = page.getByRole('button', { name: 'Tree view options' });
+    await expect(treeOpts).toBeVisible({ timeout: 15_000 });
+    await treeOpts.click();
     await expect(page.locator('[role="menu"][data-state="open"]')).toBeVisible();
 
     await page.keyboard.press('Escape');

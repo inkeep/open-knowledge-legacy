@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { _electron as electron } from '@playwright/test';
+import { expect, test } from './_helpers/smoke-test';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAIN_ENTRY = resolve(__dirname, '..', '..', 'out', 'main', 'index.js');
@@ -11,6 +12,16 @@ const MAIN_ENTRY = resolve(__dirname, '..', '..', 'out', 'main', 'index.js');
 const SMOKE_ENABLED = process.env.OK_DESKTOP_E2E_SMOKE === '1';
 const DARWIN = process.platform === 'darwin';
 const BUILD_EXISTS = existsSync(MAIN_ENTRY);
+
+function userDataDirFor(tmpHome: string): string {
+  return join(tmpHome, 'electron-userdata');
+}
+
+function rmTmpHomeSafely(tmpHome: string): void {
+  try {
+    rmSync(tmpHome, { recursive: true, force: true });
+  } catch {}
+}
 
 test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
   test.skip(!SMOKE_ENABLED, 'Set OK_DESKTOP_E2E_SMOKE=1 to run Electron smoke tests.');
@@ -22,7 +33,10 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
 
   test.skip('cold-start Apple-Event delivery — deferred until signed DMG enables Launch Services binding', () => {});
 
-  test('open(1) shell-out post-launch routes extension-less docName to renderer hash', async () => {
+  test('open(1) shell-out post-launch routes extension-less docName to renderer hash', async ({
+    captureStderrFor,
+  }) => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'ok-m4-deep-link-home-'));
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-m4-deep-link-'));
     mkdirSync(join(projectDir, '.ok'), { recursive: true });
     writeFileSync(
@@ -32,9 +46,10 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
     writeFileSync(join(projectDir, 'target.md'), '# Target Doc\n\nDeep-link smoke content.\n');
 
     const app = await electron.launch({
-      args: [MAIN_ENTRY],
+      args: [MAIN_ENTRY, `--user-data-dir=${userDataDirFor(tmpHome)}`],
       timeout: 30_000,
     });
+    captureStderrFor(app);
 
     try {
       const firstWindow = await app.firstWindow({ timeout: 15_000 });
@@ -53,10 +68,14 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
     } finally {
       await app.close();
       rmSync(projectDir, { recursive: true, force: true });
+      rmTmpHomeSafely(tmpHome);
     }
   });
 
-  test('open(1) shell-out with nested docName round-trips encoded slash', async () => {
+  test('open(1) shell-out with nested docName round-trips encoded slash', async ({
+    captureStderrFor,
+  }) => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'ok-m4-deep-link-nested-home-'));
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-m4-deep-link-nested-'));
     mkdirSync(join(projectDir, '.ok'), { recursive: true });
     writeFileSync(
@@ -70,9 +89,10 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
     );
 
     const app = await electron.launch({
-      args: [MAIN_ENTRY],
+      args: [MAIN_ENTRY, `--user-data-dir=${userDataDirFor(tmpHome)}`],
       timeout: 30_000,
     });
+    captureStderrFor(app);
 
     try {
       const firstWindow = await app.firstWindow({ timeout: 15_000 });
@@ -91,6 +111,7 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
     } finally {
       await app.close();
       rmSync(projectDir, { recursive: true, force: true });
+      rmTmpHomeSafely(tmpHome);
     }
   });
 });

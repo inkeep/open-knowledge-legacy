@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { _electron as electron } from '@playwright/test';
+import { expect, test } from './_helpers/smoke-test';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAIN_ENTRY = resolve(__dirname, '..', '..', 'out', 'main', 'index.js');
@@ -18,7 +19,9 @@ test.describe('external-link safety-net delegation', () => {
     `Main build missing at ${MAIN_ENTRY} — run "bun run build:desktop" first.`,
   );
 
-  test('window.open(https://...) routes to shell.openExternal via safety net', async () => {
+  test('window.open(https://...) routes to shell.openExternal via safety net', async ({
+    captureStderrFor,
+  }) => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-external-link-'));
     mkdirSync(join(projectDir, '.ok'), { recursive: true });
     writeFileSync(
@@ -31,13 +34,14 @@ test.describe('external-link safety-net delegation', () => {
     );
 
     const app = await electron.launch({
-      args: [MAIN_ENTRY],
+      args: [MAIN_ENTRY, `--user-data-dir=${join(projectDir, 'electron-userdata')}`],
       timeout: 30_000,
       env: {
         ...process.env,
         OK_TEST_OPEN_PROJECT: projectDir,
       },
     });
+    captureStderrFor(app);
 
     await app.evaluate(({ shell }) => {
       const calls: string[] = [];
