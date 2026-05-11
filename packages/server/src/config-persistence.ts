@@ -14,7 +14,11 @@ import {
   withConfigSpan,
   withConfigSpanSync,
 } from '@inkeep/open-knowledge-core';
-import { resolveConfigPath } from '@inkeep/open-knowledge-core/server';
+import {
+  FileLockTimeoutError,
+  resolveConfigPath,
+  withFileLock,
+} from '@inkeep/open-knowledge-core/server';
 import type { Counter } from '@opentelemetry/api';
 import { parseDocument, stringify } from 'yaml';
 import type * as Y from 'yjs';
@@ -215,7 +219,7 @@ async function atomicWriteConfig(absPath: string, content: string): Promise<void
   }
 }
 
-type StoreConfigDocOutcome = 'persisted' | 'reverted' | 'write-failed' | 'no-op';
+type StoreConfigDocOutcome = 'persisted' | 'reverted' | 'write-failed' | 'no-op' | 'reconciled';
 
 export async function storeConfigDoc(
   document: Y.Doc,
@@ -290,22 +294,102 @@ async function storeConfigDocInner(
   }
 
   const filePath = configDocAbsPath(documentName, ctx);
+
   try {
-    await atomicWriteConfig(filePath, content);
+    await tracedMkdir(dirname(filePath), { recursive: true });
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     getLogger('config-persistence').warn(
       { docName: documentName, path: filePath, err: e },
-      `[config-persistence] write-failed at ${filePath}: ${detail}`,
+      `[config-persistence] could not create parent dir for ${filePath}: ${detail}`,
     );
     ctx.onConfigRejected?.(documentName, {
       code: 'WRITE_ERROR',
-      detail: `Failed to persist config at ${filePath}: ${detail}`,
+      detail: `Could not create parent directory for ${filePath}: ${detail}`,
     });
     return 'write-failed';
   }
-  ctx.lkgCache.set(documentName, content);
-  return 'persisted';
+
+  try {
+    return await withFileLock(
+      `${filePath}.lock`,
+      async () => {
+        let diskContent: string | null = null;
+        try {
+          diskContent = readFileSync(filePath, 'utf-8');
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT') {
+            const detail = e instanceof Error ? e.message : String(e);
+            getLogger('config-persistence').warn(
+              { docName: documentName, path: filePath, err: e },
+              `[config-persistence] could not read config for reconciliation: ${detail}`,
+            );
+            ctx.onConfigRejected?.(documentName, {
+              code: 'WRITE_ERROR',
+              detail: `Could not read config for reconciliation at ${filePath}: ${detail}`,
+            });
+            return 'write-failed';
+          }
+        }
+
+        if (diskContent !== null && lkg !== undefined && diskContent !== lkg) {
+          const diskValidation = validateConfigContent(documentName, diskContent);
+          if (diskValidation.ok) {
+            document.transact(() => {
+              if (ytext.length > 0) ytext.delete(0, ytext.length);
+              ytext.insert(0, diskContent);
+            }, CONFIG_FILE_WATCHER_ORIGIN);
+            ctx.lkgCache.set(documentName, diskContent);
+            getLogger('config-persistence').info(
+              { docName: documentName, path: filePath },
+              '[config-persistence] reconciled: external writer landed; imported disk into Y.Text',
+            );
+            return 'reconciled';
+          }
+          getLogger('config-persistence').warn(
+            { docName: documentName, path: filePath },
+            '[config-persistence] disk diverged from LKG but contains invalid content; proceeding with local write',
+          );
+        }
+
+        try {
+          await atomicWriteConfig(filePath, content);
+        } catch (e) {
+          const detail = e instanceof Error ? e.message : String(e);
+          getLogger('config-persistence').warn(
+            { docName: documentName, path: filePath, err: e },
+            `[config-persistence] write-failed at ${filePath}: ${detail}`,
+          );
+          ctx.onConfigRejected?.(documentName, {
+            code: 'WRITE_ERROR',
+            detail: `Failed to persist config at ${filePath}: ${detail}`,
+          });
+          return 'write-failed';
+        }
+        ctx.lkgCache.set(documentName, content);
+        return 'persisted';
+      },
+      {
+        onWarn: (message, context) => {
+          getLogger('config-persistence').warn(context, `[config-persistence] ${message}`);
+        },
+      },
+    );
+  } catch (e) {
+    if (e instanceof FileLockTimeoutError) {
+      getLogger('config-persistence').warn(
+        { docName: documentName, path: filePath, err: e },
+        `[config-persistence] lock timeout at ${filePath}: ${e.message}`,
+      );
+      ctx.onConfigRejected?.(documentName, {
+        code: 'WRITE_ERROR',
+        detail: e.message,
+      });
+      return 'write-failed';
+    }
+    throw e;
+  }
 }
 
 type ApplyExternalConfigChangeOutcome = 'applied' | 'rejected' | 'no-op';

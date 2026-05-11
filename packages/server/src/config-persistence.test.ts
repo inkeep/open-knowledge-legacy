@@ -245,6 +245,148 @@ describe('storeConfigDoc — happy path', () => {
   });
 });
 
+describe('storeConfigDoc — cross-process reconciliation (file lock)', () => {
+  function makeSecondCtxSharingHomedir(primary: Fixture): {
+    ctx: ConfigPersistenceCtx;
+    rejections: Array<{ docName: string; error: ConfigValidationError }>;
+  } {
+    const rejections: Array<{ docName: string; error: ConfigValidationError }> = [];
+    return {
+      rejections,
+      ctx: {
+        projectDir: primary.projectDir, // same project dir, but the doc under test is the user-scoped one
+        lkgCache: new Map(),
+        homedirOverride: primary.homedir,
+        onConfigRejected: (docName, error) => {
+          rejections.push({ docName, error });
+        },
+      },
+    };
+  }
+
+  test('reconciles when disk diverged from LKG: imports disk into Y.Text and does NOT overwrite disk', async () => {
+    const path = configDocAbsPath(CONFIG_DOC_NAME_USER, fx.ctx);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'mcp:\n  autoStart: false\n', 'utf-8'); // "vA"
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_USER, 'mcp:\n  autoStart: true\n'); // "v0"
+
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, 'appearance:\n  theme: dark\n'); // "vB"
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_USER, undefined, fx.ctx);
+
+    expect(outcome).toBe('reconciled');
+    expect(readFileSync(path, 'utf-8')).toBe('mcp:\n  autoStart: false\n');
+    expect(doc.getText('source').toString()).toBe('mcp:\n  autoStart: false\n');
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_USER)).toBe('mcp:\n  autoStart: false\n');
+    expect(fx.rejections).toHaveLength(0);
+  });
+
+  test('two servers writing the SAME shared file: second store reconciles, first writer wins', async () => {
+    const second = makeSecondCtxSharingHomedir(fx);
+    const path = configDocAbsPath(CONFIG_DOC_NAME_USER, fx.ctx);
+    expect(configDocAbsPath(CONFIG_DOC_NAME_USER, second.ctx)).toBe(path);
+
+    const v0 = 'mcp:\n  autoStart: true\n';
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, v0, 'utf-8');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_USER, v0);
+    second.ctx.lkgCache.set(CONFIG_DOC_NAME_USER, v0);
+
+    const docA = new Y.Doc();
+    docA.getText('source').insert(0, 'mcp:\n  autoStart: false\n');
+    const outcomeA = await storeConfigDoc(docA, CONFIG_DOC_NAME_USER, undefined, fx.ctx);
+    expect(outcomeA).toBe('persisted');
+    expect(readFileSync(path, 'utf-8')).toBe('mcp:\n  autoStart: false\n');
+
+    const docB = new Y.Doc();
+    docB.getText('source').insert(0, 'appearance:\n  theme: dark\n');
+    const outcomeB = await storeConfigDoc(docB, CONFIG_DOC_NAME_USER, undefined, second.ctx);
+
+    expect(outcomeB).toBe('reconciled');
+    expect(readFileSync(path, 'utf-8')).toBe('mcp:\n  autoStart: false\n'); // A's write survives
+    expect(docB.getText('source').toString()).toBe('mcp:\n  autoStart: false\n');
+    expect(second.ctx.lkgCache.get(CONFIG_DOC_NAME_USER)).toBe('mcp:\n  autoStart: false\n');
+
+    expect(docB.getText('source').toString()).not.toContain('theme: dark');
+  });
+
+  test('disk matches LKG: writes proceed normally (no spurious reconciliation)', async () => {
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, 'mcp:\n  autoStart: false\n');
+
+    const path = configDocAbsPath(CONFIG_DOC_NAME_PROJECT, fx.ctx);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'mcp:\n  autoStart: true\n', 'utf-8');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'mcp:\n  autoStart: true\n');
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
+
+    expect(outcome).toBe('persisted');
+    expect(readFileSync(path, 'utf-8')).toBe('mcp:\n  autoStart: false\n');
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT)).toBe('mcp:\n  autoStart: false\n');
+  });
+
+  test('lockfile is cleaned up after each store', async () => {
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, 'mcp:\n  autoStart: false\n');
+
+    await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
+
+    const path = configDocAbsPath(CONFIG_DOC_NAME_PROJECT, fx.ctx);
+    expect(existsSync(`${path}.lock`)).toBe(false);
+  });
+
+  test('disk diverged but content is INVALID YAML: do NOT reconcile, write our valid content instead', async () => {
+    const path = configDocAbsPath(CONFIG_DOC_NAME_USER, fx.ctx);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'mcp:\n  autoStart: !!!!!!!!!!!!!!\n', 'utf-8');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_USER, 'mcp:\n  autoStart: true\n');
+
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, 'appearance:\n  theme: dark\n');
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_USER, undefined, fx.ctx);
+
+    expect(outcome).toBe('persisted');
+    expect(readFileSync(path, 'utf-8')).toBe('appearance:\n  theme: dark\n');
+    expect(doc.getText('source').toString()).toBe('appearance:\n  theme: dark\n');
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_USER)).toBe('appearance:\n  theme: dark\n');
+    expect(fx.rejections).toHaveLength(0);
+  });
+
+  test('mkdir failure surfaces as write-failed via onConfigRejected; no exception escapes', async () => {
+    const parentPath = join(fx.homedir, '.ok');
+    writeFileSync(parentPath, 'placeholder', 'utf-8');
+
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, 'appearance:\n  theme: dark\n');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_USER, '');
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_USER, undefined, fx.ctx);
+
+    expect(outcome).toBe('write-failed');
+    expect(fx.rejections).toHaveLength(1);
+    expect(fx.rejections[0]?.docName).toBe(CONFIG_DOC_NAME_USER);
+    expect(fx.rejections[0]?.error.code).toBe('WRITE_ERROR');
+  });
+
+  test('non-ENOENT read error inside the lock surfaces as write-failed (does NOT silently fall through to write)', async () => {
+    const path = configDocAbsPath(CONFIG_DOC_NAME_PROJECT, fx.ctx);
+    mkdirSync(path, { recursive: true });
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'mcp:\n  autoStart: true\n');
+
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, 'appearance:\n  theme: dark\n');
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
+
+    expect(outcome).toBe('write-failed');
+    expect(fx.rejections).toHaveLength(1);
+    expect(fx.rejections[0]?.error.code).toBe('WRITE_ERROR');
+  });
+});
+
 describe('storeConfigDoc — write failures', () => {
   test('disk write failure surfaces via onConfigRejected with WRITE_ERROR; no leftover tmp files', async () => {
     const doc = new Y.Doc();
