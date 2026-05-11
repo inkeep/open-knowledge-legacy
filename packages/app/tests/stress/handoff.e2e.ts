@@ -62,20 +62,12 @@ async function waitForProbeSettled(page: Page, host: 'electron' | 'web'): Promis
     .toBe(true);
 }
 
-function skipElectronCellsInCI() {
-  test.skip(
-    process.env.CI === 'true',
-    'Electron-mock cells deterministically time out on GitHub Actions ubuntu-64gb under workers=4 (passes locally 8/8 + in nightly --workers=1). See comment above for hypothesis + signal-loss bound.',
-  );
-}
-
 test.describe('handoff — 8-cell matrix', () => {
   test('cell 1: Electron Claude Cowork happy path dispatches correct URL + success toast', async ({
     page,
     api,
     workerServer,
   }) => {
-    skipElectronCellsInCI();
     const cfg: HandoffMockConfig = {
       host: 'electron',
       install: { claude: true, codex: true, cursor: true },
@@ -123,7 +115,6 @@ test.describe('handoff — 8-cell matrix', () => {
     api,
     workerServer,
   }) => {
-    skipElectronCellsInCI();
     const cfg: HandoffMockConfig = {
       host: 'electron',
       install: { claude: true, codex: true, cursor: true },
@@ -172,7 +163,6 @@ test.describe('handoff — 8-cell matrix', () => {
     api,
     workerServer,
   }) => {
-    skipElectronCellsInCI();
     const cfg: HandoffMockConfig = {
       host: 'electron',
       install: { claude: true, codex: false, cursor: true },
@@ -362,7 +352,6 @@ test.describe('handoff — 8-cell matrix', () => {
     api,
     workerServer,
   }) => {
-    skipElectronCellsInCI();
     const cfg: HandoffMockConfig = {
       host: 'electron',
       install: { claude: true, codex: true, cursor: true },
