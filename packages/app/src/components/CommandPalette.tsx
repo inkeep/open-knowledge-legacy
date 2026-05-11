@@ -582,19 +582,6 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
             </CommandGroup>
           ) : null}
 
-          {showNavigation ? (
-            <CommandGroup heading="Search">
-              {visibleSearchResults.map((entry) => (
-                <NavigationItem
-                  key={makeOmnibarRecentKey(entry.kind, entry.path)}
-                  entry={entry}
-                  query={trimmedDeferredQuery}
-                  onSelect={() => navigateToEntry(entry)}
-                />
-              ))}
-            </CommandGroup>
-          ) : null}
-
           {showCreateFile || showCreateFolder || showGraphCommand ? (
             <CommandGroup heading="Commands">
               {showCreateFile ? (
@@ -791,6 +778,19 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                       </CommandItem>
                     ))
                 : null}
+            </CommandGroup>
+          ) : null}
+
+          {showNavigation ? (
+            <CommandGroup heading="Search">
+              {visibleSearchResults.map((entry) => (
+                <NavigationItem
+                  key={makeOmnibarRecentKey(entry.kind, entry.path)}
+                  entry={entry}
+                  query={trimmedDeferredQuery}
+                  onSelect={() => navigateToEntry(entry)}
+                />
+              ))}
             </CommandGroup>
           ) : null}
         </CommandList>
