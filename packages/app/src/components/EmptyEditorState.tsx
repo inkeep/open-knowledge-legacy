@@ -1,4 +1,4 @@
-import { DocumentListSuccessSchema, SeedPlanSuccessSchema } from '@inkeep/open-knowledge-core';
+import { DocumentListSuccessSchema } from '@inkeep/open-knowledge-core';
 import { Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { OkBlob } from '@/components/OkBlob';
@@ -6,12 +6,9 @@ import { SeedDialog } from '@/components/SeedDialog';
 import { Button } from '@/components/ui/button';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 
-type SeedStatus = 'loading' | 'has-work' | 'seeded' | 'error';
-
 export function EmptyEditorState() {
   const [seedDialogOpen, setSeedDialogOpen] = useState(false);
   const [documentCount, setDocumentCount] = useState<number | null>(null);
-  const [seedStatus, setSeedStatus] = useState<SeedStatus>('loading');
   const [celebrateSignal, setCelebrateSignal] = useState(0);
   const documentCountResolvedRef = useRef(false);
   const celebrateTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -20,64 +17,24 @@ export function EmptyEditorState() {
     let cancelled = false;
 
     async function refresh() {
-      const docsPromise = fetch('/api/documents')
-        .then(async (res) => {
-          const body = (await res.json().catch(() => null)) as unknown;
-          if (cancelled) return;
-          const success = res.ok ? DocumentListSuccessSchema.safeParse(body) : null;
-          if (success?.success) {
-            setDocumentCount(countDocuments(success.data.documents));
-            documentCountResolvedRef.current = true;
-          } else if (!documentCountResolvedRef.current) {
-            setDocumentCount(1);
-            documentCountResolvedRef.current = true;
-          }
-        })
-        .catch(() => {
-          if (!cancelled && !documentCountResolvedRef.current) {
-            setDocumentCount(1);
-            documentCountResolvedRef.current = true;
-          }
-        });
-
-      const planPromise = (async () => {
-        const okDesktop = typeof window !== 'undefined' ? window.okDesktop : undefined;
-        try {
-          if (okDesktop?.seed) {
-            const result = await okDesktop.seed.plan();
-            if (cancelled) return;
-            if (!result.ok) {
-              setSeedStatus('error');
-              return;
-            }
-            const hasWork = result.plan.created.length > 0;
-            setSeedStatus(hasWork ? 'has-work' : 'seeded');
-            return;
-          }
-          const res = await fetch('/api/seed/plan');
-          if (cancelled) return;
-          if (!res.ok) {
-            setSeedStatus('error');
-            return;
-          }
-          const body = (await res.json().catch(() => null)) as unknown;
-          if (cancelled) return;
-          const parsed = SeedPlanSuccessSchema.safeParse(body);
-          if (!parsed.success) {
-            setSeedStatus('error');
-            return;
-          }
-          const plan = parsed.data.plan as {
-            created?: unknown[];
-          } | null;
-          const hasWork = (plan?.created?.length ?? 0) > 0;
-          setSeedStatus(hasWork ? 'has-work' : 'seeded');
-        } catch {
-          if (!cancelled) setSeedStatus('error');
+      try {
+        const res = await fetch('/api/documents');
+        const body = (await res.json().catch(() => null)) as unknown;
+        if (cancelled) return;
+        const success = res.ok ? DocumentListSuccessSchema.safeParse(body) : null;
+        if (success?.success) {
+          setDocumentCount(countEntries(success.data.documents));
+          documentCountResolvedRef.current = true;
+        } else if (!documentCountResolvedRef.current) {
+          setDocumentCount(1);
+          documentCountResolvedRef.current = true;
         }
-      })();
-
-      await Promise.all([docsPromise, planPromise]);
+      } catch {
+        if (!cancelled && !documentCountResolvedRef.current) {
+          setDocumentCount(1);
+          documentCountResolvedRef.current = true;
+        }
+      }
     }
 
     void refresh();
@@ -95,21 +52,19 @@ export function EmptyEditorState() {
   function handleSeedApplied() {
     clearTimeout(celebrateTimerRef.current);
     celebrateTimerRef.current = setTimeout(() => setCelebrateSignal((prev) => prev + 1), 250);
-    setSeedStatus('seeded');
     fetch('/api/documents')
       .then(async (res) => {
         const body = (await res.json().catch(() => null)) as unknown;
         if (!res.ok) return;
         const success = DocumentListSuccessSchema.safeParse(body);
         if (success.success) {
-          setDocumentCount(countDocuments(success.data.documents));
+          setDocumentCount(countEntries(success.data.documents));
         }
       })
       .catch(() => {});
   }
 
-  const showCta = seedStatus === 'has-work';
-  const messageReady = documentCount !== null && seedStatus !== 'loading';
+  const messageReady = documentCount !== null;
   const isOnboarding = documentCount === 0;
 
   return (
@@ -117,9 +72,9 @@ export function EmptyEditorState() {
       <OkBlob size={80} celebrateSignal={celebrateSignal} />
       {messageReady ? (
         isOnboarding ? (
-          <OnboardingMessage onCtaClick={() => setSeedDialogOpen(true)} showCta={showCta} />
+          <OnboardingMessage onCtaClick={() => setSeedDialogOpen(true)} />
         ) : (
-          <NoSelectionMessage onCtaClick={() => setSeedDialogOpen(true)} showCta={showCta} />
+          <NoSelectionMessage />
         )
       ) : null}
       <SeedDialog
@@ -131,43 +86,31 @@ export function EmptyEditorState() {
   );
 }
 
-function countDocuments(entries: ReadonlyArray<{ kind?: unknown }>): number {
-  return entries.filter((entry) => entry.kind === 'document').length;
+function countEntries(entries: ReadonlyArray<{ kind?: unknown }>): number {
+  return entries.filter((entry) => entry.kind === 'document' || entry.kind === 'folder').length;
 }
 
-function OnboardingMessage({ onCtaClick, showCta }: { onCtaClick: () => void; showCta: boolean }) {
+function OnboardingMessage({ onCtaClick }: { onCtaClick: () => void }) {
   return (
     <div className="flex max-w-sm flex-col items-center gap-3 text-center">
-      <h2 className="text-base font-medium">Welcome to your LLM brain</h2>
+      <h2 className="text-base font-medium">Welcome to Open Knowledge</h2>
       <p className="text-sm text-muted-foreground">
-        A space for working with AI agents. Start with a curated layer structure — or create your
-        own files in the sidebar.
+        Pick a starter pack to scaffold a folder layout — or skip and start writing in the sidebar.
+        Packs ship with templates and agent-readable descriptions so AI tools work with your vault
+        out of the box.
       </p>
-      {showCta ? (
-        <Button className="mt-1" onClick={onCtaClick}>
-          <Sparkles aria-hidden="true" className="h-4 w-4" />
-          Initialize LLM brain
-        </Button>
-      ) : null}
+      <Button className="mt-1" onClick={onCtaClick}>
+        <Sparkles aria-hidden="true" className="h-4 w-4" />
+        Pick a starter pack
+      </Button>
     </div>
   );
 }
 
-function NoSelectionMessage({ onCtaClick, showCta }: { onCtaClick: () => void; showCta: boolean }) {
+function NoSelectionMessage() {
   return (
     <div className="flex flex-col items-center gap-3">
       <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
-      {showCta ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="uppercase font-mono text-xs"
-          onClick={onCtaClick}
-        >
-          <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
-          Initialize LLM brain
-        </Button>
-      ) : null}
     </div>
   );
 }

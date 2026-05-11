@@ -82,6 +82,7 @@ const EXEMPT_HANDLERS = new Set([
   'handleServerInfo',
   'handleSeedPlan',
   'handleSeedApply',
+  'handleSeedPacks',
   'handleAgentActivity',
   'handleAgentBurstDiff',
   'handleInstallSkill',

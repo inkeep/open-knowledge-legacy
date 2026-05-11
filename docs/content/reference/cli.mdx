@@ -101,7 +101,7 @@ Full walkthrough: [Claude Desktop](/docs/integrations/claude-desktop).
 
 ## `seed`
 
-Scaffold a starter knowledge-base structure: three folders (`external-sources/`, `research/`, `articles/`) plus a `log.md`.
+Scaffold a starter pack. Five packs ship today; the default `knowledge-base` pack creates `external-sources/`, `research/`, `articles/`, and a `log.md`.
 
 ```bash
 ok seed [path] [options]
@@ -111,9 +111,22 @@ ok seed [path] [options]
 
 | Flag | Description |
 | --- | --- |
+| `-p, --pack <id>` | Pack to scaffold. One of `knowledge-base`, `software-lifecycle`, `plain-notes`, `worldbuilding`, `writing-pipeline`. Defaults to `knowledge-base`. |
 | `-r, --root <path>` | Subfolder to scaffold into instead of the project root |
+| `--personal-templates` | Also write the universal personal-templates pack (daily journal, reading log, recipes, etc.) to `~/.ok/templates/`. Idempotent — never overwrites existing files. |
+| `--list-packs` | Print the available starter packs and exit |
 | `-y, --yes` | Skip the confirmation prompt |
 | `--dry-run` | Print the plan and exit without writing |
+
+Examples:
+
+```bash
+ok seed                                    # default knowledge-base at project root
+ok seed --pack software-lifecycle          # proposals / decisions / specs / postmortems / guides
+ok seed --pack worldbuilding --root world  # fiction encyclopedia in world/
+ok seed --personal-templates               # also write ~/.ok/templates/
+ok seed --list-packs                       # enumerate available packs
+```
 
 ## `ui`
 

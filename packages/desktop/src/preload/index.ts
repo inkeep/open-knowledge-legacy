@@ -251,8 +251,9 @@ const bridge: OkDesktopBridge = {
   },
 
   seed: {
-    plan: (rootDir) => invoke('ok:seed:plan', rootDir),
-    apply: (plan) => invoke('ok:seed:apply', plan),
+    plan: (options) => invoke('ok:seed:plan', options),
+    apply: (plan, options) => invoke('ok:seed:apply', plan, options),
+    listPacks: () => invoke('ok:seed:list-packs'),
   },
 
   skill: {

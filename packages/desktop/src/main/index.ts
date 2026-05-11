@@ -80,7 +80,7 @@ import {
   handleCloneStart,
   type LocalOpDeps,
 } from './ipc/local-op.ts';
-import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
+import { handleSeedApply, handleSeedListPacks, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
   recordHandoff as recordHandoffImpl,
@@ -1117,10 +1117,10 @@ function registerIpcHandlers() {
       ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
       : undefined;
   };
-  handle('ok:seed:plan', async (event, rootDir) => {
+  handle('ok:seed:plan', async (event, options) => {
     const result = await handleSeedPlan(
       { resolveProjectRoot: () => resolveSeedProjectRoot(event) },
-      rootDir,
+      options,
     );
     if (!result.ok) {
       logIpcError({
@@ -1133,10 +1133,11 @@ function registerIpcHandlers() {
     }
     return result;
   });
-  handle('ok:seed:apply', async (event, plan) => {
+  handle('ok:seed:apply', async (event, plan, options) => {
     const result = await handleSeedApply(
       { resolveProjectRoot: () => resolveSeedProjectRoot(event) },
       plan,
+      options,
     );
     if (!result.ok) {
       logIpcError({
@@ -1149,6 +1150,7 @@ function registerIpcHandlers() {
     }
     return result;
   });
+  handle('ok:seed:list-packs', async () => handleSeedListPacks());
 
   handle('ok:skill:detect-claude-desktop', async () => {
     return handleDetectClaudeDesktop();

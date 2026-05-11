@@ -1,6 +1,35 @@
-import type { ApplyResult, ScaffoldPlan } from '@inkeep/open-knowledge-server';
+import type {
+  ApplyResult,
+  PackId,
+  PersonalTemplateWriteResult,
+  ScaffoldPlan,
+} from '@inkeep/open-knowledge-server';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 import type { EntryPoint } from './entry-point.ts';
+
+export interface SeedPlanOptions {
+  rootDir?: string;
+  packId?: PackId;
+  includePersonalTemplates?: boolean;
+}
+
+export interface SeedApplyOptions {
+  packId?: PackId;
+  includePersonalTemplates?: boolean;
+}
+
+interface OkSeedPackFolderInfo {
+  path: string;
+  summary: string;
+}
+
+interface OkSeedPackInfo {
+  id: PackId;
+  name: string;
+  description: string;
+  defaultSubfolder?: string;
+  folders: OkSeedPackFolderInfo[];
+}
 
 export type OkSeedPlanResult =
   | { ok: true; plan: ScaffoldPlan }
@@ -13,11 +42,15 @@ export type OkSeedPlanResult =
     };
 
 export type OkSeedApplyResult =
-  | { ok: true; result: ApplyResult }
+  | { ok: true; result: ApplyResult; personalTemplates?: PersonalTemplateWriteResult }
   | {
       ok: false;
       error: { kind: 'no-project' | 'prerequisite-missing' | 'internal'; message: string };
     };
+
+export type OkSeedListPacksResult =
+  | { ok: true; packs: OkSeedPackInfo[] }
+  | { ok: false; error: { kind: 'internal'; message: string } };
 
 type OkDesktopMode = 'editor' | 'navigator';
 
@@ -287,8 +320,9 @@ export interface OkDesktopBridge {
   };
 
   seed: {
-    plan(rootDir?: string): Promise<OkSeedPlanResult>;
-    apply(plan: ScaffoldPlan): Promise<OkSeedApplyResult>;
+    plan(options?: SeedPlanOptions): Promise<OkSeedPlanResult>;
+    apply(plan: ScaffoldPlan, options?: SeedApplyOptions): Promise<OkSeedApplyResult>;
+    listPacks(): Promise<OkSeedListPacksResult>;
   };
 
   skill: {

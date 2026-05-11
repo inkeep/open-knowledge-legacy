@@ -4,6 +4,8 @@ import {
   LOG_MD_TEMPLATE,
   STARTER_FOLDER_FRONTMATTER_FILENAME,
   STARTER_FOLDERS,
+  STARTER_PACK_IDS,
+  STARTER_PACKS,
   STARTER_TEMPLATES,
 } from './starter.ts';
 
@@ -113,6 +115,114 @@ describe('LOG_MD_TEMPLATE', () => {
 describe('STARTER_FOLDER_FRONTMATTER_FILENAME', () => {
   test('is the canonical literal expected by the cascade resolver', () => {
     expect(STARTER_FOLDER_FRONTMATTER_FILENAME).toBe('frontmatter.yml');
+  });
+});
+
+describe('STARTER_PACKS — all packs structural validation', () => {
+  test('STARTER_PACK_IDS contains exactly the 5 expected packs (pinned to detect silent additions/deletions)', () => {
+    expect(STARTER_PACK_IDS.length).toBe(5);
+    expect([...STARTER_PACK_IDS].sort()).toEqual([
+      'knowledge-base',
+      'plain-notes',
+      'software-lifecycle',
+      'worldbuilding',
+      'writing-pipeline',
+    ]);
+    for (const id of STARTER_PACK_IDS) {
+      expect(STARTER_PACKS[id]).toBeDefined();
+      expect(STARTER_PACKS[id]?.id).toBe(id);
+    }
+  });
+
+  test('every pack has non-empty name + description', () => {
+    for (const pack of Object.values(STARTER_PACKS)) {
+      expect(pack.name.length).toBeGreaterThan(0);
+      expect(pack.description.length).toBeGreaterThan(10);
+    }
+  });
+
+  test('every folder starterTemplate + extraTemplates resolves to a body in pack.templates', () => {
+    for (const pack of Object.values(STARTER_PACKS)) {
+      for (const folder of pack.folders) {
+        expect(
+          pack.templates[folder.starterTemplate],
+          `starterTemplate "${folder.starterTemplate}" in folder "${folder.path}" of pack "${pack.id}" has no body`,
+        ).toBeDefined();
+        for (const extra of folder.extraTemplates ?? []) {
+          expect(
+            pack.templates[extra],
+            `extraTemplate "${extra}" in folder "${folder.path}" of pack "${pack.id}" has no body`,
+          ).toBeDefined();
+        }
+      }
+    }
+  });
+
+  test('every template body across every pack uses only v1 substitution tokens', () => {
+    const ALLOWED = new Set(['date', 'user']);
+    for (const pack of Object.values(STARTER_PACKS)) {
+      for (const [name, body] of Object.entries(pack.templates)) {
+        const tokens = [...body.matchAll(/\{\{([^{}\n]+?)\}\}/g)].map((m) => (m[1] ?? '').trim());
+        for (const token of tokens) {
+          expect(
+            ALLOWED.has(token),
+            `Pack "${pack.id}" template "${name}" uses unknown token "{{${token}}}" — only {{date}} and {{user}} are allowed in v1.`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  test('every folder path uses kebab-case (matches existing scaffolder validator)', () => {
+    for (const pack of Object.values(STARTER_PACKS)) {
+      for (const folder of pack.folders) {
+        expect(folder.path).toMatch(/^[a-z][a-z0-9-]*$/);
+      }
+    }
+  });
+
+  test('every template name uses filename-safe characters (alphanumeric + hyphens + underscores, matches the cascade resolver regex)', () => {
+    for (const pack of Object.values(STARTER_PACKS)) {
+      for (const name of Object.keys(pack.templates)) {
+        expect(name).toMatch(/^[A-Za-z0-9_-]+$/);
+      }
+    }
+  });
+
+  test('every template body has frontmatter with a non-empty title', () => {
+    for (const pack of Object.values(STARTER_PACKS)) {
+      for (const [name, body] of Object.entries(pack.templates)) {
+        expect(body.startsWith('---\n')).toBe(true);
+        expect(body, `Pack "${pack.id}" template "${name}" missing title:`).toContain('title:');
+      }
+    }
+  });
+
+  test('no template body is registered without being referenced from some folder', () => {
+    for (const pack of Object.values(STARTER_PACKS)) {
+      const referenced = new Set<string>();
+      for (const folder of pack.folders) {
+        referenced.add(folder.starterTemplate);
+        for (const extra of folder.extraTemplates ?? []) referenced.add(extra);
+      }
+      for (const templateName of Object.keys(pack.templates)) {
+        expect(
+          referenced.has(templateName),
+          `Pack "${pack.id}" template "${templateName}" is registered but referenced by no folder.`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  test('defaultSubfolder when set uses kebab-case (matches rootDir normalization expectations)', () => {
+    for (const pack of Object.values(STARTER_PACKS)) {
+      if (pack.defaultSubfolder !== undefined) {
+        expect(
+          pack.defaultSubfolder,
+          `Pack "${pack.id}" defaultSubfolder "${pack.defaultSubfolder}" should be kebab-case.`,
+        ).toMatch(/^[a-z][a-z0-9-]*$/);
+      }
+    }
   });
 });
 
