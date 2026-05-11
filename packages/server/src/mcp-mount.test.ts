@@ -1,11 +1,21 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server as HttpServer, request as httpRequest } from 'node:http';
 import {
   type AddressInfo,
   connect as createNetConnection,
   createServer as createNetServer,
 } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Hocuspocus } from '@hocuspocus/server';
+import {
+  ASSET_EXTENSIONS,
+  EXECUTABLE_BLOCKLIST_EXTENSIONS,
+  INLINE_RENDERABLE_EXTENSIONS,
+} from '@inkeep/open-knowledge-core';
+import sirv from 'sirv';
+import { createAssetServeMiddleware } from './asset-serve-middleware.ts';
 import type { McpHttpHandler } from './mcp-http.ts';
 import { type MountMcpAndApiHandle, mountMcpAndApi } from './mcp-mount.ts';
 
@@ -212,5 +222,105 @@ describe('mountMcpAndApi /mcp guard', () => {
 
     expect(response).toBe('');
     expect(calls).toBe(0);
+  });
+});
+
+describe('mountMcpAndApi content-asset middleware', () => {
+  const tmpDirs: string[] = [];
+
+  function makeContentDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'ok-mcp-mount-assets-'));
+    tmpDirs.push(dir);
+    return dir;
+  }
+
+  async function startWithAssets(contentDir: string): Promise<{ port: number }> {
+    const httpServer = createServer();
+    const filter = {
+      isExcluded: (rel: string) => rel.startsWith('.ok/') || rel === 'excluded.png',
+    };
+    const mount = mountMcpAndApi({
+      httpServer,
+      hocuspocus,
+      log,
+      contentAssetMiddleware: createAssetServeMiddleware({
+        contentFilter: filter,
+        contentSirv: sirv(contentDir, { dev: true, dotfiles: false }),
+        inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,
+        assetExtensions: ASSET_EXTENSIONS,
+        blocklistExtensions: EXECUTABLE_BLOCKLIST_EXTENSIONS,
+      }),
+    });
+    const port = await getFreePort();
+    await new Promise<void>((resolve) => httpServer.listen(port, '127.0.0.1', () => resolve()));
+    servers.push({ httpServer, mount });
+    return { port };
+  }
+
+  test('serves a content asset with inline disposition + nosniff', async () => {
+    const contentDir = makeContentDir();
+    mkdirSync(join(contentDir, 'assets'));
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); // PNG magic
+    writeFileSync(join(contentDir, 'assets', 'x.png'), bytes);
+    const { port } = await startWithAssets(contentDir);
+
+    const res = await fetch(`http://127.0.0.1:${port}/assets/x.png`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-disposition')).toBe('inline');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(got.equals(bytes)).toBe(true);
+  });
+
+  test('content-filter-excluded path falls through to the problem+json 404', async () => {
+    const contentDir = makeContentDir();
+    mkdirSync(join(contentDir, 'assets'));
+    writeFileSync(join(contentDir, 'excluded.png'), Buffer.from([0]));
+    const { port } = await startWithAssets(contentDir);
+
+    const res = await fetch(`http://127.0.0.1:${port}/excluded.png`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    const body = (await res.json()) as { type?: string };
+    expect(body.type).toBe('urn:ok:error:not-found');
+  });
+
+  test('asset-extension miss returns a bare 404 from the middleware, not the catch-all', async () => {
+    const contentDir = makeContentDir();
+    const { port } = await startWithAssets(contentDir);
+
+    const res = await fetch(`http://127.0.0.1:${port}/missing.png`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('content-type')).not.toBe('application/problem+json');
+    expect(await res.text()).toBe('');
+  });
+
+  test('synchronous throw from middleware returns a 500 problem+json (no hang)', async () => {
+    const httpServer = createServer();
+    const mount = mountMcpAndApi({
+      httpServer,
+      hocuspocus,
+      log,
+      contentAssetMiddleware: () => {
+        throw new Error('simulated EMFILE');
+      },
+    });
+    const port = await getFreePort();
+    await new Promise<void>((resolve) => httpServer.listen(port, '127.0.0.1', () => resolve()));
+    servers.push({ httpServer, mount });
+
+    const res = await fetch(`http://127.0.0.1:${port}/assets/x.png`);
+    expect(res.status).toBe(500);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    const body = (await res.json()) as { type?: string; status?: number };
+    expect(body.type).toBe('urn:ok:error:internal-server-error');
+    expect(body.status).toBe(500);
+  });
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

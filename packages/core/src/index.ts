@@ -648,6 +648,7 @@ export type {
   TimelineEntry,
 } from './types/timeline.ts';
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
+export { toDesktopAssetHref } from './utils/asset-href.ts';
 export { ChunkedInsertError, chunkedYTextInsert } from './utils/chunked-insert.ts';
 export { createCodeFenceTracker } from './utils/code-fence-tracker.ts';
 export { extensionOf } from './utils/extension.ts';

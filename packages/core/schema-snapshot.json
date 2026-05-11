@@ -186,6 +186,10 @@
           "hasDefault": true,
           "default": null
         },
+        "sourceUrl": {
+          "hasDefault": true,
+          "default": null
+        },
         "src": {
           "hasDefault": true,
           "default": null

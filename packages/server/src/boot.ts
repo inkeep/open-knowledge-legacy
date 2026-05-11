@@ -1,8 +1,16 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
 import { resolve } from 'node:path';
-import { LOCAL_DIR, OK_DIR } from '@inkeep/open-knowledge-core';
+import {
+  ASSET_EXTENSIONS,
+  EXECUTABLE_BLOCKLIST_EXTENSIONS,
+  INLINE_RENDERABLE_EXTENSIONS,
+  LOCAL_DIR,
+  OK_DIR,
+} from '@inkeep/open-knowledge-core';
 import { resolveGitDirDetailed } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import sirv from 'sirv';
+import { createAssetServeMiddleware } from './asset-serve-middleware.ts';
 import type { Config } from './config/schema.ts';
 import { normalizeFsPath } from './fs-traced.ts';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
@@ -98,6 +106,7 @@ export interface BootServerOptions
   skipAutoInit?: boolean;
   attachUiSibling?: boolean;
   idleShutdownMs?: number | null;
+  serveContentAssets?: boolean;
   autoInitFn?: () => boolean | Promise<boolean>;
   spawnUiSiblingFn?: (ctx: { lockDir: string; log: PinoLogger }) => void | Promise<void>;
   idleShutdownHandler?: (destroyServer: () => Promise<void>) => () => Promise<void>;
@@ -228,6 +237,16 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
   httpServer.headersTimeout = 30_000;
   httpServer.requestTimeout = 60_000;
 
+  const contentAssetMiddleware = opts.serveContentAssets
+    ? createAssetServeMiddleware({
+        contentFilter: serverInstance.contentFilter,
+        contentSirv: sirv(opts.contentDir, { dev: true, dotfiles: false }),
+        inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,
+        assetExtensions: ASSET_EXTENSIONS,
+        blocklistExtensions: EXECUTABLE_BLOCKLIST_EXTENSIONS,
+      })
+    : undefined;
+
   const mount = mountMcpAndApi({
     httpServer,
     hocuspocus,
@@ -237,6 +256,7 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
     agentFocusBroadcaster,
     agentPresenceBroadcaster,
     keepaliveGraceMs: opts.keepaliveGraceMs,
+    contentAssetMiddleware,
   });
 
   let idleHandle: IdleShutdownHandle | null = null;

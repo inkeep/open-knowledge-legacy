@@ -1,4 +1,4 @@
-import { parsePdfAnchor } from '@inkeep/open-knowledge-core';
+import { parsePdfAnchor, toDesktopAssetHref } from '@inkeep/open-knowledge-core';
 import { ChevronDown, PanelLeft, ZoomIn, ZoomOut } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { computeBaseScale, type PdfLayoutMode } from './pdf-layout.ts';
@@ -101,6 +101,7 @@ export function Pdf(props: PdfProps) {
       setLoading(false);
       return;
     }
+    const docUrl = toDesktopAssetHref(props.src);
     let cancelled = false;
     let activeDoc: PdfDoc | null = null;
     setLoading(true);
@@ -110,7 +111,7 @@ export function Pdf(props: PdfProps) {
       try {
         const pdfjs = await loadPdfjs();
         const doc = await pdfjs.getDocument({
-          url: props.src,
+          url: docUrl,
           isEvalSupported: false,
         } as Parameters<typeof pdfjs.getDocument>[0]).promise;
         if (cancelled) {

@@ -3,6 +3,7 @@ import {
   extractAssetExtension,
   IMAGE_EXTENSIONS,
   resolveAssetProjectPath,
+  toDesktopAssetHref,
 } from '@inkeep/open-knowledge-core';
 import { dispatchAssetClick } from '../asset-dispatch';
 import { getInteractionLayer } from '../interaction-layer-host';
@@ -60,7 +61,7 @@ function buildWikiLinkEmbedChipDom(params: {
   return { dom };
 }
 
-function buildWikiLinkEmbedImageDom(params: {
+export function buildWikiLinkEmbedImageDom(params: {
   nodeId: string;
   target: string;
   alias: string | null;
@@ -76,7 +77,7 @@ function buildWikiLinkEmbedImageDom(params: {
   dom.setAttribute('data-node-id', params.nodeId);
   dom.setAttribute('data-target', params.target);
   dom.setAttribute('data-alias', params.alias ?? '');
-  dom.setAttribute('src', params.src);
+  dom.setAttribute('src', toDesktopAssetHref(params.src));
   dom.setAttribute('alt', params.alias ?? params.target);
   return { dom };
 }
@@ -116,7 +117,7 @@ export const WikiLinkEmbed = BaseWikiLinkEmbed.extend({
             const newSrc = newResolvedSrc ?? newTarget;
             dom.setAttribute('data-target', newTarget);
             dom.setAttribute('data-alias', newAlias ?? '');
-            dom.setAttribute('src', newSrc);
+            dom.setAttribute('src', toDesktopAssetHref(newSrc));
             dom.setAttribute('alt', newAlias ?? newTarget);
             return true;
           },

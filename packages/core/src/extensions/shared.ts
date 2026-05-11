@@ -1,5 +1,4 @@
 import Highlight from '@tiptap/extension-highlight';
-import Image from '@tiptap/extension-image';
 import { TableRow } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
 import { BlockquoteFidelity } from './blockquote-fidelity.ts';
@@ -15,6 +14,7 @@ import { HardBreakFidelity } from './hard-break-fidelity.ts';
 import { HeadingFidelity } from './heading-fidelity.ts';
 import { HtmlBlockFidelity } from './html-block-fidelity.ts';
 import { ImageReferenceFidelity } from './image-reference-fidelity.ts';
+import { ImageSrcFidelity } from './image-src-fidelity.ts';
 import { JsxComponent } from './jsx-component.ts';
 import { JsxInline } from './jsx-inline.ts';
 import { LinkFidelity } from './link-fidelity.ts';
@@ -77,7 +77,7 @@ export const sharedExtensions = [
   TableRow,
   TableHeaderFidelity,
   TableCellFidelity,
-  Image.configure({ inline: true }),
+  ImageSrcFidelity.configure({ inline: true }),
   ImageReferenceFidelity,
   Highlight,
   CommentMark,

@@ -1,3 +1,5 @@
+import { toDesktopAssetHref } from '@inkeep/open-knowledge-core';
+
 interface AudioProps {
   src?: string;
   controls?: boolean;
@@ -16,7 +18,7 @@ export function Audio(props: AudioProps) {
   return (
     <audio
       className="ok-audio"
-      src={props.src}
+      src={props.src === undefined ? undefined : toDesktopAssetHref(props.src)}
       title={props.title}
       controls={resolveControls(props.controls)}
       autoPlay={props.autoplay}

@@ -787,10 +787,12 @@ export const builtInComponents: JsxComponentMeta[] = [
     rendersAs: 'img',
     translateProps: (props) => props,
     serialize: (node) => {
-      const p = node.attrs.props as { src?: string; alt?: string; title?: string } | undefined;
+      const p = node.attrs.props as
+        | { src?: string; alt?: string; title?: string; sourceUrl?: string }
+        | undefined;
       const image = {
         type: 'image' as const,
-        url: p?.src ?? '',
+        url: p?.sourceUrl ?? p?.src ?? '',
         alt: p?.alt ?? '',
         title: p?.title ?? null,
       };

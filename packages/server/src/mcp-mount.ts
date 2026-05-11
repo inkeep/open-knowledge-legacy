@@ -31,6 +31,7 @@ export interface MountMcpAndApiOptions {
   agentFocusBroadcaster?: AgentFocusBroadcaster | null;
   agentPresenceBroadcaster?: AgentPresenceBroadcaster | null;
   keepaliveGraceMs?: number;
+  contentAssetMiddleware?: (req: IncomingMessage, res: ServerResponse, next: () => void) => void;
 }
 
 export interface MountMcpAndApiHandle {
@@ -47,6 +48,7 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
     sessionManager,
     agentFocusBroadcaster,
     agentPresenceBroadcaster,
+    contentAssetMiddleware,
   } = opts;
   const keepaliveGraceMs = opts.keepaliveGraceMs ?? DEFAULT_KEEPALIVE_GRACE_MS;
 
@@ -134,6 +136,28 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
             res.end();
           }
         });
+      return;
+    }
+    if (contentAssetMiddleware !== undefined) {
+      try {
+        contentAssetMiddleware(req, res, () => {
+          if (res.writableEnded || res.headersSent) return;
+          errorResponse(res, 404, 'urn:ok:error:not-found', 'Not found.', {
+            handler: 'mcp-mount',
+            detail: `No handler for ${url ?? '/'}`,
+          });
+        });
+      } catch (err) {
+        log.error({ err }, 'Unhandled content-asset middleware error');
+        if (!res.writableEnded && !res.headersSent) {
+          errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+            handler: 'mcp-mount',
+            cause: err,
+          });
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+      }
       return;
     }
     errorResponse(res, 404, 'urn:ok:error:not-found', 'Not found.', {

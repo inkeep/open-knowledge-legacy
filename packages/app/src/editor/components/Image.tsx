@@ -1,3 +1,4 @@
+import { toDesktopAssetHref } from '@inkeep/open-knowledge-core';
 import type { ImgHTMLAttributes } from 'react';
 import Zoom from 'react-medium-image-zoom';
 
@@ -23,7 +24,7 @@ function resolveLoading(loading: 'eager' | 'lazy' | undefined): 'eager' | 'lazy'
 function BareImg(props: ImageProps) {
   return (
     <img
-      src={props.src}
+      src={props.src === undefined ? undefined : toDesktopAssetHref(props.src)}
       alt={props.alt ?? ''}
       width={props.width}
       height={props.height}

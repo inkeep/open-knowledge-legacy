@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import { sharedExtensions } from '../extensions/shared.ts';
 import { MarkdownManager } from './index.ts';
@@ -596,5 +596,209 @@ describe('handlers.wikiLinkEmbed — WikiEmbedAudio dispatch (US-008)', () => {
   test('round-trip: ![[song.mp3#chorus]] preserves anchor byte-identical', () => {
     const md = '![[song.mp3#chorus]]\n';
     expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+});
+
+describe('handlers.image / imagePromoter — server-absolute URL contract (doc-relative image src)', () => {
+  test('block-context ![alt](../../path) → CommonMarkImage with server-absolute src resolved against sourcePath', () => {
+    const json = mdManager.parse('![Aang](../../assets/images/characters/aang.png)\n', {
+      sourcePath: 'characters/air-nomads/aang.md',
+    });
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.alt).toBe('Aang');
+    expect(props?.src).toMatch(/^\//);
+    expect(props?.src).toBe('/assets/images/characters/aang.png');
+  });
+
+  test('inline ![alt](../../path) mid-prose → PM image node with server-absolute src', () => {
+    const json = mdManager.parse(
+      'Some prose with ![Aang](../../assets/images/characters/aang.png) inline.\n',
+      { sourcePath: 'characters/air-nomads/aang.md' },
+    );
+    const image = findInJson(json, 'image');
+    expect(image).not.toBeNull();
+    expect(image?.attrs?.src).toMatch(/^\//);
+    expect(image?.attrs?.src).toBe('/assets/images/characters/aang.png');
+  });
+
+  test('block-context ./img.png resolves to /<doc-dir>/img.png', () => {
+    const json = mdManager.parse('![pic](./img.png)\n', {
+      sourcePath: 'characters/air-nomads/aang.md',
+    });
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('/characters/air-nomads/img.png');
+  });
+
+  test('block-context bare-basename img.png resolves to /<doc-dir>/img.png', () => {
+    const json = mdManager.parse('![pic](img.png)\n', {
+      sourcePath: 'characters/air-nomads/aang.md',
+    });
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('/characters/air-nomads/img.png');
+  });
+
+  test('absolute path /abs/x.png passes through unchanged', () => {
+    const json = mdManager.parse('![x](/abs/x.png)\n', {
+      sourcePath: 'characters/air-nomads/aang.md',
+    });
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('/abs/x.png');
+  });
+
+  test('http(s) URL passes through unchanged', () => {
+    const json = mdManager.parse('![x](https://example.com/x.png)\n', {
+      sourcePath: 'characters/air-nomads/aang.md',
+    });
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('https://example.com/x.png');
+  });
+
+  test('data: URI passes through unchanged', () => {
+    const dataUri =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=';
+    const json = mdManager.parse(`![pixel](${dataUri})\n`, {
+      sourcePath: 'characters/air-nomads/aang.md',
+    });
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe(dataUri);
+  });
+
+  test('relative path to a non-existent file still produces a server-absolute src', () => {
+    const json = mdManager.parse('![x](../missing/ghost.png)\n', {
+      sourcePath: 'characters/air-nomads/aang.md',
+    });
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('/characters/missing/ghost.png');
+  });
+
+  test('no sourcePath in parse context → src left verbatim (no resolution attempted)', () => {
+    const json = mdManager.parse('![x](../../assets/x.png)\n');
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('../../assets/x.png');
+  });
+
+  test('round-trip: block-context relative image src is byte-identical on save', () => {
+    const md = '![Aang](../../assets/images/characters/aang.png)\n';
+    expect(
+      mdManager.serialize(mdManager.parse(md, { sourcePath: 'characters/air-nomads/aang.md' })),
+    ).toBe(md);
+  });
+
+  test('round-trip: inline relative image src is byte-identical on save', () => {
+    const md = 'Some prose with ![Aang](../../assets/images/characters/aang.png) inline.\n';
+    expect(
+      mdManager.serialize(mdManager.parse(md, { sourcePath: 'characters/air-nomads/aang.md' })),
+    ).toBe(md);
+  });
+
+  test('dirty-path block round-trip: edited CommonMarkImage re-emits the authored doc-relative URL', () => {
+    const json = mdManager.parse('![Aang](../../assets/images/characters/aang.png)\n', {
+      sourcePath: 'characters/air-nomads/aang.md',
+    });
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown>;
+    expect(props.src).toBe('/assets/images/characters/aang.png');
+    expect(props.sourceUrl).toBe('../../assets/images/characters/aang.png');
+    if (node?.attrs) node.attrs.sourceDirty = true;
+    props.alt = 'Aang kneeling';
+    expect(mdManager.serialize(json)).toBe(
+      '![Aang kneeling](../../assets/images/characters/aang.png)\n',
+    );
+  });
+
+  test('dirty-path inline round-trip: edited PM image node re-emits the authored doc-relative URL', () => {
+    const json = mdManager.parse(
+      'Some prose with ![Aang](../../assets/images/characters/aang.png) inline.\n',
+      { sourcePath: 'characters/air-nomads/aang.md' },
+    );
+    const image = findInJson(json, 'image');
+    expect(image).not.toBeNull();
+    const attrs = image?.attrs as Record<string, unknown>;
+    expect(attrs.src).toBe('/assets/images/characters/aang.png');
+    expect(attrs.sourceUrl).toBe('../../assets/images/characters/aang.png');
+    attrs.alt = 'Aang kneeling';
+    expect(mdManager.serialize(json)).toBe(
+      'Some prose with ![Aang kneeling](../../assets/images/characters/aang.png) inline.\n',
+    );
+  });
+
+  test('escape: block-context relative path climbing above contentDir stays raw', () => {
+    const json = mdManager.parse('![x](../../../../etc/passwd)\n', {
+      sourcePath: 'docs/page.md',
+    });
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('../../../../etc/passwd');
+  });
+
+  test('escape: inline mid-prose relative path climbing above contentDir stays raw', () => {
+    const json = mdManager.parse('Hello ![x](../../../etc/passwd) world.\n', {
+      sourcePath: 'a/b.md',
+    });
+    const image = findInJson(json, 'image');
+    expect(image).not.toBeNull();
+    expect(image?.attrs?.src).toBe('../../../etc/passwd');
+  });
+
+  test('exact-depth climb to contentDir root normalizes to server-absolute path', () => {
+    const json = mdManager.parse('![x](../img.png)\n', { sourcePath: 'a/b.md' });
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('/img.png');
+  });
+
+  test('exact-depth-plus-one climb escapes contentDir and stays raw', () => {
+    const json = mdManager.parse('![x](../../img.png)\n', { sourcePath: 'a/b.md' });
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('../../img.png');
+  });
+
+  test('escape diagnostic: emits a console.warn under NODE_ENV=test', () => {
+    const warn = spyOn(console, 'warn').mockImplementation(mock(() => {}));
+    try {
+      mdManager.parse('![x](../../../../etc/passwd)\n', { sourcePath: 'docs/page.md' });
+      expect(warn).toHaveBeenCalled();
+      const message = String(warn.mock.calls[0]?.[0] ?? '');
+      expect(message).toContain('[resolve-image-url]');
+      expect(message).toContain('escapes contentDir');
+      expect(message).toContain('../../../../etc/passwd');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test('escape diagnostic: silent under NODE_ENV=production', () => {
+    const warn = spyOn(console, 'warn').mockImplementation(mock(() => {}));
+    const prior = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      mdManager.parse('![x](../../../../etc/passwd)\n', { sourcePath: 'docs/page.md' });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      if (prior === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prior;
+      warn.mockRestore();
+    }
   });
 });

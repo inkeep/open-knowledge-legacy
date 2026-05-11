@@ -186,6 +186,7 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
         idleShutdownMs: null, // BrowserWindow lifecycle owns utility lifetime
         skipAutoInit: true,
         autoInitFn: undefined,
+        serveContentAssets: true,
       });
       const readyMsg: UtilityReadyMessage = {
         type: 'ready',

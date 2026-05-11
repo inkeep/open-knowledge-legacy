@@ -65,6 +65,7 @@ import {
   parseMdToMdast,
   serializeMd,
 } from './pipeline.ts';
+import { normalizeDocRelativeAssetUrl } from './resolve-image-url.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
 
 interface MdastToPmState {
@@ -390,12 +391,16 @@ function buildMdastToPmHandlers(
   }
 
   if (n.image) {
-    handlers.image = (node: Image) =>
-      n.image.createAndFill({
-        src: node.url ?? '',
+    handlers.image = (node: Image) => {
+      const orig = node.url ?? '';
+      const normalized = normalizeDocRelativeAssetUrl(orig, parseCtx.current.sourcePath);
+      return n.image.createAndFill({
+        src: normalized,
         alt: node.alt ?? null,
         title: node.title ?? null,
+        sourceUrl: normalized !== orig ? orig : null,
       });
+    };
     if (n.imageReference) {
       handlers.imageReference = (node: ImageReference) =>
         n.imageReference.createAndFill({
@@ -667,6 +672,14 @@ function buildMdastToPmHandlers(
       const name = node.name ?? '';
       const descriptor = registry.getOrWildcard(name);
       const structuredAttrs = destructureAttrs(node.attributes, descriptor.props);
+      if (name === 'CommonMarkImage' && typeof structuredAttrs.src === 'string') {
+        const origUrl = structuredAttrs.src;
+        const normalized = normalizeDocRelativeAssetUrl(origUrl, parseCtx.current.sourcePath);
+        if (normalized !== origUrl) {
+          structuredAttrs.src = normalized;
+          structuredAttrs.sourceUrl = origUrl;
+        }
+      }
       const children = state.all(node).flat();
 
       return n.jsxComponent.createAndFill(
@@ -1083,7 +1096,7 @@ function buildPmToMdastHandlers(schema: Schema): {
   if (n.image) {
     nodeHandlers.image = (pmNode: PmNode) => ({
       type: 'image' as const,
-      url: pmNode.attrs.src,
+      url: (pmNode.attrs.sourceUrl as string | null) ?? pmNode.attrs.src,
       alt: pmNode.attrs.alt,
       title: pmNode.attrs.title,
     });
