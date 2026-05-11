@@ -156,3 +156,20 @@ test('activation does not steal focus from the editor', async ({ page }) => {
   });
   expect(focusInSidebar).toBe(false);
 });
+
+test('hovering a sidebar row surfaces its full relative path as a title (VS Code parity)', async ({
+  page,
+}) => {
+  await page.goto(`/#/sidebar-folder/nested-doc`);
+  await fileRow(page, 'nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
+  await expect(folderRow(page)).toHaveAttribute('aria-expanded', 'true');
+
+  await fileRow(page, 'nested-doc.md').hover();
+  await expect(fileRow(page, 'nested-doc.md')).toHaveAttribute(
+    'title',
+    'sidebar-folder/nested-doc.md',
+  );
+
+  await folderRow(page).hover();
+  await expect(folderRow(page)).toHaveAttribute('title', 'sidebar-folder');
+});
