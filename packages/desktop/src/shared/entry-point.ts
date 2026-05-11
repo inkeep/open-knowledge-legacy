@@ -1,7 +1,14 @@
-export type EntryPoint = 'start-fresh' | 'pick-existing' | 'recents' | 'deep-link' | 'drag-drop';
+export type EntryPoint =
+  | 'create-new'
+  | 'create-new-nested-redirect'
+  | 'pick-existing'
+  | 'recents'
+  | 'deep-link'
+  | 'drag-drop';
 
 const ENTRY_POINT_VALUES: ReadonlySet<EntryPoint> = new Set([
-  'start-fresh',
+  'create-new',
+  'create-new-nested-redirect',
   'pick-existing',
   'recents',
   'deep-link',

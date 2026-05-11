@@ -248,8 +248,7 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
 
   test('Navigator stays visible when project open fails', async ({ captureStderrFor }) => {
     const { tmpHome, projectDir } = seedHomeWithoutLastOpenedProject('failure');
-    const bogusProjectPath = join(tmpHome, 'a-file-not-a-dir');
-    writeFileSync(bogusProjectPath, 'this is a file, not a directory\n');
+    const bogusProjectPath = join(tmpHome, 'does-not-exist');
     let app: ElectronApplication | null = null;
     try {
       app = await launchApp(tmpHome);
@@ -281,7 +280,7 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
         await window.okDesktop?.project.open({
           path,
           target: 'new-window',
-          entryPoint: 'start-fresh',
+          entryPoint: 'recents',
         });
       }, bogusProjectPath);
 
@@ -304,7 +303,7 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
         };
       });
       expect(dialogState.calls).toBeGreaterThan(0);
-      expect(dialogState.title).toBe('Unable to open project');
+      expect(dialogState.title).toBe('Cannot open this folder');
     } finally {
       await closeAppSafely(app);
       rmTmpHomeSafely(tmpHome);

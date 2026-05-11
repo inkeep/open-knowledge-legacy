@@ -144,6 +144,12 @@ describe('M1 smoke', () => {
       'shell.showAssetMenu', // 2026-04-23 FR-A8 (right-click context menu)
       'shell.showItemInFolder', // 2026-04-27 file-tree reveal-in-finder
     ] as const;
+    const REQUIRED_FS_MEMBERS = [
+      'fs.defaultProjectsRoot',
+      'fs.folderState',
+      'fs.findEnclosingProjectRoot',
+      'fs.findEnclosingGitRoot',
+    ] as const;
     for (const [label, members] of [
       ['core', coreMembers],
       ['desktop', desktopMembers],
@@ -151,6 +157,13 @@ describe('M1 smoke', () => {
     ] as const) {
       expect(members.has('shell')).toBe(true);
       for (const required of REQUIRED_SHELL_MEMBERS) {
+        expect(members.has(required)).toBe(true);
+        if (!members.has(required)) {
+          throw new Error(`${label} extractor missed ${required} — walker broken`);
+        }
+      }
+      expect(members.has('fs')).toBe(true);
+      for (const required of REQUIRED_FS_MEMBERS) {
         expect(members.has(required)).toBe(true);
         if (!members.has(required)) {
           throw new Error(`${label} extractor missed ${required} — walker broken`);
@@ -185,63 +198,169 @@ describe('M1 smoke', () => {
     }
   });
 
-  test('M1 invariant: EditorId literal-union drift catcher (Pass 0 Major #3)', async () => {
+  test('M1 invariant: literal unions consolidated in core; mirrors re-export or alias without the inline shape', async () => {
     const packagesRoot = join(__dirname, '..', '..', '..');
+    const editorsConstantPath = join(packagesRoot, 'core', 'src', 'constants', 'editors.ts');
+    const folderStateConstantPath = join(
+      packagesRoot,
+      'core',
+      'src',
+      'constants',
+      'folder-state.ts',
+    );
+    const bannerConstantPath = join(
+      packagesRoot,
+      'core',
+      'src',
+      'constants',
+      'create-new-banner.ts',
+    );
+    const reasonConstantPath = join(
+      packagesRoot,
+      'core',
+      'src',
+      'constants',
+      'create-new-project-reason.ts',
+    );
+
     const cliEditorsPath = join(packagesRoot, 'cli', 'src', 'commands', 'editors.ts');
     const ipcChannelsPath = join(__dirname, '..', '..', 'src', 'shared', 'ipc-channels.ts');
-    const corePath = join(packagesRoot, 'core', 'src', 'desktop-bridge.ts');
-    const appPath = join(packagesRoot, 'app', 'src', 'lib', 'desktop-bridge-types.ts');
+    const bridgeContractPath = join(__dirname, '..', '..', 'src', 'shared', 'bridge-contract.ts');
+    const coreBridgePath = join(packagesRoot, 'core', 'src', 'desktop-bridge.ts');
+    const appBridgePath = join(packagesRoot, 'app', 'src', 'lib', 'desktop-bridge-types.ts');
+    const createNewProjectPath = join(
+      __dirname,
+      '..',
+      '..',
+      'src',
+      'main',
+      'create-new-project.ts',
+    );
+    const createProjectDialogPath = join(
+      packagesRoot,
+      'app',
+      'src',
+      'components',
+      'CreateProjectDialog.tsx',
+    );
+    const onboardingTelemetryPath = join(
+      __dirname,
+      '..',
+      '..',
+      'src',
+      'main',
+      'onboarding-telemetry.ts',
+    );
+
     const { readFileSync } = await import('node:fs');
 
-    const extractLiteralUnion = (src: string, typeName: string): Set<string> => {
-      const declRegex = new RegExp(`type\\s+${typeName}\\s*=([^;]+);`, 'm');
-      const match = src.match(declRegex);
-      if (!match?.[1]) return new Set();
-      const body = match[1];
-      const literals = body.match(/'([^']+)'/g) ?? [];
-      return new Set(literals.map((l) => l.slice(1, -1)));
-    };
+    /** A pinned literal-union consolidation. `canonicalRe` extracts the
+     *  declared union body from the canonical file; `inlineRe` is the exact
+     *  literal-union substring that mirror files USED to carry, and which
+     *  this test forbids outside the canonical file. */
+    interface UnionPin {
+      readonly typeName: string;
+      readonly canonicalPath: string;
+      readonly canonicalRe: RegExp;
+      readonly expectedLiteralCount: number;
+      readonly inlineRe: RegExp;
+      readonly mirrors: readonly (readonly [label: string, path: string])[];
+    }
 
-    const cliMembers = extractLiteralUnion(readFileSync(cliEditorsPath, 'utf-8'), 'EditorId');
-    const ipcMembers = extractLiteralUnion(
-      readFileSync(ipcChannelsPath, 'utf-8'),
-      'McpWiringEditorId',
-    );
-    const coreMembers = extractLiteralUnion(readFileSync(corePath, 'utf-8'), 'OkMcpWiringEditorId');
-    const appMembers = extractLiteralUnion(readFileSync(appPath, 'utf-8'), 'OkMcpWiringEditorId');
+    const pins: readonly UnionPin[] = [
+      {
+        typeName: 'EditorId',
+        canonicalPath: editorsConstantPath,
+        canonicalRe: /type\s+EditorId\s*=([^;]+);/,
+        expectedLiteralCount: 4,
+        inlineRe: /'claude'\s*\|\s*'claude-desktop'\s*\|\s*'cursor'\s*\|\s*'codex'/,
+        mirrors: [
+          ['cli/commands/editors.ts', cliEditorsPath],
+          ['desktop/shared/ipc-channels.ts', ipcChannelsPath],
+          ['desktop/shared/bridge-contract.ts', bridgeContractPath],
+          ['core/desktop-bridge.ts', coreBridgePath],
+          ['app/lib/desktop-bridge-types.ts', appBridgePath],
+        ],
+      },
+      {
+        typeName: 'OkFolderState',
+        canonicalPath: folderStateConstantPath,
+        canonicalRe: /type\s+OkFolderState\s*=([^;]+);/,
+        expectedLiteralCount: 3,
+        inlineRe: /'free'\s*\|\s*'exists-empty'\s*\|\s*'exists-nonempty'/,
+        mirrors: [
+          ['core/desktop-bridge.ts', coreBridgePath],
+          ['app/lib/desktop-bridge-types.ts', appBridgePath],
+          ['desktop/shared/bridge-contract.ts', bridgeContractPath],
+          ['desktop/shared/ipc-channels.ts', ipcChannelsPath],
+          ['desktop/main/create-new-project.ts', createNewProjectPath],
+        ],
+      },
+      {
+        typeName: 'CreateNewBannerKind',
+        canonicalPath: bannerConstantPath,
+        canonicalRe: /type\s+CreateNewBannerKind\s*=([^;]+);/,
+        expectedLiteralCount: 3,
+        inlineRe: /'nested'\s*\|\s*'nonempty'\s*\|\s*'git-confirm'/,
+        mirrors: [
+          ['core/desktop-bridge.ts', coreBridgePath],
+          ['app/lib/desktop-bridge-types.ts', appBridgePath],
+          ['desktop/shared/bridge-contract.ts', bridgeContractPath],
+          ['desktop/shared/ipc-channels.ts', ipcChannelsPath],
+          ['app/components/CreateProjectDialog.tsx', createProjectDialogPath],
+          ['desktop/main/onboarding-telemetry.ts', onboardingTelemetryPath],
+        ],
+      },
+      {
+        typeName: 'CreateNewProjectFailureReason',
+        canonicalPath: reasonConstantPath,
+        canonicalRe: /type\s+CreateNewProjectFailureReason\s*=([^;]+);/,
+        expectedLiteralCount: 7,
+        inlineRe:
+          /'invalid-args'\s*\|\s*'nested-project'\s*\|\s*'target-not-empty'\s*\|\s*'mkdir-failed'\s*\|\s*'git-init-failed'\s*\|\s*'init-failed'\s*\|\s*'discovery-failed'/,
+        mirrors: [['desktop/main/create-new-project.ts', createNewProjectPath]],
+      },
+    ];
 
-    expect(cliMembers.size).toBeGreaterThan(0);
-    expect(ipcMembers.size).toBeGreaterThan(0);
-    expect(coreMembers.size).toBeGreaterThan(0);
-    expect(appMembers.size).toBeGreaterThan(0);
+    const offenders: string[] = [];
+    for (const pin of pins) {
+      const canonicalSrc = readFileSync(pin.canonicalPath, 'utf-8');
+      const canonicalMatch = canonicalSrc.match(pin.canonicalRe);
+      expect(canonicalMatch).not.toBeNull();
+      const canonicalLiterals = (canonicalMatch?.[1] ?? '').match(/'([^']+)'/g) ?? [];
+      expect(canonicalLiterals.length).toBe(pin.expectedLiteralCount);
 
-    expect(cliMembers.size).toBe(4);
-
-    const diff = (a: Set<string>, b: Set<string>) => Array.from(a).filter((x) => !b.has(x));
-    const failures: string[] = [];
-    for (const [otherLabel, otherMembers] of [
-      ['ipc-channels.ts (McpWiringEditorId)', ipcMembers],
-      ['core/desktop-bridge.ts (OkMcpWiringEditorId)', coreMembers],
-      ['app/desktop-bridge-types.ts (OkMcpWiringEditorId)', appMembers],
-    ] as const) {
-      const cliMinusOther = diff(cliMembers, otherMembers);
-      const otherMinusCli = diff(otherMembers, cliMembers);
-      if (cliMinusOther.length || otherMinusCli.length) {
-        failures.push(
-          `  ${otherLabel} drift vs cli/editors.ts (canonical):\n` +
-            `    cli has but ${otherLabel} missing: [${cliMinusOther.join(', ')}]\n` +
-            `    ${otherLabel} has but cli missing: [${otherMinusCli.join(', ')}]`,
-        );
+      for (const [label, path] of pin.mirrors) {
+        const src = readFileSync(path, 'utf-8');
+        if (pin.inlineRe.test(src)) {
+          offenders.push(`  [${pin.typeName}] ${label} still carries an inline literal union`);
+        }
+        const importsFromCore =
+          /from\s+['"]@inkeep\/open-knowledge-core['"]/.test(src) ||
+          /from\s+['"]\.\/constants\/[\w-]+\.ts['"]/.test(src);
+        if (!importsFromCore) {
+          offenders.push(
+            `  [${pin.typeName}] ${label} does not import from @inkeep/open-knowledge-core`,
+          );
+        }
+        const typeRe = new RegExp(`\\b${pin.typeName}\\b`);
+        if (!typeRe.test(src)) {
+          offenders.push(
+            `  [${pin.typeName}] ${label} does not reference the canonical ${pin.typeName} type`,
+          );
+        }
       }
     }
 
-    if (failures.length > 0) {
+    if (offenders.length > 0) {
       throw new Error(
         [
-          'EditorId literal-union drift across the four copies:',
-          ...failures,
+          'Literal-union consolidation regression:',
+          ...offenders,
           '',
-          'Fix: update every union body so all four files agree on the literal members.',
+          'Fix: import or re-export the canonical type from @inkeep/open-knowledge-core.',
+          'See packages/core/src/constants/{editors,folder-state,create-new-banner}.ts for the',
+          'canonical declarations.',
         ].join('\n'),
       );
     }
@@ -280,6 +399,44 @@ describe('M1 smoke', () => {
     expect(appMembers.size).toBeGreaterThan(0);
 
     expect(desktopMembers.size).toBe(3);
+
+    expect(desktopMembers).toEqual(coreMembers);
+    expect(desktopMembers).toEqual(appMembers);
+  });
+
+  test('M1 invariant: EntryPoint / OkProjectEntryPoint literal-union drift catcher', async () => {
+    const desktopPath = join(__dirname, '..', '..', 'src', 'shared', 'entry-point.ts');
+    const corePath = join(__dirname, '..', '..', '..', 'core', 'src', 'desktop-bridge.ts');
+    const appPath = join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'app',
+      'src',
+      'lib',
+      'desktop-bridge-types.ts',
+    );
+    const { readFileSync } = await import('node:fs');
+
+    const extractLiteralUnion = (src: string, typeName: string): Set<string> => {
+      const declRegex = new RegExp(`type\\s+${typeName}\\s*=([^;]+);`, 'm');
+      const match = src.match(declRegex);
+      if (!match?.[1]) return new Set();
+      const body = match[1];
+      const literals = body.match(/'([^']+)'/g) ?? [];
+      return new Set(literals.map((l) => l.slice(1, -1)));
+    };
+
+    const desktopMembers = extractLiteralUnion(readFileSync(desktopPath, 'utf-8'), 'EntryPoint');
+    const coreMembers = extractLiteralUnion(readFileSync(corePath, 'utf-8'), 'OkProjectEntryPoint');
+    const appMembers = extractLiteralUnion(readFileSync(appPath, 'utf-8'), 'OkProjectEntryPoint');
+
+    expect(desktopMembers.size).toBeGreaterThan(0);
+    expect(coreMembers.size).toBeGreaterThan(0);
+    expect(appMembers.size).toBeGreaterThan(0);
+
+    expect(desktopMembers.size).toBe(6);
 
     expect(desktopMembers).toEqual(coreMembers);
     expect(desktopMembers).toEqual(appMembers);

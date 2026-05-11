@@ -18,20 +18,6 @@ function readTestPickedPath(): string | null {
   return picked;
 }
 
-export async function promptForFolder(
-  dialogModule: DialogLike,
-  opts: PromptForFolderOpts = {},
-): Promise<string | null> {
-  const testSeam = readTestPickedPath();
-  if (testSeam !== null) return testSeam;
-  const result = await dialogModule.showOpenDialog({
-    properties: ['openDirectory', 'createDirectory'],
-    ...(opts.defaultPath !== undefined ? { defaultPath: opts.defaultPath } : {}),
-  });
-  if (result.canceled) return null;
-  return result.filePaths[0] ?? null;
-}
-
 export async function promptForExistingFolder(
   dialogModule: DialogLike,
   opts: PromptForFolderOpts = {},

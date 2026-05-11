@@ -82,7 +82,6 @@ async function installDelayedDesktopSessionBridge(
         onDeepLink: () => unsubscribe,
         dialog: {
           openFolder: async () => null,
-          createFolder: async () => null,
         },
         shell: {
           openExternal: async () => {},
@@ -105,6 +104,8 @@ async function installDelayedDesktopSessionBridge(
             window.localStorage.setItem(sessionKey, JSON.stringify(state));
           },
           open: async () => {},
+          createNew: async () => {},
+          recordCreateNewBannerShown: async () => {},
           close: async () => {},
         },
         navigator: { open: async () => {} },

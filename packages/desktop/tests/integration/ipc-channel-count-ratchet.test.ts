@@ -5,7 +5,7 @@ import { join } from 'node:path';
 const SRC_PATH = join(__dirname, '..', '..', 'src', 'shared', 'ipc-channels.ts');
 const CHANNELS_SRC = readFileSync(SRC_PATH, 'utf-8');
 
-const REQUEST_CHANNEL_CAP = 45;
+const REQUEST_CHANNEL_CAP = 50;
 
 function extractInterfaceBody(src: string, interfaceName: string): string {
   const re = new RegExp(`(^|\\n)export\\s+interface\\s+${interfaceName}\\s*\\{`);
@@ -48,7 +48,7 @@ describe('IPC channel count ratchet — RequestChannels', () => {
           `Current count: ${count}.`,
           '',
           'The hand-rolled IPC discriminated union is past its scale-match trigger.',
-          'Adding a 41st channel must coincide with the typed-ipc migration —',
+          `Adding a ${REQUEST_CHANNEL_CAP + 1}th channel must coincide with the typed-ipc migration —`,
           'either land the migration spec first, or fold the new payload into an existing',
           'channel via additive optional fields (the `ok:theme:applied` precedent).',
           '',

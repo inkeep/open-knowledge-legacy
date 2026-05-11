@@ -1,3 +1,7 @@
+import type { CreateNewBannerKind, EditorId, OkFolderState } from '@inkeep/open-knowledge-core';
+
+export type { OkFolderState };
+
 /** Seed scaffolder shapes — structurally duplicated from
  * `@inkeep/open-knowledge-server`'s seed module. See core's desktop-bridge.ts
  * for rationale (avoids pulling server into the app compilation tree).
@@ -89,6 +93,18 @@ export type OkSeedListPacksResult =
   | { ok: true; packs: OkSeedPackInfo[] }
   | { ok: false; error: { kind: 'internal'; message: string } };
 
+/** Pure-fs upward-walk result types mirrored from
+ *  `@inkeep/open-knowledge-server`'s `fs/` module. Structurally duplicated
+ *  for the same reason as the seed shapes above. */
+export interface OkFindEnclosingProjectRootResult {
+  readonly rootPath: string;
+  readonly distance: number;
+}
+export interface OkFindEnclosingGitRootResult {
+  readonly gitRoot: string;
+  readonly distance: number;
+}
+
 type OkDesktopMode = 'editor' | 'navigator';
 
 export interface OkDesktopConfig {
@@ -121,7 +137,8 @@ export interface RecentProjectEntry {
 }
 
 export type OkProjectEntryPoint =
-  | 'start-fresh'
+  | 'create-new'
+  | 'create-new-nested-redirect'
   | 'pick-existing'
   | 'recents'
   | 'deep-link'
@@ -169,7 +186,7 @@ interface OkStateSnapshot {
   } | null;
 }
 
-export type OkMcpWiringEditorId = 'claude' | 'claude-desktop' | 'cursor' | 'codex';
+export type OkMcpWiringEditorId = EditorId;
 
 /** Payload passed to `mcpWiring.onShow` subscribers. `willReplace: true`
  *  signals the editor has an existing OK-managed MCP entry (canonical npx,
@@ -299,7 +316,6 @@ export interface OkDesktopBridge {
   signalThemeApplied(opts?: { reducedTransparency?: boolean }): void;
   dialog: {
     openFolder(opts?: { defaultPath?: string }): Promise<string | null>;
-    createFolder(): Promise<string | null>;
   };
   shell: {
     openExternal(url: string): Promise<void>;
@@ -354,7 +370,20 @@ export interface OkDesktopBridge {
       target: 'new-window';
       entryPoint: OkProjectEntryPoint;
     }): Promise<void>;
+    createNew(args: {
+      parent: string;
+      name: string;
+      editors: OkMcpWiringEditorId[];
+    }): Promise<void>;
+    recordCreateNewBannerShown(banner: CreateNewBannerKind): Promise<void>;
     close(): Promise<void>;
+  };
+
+  fs: {
+    defaultProjectsRoot(): Promise<string>;
+    folderState(path: string): Promise<OkFolderState>;
+    findEnclosingProjectRoot(path: string): Promise<OkFindEnclosingProjectRootResult | null>;
+    findEnclosingGitRoot(path: string): Promise<OkFindEnclosingGitRootResult | null>;
   };
   navigator: {
     open(): Promise<void>;

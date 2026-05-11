@@ -3,7 +3,8 @@ import { isEntryPoint } from './entry-point.ts';
 
 describe('isEntryPoint', () => {
   it('accepts every literal value in the EntryPoint union', () => {
-    expect(isEntryPoint('start-fresh')).toBe(true);
+    expect(isEntryPoint('create-new')).toBe(true);
+    expect(isEntryPoint('create-new-nested-redirect')).toBe(true);
     expect(isEntryPoint('pick-existing')).toBe(true);
     expect(isEntryPoint('recents')).toBe(true);
     expect(isEntryPoint('deep-link')).toBe(true);
@@ -11,9 +12,9 @@ describe('isEntryPoint', () => {
   });
 
   it('rejects unknown strings', () => {
-    expect(isEntryPoint('start')).toBe(false);
+    expect(isEntryPoint('start-fresh')).toBe(false);
     expect(isEntryPoint('')).toBe(false);
-    expect(isEntryPoint('Start-Fresh')).toBe(false);
+    expect(isEntryPoint('Create-New')).toBe(false);
     expect(isEntryPoint('__proto__')).toBe(false);
   });
 
@@ -24,6 +25,6 @@ describe('isEntryPoint', () => {
     expect(isEntryPoint(false)).toBe(false);
     expect(isEntryPoint({})).toBe(false);
     expect(isEntryPoint([])).toBe(false);
-    expect(isEntryPoint(['start-fresh'])).toBe(false);
+    expect(isEntryPoint(['create-new'])).toBe(false);
   });
 });

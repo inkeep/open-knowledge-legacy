@@ -36,15 +36,23 @@ The DMG bundles its own CLI; put it on your PATH from **File → Install Command
 
 ### Opening a folder
 
-When you click **Pick Existing Project** (or open from Recents, drag-and-drop, or an `openknowledge://` deep link), a consent dialog confirms scaffolding details before writing anything. You choose:
+The Welcome screen has three cards: **Clone from GitHub**, **Open folder on disk**, and **Create new project**.
+
+**Open folder on disk** picks an existing folder. A consent dialog confirms scaffolding details before writing anything. You choose:
 
 - Which directory to use as the content root (`Browse…` opens a folder picker constrained to the project)
 - Extra `.okignore` patterns. Files that match these patterns are ignored by Open Knowledge
 - Which AI tools to configure for this project
 
-Picking a folder via the dialog scaffolds `.ok/`; if you don't want OK in this folder, click **Cancel** and the folder is left untouched. Folders you create through **Start Fresh** apply defaults silently.
+The same dialog runs when you open from Recents, drag-and-drop, or an `openknowledge://` deep link. Click **Cancel** to leave the folder untouched.
 
-When the picked folder lives inside a git repository, `.ok/` lands at the git working-tree root with `content.dir` scoped to the relative sub-path.
+**Create new project** opens an in-app dialog for making a new project folder. You type a **Name**, pick a **Location** (the parent directory) via **Browse…**, and tick which AI editors to wire up. The dialog evaluates the resolved `<parent>/<name>` path before you submit:
+
+- If the parent sits inside an existing Open Knowledge project, the dialog blocks the create and offers to open the enclosing project instead.
+- If the parent sits inside a git working tree (and no Open Knowledge project is present), the dialog confirms that `.ok/config.yml` will land at the git root, with `content.dir` scoped to your new folder. One project per git repo.
+- If the resolved target folder already exists with content, the dialog points you back to **Open folder on disk**.
+
+When the picked folder lives inside a git repository, `.ok/` lands at the git working-tree root with `content.dir` scoped to the relative sub-path. The rule is the same for both flows.
 
 ### Update channels
 

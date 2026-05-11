@@ -220,7 +220,6 @@ const bridge: OkDesktopBridge = {
 
   dialog: {
     openFolder: (opts) => invoke('ok:dialog:open-folder', opts),
-    createFolder: () => invoke('ok:dialog:create-folder'),
   },
 
   shell: {
@@ -243,7 +242,17 @@ const bridge: OkDesktopBridge = {
     getSessionState: () => invoke('ok:project:get-session-state'),
     setSessionState: (state) => invoke('ok:project:set-session-state', state),
     open: (request) => invoke('ok:project:open', request),
+    createNew: (args) => invoke('ok:project:create-new', args),
+    recordCreateNewBannerShown: (banner) =>
+      invoke('ok:project:record-create-new-banner-shown', banner),
     close: () => invoke('ok:project:close'),
+  },
+
+  fs: {
+    defaultProjectsRoot: () => invoke('ok:fs:default-projects-root'),
+    folderState: (path: string) => invoke('ok:fs:folder-state', path),
+    findEnclosingProjectRoot: (path: string) => invoke('ok:fs:find-enclosing-project-root', path),
+    findEnclosingGitRoot: (path: string) => invoke('ok:fs:find-enclosing-git-root', path),
   },
 
   navigator: {
