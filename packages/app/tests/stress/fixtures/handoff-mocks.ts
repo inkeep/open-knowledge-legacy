@@ -1,5 +1,5 @@
-import type { OkDesktopBridge } from '@inkeep/open-knowledge-core';
 import type { Page } from '@playwright/test';
+import type { OkDesktopBridge } from '@/lib/desktop-bridge-types';
 
 export interface InstallMap {
   readonly claude: boolean;
@@ -161,7 +161,10 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
     (window as any).__handoffMocks__ = mocks;
 
     const originalFetch = window.fetch.bind(window);
-    window.fetch = async (input, init) => {
+    const wrappedFetch = async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
       try {
         const url =
           typeof input === 'string'
@@ -194,6 +197,7 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
       } catch {}
       return res;
     };
+    window.fetch = wrappedFetch as unknown as typeof window.fetch;
 
     const HANDOFF_SCHEMES = new Set(['claude:', 'codex:', 'cursor:']);
     const HANDOFF_HOSTS = new Set(['claude.ai']);
@@ -242,6 +246,10 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         recordHandoff: async (line: Record<string, unknown>): Promise<void> => {
           mocks.recordHandoffCalls.push(line);
         },
+        openAsset: async (): Promise<{ ok: true }> => ({ ok: true }),
+        revealAsset: async (): Promise<{ ok: true }> => ({ ok: true }),
+        showAssetMenu: async (): Promise<void> => {},
+        showItemInFolder: async (): Promise<void> => {},
       };
 
       const bridge = {
@@ -257,7 +265,11 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         onUpdateDownloaded: () => () => {},
         onWhatsNew: () => () => {},
         onUpdateStuckHint: () => () => {},
+        onUpdateDowngradeWarning: () => () => {},
+        onChannelChanged: () => () => {},
         onDeepLink: () => () => {},
+        setThemeSource: async (): Promise<{ ok: true }> => ({ ok: true }),
+        signalThemeApplied: (): void => {},
         dialog: {
           openFolder: async () => null,
           createFolder: async () => null,
@@ -268,6 +280,13 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         },
         project: {
           listRecent: async () => [],
+          getSessionState: async () => ({
+            openTabs: [],
+            activeDocName: null,
+            activeTabId: null,
+            updatedAt: null,
+          }),
+          setSessionState: async () => {},
           open: async () => {},
           close: async () => {},
         },
@@ -284,12 +303,51 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         },
         update: {
           relaunchNow: async () => {},
+          setChannel: async () => {},
+          confirmDowngrade: async () => {},
+          checkNow: async () => {},
+        },
+        state: {
+          query: async () => ({
+            channel: 'latest' as const,
+            schemaIncompatibility: null,
+          }),
+          resetIncompatible: async () => {},
         },
         mcpWiring: {
           onShow: () => () => {},
           signalReady: () => {},
           confirm: async () => ({ ok: true }),
           skip: async () => ({ ok: true }),
+        },
+        onboarding: {
+          onShow: () => () => {},
+          signalReady: () => {},
+          confirm: async () => ({ ok: true }),
+          cancel: async () => ({ ok: true }),
+          probeContent: async () => ({
+            ok: true as const,
+            count: 0,
+            sample: [],
+            truncated: false,
+          }),
+          onToast: () => () => {},
+        },
+        localOp: {
+          auth: {
+            start: () => ({
+              events: (async function* () {})(),
+              cancel: () => {},
+            }),
+          },
+          clone: {
+            start: () => ({
+              events: (async function* () {})(),
+              cancel: () => {},
+            }),
+          },
+          authStatus: async () => ({ authenticated: false as const, host: 'github.com' }),
+          authRepos: async () => ({ ok: true as const, host: 'github.com', repos: [] }),
         },
         platform: 'darwin' as const,
         appVersion: 'test-0.0.0',
