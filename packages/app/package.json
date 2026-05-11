@@ -105,6 +105,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "codemirror": "^6.0.2",
+    "codemirror-lang-mermaid": "^0.5.0",
     "date-fns": "^4.1.0",
     "fuzzysort": "^3.1.0",
     "ignore": "^5.3.2",

@@ -2694,6 +2694,11 @@ Homepage: https://github.com/codemirror/basic-setup
 
 Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
+### `codemirror-lang-mermaid@0.5.0`
+Homepage: https://github.com/inspirnathan/codemirror-lang-mermaid
+
+Copyright (C) 2023 by Nathan Vaughn <inspirnathan@gmail.com>
+
 ### `color-convert@2.0.1`
 Homepage: https://github.com/Qix-/color-convert
 

@@ -1627,6 +1627,23 @@ button:active:not(:disabled) {
   --sidebar-hover: oklch(0.97 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /*
+    Syntax-highlight semantic tokens — used by the PropPanel CodeMirror
+    editor (`CodeMirrorPropInput`) and any future code-shaped surface
+    that wants theme-adaptive coloring. Light values are the Tailwind v4
+    `-700`/`-800` saturated palette (good contrast on `--background:
+    oklch(1 0 0)`); the matching `.dark` block below shifts to `-300`/
+    `-400` for WCAG AA on `--background: oklch(0.145 0 0)`. Hex
+    fallbacks are GitHub-light defaults — only used if Tailwind's
+    default theme tokens haven't loaded (SSR / preview-render edge).
+  */
+  --syntax-keyword: var(--color-purple-700, #6f42c1);
+  --syntax-tag: var(--color-red-700, #b31d28);
+  --syntax-attr: var(--color-blue-700, #005cc5);
+  --syntax-string: var(--color-green-800, #22863a);
+  --syntax-number: var(--color-blue-800, #005cc5);
+  --syntax-atom: var(--color-orange-700, #d2691e);
 }
 
 .dark {
@@ -1662,6 +1679,19 @@ button:active:not(:disabled) {
   --sidebar-hover: oklch(0.269 0 0 / 50%);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  /*
+    Syntax-highlight tokens — dark-theme overrides. Lighter shades
+    (`-300` / `-400`) clear WCAG AA on the dark `--background:
+    oklch(0.145 0 0)`. Hex fallbacks are mid-light shades that survive
+    on dark for the SSR / preview-render edge.
+  */
+  --syntax-keyword: var(--color-purple-300, #d2a8ff);
+  --syntax-tag: var(--color-red-300, #ffa198);
+  --syntax-attr: var(--color-blue-300, #79c0ff);
+  --syntax-string: var(--color-green-300, #7ee787);
+  --syntax-number: var(--color-blue-300, #79c0ff);
+  --syntax-atom: var(--color-orange-300, #ffa657);
 }
 
 /*
@@ -2711,6 +2741,77 @@ html.electron-mode [data-slot="sidebar-inner"] {
    * chrome bar's appearance + bubble-menu mode-swap (download button)
    * provide the additional UI signals. */
   background-color: var(--muted);
+}
+
+/* 7f. CodeMirror prop input (PropPanel string-prop control with `language` set,
+ * 2026-05).
+ *
+ * Replaces the plain `<input type="text">` for code-shaped props (Math
+ * formula → LaTeX, Mermaid chart, JSON / HTML / YAML payloads). Sized
+ * to fit the PropPanel popover comfortably — min-height ≈ 5 lines so a
+ * one-line formula doesn't render in a sliver, max-height with overflow
+ * so a 50-line Mermaid diagram doesn't blow out the popover.
+ *
+ * Padding-free wrapper — the inner `.cm-editor` has its own padding from
+ * CM6 defaults. Matches shadcn `<Input>` border + radius tokens so the
+ * editor sits visually consistent with sibling string inputs in the
+ * same panel. */
+.ok-prop-codemirror {
+  width: 100%;
+  min-height: 6.5rem;
+  max-height: 18rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background-color: var(--background);
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  transition: border-color 120ms ease;
+}
+
+.ok-prop-codemirror:focus-within {
+  border-color: var(--ring, var(--border));
+  outline: 2px solid var(--ring, currentColor);
+  outline-offset: -1px;
+}
+
+.ok-prop-codemirror .cm-editor {
+  height: 100%;
+  max-height: 18rem;
+  outline: none;
+}
+
+.ok-prop-codemirror .cm-editor.cm-focused {
+  outline: none;
+}
+
+.ok-prop-codemirror .cm-scroller {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.45;
+  /*
+    Stop scroll-chaining inside the PropPanel popover — without this,
+    scrolling past the editor's content boundary (e.g. on a long
+    Mermaid diagram) chains to the page behind the popover. `contain`
+    keeps the gesture local to the editor's scrollable region.
+  */
+  overscroll-behavior: contain;
+}
+
+.ok-prop-codemirror .cm-content {
+  padding: 0.4rem 0;
+  caret-color: var(--foreground);
+}
+
+.ok-prop-codemirror .cm-gutters {
+  background-color: var(--muted);
+  border-right: 1px solid var(--border);
+  color: var(--muted-foreground);
+}
+
+.ok-prop-codemirror .cm-activeLineGutter,
+.ok-prop-codemirror .cm-activeLine {
+  background-color: var(--accent);
 }
 
 /* 7d. Accordion (5-pack DIY renderer, US-009 — standalone HTML5 <details>).

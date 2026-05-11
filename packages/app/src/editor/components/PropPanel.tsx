@@ -17,6 +17,7 @@ import { Switch } from '@/components/ui/switch';
 import { uploadFile } from '@/editor/image-upload/upload-file.ts';
 import type { JsxComponentDescriptor } from '@/editor/registry/types.ts';
 import { getAutoFocusedPropName, humanizePropName } from '@/editor/utils/editor-strings.ts';
+import { CodeMirrorPropInput } from './CodeMirrorPropInput.tsx';
 
 function advancedOpenStateKey(descriptorName: string): string {
   return `ok.propPanel.advanced.${descriptorName}`;
@@ -161,6 +162,32 @@ function PropControl({
       const accept = propDef.accept;
       const showUpload = accept !== undefined && accept.length > 0;
       const treatEmptyAsUndefined = !propDef.required && propDef.defaultValue === undefined;
+
+      if (propDef.language) {
+        const labelId = `${stringId}-label`;
+        return (
+          <div className="flex flex-col gap-1">
+            <label id={labelId} htmlFor={stringId} className="text-xs text-muted-foreground">
+              {humanizePropName(propDef.name)}
+            </label>
+            <CodeMirrorPropInput
+              id={stringId}
+              ariaLabelledBy={labelId}
+              value={(value as string) ?? ''}
+              language={propDef.language}
+              onChange={(next) => {
+                if (next === '' && treatEmptyAsUndefined) {
+                  onChange(undefined);
+                  return;
+                }
+                onChange(next);
+              }}
+              autoFocus={isAutoFocused}
+            />
+          </div>
+        );
+      }
+
       return (
         <div className="flex flex-col gap-1">
           <label htmlFor={stringId} className="text-xs text-muted-foreground">
