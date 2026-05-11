@@ -294,6 +294,14 @@ describe('resolveGitDir', () => {
     writeFileSync(resolve(project, '.git'), 'gitdir: ../real-git-relative\n');
     expect(resolveGitDir(project)).toBe(realGitDir);
   });
+
+  test('subfolder of repo: resolves ancestor .git directory', () => {
+    const repo = resolve(tmp, 'repo');
+    const sub = resolve(repo, 'docs');
+    mkdirSync(resolve(repo, '.git'), { recursive: true });
+    mkdirSync(sub, { recursive: true });
+    expect(resolveGitDir(sub)).toBe(resolve(repo, '.git'));
+  });
 });
 
 describe('resolveShadowDir', () => {
@@ -329,6 +337,25 @@ describe('resolveShadowDir', () => {
     expect(e.resolvedTarget).toBe(missingTarget);
     expect(e.message).toContain(missingTarget);
     expect(e.message).toContain('git worktree prune');
+  });
+
+  test('subfolder with stale pointer-file .git at ancestor: MalformedGitPointerError references ancestor .git path', () => {
+    const repo = resolve(tmp, 'stale-ancestor-repo');
+    const sub = resolve(repo, 'docs');
+    mkdirSync(repo, { recursive: true });
+    mkdirSync(sub, { recursive: true });
+    const missingTarget = resolve(tmp, 'gone-admin');
+    writeFileSync(resolve(repo, '.git'), `gitdir: ${missingTarget}\n`);
+    let caught: unknown;
+    try {
+      resolveShadowDir(sub);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(MalformedGitPointerError);
+    const e = caught as MalformedGitPointerError;
+    expect(e.gitPointerPath).toBe(resolve(repo, '.git'));
+    expect(e.resolvedTarget).toBe(missingTarget);
   });
 
   test('throws MalformedGitPointerError when .git is a file without a valid gitdir: line', () => {
@@ -426,6 +453,79 @@ describe('resolveShadowDir', () => {
     writeFileSync(resolve(adminDir, 'HEAD'), 'ref: refs/heads/main\n');
     writeFileSync(resolve(project, '.git'), `gitdir: ${adminDir}\n`);
     expect(() => resolveShadowDir(project)).not.toThrow();
+  });
+
+  test('subfolder of repo with directory .git at ancestor: shadow lives under ancestor with ok-<slug>', () => {
+    const repo = resolve(tmp, 'repo');
+    const sub = resolve(repo, 'docs');
+    mkdirSync(resolve(repo, '.git'), { recursive: true });
+    mkdirSync(sub, { recursive: true });
+    expect(resolveShadowDir(sub)).toBe(resolve(repo, '.git/ok-docs'));
+  });
+
+  test('subfolder of repo with pointer-file .git at ancestor: shadow lives under linked admin dir with ok-<slug>', () => {
+    const repo = resolve(tmp, 'wt-repo');
+    const sub = resolve(repo, 'docs');
+    const adminDir = resolve(tmp, 'real-git/worktrees/wt-repo');
+    mkdirSync(repo, { recursive: true });
+    mkdirSync(sub, { recursive: true });
+    mkdirSync(adminDir, { recursive: true });
+    writeFileSync(resolve(adminDir, 'HEAD'), 'ref: refs/heads/main\n');
+    writeFileSync(resolve(repo, '.git'), `gitdir: ${adminDir}\n`);
+    expect(resolveShadowDir(sub)).toBe(resolve(adminDir, 'ok-docs'));
+  });
+
+  test('subfolder that already has its own .git wins over ancestor walk-up (precedence)', () => {
+    const repo = resolve(tmp, 'repo');
+    const sub = resolve(repo, 'docs');
+    mkdirSync(resolve(repo, '.git'), { recursive: true });
+    mkdirSync(resolve(sub, '.git'), { recursive: true });
+    expect(resolveShadowDir(sub)).toBe(resolve(sub, '.git/ok'));
+  });
+
+  test('deeply nested subfolder: slug derives from path from ancestor down', () => {
+    const repo = resolve(tmp, 'repo');
+    const sub = resolve(repo, 'packages/app');
+    mkdirSync(resolve(repo, '.git'), { recursive: true });
+    mkdirSync(sub, { recursive: true });
+    expect(resolveShadowDir(sub)).toBe(resolve(repo, '.git/ok-packages-app'));
+  });
+
+  test('two subfolders of the same repo get distinct shadow dirs (no ref collision)', () => {
+    const repo = resolve(tmp, 'repo');
+    const subA = resolve(repo, 'sub-a');
+    const subB = resolve(repo, 'sub-b');
+    mkdirSync(resolve(repo, '.git'), { recursive: true });
+    mkdirSync(subA, { recursive: true });
+    mkdirSync(subB, { recursive: true });
+    expect(resolveShadowDir(subA)).not.toBe(resolveShadowDir(subB));
+    expect(resolveShadowDir(subA)).toBe(resolve(repo, '.git/ok-sub-a'));
+    expect(resolveShadowDir(subB)).toBe(resolve(repo, '.git/ok-sub-b'));
+  });
+
+  test('long sub-paths trigger slug truncation and two paths with same long prefix get distinct shadows', () => {
+    const repo = resolve(tmp, 'repo');
+    const longPrefix = 'packages/very-long-package-name-that-exceeds-sixty-four-characters';
+    const subA = resolve(repo, `${longPrefix}-alpha`);
+    const subB = resolve(repo, `${longPrefix}-beta`);
+    mkdirSync(resolve(repo, '.git'), { recursive: true });
+    mkdirSync(subA, { recursive: true });
+    mkdirSync(subB, { recursive: true });
+    const shadowA = resolveShadowDir(subA);
+    const shadowB = resolveShadowDir(subB);
+    expect(shadowA).not.toBe(shadowB);
+    expect(shadowA.startsWith(resolve(repo, '.git/ok-'))).toBe(true);
+    expect(shadowB.startsWith(resolve(repo, '.git/ok-'))).toBe(true);
+    const slugA = shadowA.slice(resolve(repo, '.git/ok-').length);
+    const slugB = shadowB.slice(resolve(repo, '.git/ok-').length);
+    expect(slugA.length).toBeLessThanOrEqual(64);
+    expect(slugB.length).toBeLessThanOrEqual(64);
+  });
+
+  test('walk-up still legacy-fallthroughs when no ancestor .git is found within bound', () => {
+    const project = resolve(tmp, 'orphan/deep/nest');
+    mkdirSync(project, { recursive: true });
+    expect(resolveShadowDir(project)).toBe(resolve(project, '.git/ok'));
   });
 });
 

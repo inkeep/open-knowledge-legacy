@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 export type WriterClassification =
   | 'agent'
@@ -19,14 +20,26 @@ const WRITER_ID_RE =
   /^(agent-[^/]+|principal-[^/]+|file-system|git-upstream|openknowledge-service)$/;
 
 export type ResolvedGitDir =
-  | { kind: 'directory'; path: string }
-  | { kind: 'linked'; path: string }
+  | {
+      kind: 'directory';
+      path: string;
+      projectSubPath: string;
+    }
+  | {
+      kind: 'linked';
+      path: string;
+      gitPath: string;
+      projectSubPath: string;
+    }
   | { kind: 'absent' }
   | { kind: 'malformed-pointer'; gitPath: string; target: string; cause?: unknown }
   | { kind: 'inaccessible'; gitPath: string; cause: unknown };
 
-export function resolveGitDirDetailed(projectRoot: string): ResolvedGitDir {
-  const gitPath = resolve(projectRoot, '.git');
+function classifyGitEntry(
+  gitPath: string,
+  workTreeRoot: string,
+  projectRoot: string,
+): ResolvedGitDir {
   let stat: ReturnType<typeof statSync>;
   try {
     stat = statSync(gitPath);
@@ -35,7 +48,8 @@ export function resolveGitDirDetailed(projectRoot: string): ResolvedGitDir {
     if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'absent' };
     return { kind: 'inaccessible', gitPath, cause: err };
   }
-  if (stat.isDirectory()) return { kind: 'directory', path: gitPath };
+  const projectSubPath = computeProjectSubPath(workTreeRoot, projectRoot);
+  if (stat.isDirectory()) return { kind: 'directory', path: gitPath, projectSubPath };
   if (stat.isFile()) {
     let content: string;
     try {
@@ -45,9 +59,61 @@ export function resolveGitDirDetailed(projectRoot: string): ResolvedGitDir {
     }
     const match = content.match(/^gitdir:\s*(.+)$/);
     if (!match) return { kind: 'malformed-pointer', gitPath, target: '' };
-    return { kind: 'linked', path: resolve(projectRoot, match[1]) };
+    return {
+      kind: 'linked',
+      path: resolve(workTreeRoot, match[1]),
+      gitPath,
+      projectSubPath,
+    };
   }
   return { kind: 'absent' };
+}
+
+function computeProjectSubPath(workTreeRoot: string, projectRoot: string): string {
+  const rel = relative(workTreeRoot, projectRoot);
+  if (rel === '' || rel === '.') return '';
+  if (rel.startsWith('..') || isAbsolute(rel)) return '';
+  return rel;
+}
+
+function findAncestorGitEntry(startDir: string): { gitPath: string; workTreeRoot: string } | null {
+  const home = homedir();
+  let cursor = resolve(startDir);
+  const MAX_DEPTH = 64;
+  for (let i = 0; i < MAX_DEPTH; i++) {
+    if (cursor === home) return null;
+    const parent = dirname(cursor);
+    if (parent === cursor) return null; // reached filesystem root
+    if (parent === home) return null; // refuse ~/.git (at-or-above-home policy)
+    const candidate = resolve(parent, '.git');
+    try {
+      const stat = statSync(candidate);
+      if (stat.isDirectory() || stat.isFile()) {
+        return { gitPath: candidate, workTreeRoot: parent };
+      }
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+        console.warn(
+          `[shadow-repo-layout] Cannot stat ${candidate} (${code ?? 'unknown'}); skipping ancestor`,
+        );
+      }
+    }
+    cursor = parent;
+  }
+  return null;
+}
+
+export function resolveGitDirDetailed(projectRoot: string): ResolvedGitDir {
+  const projectRootAbs = resolve(projectRoot);
+  const direct = classifyGitEntry(resolve(projectRootAbs, '.git'), projectRootAbs, projectRootAbs);
+  if (direct.kind !== 'absent') return direct;
+
+  const ancestor = findAncestorGitEntry(projectRootAbs);
+  if (ancestor === null) {
+    return { kind: 'absent' };
+  }
+  return classifyGitEntry(ancestor.gitPath, ancestor.workTreeRoot, projectRootAbs);
 }
 
 export function resolveGitDir(projectRoot: string): string | null {
@@ -60,12 +126,12 @@ export function resolveShadowDir(projectRoot: string): string {
   const result = resolveGitDirDetailed(projectRoot);
   switch (result.kind) {
     case 'directory':
-      return resolve(result.path, 'ok');
+      return resolve(result.path, shadowSubdirName(result.projectSubPath));
     case 'linked':
       if (!existsSync(result.path)) {
-        throw new MalformedGitPointerError(resolve(projectRoot, '.git'), result.path);
+        throw new MalformedGitPointerError(result.gitPath, result.path);
       }
-      return resolve(result.path, 'ok');
+      return resolve(result.path, shadowSubdirName(result.projectSubPath));
     case 'malformed-pointer':
       throw new MalformedGitPointerError(result.gitPath, result.target, { cause: result.cause });
     case 'inaccessible':
@@ -73,6 +139,28 @@ export function resolveShadowDir(projectRoot: string): string {
     case 'absent':
       return resolve(projectRoot, '.git/ok');
   }
+}
+
+function shadowSubdirName(projectSubPath: string): string {
+  if (projectSubPath === '') return 'ok';
+  return `ok-${slugifyShadowSubPath(projectSubPath)}`;
+}
+
+function slugifyShadowSubPath(rel: string): string {
+  const flat = rel.split(sep).join('-').replace(/\/+/g, '-');
+  const sanitized = flat.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_');
+  const MAX = 64;
+  if (sanitized.length <= MAX) return sanitized || 'sub';
+  const hash = djb2(rel).toString(16).padStart(8, '0');
+  return `${sanitized.slice(0, MAX - 9)}-${hash}`;
+}
+
+function djb2(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 33 + s.charCodeAt(i)) >>> 0;
+  }
+  return h;
 }
 
 export class MalformedGitPointerError extends Error {
