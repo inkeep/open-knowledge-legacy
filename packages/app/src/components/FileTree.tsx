@@ -1698,7 +1698,12 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   }
 
   function handleTreeMouseMove(event: ReactMouseEvent<HTMLElement>) {
-    const path = findTreeItemPath(event.nativeEvent);
+    const row = findTreeItemElement(event.nativeEvent);
+    const path = row?.dataset.itemPath ?? null;
+    if (row && path) {
+      const title = path.endsWith('/') ? path.slice(0, -1) : path;
+      if (row.title !== title) row.title = title;
+    }
     if (!path || path.endsWith('/')) {
       cancelCurrentHoverPrewarm();
       return;
@@ -1817,10 +1822,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   );
 }
 
-function findTreeItemPath(event: MouseEvent): string | null {
+function findTreeItemElement(event: MouseEvent): HTMLElement | null {
   for (const entry of event.composedPath()) {
     if (entry instanceof HTMLElement && entry.dataset.itemPath) {
-      return entry.dataset.itemPath;
+      return entry;
     }
   }
   return null;
