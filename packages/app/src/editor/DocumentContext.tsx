@@ -304,6 +304,95 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
 
     p.setOnBranchMismatch(() => refreshServerInfo(p));
 
+    p.setOnRenameRedirect(({ fromDocName, toDocName, hadOpenProvider }) => {
+      void (async () => {
+        let cleanupError: unknown;
+        const wasActive = p.getActiveDocName() === fromDocName;
+        try {
+          await Promise.all([
+            p.closeAndClearPersistence(fromDocName),
+            p.closeAndClearPersistence(toDocName),
+          ]);
+          if (wasActive) {
+            p.open(toDocName);
+            p.setActive(toDocName);
+          }
+          setOpenTabs((current) => remapOpenTabs(current, [{ fromDocName, toDocName }], MAX_POOL));
+          setActiveTarget((current) => {
+            if (!current) return current;
+            const currentDocName = docNameForNavigationTarget(current);
+            if (currentDocName === fromDocName) {
+              return { kind: 'doc', target: toDocName, docName: toDocName };
+            }
+            return current;
+          });
+          if (wasActive) {
+            window.location.hash = hashFromDocName(toDocName);
+          }
+        } catch (err) {
+          cleanupError = err;
+          console.warn(
+            JSON.stringify({
+              event: 'removal-cleanup-error',
+              kind: 'renamed',
+              fromDocName,
+              toDocName,
+              message: String(err instanceof Error ? err.message : err),
+            }),
+          );
+        }
+        console.info(
+          JSON.stringify({
+            event: 'removal.cleanup',
+            kind: 'renamed',
+            fromDocName,
+            toDocName,
+            hadOpenProvider,
+            hadStaleIdb: !hadOpenProvider,
+            source: 'auth-rejection',
+            errored: cleanupError !== undefined,
+          }),
+        );
+      })();
+    });
+    p.setOnDocDeleted(({ docName, hadOpenProvider }) => {
+      void (async () => {
+        let cleanupError: unknown;
+        try {
+          await p.closeAndClearPersistence(docName);
+          setOpenTabs((current) => removeOpenTab(current, docName));
+          setActiveTarget((current) => {
+            if (!current) return current;
+            return docNameForNavigationTarget(current) === docName ? null : current;
+          });
+          if (p.getActiveDocName() === docName) {
+            window.location.hash = '';
+          }
+        } catch (err) {
+          cleanupError = err;
+          console.warn(
+            JSON.stringify({
+              event: 'removal-cleanup-error',
+              kind: 'deleted',
+              docName,
+              message: String(err instanceof Error ? err.message : err),
+            }),
+          );
+        }
+        console.info(
+          JSON.stringify({
+            event: 'removal.cleanup',
+            kind: 'deleted',
+            fromDocName: docName,
+            hadOpenProvider,
+            hadStaleIdb: !hadOpenProvider,
+            source: 'auth-rejection',
+            errored: cleanupError !== undefined,
+          }),
+        );
+      })();
+    });
+
     p.setOnChange(() => setSnapshot(takeSnapshot(p)));
 
     fetch('/api/principal')
@@ -363,6 +452,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
       p.setOnChange(null);
+      p.setOnRenameRedirect(null);
+      p.setOnDocDeleted(null);
     };
   }, [collabUrl]);
 

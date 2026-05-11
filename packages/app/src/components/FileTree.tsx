@@ -1625,6 +1625,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
             ...[...partialDeleted].map((docName) => docTabId(docName)),
             ...[...partialDeletedFolders].map((folderPath) => folderTabId(folderPath)),
           ]);
+          await Promise.all([...partialDeleted].map((docName) => closeAndClearForRename(docName)));
           toast.error(parsed.title);
           setBusyPath(null);
           resetModelToDocuments();
@@ -1661,6 +1662,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         ...[...deleted].map((docName) => docTabId(docName)),
         ...[...deletedFolders].map((folderPath) => folderTabId(folderPath)),
       ]);
+      await Promise.all([...deleted].map((docName) => closeAndClearForRename(docName)));
 
       for (const target of targets) {
         const treePath =

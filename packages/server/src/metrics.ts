@@ -208,6 +208,51 @@ export interface ReconciliationMetrics {
    *  class is the operator-visible signal of an unhealthy filesystem; growth
    *  on `unknown` warrants triage on whether the classifier needs a new bin. */
   deferredStoreFailures: number;
+  /** Count of WebSocket connections rejected by `removalRedirectGuard` with
+   *  the `'rename-redirect'` reason — incoming connections to a docName whose
+   *  file has been renamed away and whose new target exists on disk. Each
+   *  rejection corresponds to one prevented phantom-resurrection write that
+   *  the IDB-resync would otherwise have produced. Steady-state non-zero is
+   *  expected (every external rename closes existing tabs and they reconnect
+   *  to the OLD name once before redirect); a sudden zero where you expected
+   *  redirects suggests the cache populate sites have drifted from the auth
+   *  extension. */
+  authRenameRedirectCount: number;
+  /** Count of WebSocket connections rejected by `removalRedirectGuard` with
+   *  the `'doc-deleted'` reason — incoming connections to a docName that was
+   *  deleted (no on-disk file, cache entry has `kind: 'deleted'`). Same
+   *  observability rationale as `authRenameRedirectCount`. */
+  authDocDeletedCount: number;
+  /** Count of LRU evictions on the per-process `recentlyRemovedDocs` cache
+   *  (oldest entry dropped when the cap is exceeded). Bounds the
+   *  resurrection-protection window: evicted entries no longer trigger a
+   *  redirect, so a stale client reconnecting to that exact docName after
+   *  eviction may still resurrect the file. Frequent evictions mean the cap
+   *  is too low for the workload — raise it (cap is 10 000 with headroom
+   *  for AI-driven mass renames). */
+  recentlyRemovedDocsEvictions: number;
+  /** Gauge — current cardinality of the per-process `recentlyRemovedDocs`
+   *  cache. Read directly from the cache's `size` getter; updated on every
+   *  populate / eviction so operators can correlate evictions with the cap.
+   *  Per-process, drops on restart along with the cache itself. */
+  recentlyRemovedDocsSize: number;
+  /** Count of `removalRedirectGuard` invocations that fell through to admit
+   *  via the defensive try/catch — the guard's body threw something other
+   *  than a `HocuspocusAuthRejection` (cache shape mismatch, fs probe
+   *  failure, programming error introduced by a future refactor). Each
+   *  fall-through silently disables the phantom-resurrection defense for
+   *  that connection, so the counter is the operator-visible signal that
+   *  the guard is being bypassed at scale. Steady-state target ~0; non-zero
+   *  growth correlates with `removal-redirect-extension-error` warns and
+   *  warrants investigation before resurrection events accumulate. */
+  authRemovalGuardErrors: number;
+  /** Count of pathological cache cycles (e.g. A → B → A) detected by the
+   *  chain walk's visited-Set guard. Each detection admits the connection
+   *  (the phantom-resurrection defense is bypassed for that admit) and
+   *  emits a `removal-redirect-chain-cycle` warn. Steady-state target ~0;
+   *  non-zero indicates a cache populator is producing inconsistent
+   *  rename pairs and the defense is silently degrading. */
+  removalRedirectChainCycles: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -252,6 +297,12 @@ const counters: ReconciliationMetrics = {
   externalChangeHandlerErrors: 0,
   persistenceSanityCheckSerializeFailures: 0,
   deferredStoreFailures: 0,
+  authRenameRedirectCount: 0,
+  authDocDeletedCount: 0,
+  recentlyRemovedDocsEvictions: 0,
+  recentlyRemovedDocsSize: 0,
+  authRemovalGuardErrors: 0,
+  removalRedirectChainCycles: 0,
 };
 
 export function incrementReconcile(): void {
@@ -385,6 +436,30 @@ export function incrementDeferredStoreFailures(): void {
   counters.deferredStoreFailures++;
 }
 
+export function incrementAuthRenameRedirect(): void {
+  counters.authRenameRedirectCount++;
+}
+
+export function incrementAuthDocDeleted(): void {
+  counters.authDocDeletedCount++;
+}
+
+export function incrementRecentlyRemovedDocsEviction(): void {
+  counters.recentlyRemovedDocsEvictions++;
+}
+
+export function setRecentlyRemovedDocsSize(size: number): void {
+  counters.recentlyRemovedDocsSize = size;
+}
+
+export function incrementAuthRemovalGuardError(): void {
+  counters.authRemovalGuardErrors++;
+}
+
+export function incrementRemovalRedirectChainCycle(): void {
+  counters.removalRedirectChainCycles++;
+}
+
 export function incrementCollabSocketFilteredError(code: 'EPIPE' | 'ECONNRESET'): void {
   if (code === 'EPIPE') counters.collabSocketEpipeCount++;
   else counters.collabSocketEconnresetCount++;
@@ -468,4 +543,10 @@ export function resetMetrics(): void {
   counters.externalChangeHandlerErrors = 0;
   counters.persistenceSanityCheckSerializeFailures = 0;
   counters.deferredStoreFailures = 0;
+  counters.authRenameRedirectCount = 0;
+  counters.authDocDeletedCount = 0;
+  counters.recentlyRemovedDocsEvictions = 0;
+  counters.recentlyRemovedDocsSize = 0;
+  counters.authRemovalGuardErrors = 0;
+  counters.removalRedirectChainCycles = 0;
 }
