@@ -3,7 +3,7 @@ name: open-knowledge
 description: "MUST invoke when the project contains a .ok/ directory — before any read or edit of .md / .mdx files, any mcp__open-knowledge__ tool call, and any write_document / edit_document. Skip if no .ok/ — not an Open Knowledge project. Carries preview-attach (open preview browser at session start; one-shot on `action: attach-preview-once`), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with opt-in nested .ok/ frontmatter + templates, and the anti-pattern table. Authoritative — MCP server instructions and AGENTS.md overlap but do not substitute for the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance carried only here."
 compatibility: "Claude Code, Claude Desktop, Claude Cowork, Claude.ai web. Requires Open Knowledge MCP server + code execution."
 metadata:
-  version: "0.4.0-beta.30"
+  version: "0.4.0-beta.31"
   author: "Inkeep"
   repository: "https://github.com/inkeep/open-knowledge"
 ---
@@ -150,7 +150,7 @@ Before creating or editing docs in a folder, **always** call `list_documents(<fo
 Pre-write checklist:
 
 1. **Read `frontmatter_defaults`** — the merged folder defaults (title shape, description, tags) that any new doc here will inherit. Surfaces nested `<folder>/.ok/frontmatter.yml` cascade walked root → leaf, leaf wins per-key. **Don't redeclare** keys the cascade already provides — let inheritance carry them. Override per-file only when the file truly differs.
-2. **Read `templates_available`** — the menu of starter shapes for `write_document({ template })`. Each entry has `name`, `title`, `description`, and `scope` (`local` / `inherited`). If an entry matches, prefer it over free-form markdown — see "When to use a template" and "When to create a template" below.
+2. **Read `templates_available`** — the menu of starter shapes for `write_document({ template })`. Each entry has `name`, `title`, `description`, and `scope` (`local` / `inherited` / `user`). If an entry matches, prefer it over free-form markdown — see "When to use a template" and "When to create a template" below.
 3. **Read recent siblings** — `list_documents` enrichment shows recent edits and per-child frontmatter. New docs should match the shape of existing ones (filename pattern, frontmatter keys, body structure). Inconsistency is the enemy.
 4. **Confirm content scope** — `content.dir` (in `.ok/config.yml`) defines the content root. `.gitignore` and `.okignore` files (gitignore syntax, nested at any depth) define which paths are excluded from the document index. Anything excluded is regular source code, not a knowledge-base doc.
 
@@ -270,7 +270,7 @@ write_document({
 //    calls — those are author-fill markers, not server-side substitutions.
 ```
 
-Templates resolve via leaf → root walk-up at the target's parent folder, with closest-wins on filename collision (D7). The `scope` field has two values: `"local"` (template lives in this folder's `.ok/templates/`) and `"inherited"` (template lives in an ancestor's) — both are first-class menu entries. Descendant templates do NOT appear in the parent's array — they surface only inside `subfolders[].templates_available` when `list_documents` is called with `depth > 1`.
+Templates resolve via leaf → root walk-up at the target's parent folder, with closest-wins on filename collision (D7). The `scope` field has three values: `"local"` (template lives in this folder's `.ok/templates/`), `"inherited"` (template lives in an ancestor's), and `"user"` (template lives in `~/.ok/templates/`, surfaced when the request was served from the user-global cascade) — all three are first-class menu entries. Descendant templates do NOT appear in the parent's array — they surface only inside `subfolders[].templates_available` when `list_documents` is called with `depth > 1`.
 
 **`template` and `markdown` are mutually exclusive** (D21). Passing both errors with `TEMPLATE_AND_MARKDOWN_BOTH_SET`. The template body becomes the new doc's body verbatim (after `{{date}}`/`{{user}}` substitution); fill `{shape}`-style placeholders via subsequent `edit_document` calls.
 

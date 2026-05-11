@@ -4,10 +4,10 @@ import { join } from 'node:path';
 
 export const PERSONAL_TEMPLATES: Readonly<Record<string, string>> = {
   'daily-journal': `---
-title: {{date}}
+title: '{{date}}'
 description: Daily journal entry — universal template, works in any vault.
-date: {{date}}
-author: {{user}}
+date: '{{date}}'
+author: '{{user}}'
 mood:
 weather:
 top3: []
@@ -33,8 +33,8 @@ tags: [daily, journal]
   'meeting-notes': `---
 title: Meeting — <topic>
 description: One file per meeting. Update title with the actual topic after instantiation.
-date: {{date}}
-author: {{user}}
+date: '{{date}}'
+author: '{{user}}'
 attendees: []
 agenda: []
 decisions: []
@@ -59,10 +59,10 @@ tags: [meeting]
 (Concrete TODOs with owners — also in frontmatter for sweeps.)
 `,
   'weekly-review': `---
-title: Week of {{date}}
+title: 'Week of {{date}}'
 description: Friday sweep — what shipped, what stalled, what's next.
-week_of: {{date}}
-author: {{user}}
+week_of: '{{date}}'
+author: '{{user}}'
 shipped: []
 stalled: []
 next_week: []
@@ -114,10 +114,10 @@ tags: [reading]
 (Other reading this links to — \`[[wiki-links]]\` to other entries.)
 `,
   'gym-log': `---
-title: {{date}} — <workout type>
+title: '{{date}} — <workout type>'
 description: Per-workout log entry.
-date: {{date}}
-author: {{user}}
+date: '{{date}}'
+author: '{{user}}'
 workout_type:
 duration_min:
 lifts: []
