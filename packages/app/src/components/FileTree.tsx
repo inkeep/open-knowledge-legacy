@@ -13,6 +13,7 @@ import {
 import {
   type ContextMenuItem,
   type ContextMenuOpenContext,
+  FILE_TREE_TAG_NAME,
   type FileTreeDirectoryHandle,
   type FileTreeDropResult,
   type FileTreeRenameEvent,
@@ -1521,6 +1522,39 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, [model]);
 
+  useEffect(() => {
+    if (loading || documents.length === 0) return;
+    const shadow = fileTreeHostRef.current?.querySelector(FILE_TREE_TAG_NAME)?.shadowRoot;
+    if (!shadow) return;
+    const toTitle = (treePath: string) =>
+      treePath.endsWith('/') ? treePath.slice(0, -1) : treePath;
+    const stampTitles = () => {
+      for (const row of shadow.querySelectorAll<HTMLElement>('[data-item-path]')) {
+        const treePath = row.dataset.itemPath;
+        if (!treePath) continue;
+        const title = toTitle(treePath);
+        if (row.title !== title) row.title = title;
+      }
+      const anchor = shadow.querySelector<HTMLElement>('[data-type="context-menu-anchor"]');
+      if (anchor) {
+        const hoveredPath = shadow.querySelector<HTMLElement>(
+          '[data-item-context-hover="true"][data-item-path]',
+        )?.dataset.itemPath;
+        const title = hoveredPath ? toTitle(hoveredPath) : '';
+        if (anchor.title !== title) anchor.title = title;
+      }
+    };
+    stampTitles();
+    const observer = new MutationObserver(stampTitles);
+    observer.observe(shadow, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['data-item-path', 'data-item-context-hover'],
+    });
+    return () => observer.disconnect();
+  }, [loading, documents.length]);
+
   const folderStateCacheRef = useRef<{ folderCount: number; expandedCount: number }>({
     folderCount: 0,
     expandedCount: 0,
@@ -1698,12 +1732,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   }
 
   function handleTreeMouseMove(event: ReactMouseEvent<HTMLElement>) {
-    const row = findTreeItemElement(event.nativeEvent);
-    const path = row?.dataset.itemPath ?? null;
-    if (row && path) {
-      const title = path.endsWith('/') ? path.slice(0, -1) : path;
-      if (row.title !== title) row.title = title;
-    }
+    const path = findTreeItemPath(event.nativeEvent);
     if (!path || path.endsWith('/')) {
       cancelCurrentHoverPrewarm();
       return;
@@ -1822,10 +1851,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   );
 }
 
-function findTreeItemElement(event: MouseEvent): HTMLElement | null {
+function findTreeItemPath(event: MouseEvent): string | null {
   for (const entry of event.composedPath()) {
     if (entry instanceof HTMLElement && entry.dataset.itemPath) {
-      return entry;
+      return entry.dataset.itemPath;
     }
   }
   return null;

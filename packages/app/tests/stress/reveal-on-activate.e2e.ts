@@ -173,3 +173,24 @@ test('hovering a sidebar row surfaces its full relative path as a title (VS Code
   await folderRow(page).hover();
   await expect(folderRow(page)).toHaveAttribute('title', 'sidebar-folder');
 });
+
+test('sidebar full-path title is eager (no hover needed) and reaches the floating action overlay', async ({
+  page,
+}) => {
+  await page.goto(`/#/sidebar-folder/nested-doc`);
+  await fileRow(page, 'nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
+  await expect(folderRow(page)).toHaveAttribute('aria-expanded', 'true');
+
+  await expect(fileRow(page, 'nested-doc.md')).toHaveAttribute(
+    'title',
+    'sidebar-folder/nested-doc.md',
+  );
+  await expect(folderRow(page)).toHaveAttribute('title', 'sidebar-folder');
+  await expect(fileRow(page, 'test-doc.md')).toHaveAttribute('title', 'test-doc.md');
+
+  const contextMenuAnchor = sidebar(page).locator('[data-type="context-menu-anchor"]');
+  await folderRow(page).hover();
+  await expect(contextMenuAnchor).toHaveAttribute('title', 'sidebar-folder');
+  await fileRow(page, 'nested-doc.md').hover();
+  await expect(contextMenuAnchor).toHaveAttribute('title', 'sidebar-folder/nested-doc.md');
+});
