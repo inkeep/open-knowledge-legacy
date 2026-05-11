@@ -27,7 +27,7 @@ import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentPresenceBroadcaster } from './agent-presence.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
-import { createApiExtension } from './api-extension.ts';
+import { createApiExtension, isSafeDocName } from './api-extension.ts';
 import { seedBasenameIndex } from './asset-walk.ts';
 import { HocuspocusAuthRejection, parseHocuspocusAuthToken } from './auth-token-schema.ts';
 import { BacklinkIndex } from './backlink-index.ts';
@@ -64,9 +64,11 @@ import {
   incrementBranchSwitch,
   incrementConflict,
   incrementPark,
+  incrementRecentlyRemovedDocsEviction,
   incrementReconcile,
   incrementRescueBuffer,
   incrementUpstreamImport,
+  setRecentlyRemovedDocsSize,
 } from './metrics.ts';
 import {
   createPersistenceExtension,
@@ -81,7 +83,9 @@ import {
   switchReconciledBaseScope,
 } from './persistence.ts';
 import { loadPrincipal } from './principal.ts';
+import { RecentlyRemovedDocs } from './recently-removed-docs.ts';
 import { reconcile } from './reconciliation.ts';
+import { runRemovalRedirectGuard } from './removal-redirect-guard.ts';
 import {
   gcRenameLog,
   loadRenameLogIndex,
@@ -288,6 +292,34 @@ export function createServer(options: ServerOptions): ServerInstance {
       });
     }, BACKLINK_SAVE_DEBOUNCE_MS);
   }
+
+  const recentlyRemovedDocs = new RecentlyRemovedDocs(undefined, {
+    onEviction: () => incrementRecentlyRemovedDocsEviction(),
+    onSizeChange: (size) => setRecentlyRemovedDocsSize(size),
+  });
+  const onUpstreamRename = (oldDocName: string, newDocName: string): void => {
+    if (isSystemDoc(oldDocName) || isConfigDoc(oldDocName)) return;
+    recentlyRemovedDocs.setRenamed(oldDocName, newDocName);
+  };
+  const onUpstreamDelete = (docName: string): void => {
+    if (isSystemDoc(docName) || isConfigDoc(docName)) return;
+    if (recentlyRemovedDocs.peek(docName)?.kind === 'renamed') {
+      console.info(
+        JSON.stringify({
+          event: 'recently-removed-docs-unpaired-delete-suppressed',
+          docName,
+          source: 'watcher-delete',
+        }),
+      );
+      return;
+    }
+    recentlyRemovedDocs.setDeleted(docName);
+  };
+  const onUpstreamAdd = (docName: string): void => {
+    if (isSystemDoc(docName) || isConfigDoc(docName)) return;
+    recentlyRemovedDocs.delete(docName);
+  };
+
   try {
     contentFilter = createContentFilter({
       projectDir,
@@ -480,6 +512,27 @@ export function createServer(options: ServerOptions): ServerInstance {
     };
     hocuspocus.configuration.extensions.push(configDocAdmissionGuard);
 
+    const resolvedContentDir = resolve(contentDir);
+    function resolveDocFilePath(docName: string): string | null {
+      if (!isSafeDocName(docName)) return null;
+      const filePath = resolve(resolvedContentDir, `${docName}${getDocExtension(docName)}`);
+      if (!filePath.startsWith(`${resolvedContentDir}/`) && filePath !== resolvedContentDir) {
+        return null;
+      }
+      return filePath;
+    }
+    const removalRedirectGuard: Extension & { __kind: 'removal-redirect-guard' } = {
+      __kind: 'removal-redirect-guard',
+      async onAuthenticate(payload) {
+        await runRemovalRedirectGuard(payload.documentName, {
+          recentlyRemovedDocs,
+          resolveFilePath: resolveDocFilePath,
+          fileExists: existsSync,
+        });
+      },
+    };
+    hocuspocus.configuration.extensions.push(removalRedirectGuard);
+
     const systemDocBroadcastGuard: Extension & { __kind: 'system-doc-broadcast-guard' } = {
       __kind: 'system-doc-broadcast-guard',
       async beforeHandleMessage(payload) {
@@ -525,6 +578,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       getPrincipal: () => loadedPrincipal,
       forceUnloadDocument,
       ready,
+      recentlyRemovedDocs,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 
@@ -645,6 +699,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           signalChannel('backlinks');
           signalChannel('graph');
           signalChannel('tags');
+          onUpstreamAdd(event.docName);
           break;
         }
 
@@ -768,6 +823,15 @@ export function createServer(options: ServerOptions): ServerInstance {
             signalChannel('backlinks');
             signalChannel('graph');
             signalChannel('tags');
+            onUpstreamDelete(docName);
+            console.info(
+              JSON.stringify({
+                event: 'recently-removed-docs-populate',
+                docName,
+                kind: 'deleted',
+                source: 'watcher-delete',
+              }),
+            );
             return;
           }
 
@@ -815,6 +879,15 @@ export function createServer(options: ServerOptions): ServerInstance {
           signalChannel('backlinks');
           signalChannel('graph');
           signalChannel('tags');
+          onUpstreamDelete(docName);
+          console.info(
+            JSON.stringify({
+              event: 'recently-removed-docs-populate',
+              docName,
+              kind: 'deleted',
+              source: 'watcher-delete',
+            }),
+          );
           break;
         }
 
@@ -839,6 +912,16 @@ export function createServer(options: ServerOptions): ServerInstance {
           signalChannel('backlinks');
           signalChannel('graph');
           signalChannel('tags');
+          onUpstreamRename(oldDocName, newDocName);
+          console.info(
+            JSON.stringify({
+              event: 'recently-removed-docs-populate',
+              from: oldDocName,
+              to: newDocName,
+              kind: 'renamed',
+              source: 'watcher-rename',
+            }),
+          );
           break;
         }
 

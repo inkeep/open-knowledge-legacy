@@ -32,12 +32,14 @@ export {
 } from './asset-serve-middleware.ts';
 export { seedBasenameIndex } from './asset-walk.ts';
 export {
+  formatAuthRejectionWire,
   HOCUSPOCUS_AUTH_REJECTION_REASONS,
   HocuspocusAuthRejection,
   type HocuspocusAuthRejectionReason,
   type HocuspocusAuthToken,
   HocuspocusAuthTokenSchema,
   isHocuspocusAuthRejectionReason,
+  parseAuthRejectionWire,
   parseHocuspocusAuthToken,
 } from './auth-token-schema.ts';
 export {

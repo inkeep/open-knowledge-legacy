@@ -1907,3 +1907,94 @@ describe('createServer() — phantom-doc unload', () => {
     }
   });
 });
+
+describe('createServer() — removalRedirectGuard registration', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'ok-removal-redirect-'));
+  });
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('extension is registered with __kind: removal-redirect-guard', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const ext = server.hocuspocus.configuration.extensions.find(
+        (e) => (e as { __kind?: string }).__kind === 'removal-redirect-guard',
+      ) as { onAuthenticate?: (payload: unknown) => Promise<void> } | undefined;
+      expect(ext).toBeDefined();
+      expect(typeof ext?.onAuthenticate).toBe('function');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('extension order: after configDocAdmissionGuard, before apiExtension', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const exts = server.hocuspocus.configuration.extensions;
+      const idx = (kind: string): number =>
+        exts.findIndex((e) => (e as { __kind?: string }).__kind === kind);
+      const principal = idx('principal-auth');
+      const configGuard = idx('config-doc-admission-guard');
+      const removal = idx('removal-redirect-guard');
+      expect(principal).toBeGreaterThan(-1);
+      expect(configGuard).toBeGreaterThan(principal);
+      expect(removal).toBeGreaterThan(configGuard);
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('onAuthenticate admits a fresh docName (no file, no cache state)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const ext = server.hocuspocus.configuration.extensions.find(
+        (e) => (e as { __kind?: string }).__kind === 'removal-redirect-guard',
+      ) as { onAuthenticate: (payload: unknown) => Promise<void> } | undefined;
+      if (!ext) throw new Error('removal-redirect-guard not registered');
+      let thrown: unknown = null;
+      try {
+        await ext.onAuthenticate({
+          token: undefined,
+          context: {},
+          documentName: 'fresh-doc',
+        });
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeNull();
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('onAuthenticate is a no-op for system docs (cache lookup never happens)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const ext = server.hocuspocus.configuration.extensions.find(
+        (e) => (e as { __kind?: string }).__kind === 'removal-redirect-guard',
+      ) as { onAuthenticate: (payload: unknown) => Promise<void> } | undefined;
+      if (!ext) throw new Error('removal-redirect-guard not registered');
+      let thrown: unknown = null;
+      try {
+        await ext.onAuthenticate({
+          token: undefined,
+          context: {},
+          documentName: '__system__',
+        });
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeNull();
+    } finally {
+      await server.destroy();
+    }
+  });
+});

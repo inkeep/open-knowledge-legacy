@@ -2652,3 +2652,156 @@ describe('ProviderPool provider-open gating', () => {
     pool = new ProviderPool(3, DUMMY_WS);
   });
 });
+
+describe('ProviderPool authenticationFailed: rename-redirect / doc-deleted', () => {
+  const emit = (entry: { provider: unknown }, reason: string) => {
+    (entry.provider as { emit: (e: string, p: unknown) => void }).emit('authenticationFailed', {
+      reason,
+    });
+  };
+
+  test("'rename-redirect:foo' parses payload and invokes onRenameRedirect", () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const calls: { fromDocName: string; toDocName: string; hadOpenProvider: boolean }[] = [];
+    pool.setOnRenameRedirect((args) => calls.push(args));
+    const entry = pool.open('doc-from');
+    if (!entry) throw new Error('expected entry');
+    emit(entry, 'rename-redirect:doc-to');
+    expect(calls).toEqual([
+      { fromDocName: 'doc-from', toDocName: 'doc-to', hadOpenProvider: true },
+    ]);
+  });
+
+  test("'rename-redirect' with payload containing colon round-trips on first colon only", () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const calls: { toDocName: string }[] = [];
+    pool.setOnRenameRedirect((args) => calls.push({ toDocName: args.toDocName }));
+    const entry = pool.open('a');
+    if (!entry) throw new Error('expected entry');
+    emit(entry, 'rename-redirect:has:colon/in/path');
+    expect(calls[0]?.toDocName).toBe('has:colon/in/path');
+  });
+
+  test("'rename-redirect' with empty payload warns and skips cleanup", () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    let cleanupCalled = 0;
+    pool.setOnRenameRedirect(() => {
+      cleanupCalled++;
+    });
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (msg: unknown) => warns.push(String(msg));
+    try {
+      const entry = pool.open('doc-x');
+      if (!entry) throw new Error('expected entry');
+      emit(entry, 'rename-redirect');
+      emit(entry, 'rename-redirect:');
+    } finally {
+      console.warn = orig;
+    }
+    expect(cleanupCalled).toBe(0);
+    const matched = warns.filter((w) => w.includes('rename-redirect-missing-payload'));
+    expect(matched.length).toBe(2);
+  });
+
+  test("'doc-deleted' invokes onDocDeleted with hadOpenProvider true when entry is active", () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const calls: { docName: string; hadOpenProvider: boolean }[] = [];
+    pool.setOnDocDeleted((args) => calls.push(args));
+    const entry = pool.open('doc-z');
+    if (!entry) throw new Error('expected entry');
+    emit(entry, 'doc-deleted');
+    expect(calls).toEqual([{ docName: 'doc-z', hadOpenProvider: true }]);
+  });
+
+  test("server-driven 'close' triggers a fresh sendToken so onAuthenticate can re-run", () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc-close');
+    if (!entry) throw new Error('expected entry');
+    const provider = entry.provider as {
+      sendToken: () => Promise<void>;
+      emit: (e: string, p: unknown) => void;
+    };
+    const sendTokenSpy = spyOn(provider, 'sendToken').mockResolvedValue();
+    sendTokenSpy.mockClear();
+    provider.emit('close', { event: { code: 1000, reason: 'Server closed the connection' } });
+    expect(sendTokenSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("server-driven 'close' followed by sendToken rejection emits a structured warn", async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc-warn');
+    if (!entry) throw new Error('expected entry');
+    const provider = entry.provider as {
+      sendToken: () => Promise<void>;
+      emit: (e: string, p: unknown) => void;
+    };
+    const sendTokenSpy = spyOn(provider, 'sendToken').mockRejectedValue(
+      new Error('synthetic transport-closed failure'),
+    );
+    sendTokenSpy.mockClear();
+    const warns: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]): void => {
+      warns.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+    };
+    try {
+      provider.emit('close', { event: { code: 1000, reason: 'rename-driven' } });
+      await waitFor(
+        () => warns.some((w) => w.includes('ok-provider-server-driven-close-reauth-failed')),
+        500,
+      );
+      const matched = warns.filter((w) =>
+        w.includes('ok-provider-server-driven-close-reauth-failed'),
+      );
+      expect(matched.length).toBeGreaterThanOrEqual(1);
+      expect(matched[0]).toContain('"docName":"doc-warn"');
+      expect(matched[0]).toContain('synthetic transport-closed failure');
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("burst of server-driven 'close' frames during in-flight sendToken does not stack parallel auths", () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc-burst');
+    if (!entry) throw new Error('expected entry');
+    const provider = entry.provider as {
+      sendToken: () => Promise<void>;
+      emit: (e: string, p: unknown) => void;
+    };
+    const neverResolve = new Promise<void>(() => {});
+    const sendTokenSpy = spyOn(provider, 'sendToken').mockReturnValue(neverResolve);
+    sendTokenSpy.mockClear();
+    provider.emit('close', { event: { code: 1000, reason: 'first' } });
+    provider.emit('close', { event: { code: 1000, reason: 'second' } });
+    provider.emit('close', { event: { code: 1000, reason: 'third' } });
+    expect(sendTokenSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("'rename-redirect' / 'doc-deleted' with no handler set are clean no-ops", () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc-a');
+    if (!entry) throw new Error('expected entry');
+    expect(() => emit(entry, 'rename-redirect:doc-b')).not.toThrow();
+    expect(() => emit(entry, 'doc-deleted')).not.toThrow();
+  });
+
+  test("existing 'server-instance-mismatch' arm is unchanged by the new arms", () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    let renameRedirectCalls = 0;
+    let docDeletedCalls = 0;
+    pool.setOnRenameRedirect(() => {
+      renameRedirectCalls++;
+    });
+    pool.setOnDocDeleted(() => {
+      docDeletedCalls++;
+    });
+    pool.setExpectedServerInstanceId('old-instance-id');
+    const entry = pool.open('doc-svr');
+    if (!entry) throw new Error('expected entry');
+    emit(entry, 'server-instance-mismatch');
+    expect(renameRedirectCalls).toBe(0);
+    expect(docDeletedCalls).toBe(0);
+  });
+});

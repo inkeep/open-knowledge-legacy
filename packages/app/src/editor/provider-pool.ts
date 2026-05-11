@@ -63,6 +63,7 @@ interface ActivePoolEntry extends PoolEntryBase {
   observerCleanup: (() => void) | null;
   observerFireCounterCleanup: (() => void) | null;
   pendingRecycleTimer: ReturnType<typeof setTimeout> | null;
+  serverDrivenCloseReauthInFlight: boolean;
 }
 
 interface TearingDownPoolEntry extends PoolEntryBase {
@@ -71,6 +72,7 @@ interface TearingDownPoolEntry extends PoolEntryBase {
   observerCleanup: null;
   observerFireCounterCleanup: null;
   pendingRecycleTimer: null;
+  serverDrivenCloseReauthInFlight: false;
 }
 
 type PoolEntry = ActivePoolEntry | TearingDownPoolEntry;
@@ -504,6 +506,24 @@ export class ProviderPool {
     };
   }
 
+  private onRenameRedirect:
+    | ((args: { fromDocName: string; toDocName: string; hadOpenProvider: boolean }) => void)
+    | null = null;
+  private onDocDeleted: ((args: { docName: string; hadOpenProvider: boolean }) => void) | null =
+    null;
+  setOnRenameRedirect(
+    cb:
+      | ((args: { fromDocName: string; toDocName: string; hadOpenProvider: boolean }) => void)
+      | null,
+  ): void {
+    this.onRenameRedirect = cb;
+  }
+  setOnDocDeleted(
+    cb: ((args: { docName: string; hadOpenProvider: boolean }) => void) | null,
+  ): void {
+    this.onDocDeleted = cb;
+  }
+
   setOnChange(cb: PoolChangeCallback | null): void {
     this.onChange = cb;
   }
@@ -619,6 +639,7 @@ export class ProviderPool {
       hasSynced: false,
       pendingRecycleTimer: null,
       bridgeSetupFailed: false,
+      serverDrivenCloseReauthInFlight: false,
     };
     mark('ok/pool/open', { docName, hit: false, poolEventId });
     mark.count('ok/pool/open', { hit: false });
@@ -682,17 +703,23 @@ export class ProviderPool {
       const KNOWN = [
         'server-instance-mismatch',
         'branch-mismatch',
+        'rename-redirect',
+        'doc-deleted',
       ] as const satisfies readonly HocuspocusAuthRejectionReason[];
       type _AssertCovers = HocuspocusAuthRejectionReason extends (typeof KNOWN)[number]
         ? true
         : never;
       const _assertCovers: _AssertCovers = true;
       void _assertCovers;
-      if (!(KNOWN as readonly string[]).includes(reason)) {
+      const colonIdx = reason.indexOf(':');
+      const candidateKind = colonIdx === -1 ? reason : reason.slice(0, colonIdx);
+      if (!(KNOWN as readonly string[]).includes(candidateKind)) {
         console.warn(JSON.stringify({ event: 'ok-auth-failed-unknown-reason', reason }));
         return;
       }
-      const typed = reason as HocuspocusAuthRejectionReason;
+      const rawPayload = colonIdx === -1 ? '' : reason.slice(colonIdx + 1);
+      const payload: string | undefined = rawPayload.length > 0 ? rawPayload : undefined;
+      const typed = candidateKind as HocuspocusAuthRejectionReason;
       if (typed === 'server-instance-mismatch') {
         if (expectedServerInstanceId === null) {
           return;
@@ -709,14 +736,68 @@ export class ProviderPool {
         this.onBranchMismatch?.();
         return;
       }
+      if (typed === 'rename-redirect') {
+        if (payload === undefined || payload.length === 0) {
+          console.warn(
+            JSON.stringify({
+              event: 'rename-redirect-missing-payload',
+              fromDocName: docName,
+            }),
+          );
+          return;
+        }
+        const fromDocName = docName;
+        const toDocName = payload;
+        const existing = this.entries.get(fromDocName);
+        const hadOpenProvider = existing !== undefined && existing.kind === 'active';
+        this.onRenameRedirect?.({ fromDocName, toDocName, hadOpenProvider });
+        return;
+      }
+      if (typed === 'doc-deleted') {
+        const existing = this.entries.get(docName);
+        const hadOpenProvider = existing !== undefined && existing.kind === 'active';
+        this.onDocDeleted?.({ docName, hadOpenProvider });
+        return;
+      }
       const _never: never = typed;
       void _never;
+    };
+
+    const onServerDrivenClose = ({ event }: { event?: { code?: number; reason?: string } }) => {
+      if (entry.kind !== 'active' || this.entries.get(docName) !== entry) return;
+      if (entry.serverDrivenCloseReauthInFlight) return;
+      entry.serverDrivenCloseReauthInFlight = true;
+      provider
+        .sendToken()
+        .catch((err: unknown) => {
+          console.warn(
+            JSON.stringify({
+              event: 'ok-provider-server-driven-close-reauth-failed',
+              docName,
+              message: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        })
+        .finally(() => {
+          if (entry.kind === 'active' && this.entries.get(docName) === entry) {
+            entry.serverDrivenCloseReauthInFlight = false;
+          }
+        });
+      const reason = event?.reason ?? '<unknown>';
+      console.info(
+        JSON.stringify({
+          event: 'ok-provider-server-driven-close-reauth',
+          docName,
+          reason,
+        }),
+      );
     };
 
     provider.on('status', onStatus);
     provider.on('synced', onSynced);
     provider.on('disconnect', onDisconnect);
     provider.on('authenticationFailed', onAuthenticationFailed);
+    provider.on('close', onServerDrivenClose);
 
     const buffered = this.bufferedUpdates.get(docName);
     if (buffered !== undefined) {
@@ -1022,6 +1103,8 @@ export class ProviderPool {
     this.bufferedUpdates.clear();
     this.onBranchMismatch = null;
     this.branchMismatchInFlight = null;
+    this.onRenameRedirect = null;
+    this.onDocDeleted = null;
     this.evictListeners.clear();
     this.serverRestartRecoveryState = IDLE_SERVER_RESTART_RECOVERY;
     this.cachedServerInstanceId = null;
@@ -1055,6 +1138,7 @@ export class ProviderPool {
     torn.observerCleanup = null;
     torn.observerFireCounterCleanup = null;
     torn.pendingRecycleTimer = null;
+    torn.serverDrivenCloseReauthInFlight = false;
 
     if (pendingRecycleTimer) clearTimeout(pendingRecycleTimer);
 

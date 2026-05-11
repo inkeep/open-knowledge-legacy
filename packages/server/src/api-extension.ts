@@ -188,6 +188,7 @@ import {
   type FrontmatterMetadata,
   parseFrontmatterMetadata,
 } from './page-identity.ts';
+import type { RecentlyRemovedDocs } from './recently-removed-docs.ts';
 import { readServerLock } from './server-lock.ts';
 import { buildAndOpenSkill } from './skill-install.ts';
 import { readSkillInstallStateSnapshot } from './skill-state.ts';
@@ -856,6 +857,7 @@ export interface ApiExtensionOptions {
   installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
   forceUnloadDocument?: (document: Document) => Promise<void>;
   ready?: Promise<void>;
+  recentlyRemovedDocs?: RecentlyRemovedDocs;
 }
 
 interface WorkspaceSearchCacheEntry {
@@ -890,7 +892,7 @@ export function extractHeadings(content: string): HeadingEntry[] {
   return headings;
 }
 
-function isSafeDocName(docName: string): boolean {
+export function isSafeDocName(docName: string): boolean {
   return !(
     docName.includes('..') ||
     docName.startsWith('/') ||
@@ -929,6 +931,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     installedAgentsProbe,
     forceUnloadDocument,
     ready,
+    recentlyRemovedDocs,
   } = options;
 
   const localOpGuard = createConcurrencyGuard();
@@ -1502,6 +1505,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               backlinkIndex.updateDocumentFromMarkdown(docName, rewritten.markdown);
             }
 
+            if (recentlyRemovedDocs) {
+              for (const { from, to } of affectedDocs) {
+                if (isSystemDoc(from) || isConfigDoc(from)) continue;
+                recentlyRemovedDocs.setRenamed(from, to);
+                console.info(
+                  JSON.stringify({
+                    event: 'recently-removed-docs-populate',
+                    from,
+                    to,
+                    kind: 'renamed',
+                    source: 'spine',
+                  }),
+                );
+              }
+            }
+
             const liveContents = await captureAndCloseDocuments([...renameMap.keys()]);
 
             const rootSourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
@@ -1648,6 +1667,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
           rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
           span.setAttribute('rename.rewrite_count', rewrittenDocs.length);
+
           return { renamed, rewrittenDocs };
         },
       ),
@@ -4456,6 +4476,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           throw err;
         }
         const docName = stripDocExtension(filePath);
+        recentlyRemovedDocs?.delete(docName);
         if (contentFilter) {
           contentFilter.incrementMdDir(dirname(docName));
         }
@@ -4922,6 +4943,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           kind === 'file' ? [path] : listAffectedDocNames(getFileIndex(), kind, path);
 
         await captureAndCloseDocuments(deletedDocNames);
+
+        if (recentlyRemovedDocs) {
+          for (const docName of deletedDocNames) {
+            if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
+            recentlyRemovedDocs.setDeleted(docName);
+            console.info(
+              JSON.stringify({
+                event: 'recently-removed-docs-populate',
+                docName,
+                kind: 'deleted',
+                source: 'handleDeletePath',
+              }),
+            );
+          }
+        }
 
         if (kind === 'file') {
           unlinkSync(targetPath);
