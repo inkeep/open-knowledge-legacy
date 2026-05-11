@@ -67,7 +67,7 @@ export const TemplatePayloadSchema = z
   .object({
     name: z.string().min(1),
     folder: z.string(),
-    scope: z.enum(['local', 'inherited']),
+    scope: z.enum(['local', 'inherited', 'user']),
     path: z.string().min(1),
     frontmatter: TemplateFrontmatterSchema,
     body: z.string(),
