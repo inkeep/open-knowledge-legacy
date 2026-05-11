@@ -1,21 +1,17 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { assertEntryPathInProject } from './path-safety.ts';
-import {
-  buildStarterFolderFrontmatterYaml,
-  LOG_MD_TEMPLATE,
-  STARTER_FOLDERS,
-  STARTER_TEMPLATES,
-} from './starter.ts';
+import { buildStarterFolderFrontmatterYaml, DEFAULT_PACK_ID, resolvePack } from './starter.ts';
 import type { ApplyError, ApplyResult, FileEntry, ScaffoldPlan, SeedOptions } from './types.ts';
 import { SeedRootDirError } from './types.ts';
 
-function resolveFileContent(templateId: string): string | undefined {
-  if (templateId === 'log.md') return LOG_MD_TEMPLATE;
-
+function resolveFileContent(
+  templateId: string,
+  pack: ReturnType<typeof resolvePack>,
+): string | undefined {
   const fmMatch = /^([^/]+)\/\.ok\/frontmatter\.yml$/.exec(templateId);
   if (fmMatch) {
-    const folder = STARTER_FOLDERS.find((f) => f.path === fmMatch[1]);
+    const folder = pack.folders.find((f) => f.path === fmMatch[1]);
     if (!folder) return undefined;
     return buildStarterFolderFrontmatterYaml(folder);
   }
@@ -23,7 +19,11 @@ function resolveFileContent(templateId: string): string | undefined {
   const tplMatch = /^([^/]+)\/\.ok\/templates\/([^/]+)\.md$/.exec(templateId);
   if (tplMatch) {
     const templateName = tplMatch[2] ?? '';
-    return STARTER_TEMPLATES[templateName];
+    return pack.templates[templateName];
+  }
+
+  if (!templateId.includes('/') && pack.rootFiles?.[templateId] !== undefined) {
+    return pack.rootFiles[templateId];
   }
 
   return undefined;
@@ -32,6 +32,7 @@ function resolveFileContent(templateId: string): string | undefined {
 export async function applySeed(plan: ScaffoldPlan, opts: SeedOptions = {}): Promise<ApplyResult> {
   const started = Date.now();
   const projectDir = resolve(opts.projectDir ?? process.cwd());
+  const pack = resolvePack(opts.packId ?? DEFAULT_PACK_ID);
 
   let applied = 0;
   const errors: ApplyError[] = [];
@@ -70,11 +71,11 @@ export async function applySeed(plan: ScaffoldPlan, opts: SeedOptions = {}): Pro
     (e): e is { entry: FileEntry & { kind: 'file' }; absPath: string } => e.entry.kind === 'file',
   )) {
     const templateId = entry.template ?? entry.path;
-    const content = resolveFileContent(templateId);
+    const content = resolveFileContent(templateId, pack);
     if (content === undefined) {
       errors.push({
         path: entry.path,
-        error: `No content template registered for template id "${templateId}"`,
+        error: `No content template registered for template id "${templateId}" in pack "${pack.id}"`,
       });
       continue;
     }

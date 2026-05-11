@@ -3,6 +3,7 @@ import { FileText, Folder, Loader2, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   DialogBody,
   DialogContent,
@@ -22,12 +23,18 @@ import {
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import type {
+  OkPackId,
   OkScaffoldApplyResult,
+  OkScaffoldPersonalTemplateWriteResult,
   OkScaffoldPlan,
   OkSeedApplyResult,
   OkSeedError,
+  OkSeedListPacksResult,
+  OkSeedPackInfo,
   OkSeedPlanResult,
 } from '@/lib/desktop-bridge-types';
+
+const DEFAULT_PACK_ID: OkPackId = 'knowledge-base';
 
 interface SeedDialogProps {
   open: boolean;
@@ -70,14 +77,23 @@ function seedClient() {
   const okDesktop = typeof window !== 'undefined' ? window.okDesktop : undefined;
   if (okDesktop?.seed) {
     return {
-      plan: (rootDir?: string) => okDesktop.seed.plan(rootDir),
-      apply: (plan: OkScaffoldPlan) => okDesktop.seed.apply(plan),
+      plan: okDesktop.seed.plan,
+      apply: okDesktop.seed.apply,
+      listPacks: okDesktop.seed.listPacks,
     };
   }
   return {
-    plan: async (rootDir?: string): Promise<OkSeedPlanResult> => {
-      const qs = rootDir ? `?rootDir=${encodeURIComponent(rootDir)}` : '';
-      const res = await fetch(`/api/seed/plan${qs}`);
+    plan: async (options?: {
+      rootDir?: string;
+      packId?: OkPackId;
+      includePersonalTemplates?: boolean;
+    }): Promise<OkSeedPlanResult> => {
+      const params = new URLSearchParams();
+      if (options?.rootDir) params.set('rootDir', options.rootDir);
+      if (options?.packId) params.set('packId', options.packId);
+      if (options?.includePersonalTemplates) params.set('includePersonalTemplates', 'true');
+      const qs = params.toString();
+      const res = await fetch(`/api/seed/plan${qs ? `?${qs}` : ''}`);
       if (!res.ok) {
         return { ok: false, error: await translateSeedError(res) };
       }
@@ -87,45 +103,107 @@ function seedClient() {
       }
       return { ok: true, plan: body.plan };
     },
-    apply: async (plan: OkScaffoldPlan): Promise<OkSeedApplyResult> => {
+    apply: async (
+      plan: OkScaffoldPlan,
+      options?: { packId?: OkPackId; includePersonalTemplates?: boolean },
+    ): Promise<OkSeedApplyResult> => {
       const res = await fetch('/api/seed/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan }),
+        body: JSON.stringify({
+          plan,
+          packId: options?.packId,
+          includePersonalTemplates: options?.includePersonalTemplates,
+        }),
       });
       if (!res.ok) {
         return { ok: false, error: await translateSeedError(res) };
       }
       const body = (await res.json().catch(() => null)) as {
         result?: OkScaffoldApplyResult;
+        personalTemplates?: OkScaffoldPersonalTemplateWriteResult;
       } | null;
       if (!body?.result) {
         return { ok: false, error: { kind: 'internal', message: 'Malformed apply response' } };
       }
-      return { ok: true, result: body.result };
+      return { ok: true, result: body.result, personalTemplates: body.personalTemplates };
+    },
+    listPacks: async (): Promise<OkSeedListPacksResult> => {
+      const res = await fetch('/api/seed/packs');
+      if (!res.ok) {
+        return { ok: false, error: { kind: 'internal', message: `HTTP ${res.status}` } };
+      }
+      const body = (await res.json().catch(() => null)) as { packs?: OkSeedPackInfo[] } | null;
+      if (!body || !Array.isArray(body.packs)) {
+        return {
+          ok: false,
+          error: { kind: 'internal', message: 'Malformed listPacks response' },
+        };
+      }
+      return { ok: true, packs: body.packs };
     },
   };
 }
 
 export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProps) {
   const [phase, setPhase] = useState<DialogPhase>({ kind: 'loading' });
+  const [packs, setPacks] = useState<OkSeedPackInfo[] | null>(null);
+  const [selectedPackId, setSelectedPackId] = useState<OkPackId>(DEFAULT_PACK_ID);
+  const [includePersonalTemplates, setIncludePersonalTemplates] = useState(true);
   const [rootChoice, setRootChoice] = useState<RootChoice>('project-root');
-  const [subfolder, setSubfolder] = useState<string>('brain');
+  const [subfolder, setSubfolder] = useState<string>('');
   const isFirstLoadRef = useRef(true);
+
+  const selectedPack = packs?.find((p) => p.id === selectedPackId);
+
+  useEffect(() => {
+    if (!open || packs !== null) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await seedClient().listPacks();
+        if (cancelled) return;
+        if (result.ok) {
+          setPacks(result.packs);
+        } else {
+          setPacks([]); // empty list short-circuits the planning loading state
+          setPhase({ kind: 'error', message: result.error.message });
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setPacks([]);
+        setPhase({
+          kind: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, packs]);
 
   useEffect(() => {
     if (open) {
+      setSelectedPackId(DEFAULT_PACK_ID);
+      setIncludePersonalTemplates(true);
       setRootChoice('project-root');
-      setSubfolder('brain');
+      setSubfolder('');
       isFirstLoadRef.current = true;
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!selectedPack) return;
+    setSubfolder(selectedPack.defaultSubfolder ?? '');
+  }, [selectedPack]);
 
   const trimmedSubfolder = subfolder.trim();
   const subfolderInvalid = rootChoice === 'subfolder' && trimmedSubfolder === '';
 
   useEffect(() => {
     if (!open) return;
+    if (packs === null) return; // wait for pack list before planning
 
     if (subfolderInvalid) {
       setPhase({ kind: 'error', message: 'Enter a folder name (e.g. brain).' });
@@ -143,14 +221,20 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
         prev.kind === 'plan' || prev.kind === 'already-seeded' ? prev : { kind: 'loading' },
       );
       seedClient()
-        .plan(effectiveRoot)
+        .plan({
+          rootDir: effectiveRoot,
+          packId: selectedPackId,
+          includePersonalTemplates,
+        })
         .then((result) => {
           if (cancelled) return;
           if (!result.ok) {
             setPhase({ kind: 'error', message: result.error.message });
             return;
           }
-          const hasWork = result.plan.created.length > 0;
+          const hasWork =
+            result.plan.created.length > 0 ||
+            (result.plan.personalTemplates?.willWrite.length ?? 0) > 0;
           setPhase(
             hasWork
               ? { kind: 'plan', plan: result.plan }
@@ -167,21 +251,50 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [open, rootChoice, trimmedSubfolder, subfolderInvalid]);
+  }, [
+    open,
+    packs,
+    selectedPackId,
+    includePersonalTemplates,
+    rootChoice,
+    trimmedSubfolder,
+    subfolderInvalid,
+  ]);
 
   async function handleApply() {
     if (phase.kind !== 'plan') return;
-    setPhase({ kind: 'applying', plan: phase.plan });
-    const result = await seedClient().apply(phase.plan);
+    const planAtClick = phase.plan;
+    setPhase({ kind: 'applying', plan: planAtClick });
+    let result: Awaited<ReturnType<ReturnType<typeof seedClient>['apply']>>;
+    try {
+      result = await seedClient().apply(planAtClick, {
+        packId: selectedPackId,
+        includePersonalTemplates,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Initialize failed: ${message}`);
+      setPhase({ kind: 'plan', plan: planAtClick });
+      return;
+    }
     if (result.ok) {
-      toast.success(
-        `LLM brain initialized (${result.result.applied} ${result.result.applied === 1 ? 'entry' : 'entries'})`,
-      );
+      const packName = selectedPack?.name ?? 'starter pack';
+      const projectEntries = result.result.applied;
+      const personalCount = result.personalTemplates?.written.length ?? 0;
+      const message =
+        projectEntries === 0 && personalCount > 0
+          ? `${personalCount} personal template${personalCount === 1 ? '' : 's'} written to ~/.ok/templates/`
+          : projectEntries === 0
+            ? `${packName} was already set up — nothing to do.`
+            : personalCount > 0
+              ? `${packName} initialized (${projectEntries} ${projectEntries === 1 ? 'entry' : 'entries'}) + ${personalCount} personal template${personalCount === 1 ? '' : 's'}`
+              : `${packName} initialized (${projectEntries} ${projectEntries === 1 ? 'entry' : 'entries'})`;
+      toast.success(message);
       onSeedApplied?.();
       onOpenChange(false);
     } else {
       toast.error(`Initialize failed: ${result.error.message}`);
-      setPhase({ kind: 'error', message: result.error.message });
+      setPhase({ kind: 'plan', plan: planAtClick });
     }
   }
 
@@ -191,22 +304,28 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles aria-hidden="true" className="h-4 w-4 text-foreground opacity-70" />
-            Initialize LLM brain
+            Initialize a starter pack
           </DialogTitle>
           <DialogDescription>
-            Three layers designed so AI agents can navigate naturally: raw sources, working drafts,
-            and canonical articles.
+            Pick a layout that matches what you're building. Each pack ships with folders,
+            templates, and agent-readable descriptions. You can mix and match later.
           </DialogDescription>
         </DialogHeader>
 
         <DialogBody className="space-y-6">
+          <PackPicker packs={packs} selectedPackId={selectedPackId} onSelect={setSelectedPackId} />
+          <PersonalTemplatesToggle
+            checked={includePersonalTemplates}
+            onCheckedChange={setIncludePersonalTemplates}
+          />
           <RootPicker
             choice={rootChoice}
             subfolder={subfolder}
+            placeholder={selectedPack?.defaultSubfolder ?? 'subfolder'}
             onChoiceChange={setRootChoice}
             onSubfolderChange={setSubfolder}
           />
-          <SeedDialogBody phase={phase} />
+          <SeedDialogBody phase={phase} selectedPack={selectedPack} />
         </DialogBody>
 
         <DialogFooter>
@@ -233,20 +352,89 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
   );
 }
 
+function PackPicker({
+  packs,
+  selectedPackId,
+  onSelect,
+}: {
+  packs: OkSeedPackInfo[] | null;
+  selectedPackId: OkPackId;
+  onSelect: (id: OkPackId) => void;
+}) {
+  return (
+    <div className="space-y-2 py-1">
+      <p className="text-sm font-medium">Pick a starter pack</p>
+      {packs === null ? (
+        <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+          <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
+          Loading packs…
+        </div>
+      ) : (
+        <RadioGroup
+          className="grid gap-2 sm:grid-cols-3"
+          value={selectedPackId}
+          onValueChange={(next) => onSelect(next as OkPackId)}
+        >
+          {packs.map((pack) => (
+            <FieldLabel key={pack.id} htmlFor={`pack-${pack.id}`}>
+              <Field orientation="horizontal" className="h-full">
+                <FieldContent>
+                  <FieldTitle className="text-sm">{pack.name}</FieldTitle>
+                  <FieldDescription className="text-xs">{pack.description}</FieldDescription>
+                </FieldContent>
+                <RadioGroupItem value={pack.id} id={`pack-${pack.id}`} />
+              </Field>
+            </FieldLabel>
+          ))}
+        </RadioGroup>
+      )}
+    </div>
+  );
+}
+
+function PersonalTemplatesToggle({
+  checked,
+  onCheckedChange,
+}: {
+  checked: boolean;
+  onCheckedChange: (next: boolean) => void;
+}) {
+  return (
+    <FieldLabel htmlFor="seed-include-personal-templates" className="cursor-pointer">
+      <Field orientation="horizontal">
+        <FieldContent>
+          <FieldTitle>Include personal templates</FieldTitle>
+          <FieldDescription>
+            Adds daily journal, reading log, recipes, and more to <code>~/.ok/templates/</code>.
+            Idempotent — never overwrites your edits.
+          </FieldDescription>
+        </FieldContent>
+        <Checkbox
+          id="seed-include-personal-templates"
+          checked={checked}
+          onCheckedChange={(next) => onCheckedChange(next === true)}
+        />
+      </Field>
+    </FieldLabel>
+  );
+}
+
 function RootPicker({
   choice,
   subfolder,
+  placeholder,
   onChoiceChange,
   onSubfolderChange,
 }: {
   choice: RootChoice;
   subfolder: string;
+  placeholder: string;
   onChoiceChange: (next: RootChoice) => void;
   onSubfolderChange: (next: string) => void;
 }) {
   return (
     <div className="space-y-2 py-1">
-      <p className="text-sm font-medium">Where should the brain live?</p>
+      <p className="text-sm font-medium">Where should it live?</p>
       <RadioGroup
         className="sm:flex"
         value={choice}
@@ -257,7 +445,7 @@ function RootPicker({
             <FieldContent>
               <FieldTitle>Project root</FieldTitle>
               <FieldDescription>
-                Scaffold the three folders directly under this project.
+                Scaffold the pack's folders directly under this project.
               </FieldDescription>
             </FieldContent>
             <RadioGroupItem value="project-root" id="seed-root-project-root" />
@@ -267,23 +455,14 @@ function RootPicker({
           <Field orientation="horizontal">
             <FieldContent>
               <FieldTitle>In a subfolder</FieldTitle>
-              {/* Override FieldDescription's `nth-last-2:-mt-1` rule, which
-                 tightens description-to-title spacing whenever a sibling
-                 (the Input below) follows. We want the title-to-description
-                 gap to match the project-root card visually. */}
               <FieldDescription className="nth-last-2:mt-0">
                 Created if missing. Reuses the folder if it already exists.
               </FieldDescription>
-              {/*
-               * No `disabled` here: focusing the input promotes the radio via
-               * onFocus, so the user can switch to subfolder mode and start
-               * typing in one click. With `disabled` set, focus would never fire.
-               */}
               <Input
                 value={subfolder}
                 onChange={(e) => onSubfolderChange(e.target.value)}
                 onFocus={() => onChoiceChange('subfolder')}
-                placeholder="brain"
+                placeholder={placeholder}
                 spellCheck={false}
                 autoCapitalize="off"
                 autoCorrect="off"
@@ -298,7 +477,13 @@ function RootPicker({
   );
 }
 
-function SeedDialogBody({ phase }: { phase: DialogPhase }) {
+function SeedDialogBody({
+  phase,
+  selectedPack,
+}: {
+  phase: DialogPhase;
+  selectedPack: OkSeedPackInfo | undefined;
+}) {
   if (phase.kind === 'loading') {
     return (
       <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
@@ -319,23 +504,20 @@ function SeedDialogBody({ phase }: { phase: DialogPhase }) {
   if (phase.kind === 'already-seeded') {
     return (
       <div className="py-2 text-sm">
-        <p className="font-medium">This LLM brain is already set up.</p>
+        <p className="font-medium">This pack is already set up here.</p>
         <p className="text-muted-foreground">
-          The three-layer structure is in place — there's nothing left to scaffold.
+          The folders and templates are in place — there's nothing left to scaffold.
         </p>
       </div>
     );
   }
 
-  const plan = phase.plan;
-
   return (
     <div className="space-y-6 py-1 text-sm">
-      <CreatedItemsList plan={plan} />
-
-      {plan.warnings.length > 0 ? (
+      <CreatedItemsList plan={phase.plan} selectedPack={selectedPack} />
+      {phase.plan.warnings.length > 0 ? (
         <div className="rounded-md bg-warning/10 p-3 text-xs text-warning-foreground">
-          {plan.warnings.map((w) => (
+          {phase.plan.warnings.map((w) => (
             <p key={w}>{w}</p>
           ))}
         </div>
@@ -344,50 +526,24 @@ function SeedDialogBody({ phase }: { phase: DialogPhase }) {
   );
 }
 
-interface Layer {
-  name: string;
-  blurb: string;
-}
-
-/** Short description per starter folder (≤2 lines) — used by
-    `CreatedItemsList` to annotate each folder row in the "what gets created"
-    list. */
-const LAYERS: readonly Layer[] = [
-  {
-    name: 'external-sources',
-    blurb:
-      'Raw sources saved verbatim — full text of URLs and PDFs, not just citations. Every claim traces back to preserved evidence.',
-  },
-  {
-    name: 'research',
-    blurb:
-      'Provisional analysis synthesizing sources. Every claim cites a doc; promotes to articles/ once the team trusts the findings.',
-  },
-  {
-    name: 'articles',
-    blurb:
-      'Canonical decisions. Each links back through research/ to its sources — no dead links, full evidence chain in repo.',
-  },
-] as const;
-
-const FILE_DESCRIPTIONS: Record<string, string> = {
-  'log.md': 'Append-only timeline',
-};
-
-/** Last path segment so descriptions still attach in subfolder mode — e.g.
-    `brain/external-sources` resolves to the `external-sources` layer blurb. */
-function basename(path: string): string {
-  return path.split('/').pop() ?? path;
-}
-
 interface CreatedItem {
   kind: 'folder' | 'file';
   name: string;
   description: string;
 }
 
-function describeCreatedItems(plan: OkScaffoldPlan): CreatedItem[] {
-  const folderBlurbs = new Map(LAYERS.map((l) => [l.name, l.blurb]));
+function basename(path: string): string {
+  return path.split('/').pop() ?? path;
+}
+
+function describeCreatedItems(
+  plan: OkScaffoldPlan,
+  selectedPack: OkSeedPackInfo | undefined,
+): CreatedItem[] {
+  const folderBlurbs = new Map<string, string>();
+  for (const f of selectedPack?.folders ?? []) {
+    folderBlurbs.set(f.path, f.summary);
+  }
   const folders: CreatedItem[] = plan.created
     .filter((e) => e.kind === 'folder')
     .map((e) => ({
@@ -400,13 +556,21 @@ function describeCreatedItems(plan: OkScaffoldPlan): CreatedItem[] {
     .map((e) => ({
       kind: 'file',
       name: e.path,
-      description: FILE_DESCRIPTIONS[basename(e.path)] ?? '',
+      description: basename(e.path) === 'log.md' ? 'Append-only timeline' : '',
     }));
   return [...folders, ...files];
 }
 
-function CreatedItemsList({ plan }: { plan: OkScaffoldPlan }) {
-  const items = describeCreatedItems(plan);
+function CreatedItemsList({
+  plan,
+  selectedPack,
+}: {
+  plan: OkScaffoldPlan;
+  selectedPack: OkSeedPackInfo | undefined;
+}) {
+  const items = describeCreatedItems(plan, selectedPack);
+  const personalTemplates = plan.personalTemplates;
+  const personalCount = personalTemplates?.willWrite.length ?? 0;
 
   return (
     <section className="space-y-3">
@@ -443,6 +607,23 @@ function CreatedItemsList({ plan }: { plan: OkScaffoldPlan }) {
             </div>
           </li>
         ))}
+        {personalCount > 0 ? (
+          <li className="flex items-start gap-3 rounded-md border border-dashed border-border/60 bg-muted/10 p-3">
+            <FileText
+              aria-hidden="true"
+              className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+              strokeWidth={1.5}
+            />
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <code className="font-mono text-1sm">
+                ~/.ok/templates/ ({personalCount} {personalCount === 1 ? 'template' : 'templates'})
+              </code>
+              <p className="text-1sm text-muted-foreground">
+                Personal templates: daily journal, reading log, weekly review, recipes, and more.
+              </p>
+            </div>
+          </li>
+        ) : null}
       </ul>
     </section>
   );

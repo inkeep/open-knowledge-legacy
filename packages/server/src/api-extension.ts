@@ -107,6 +107,7 @@ import {
   SearchSuccessSchema,
   SeedApplyRequestSchema,
   SeedApplySuccessSchema,
+  SeedListPacksSuccessSchema,
   SeedPlanSuccessSchema,
   ServerInfoSuccessSchema,
   SkillInstallStateSuccessSchema,
@@ -302,10 +303,14 @@ import {
 } from './rename-log.ts';
 import {
   applySeed,
+  coercePackId,
+  listStarterPacks,
+  planPersonalTemplates,
   planSeed,
   type ScaffoldPlan,
   SeedPrerequisiteError,
   SeedRootDirError,
+  writePersonalTemplates,
 } from './seed/index.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
 import {
@@ -6376,9 +6381,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     const url = new URL(req.url ?? '/', 'http://localhost');
     const rootDir = url.searchParams.get('rootDir') ?? undefined;
+    const rawPackId = url.searchParams.get('packId');
+    const packId = coercePackId(rawPackId);
+    if (rawPackId !== null && rawPackId !== '' && packId === undefined) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Unknown packId.', {
+        handler: 'seed-plan',
+        detail: `Pack id "${rawPackId}" is not registered.`,
+      });
+      return;
+    }
+    const includePersonalTemplates = url.searchParams.get('includePersonalTemplates') === 'true';
     try {
-      const plan = await planSeed({ projectDir: contentDir, rootDir });
-      successResponse(res, 200, SeedPlanSuccessSchema, { plan }, { handler: 'seed-plan' });
+      const plan = await planSeed({ projectDir: contentDir, rootDir, packId });
+      const planWithPersonal = includePersonalTemplates
+        ? { ...plan, personalTemplates: planPersonalTemplates() }
+        : plan;
+      successResponse(
+        res,
+        200,
+        SeedPlanSuccessSchema,
+        { plan: planWithPersonal },
+        { handler: 'seed-plan' },
+      );
     } catch (err) {
       if (err instanceof SeedPrerequisiteError) {
         errorResponse(
@@ -6416,9 +6440,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const plan = planValue as ScaffoldPlan;
+      const looseBody = body as { packId?: unknown; includePersonalTemplates?: unknown };
+      const rawPackId = looseBody.packId;
+      const packId = coercePackId(rawPackId);
+      if (typeof rawPackId === 'string' && rawPackId.length > 0 && packId === undefined) {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Unknown packId.', {
+          handler: 'seed-apply',
+          detail: `Pack id "${rawPackId}" is not registered.`,
+        });
+        return;
+      }
+      const includePersonalTemplates = looseBody.includePersonalTemplates === true;
       try {
-        const result = await applySeed(plan, { projectDir: contentDir });
-        successResponse(res, 200, SeedApplySuccessSchema, { result }, { handler: 'seed-apply' });
+        const result = await applySeed(plan, { projectDir: contentDir, packId });
+        const personalTemplates = includePersonalTemplates ? writePersonalTemplates() : undefined;
+        successResponse(
+          res,
+          200,
+          SeedApplySuccessSchema,
+          personalTemplates ? { result, personalTemplates } : { result },
+          { handler: 'seed-apply' },
+        );
       } catch (err) {
         errorResponse(
           res,
@@ -6438,6 +6480,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       preBodyGate: (req, res) => checkLocalOpSecurity(req, res, { handler: 'seed-apply' }),
     },
   );
+
+  async function handleSeedPacks(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, { handler: 'seed-packs' })) return;
+    if (req.method !== 'GET') {
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'seed-packs',
+        extraHeaders: { Allow: 'GET' },
+      });
+      return;
+    }
+    successResponse(
+      res,
+      200,
+      SeedListPacksSuccessSchema,
+      { packs: listStarterPacks() },
+      { handler: 'seed-packs' },
+    );
+  }
 
   const handleInstallSkill = withValidation(
     InstallSkillRequestSchema,
@@ -7474,6 +7534,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/skill/install-state': handleSkillInstallState,
     '/api/seed/plan': handleSeedPlan,
     '/api/seed/apply': handleSeedApply,
+    '/api/seed/packs': handleSeedPacks,
   };
 
   if (enableTestRoutes) {
@@ -7501,6 +7562,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/install-skill',
     '/api/folder-config',
     '/api/template',
+    '/api/seed/apply',
   ]);
   const STATE_MUTATING_PREFIXES: ReadonlyArray<string> = ['/api/local-op/'];
 

@@ -2,9 +2,14 @@ import { relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import {
   applySeed,
+  DEFAULT_PACK_ID,
+  type PackId,
   planSeed,
   type ScaffoldPlan,
   SeedPrerequisiteError,
+  STARTER_PACK_IDS,
+  STARTER_PACKS,
+  writePersonalTemplates,
 } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { accent, dim, error as errorColor, info, success, warning } from '../ui/colors.ts';
@@ -12,9 +17,15 @@ import { accent, dim, error as errorColor, info, success, warning } from '../ui/
 interface SeedCommandOptions {
   cwd?: string;
   root?: string;
+  pack?: PackId;
+  personalTemplates?: boolean;
   yes?: boolean;
   dryRun?: boolean;
   confirmStream?: NodeJS.ReadableStream;
+}
+
+function isPackId(value: unknown): value is PackId {
+  return typeof value === 'string' && STARTER_PACK_IDS.includes(value as PackId);
 }
 
 interface SeedCommandResult {
@@ -26,10 +37,19 @@ interface SeedCommandResult {
 
 export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedCommandResult> {
   const cwd = resolve(opts.cwd ?? process.cwd());
+  const packId: PackId = opts.pack ?? DEFAULT_PACK_ID;
+
+  if (!STARTER_PACKS[packId]) {
+    return {
+      status: 'failed',
+      message: `${errorColor('Error:')} Unknown pack "${packId}". Available: ${STARTER_PACK_IDS.join(', ')}`,
+      exitCode: 1,
+    };
+  }
 
   let plan: ScaffoldPlan;
   try {
-    plan = await planSeed({ projectDir: cwd, rootDir: opts.root });
+    plan = await planSeed({ projectDir: cwd, rootDir: opts.root, packId });
   } catch (err) {
     if (err instanceof SeedPrerequisiteError) {
       return {
@@ -46,9 +66,35 @@ export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedComman
   }
 
   if (plan.created.length === 0) {
+    const packName = STARTER_PACKS[packId].name;
+    if (opts.personalTemplates && !opts.dryRun) {
+      const ptResult = writePersonalTemplates();
+      if (ptResult.errors.length > 0) {
+        const lines = ptResult.errors.map((e) => `  ${warning('!')} ${e.path}: ${e.error}`);
+        return {
+          status: 'failed',
+          message: [
+            `${success(`Your ${packName} pack is already seeded.`)}`,
+            `${warning('Personal templates: some writes failed:')}`,
+            ...lines,
+          ].join('\n'),
+          plan,
+          exitCode: 1,
+        };
+      }
+      const wrote = ptResult.written.length;
+      if (wrote > 0) {
+        return {
+          status: 'applied',
+          message: `${success(`Your ${packName} pack is already seeded.`)}\n${success(`✓ Wrote ${wrote} personal template${wrote === 1 ? '' : 's'}`)} ${dim('to ~/.ok/templates/')}`,
+          plan,
+          exitCode: 0,
+        };
+      }
+    }
     return {
       status: 'no-op',
-      message: `${success('Your knowledge base is already seeded.')}\n${dim('Nothing to do.')}`,
+      message: `${success(`Your ${packName} pack is already seeded.`)}\n${dim('Nothing to do.')}`,
       plan,
       exitCode: 0,
     };
@@ -78,7 +124,7 @@ export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedComman
     }
   }
 
-  const applyResult = await applySeed(plan, { projectDir: cwd });
+  const applyResult = await applySeed(plan, { projectDir: cwd, packId });
 
   if (applyResult.errors.length > 0) {
     const errorLines = applyResult.errors.map((e) => `  ${errorColor('✗')} ${e.path}: ${e.error}`);
@@ -93,12 +139,35 @@ export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedComman
     };
   }
 
+  let personalTemplatesNote = '';
+  if (opts.personalTemplates) {
+    const result = writePersonalTemplates();
+    if (result.written.length > 0) {
+      personalTemplatesNote = `\n${success(`✓ Wrote ${result.written.length} personal template(s)`)} ${dim(`to ~/.ok/templates/`)}`;
+    } else if (result.errors.length === 0) {
+      personalTemplatesNote = `\n${dim('Personal templates already present — skipped.')}`;
+    } else {
+      const lines = result.errors.map((e) => `  ${warning('!')} ${e.path}: ${e.error}`);
+      personalTemplatesNote = `\n${warning('Personal templates: errors:')}\n${lines.join('\n')}`;
+    }
+  }
+
+  const packName = STARTER_PACKS[packId].name;
   return {
     status: 'applied',
-    message: `${success(`✓ Seeded knowledge base`)} ${dim(`(${applyResult.applied} entries, ${applyResult.durationMs}ms)`)}`,
+    message: `${success(`✓ Seeded ${packName}`)} ${dim(`(${applyResult.applied} entries, ${applyResult.durationMs}ms)`)}${personalTemplatesNote}`,
     plan,
     exitCode: 0,
   };
+}
+
+function formatPackList(): string {
+  const lines: string[] = [accent('Available packs:')];
+  for (const id of STARTER_PACK_IDS) {
+    const pack = STARTER_PACKS[id];
+    lines.push(`  ${success(id)}  ${dim('—')} ${pack.name}: ${pack.description}`);
+  }
+  return lines.join('\n');
 }
 
 function formatPlanBody(plan: ScaffoldPlan, cwd: string): string {
@@ -156,23 +225,52 @@ async function confirm(prompt: string, input?: NodeJS.ReadableStream): Promise<b
 export function seedCommand(): Command {
   return new Command('seed')
     .description(
-      'Scaffold the Karpathy three-layer knowledge-base structure (external-sources/, research/, articles/) + log.md + per-folder .ok/frontmatter.yml defaults. Use --root to place them inside a subfolder instead of the project root.',
+      `Scaffold a starter pack into the project. Defaults to "${DEFAULT_PACK_ID}" — the Karpathy three-layer knowledge base. Use --pack to pick a different pack (run with --list-packs to see all). Use --root to place pack folders inside a subfolder instead of the project root.`,
     )
     .argument('[path]', 'Project directory (defaults to cwd)')
+    .option(
+      '-p, --pack <id>',
+      `Starter pack to scaffold. One of: ${STARTER_PACK_IDS.join(', ')}. Defaults to "${DEFAULT_PACK_ID}".`,
+    )
     .option(
       '-r, --root <path>',
       'Subfolder (relative to the project dir) to scaffold into — created if missing. Defaults to the project root when omitted in non-interactive runs; prompts on a TTY.',
     )
+    .option(
+      '--personal-templates',
+      'Also write the personal-templates pack (daily journal, reading log, etc.) to ~/.ok/templates/ — idempotent.',
+    )
+    .option('--list-packs', 'List available starter packs and exit.')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--dry-run', 'Print the plan and exit without writing')
     .action(
       async (
         pathArg: string | undefined,
-        opts: { root?: string; yes?: boolean; dryRun?: boolean },
+        opts: {
+          pack?: string;
+          root?: string;
+          personalTemplates?: boolean;
+          listPacks?: boolean;
+          yes?: boolean;
+          dryRun?: boolean;
+        },
       ) => {
+        if (opts.listPacks) {
+          process.stdout.write(`${formatPackList()}\n`);
+          return;
+        }
+        if (opts.pack !== undefined && !isPackId(opts.pack)) {
+          process.stderr.write(
+            `${errorColor('Error:')} Unknown pack "${opts.pack}". Available: ${STARTER_PACK_IDS.join(', ')}\n`,
+          );
+          process.exitCode = 1;
+          return;
+        }
         const result = await runSeed({
           cwd: pathArg ?? process.cwd(),
+          pack: opts.pack as PackId | undefined,
           root: opts.root,
+          personalTemplates: opts.personalTemplates,
           yes: opts.yes,
           dryRun: opts.dryRun,
         });

@@ -296,6 +296,7 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         seed: {
           plan: async () => ({ ok: false, error: { kind: 'no-project', message: 'test mock' } }),
           apply: async () => ({ ok: false, error: { kind: 'no-project', message: 'test mock' } }),
+          listPacks: async () => ({ ok: true, packs: [] }),
         },
         skill: {
           detectClaudeDesktop: async () => false,

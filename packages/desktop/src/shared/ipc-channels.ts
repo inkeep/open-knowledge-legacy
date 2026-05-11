@@ -1,6 +1,6 @@
 import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
 import type { BuildAndOpenResult } from '../main/ipc/install-skill.ts';
-import type { SeedApplyResult, SeedPlanResult } from '../main/ipc/seed.ts';
+import type { SeedApplyResult, SeedListPacksResult, SeedPlanResult } from '../main/ipc/seed.ts';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 import type {
   OkDesktopConfig,
@@ -8,6 +8,8 @@ import type {
   OkLocalOpAuthStatusResponse,
   OkThemeSource,
   OkUpdateChannel,
+  SeedApplyOptions,
+  SeedPlanOptions,
 } from './bridge-contract.ts';
 import type { EntryPoint } from './entry-point.ts';
 
@@ -235,8 +237,12 @@ export interface RequestChannels {
     result: undefined;
   };
   'ok:debug:keyring-smoke': { args: []; result: KeyringSmokeResult };
-  'ok:seed:plan': { args: [rootDir?: string]; result: SeedPlanResult };
-  'ok:seed:apply': { args: [plan: ScaffoldPlan]; result: SeedApplyResult };
+  'ok:seed:plan': { args: [options?: SeedPlanOptions]; result: SeedPlanResult };
+  'ok:seed:apply': {
+    args: [plan: ScaffoldPlan, options?: SeedApplyOptions];
+    result: SeedApplyResult;
+  };
+  'ok:seed:list-packs': { args: []; result: SeedListPacksResult };
   'ok:mcp-wiring:confirm': {
     args: [request: McpWiringConfirmRequest];
     result: McpWiringConfirmResult;

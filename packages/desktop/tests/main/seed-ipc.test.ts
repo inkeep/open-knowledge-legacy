@@ -64,7 +64,10 @@ describe('handleSeedPlan', () => {
 
   test('returns {ok:false, invalid-root} when rootDir resolves outside projectDir', async () => {
     scaffoldOkDir(testDir);
-    const result = await handleSeedPlan({ resolveProjectRoot: () => testDir }, '/tmp/escape');
+    const result = await handleSeedPlan(
+      { resolveProjectRoot: () => testDir },
+      { rootDir: '/tmp/escape' },
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.kind).toBe('invalid-root');

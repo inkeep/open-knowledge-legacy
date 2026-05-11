@@ -115,6 +115,32 @@ export const SeedApplySuccessSchema = z
   .loose() satisfies StandardSchemaV1;
 export type SeedApplySuccess = z.infer<typeof SeedApplySuccessSchema>;
 
+export const SeedPackFolderInfoSchema = z
+  .object({
+    path: z.string().min(1),
+    summary: z.string().min(1),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SeedPackFolderInfo = z.infer<typeof SeedPackFolderInfoSchema>;
+
+export const SeedPackInfoSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().min(1),
+    defaultSubfolder: z.string().optional(),
+    folders: z.array(SeedPackFolderInfoSchema),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SeedPackInfo = z.infer<typeof SeedPackInfoSchema>;
+
+export const SeedListPacksSuccessSchema = z
+  .object({
+    packs: z.array(SeedPackInfoSchema),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SeedListPacksSuccess = z.infer<typeof SeedListPacksSuccessSchema>;
+
 export const InstallSkillRequestSchema = z
   .object({
     noOpen: z.boolean().optional(),

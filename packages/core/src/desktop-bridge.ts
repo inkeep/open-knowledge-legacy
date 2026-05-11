@@ -156,10 +156,20 @@ interface OkScaffoldSkipEntry {
   path: string;
   reason: 'already-exists' | 'user-content' | 'glob-collision';
 }
+interface OkScaffoldPersonalTemplatePreview {
+  willWrite: string[];
+  willSkip: string[];
+}
+interface OkScaffoldPersonalTemplateWriteResult {
+  written: string[];
+  skipped: string[];
+  errors: Array<{ path: string; error: string }>;
+}
 interface OkScaffoldPlan {
   created: OkScaffoldFileEntry[];
   skipped: OkScaffoldSkipEntry[];
   warnings: string[];
+  personalTemplates?: OkScaffoldPersonalTemplatePreview;
 }
 interface OkScaffoldApplyError {
   path: string;
@@ -175,10 +185,49 @@ interface OkSeedError {
   kind: 'no-project' | 'prerequisite-missing' | 'invalid-root' | 'internal';
   message: string;
 }
+
+type OkPackId =
+  | 'knowledge-base'
+  | 'software-lifecycle'
+  | 'plain-notes'
+  | 'worldbuilding'
+  | 'writing-pipeline';
+
+interface OkSeedPlanOptions {
+  rootDir?: string;
+  packId?: OkPackId;
+  includePersonalTemplates?: boolean;
+}
+
+interface OkSeedApplyOptions {
+  packId?: OkPackId;
+  includePersonalTemplates?: boolean;
+}
+
+interface OkSeedPackFolderInfo {
+  path: string;
+  summary: string;
+}
+
+interface OkSeedPackInfo {
+  id: OkPackId;
+  name: string;
+  description: string;
+  defaultSubfolder?: string;
+  folders: OkSeedPackFolderInfo[];
+}
+
 type OkSeedPlanResult = { ok: true; plan: OkScaffoldPlan } | { ok: false; error: OkSeedError };
 type OkSeedApplyResult =
-  | { ok: true; result: OkScaffoldApplyResult }
+  | {
+      ok: true;
+      result: OkScaffoldApplyResult;
+      personalTemplates?: OkScaffoldPersonalTemplateWriteResult;
+    }
   | { ok: false; error: OkSeedError };
+type OkSeedListPacksResult =
+  | { ok: true; packs: OkSeedPackInfo[] }
+  | { ok: false; error: { kind: 'internal'; message: string } };
 
 type OkLocalOpAuthEvent =
   | {
@@ -303,8 +352,9 @@ export interface OkDesktopBridge {
   };
 
   seed: {
-    plan(rootDir?: string): Promise<OkSeedPlanResult>;
-    apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
+    plan(options?: OkSeedPlanOptions): Promise<OkSeedPlanResult>;
+    apply(plan: OkScaffoldPlan, options?: OkSeedApplyOptions): Promise<OkSeedApplyResult>;
+    listPacks(): Promise<OkSeedListPacksResult>;
   };
 
   skill: {

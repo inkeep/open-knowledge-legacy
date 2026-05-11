@@ -2,15 +2,9 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { assertEntryPathInProject } from './path-safety.ts';
-import {
-  STARTER_FOLDER_FRONTMATTER_FILENAME,
-  STARTER_FOLDERS,
-  STARTER_TEMPLATES,
-} from './starter.ts';
+import { DEFAULT_PACK_ID, resolvePack, STARTER_FOLDER_FRONTMATTER_FILENAME } from './starter.ts';
 import type { FileEntry, ScaffoldPlan, SeedOptions, SkipEntry } from './types.ts';
 import { SeedPrerequisiteError, SeedRootDirError } from './types.ts';
-
-const LOG_MD_FILENAME = 'log.md';
 
 function frontmatterTemplateId(folderPath: string): string {
   return `${folderPath}/.ok/frontmatter.yml`;
@@ -52,6 +46,7 @@ export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
   }
 
   const rootDir = normalizeRootDir(opts.rootDir, projectDir);
+  const pack = resolvePack(opts.packId ?? DEFAULT_PACK_ID);
 
   const created: FileEntry[] = [];
   const skipped: SkipEntry[] = [];
@@ -66,7 +61,7 @@ export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
     }
   }
 
-  for (const folder of STARTER_FOLDERS) {
+  for (const folder of pack.folders) {
     const folderPath = joinRelative(rootDir, folder.path);
     const folderAbs = join(projectDir, folderPath);
     if (existsSync(folderAbs)) {
@@ -103,29 +98,41 @@ export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
       created.push({ path: tplDir, kind: 'folder' });
     }
 
-    const tplFile = `${tplDir}/${folder.starterTemplate}.md`;
-    const tplFileAbs = join(projectDir, tplFile);
-    if (existsSync(tplFileAbs)) {
-      skipped.push({ path: tplFile, reason: 'already-exists' });
-    } else if (STARTER_TEMPLATES[folder.starterTemplate] === undefined) {
-      warnings.push(
-        `No starter template body registered for "${folder.starterTemplate}". The folder will land without a template.`,
-      );
-    } else {
+    const templatesToInstall = [folder.starterTemplate, ...(folder.extraTemplates ?? [])];
+    for (const templateName of templatesToInstall) {
+      const tplFile = `${tplDir}/${templateName}.md`;
+      const tplFileAbs = join(projectDir, tplFile);
+      if (existsSync(tplFileAbs)) {
+        skipped.push({ path: tplFile, reason: 'already-exists' });
+        continue;
+      }
+      if (pack.templates[templateName] === undefined) {
+        const isStarter = templateName === folder.starterTemplate;
+        warnings.push(
+          isStarter
+            ? `No starter template body registered for "${templateName}" in pack "${pack.id}". The folder will land without a pre-selected template.`
+            : `No body registered for extra template "${templateName}" in pack "${pack.id}". The folder will land without that optional variant.`,
+        );
+        continue;
+      }
       created.push({
         path: tplFile,
         kind: 'file',
-        template: templateFileTemplateId(folder.path, folder.starterTemplate),
+        template: templateFileTemplateId(folder.path, templateName),
       });
     }
   }
 
-  const logRelPath = joinRelative(rootDir, LOG_MD_FILENAME);
-  const logAbsPath = join(projectDir, logRelPath);
-  if (existsSync(logAbsPath)) {
-    skipped.push({ path: logRelPath, reason: 'already-exists' });
-  } else {
-    created.push({ path: logRelPath, kind: 'file', template: LOG_MD_FILENAME });
+  if (pack.rootFiles) {
+    for (const filename of Object.keys(pack.rootFiles)) {
+      const relPath = joinRelative(rootDir, filename);
+      const absPath = join(projectDir, relPath);
+      if (existsSync(absPath)) {
+        skipped.push({ path: relPath, reason: 'already-exists' });
+      } else {
+        created.push({ path: relPath, kind: 'file', template: filename });
+      }
+    }
   }
 
   return { created, skipped, warnings };
