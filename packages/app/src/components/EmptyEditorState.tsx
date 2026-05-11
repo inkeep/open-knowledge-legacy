@@ -74,7 +74,7 @@ export function EmptyEditorState() {
         isOnboarding ? (
           <OnboardingMessage onCtaClick={() => setSeedDialogOpen(true)} />
         ) : (
-          <NoSelectionMessage />
+          <NoSelectionMessage onCtaClick={() => setSeedDialogOpen(true)} />
         )
       ) : null}
       <SeedDialog
@@ -107,10 +107,14 @@ function OnboardingMessage({ onCtaClick }: { onCtaClick: () => void }) {
   );
 }
 
-function NoSelectionMessage() {
+function NoSelectionMessage({ onCtaClick }: { onCtaClick: () => void }) {
   return (
     <div className="flex flex-col items-center gap-3">
       <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
+      <Button variant="outline" size="sm" onClick={onCtaClick}>
+        <Sparkles aria-hidden="true" className="h-4 w-4" />
+        Pick a starter pack
+      </Button>
     </div>
   );
 }
