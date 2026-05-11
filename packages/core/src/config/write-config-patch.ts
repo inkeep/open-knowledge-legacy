@@ -5,6 +5,7 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { isMap, isSeq, type ParsedNode, parseDocument } from 'yaml';
 import { LOCAL_DIR, OK_DIR } from '../constants/ok-dir.ts';
 import { atomicWriteFile } from '../util/atomic-yaml-write.ts';
+import { FileLockTimeoutError, withFileLock } from '../util/file-lock.ts';
 import type { ConfigValidationError, WriteScope } from './errors.ts';
 import type { Err, Ok, Result } from './result.ts';
 import { type Config, type ConfigPatch, ConfigSchema } from './schema.ts';
@@ -88,13 +89,41 @@ export async function writeConfigPatch(
 async function writeConfigPatchInner(
   opts: WriteConfigPatchOptions,
 ): Promise<WriteConfigPatchResult> {
-  const { cwd, scope, patch, homedirOverride, firstWriteHeader } = opts;
+  const { cwd, scope, patch, homedirOverride } = opts;
   const absPath = resolveConfigPath(scope, cwd, homedirOverride);
 
   const scopeViolation = validatePatchScopes(patch, scope);
   if (scopeViolation !== null) {
     return err(scopeViolation);
   }
+
+  try {
+    await mkdir(dirname(absPath), { recursive: true });
+  } catch (e) {
+    return err({
+      code: 'WRITE_ERROR',
+      detail: `Could not create parent directory for ${absPath}: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  try {
+    return await withFileLock(`${absPath}.lock`, () => writeConfigPatchLocked(opts, absPath));
+  } catch (e) {
+    if (e instanceof FileLockTimeoutError) {
+      return err({
+        code: 'WRITE_ERROR',
+        detail: e.message,
+      });
+    }
+    throw e;
+  }
+}
+
+async function writeConfigPatchLocked(
+  opts: WriteConfigPatchOptions,
+  absPath: string,
+): Promise<WriteConfigPatchResult> {
+  const { patch, scope, firstWriteHeader } = opts;
 
   let existingContent = '';
   let fileExists = false;

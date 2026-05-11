@@ -20,3 +20,8 @@ export {
   type AtomicWriteOptions,
   atomicWriteFile,
 } from './util/atomic-yaml-write.ts';
+export {
+  FileLockTimeoutError,
+  type WithFileLockOptions,
+  withFileLock,
+} from './util/file-lock.ts';

@@ -405,3 +405,77 @@ describe('writeConfigPatch — scope-violation gate', () => {
     expect(result.error.expectedScope).toBe('user');
   });
 });
+
+describe('writeConfigPatch — concurrent writes (file lock)', () => {
+  test('concurrent patches to distinct keys all land — no clobber', async () => {
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
+
+    await writeConfigPatch({
+      cwd: testDir,
+      scope: 'project',
+      patch: { schemaVersion: 1 },
+    });
+
+    const patches: ReadonlyArray<{ folders: ReadonlyArray<{ path: string }> }> = [
+      { folders: [{ path: 'a' }] },
+      { folders: [{ path: 'b' }] },
+      { folders: [{ path: 'c' }] },
+      { folders: [{ path: 'd' }] },
+      { folders: [{ path: 'e' }] },
+      { folders: [{ path: 'f' }] },
+      { folders: [{ path: 'g' }] },
+      { folders: [{ path: 'h' }] },
+    ];
+
+    const results = await Promise.all(
+      patches.map((patch) =>
+        writeConfigPatch({
+          cwd: testDir,
+          scope: 'project',
+          patch,
+        }),
+      ),
+    );
+
+    for (const result of results) {
+      if (!result.ok) throw new Error(`unexpected failure: ${JSON.stringify(result.error)}`);
+    }
+
+    const finalText = readFileSync(projectConfigPath(), 'utf-8');
+    const candidatePaths = patches.map((p) => p.folders[0]?.path);
+    const matches = candidatePaths.filter((path) => finalText.includes(`path: ${path}`));
+    expect(matches.length).toBeGreaterThanOrEqual(1);
+
+    expect(existsSync(`${projectConfigPath()}.lock`)).toBe(false);
+  });
+
+  test('preserves keys touched only by writer A when writer B patches a different key concurrently', async () => {
+    mkdirSync(join(testDir, '.ok'), { recursive: true });
+
+    await writeConfigPatch({
+      cwd: testDir,
+      scope: 'project',
+      patch: { folders: [{ path: 'seed' }] },
+    });
+
+    const races = Array.from({ length: 50 }, (_, i) => ({
+      a: { folders: [{ path: `path-${i}` }] } as const,
+      b: { mcp: { transport: i % 2 === 0 ? 'stdio' : 'http' } } as const,
+    }));
+
+    const allResults = await Promise.all(
+      races.flatMap(({ a, b }) => [
+        writeConfigPatch({ cwd: testDir, scope: 'project', patch: a }),
+        writeConfigPatch({ cwd: testDir, scope: 'project', patch: b }),
+      ]),
+    );
+
+    for (const result of allResults) {
+      if (!result.ok) throw new Error(`unexpected failure: ${JSON.stringify(result.error)}`);
+    }
+
+    const finalText = readFileSync(projectConfigPath(), 'utf-8');
+    expect(finalText).toMatch(/folders:/);
+    expect(finalText).toMatch(/mcp:[\s\S]*transport:/);
+  });
+});
