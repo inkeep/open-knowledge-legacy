@@ -42,29 +42,6 @@
       "inline": false,
       "atom": false
     },
-    "image": {
-      "attrs": {
-        "src": {
-          "hasDefault": true
-        },
-        "alt": {
-          "hasDefault": true
-        },
-        "title": {
-          "hasDefault": true
-        },
-        "width": {
-          "hasDefault": true
-        },
-        "height": {
-          "hasDefault": true
-        }
-      },
-      "content": "",
-      "group": "inline",
-      "inline": true,
-      "atom": false
-    },
     "jsxComponent": {
       "attrs": {
         "componentName": {
@@ -371,6 +348,32 @@
       "content": "block+",
       "group": "",
       "inline": false,
+      "atom": false
+    },
+    "image": {
+      "attrs": {
+        "src": {
+          "hasDefault": true
+        },
+        "alt": {
+          "hasDefault": true
+        },
+        "title": {
+          "hasDefault": true
+        },
+        "width": {
+          "hasDefault": true
+        },
+        "height": {
+          "hasDefault": true
+        },
+        "sourceUrl": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "inline",
+      "inline": true,
       "atom": false
     },
     "imageReference": {

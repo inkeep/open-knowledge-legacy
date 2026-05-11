@@ -1,3 +1,4 @@
+import { toDesktopAssetHref } from '@inkeep/open-knowledge-core';
 import { FileUp } from 'lucide-react';
 
 interface FileProps {
@@ -32,18 +33,19 @@ export function basenameFromUrl(src: string | undefined): string {
 export function File(props: FileProps) {
   const displayName = props.name?.trim() || basenameFromUrl(props.src) || 'Untitled file';
   const sizeText = props.size?.trim() ? props.size : null;
+  const href = props.src ? toDesktopAssetHref(props.src) : undefined;
 
   const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.stopPropagation();
     e.preventDefault();
-    if (props.src) {
-      window.open(props.src, '_blank', 'noopener,noreferrer');
+    if (href) {
+      window.open(href, '_blank', 'noopener,noreferrer');
     }
   };
 
   return (
     <a
-      href={props.src || undefined}
+      href={href}
       title={props.title}
       className="ok-file-attachment"
       target="_blank"
