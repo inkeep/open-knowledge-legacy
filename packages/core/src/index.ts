@@ -140,6 +140,17 @@ export {
   type ConfigDocName,
   SYSTEM_DOC_NAME,
 } from './constants/cc1.ts';
+export type { CreateNewBannerKind } from './constants/create-new-banner.ts';
+export {
+  CREATE_NEW_PROJECT_FAILURE_REASONS,
+  type CreateNewProjectFailureReason,
+} from './constants/create-new-project-reason.ts';
+export {
+  ALL_EDITOR_IDS,
+  EDITOR_LABELS,
+  type EditorId,
+} from './constants/editors.ts';
+export type { OkFolderState } from './constants/folder-state.ts';
 export { DEFAULT_GITHUB_OAUTH_CLIENT_ID } from './constants/github.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
 export { GREP_MAX_RESULTS, READ_DOCUMENT_HISTORY_DEPTH } from './constants/mcp.ts';
@@ -690,6 +701,7 @@ export {
 export { type BasenameIndex, createBasenameIndex } from './utils/path-resolve.ts';
 export { type PdfAnchorParts, parsePdfAnchor } from './utils/pdf-anchor.ts';
 export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';
+export { sanitizeFolderName } from './utils/sanitize-folder-name.ts';
 export {
   disambiguateSlug,
   getHeadingSlug,

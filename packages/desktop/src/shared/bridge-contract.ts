@@ -1,5 +1,8 @@
+import type { CreateNewBannerKind, EditorId, OkFolderState } from '@inkeep/open-knowledge-core';
 import type {
   ApplyResult,
+  FindEnclosingGitRootResult,
+  FindEnclosingProjectRootResult,
   PackId,
   PersonalTemplateWriteResult,
   ScaffoldPlan,
@@ -125,7 +128,7 @@ interface OkStateSnapshot {
   } | null;
 }
 
-type OkMcpWiringEditorId = 'claude' | 'claude-desktop' | 'cursor' | 'codex';
+type OkMcpWiringEditorId = EditorId;
 
 /** Payload passed to `onShow` subscribers. Mirrors ok:mcp-wiring:show.
  *  `willReplace: true` signals the editor has an existing OK-managed entry
@@ -258,7 +261,6 @@ export interface OkDesktopBridge {
 
   dialog: {
     openFolder(opts?: { defaultPath?: string }): Promise<string | null>;
-    createFolder(): Promise<string | null>;
   };
 
   shell: {
@@ -312,7 +314,24 @@ export interface OkDesktopBridge {
     getSessionState(): Promise<ProjectSessionState>;
     setSessionState(state: ProjectSessionState): Promise<void>;
     open(request: { path: string; target: 'new-window'; entryPoint: EntryPoint }): Promise<void>;
+    createNew(args: {
+      parent: string;
+      name: string;
+      editors: OkMcpWiringEditorId[];
+    }): Promise<void>;
+    recordCreateNewBannerShown(banner: CreateNewBannerKind): Promise<void>;
     close(): Promise<void>;
+  };
+
+  fs: {
+    /** Persisted last-used parent directory, or a platform-sensible default
+     *  on first launch (`~/Documents/Open Knowledge/`). */
+    defaultProjectsRoot(): Promise<string>;
+    /** Classify the candidate path: missing (`free`), present but empty,
+     *  or present with entries. Stat errors fall through to `free`. */
+    folderState(path: string): Promise<OkFolderState>;
+    findEnclosingProjectRoot(path: string): Promise<FindEnclosingProjectRootResult | null>;
+    findEnclosingGitRoot(path: string): Promise<FindEnclosingGitRootResult | null>;
   };
 
   navigator: {

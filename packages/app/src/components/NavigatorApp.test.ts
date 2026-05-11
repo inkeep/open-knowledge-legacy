@@ -15,11 +15,12 @@ interface MockBridge {
     getSessionState: ReturnType<typeof mock>;
     setSessionState: ReturnType<typeof mock>;
     open: ReturnType<typeof mock>;
+    createNew: ReturnType<typeof mock>;
+    recordCreateNewBannerShown: ReturnType<typeof mock>;
     close: ReturnType<typeof mock>;
   };
   dialog: {
     openFolder: ReturnType<typeof mock>;
-    createFolder: ReturnType<typeof mock>;
   };
 }
 
@@ -39,11 +40,12 @@ function makeBridge(overrides: Partial<MockBridge> = {}): MockBridge {
       ),
       setSessionState: mock(() => Promise.resolve()),
       open: mock(() => Promise.resolve()),
+      createNew: mock(() => Promise.resolve()),
+      recordCreateNewBannerShown: mock(() => Promise.resolve()),
       close: mock(() => Promise.resolve()),
     },
     dialog: {
       openFolder: mock(() => Promise.resolve(null)),
-      createFolder: mock(() => Promise.resolve(null)),
     },
     ...overrides,
   };
@@ -76,6 +78,8 @@ describe('NavigatorApp bridge contract', () => {
         ),
         setSessionState: mock(() => Promise.resolve()),
         open: mock(() => Promise.resolve()),
+        createNew: mock(() => Promise.resolve()),
+        recordCreateNewBannerShown: mock(() => Promise.resolve()),
         close: mock(() => Promise.resolve()),
       },
     });
@@ -103,7 +107,6 @@ describe('NavigatorApp bridge contract', () => {
     const bridge = makeBridge({
       dialog: {
         openFolder: mock(() => Promise.resolve('/tmp/picked')),
-        createFolder: mock(() => Promise.resolve(null)),
       },
     });
     const result = await bridge.dialog.openFolder();
@@ -235,8 +238,12 @@ describe('NavigatorApp entry-point propagation', () => {
     expect(NAVIGATOR_SRC).toMatch(/onOpenFolder\s*=[\s\S]*?openProject\([^)]*,\s*'pick-existing'/);
   });
 
-  test('Start fresh → openProject(..., "start-fresh")', () => {
-    expect(NAVIGATOR_SRC).toMatch(/onStartFresh\s*=[\s\S]*?openProject\([^)]*,\s*'start-fresh'/);
+  test('Create new project card opens CreateProjectDialog (no direct openProject dispatch)', () => {
+    expect(NAVIGATOR_SRC).toMatch(/const\s+onCreate\s*=\s*\(\)\s*=>\s*setCreateDialogOpen\(true\)/);
+    expect(NAVIGATOR_SRC).toMatch(/<CreateProjectDialog\b[\s\S]*?bridge=\{bridge\}/);
+    expect(NAVIGATOR_SRC).toMatch(
+      /data-testid=['"]nav-create-new['"]|dataTestId=['"]nav-create-new['"]/,
+    );
   });
 
   test('Open Recent row → openProject(..., "recents")', () => {

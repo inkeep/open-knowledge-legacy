@@ -24,7 +24,6 @@ function makeBridge(
     }),
     dialog: {
       openFolder: mock(() => Promise.resolve(null)),
-      createFolder: mock(() => Promise.resolve(null)),
     },
     shell: {
       openExternal: mock(() => Promise.resolve()),

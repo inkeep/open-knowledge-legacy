@@ -32,6 +32,7 @@ export interface AppState {
   projectSessions: Record<string, ProjectSessionState>;
   updateChannel: UpdateChannel;
   schemaVersion: number;
+  lastUsedProjectParent: string | null;
 }
 
 const RECENT_CAP = 20;
@@ -48,7 +49,12 @@ export function emptyState(): AppState {
     projectSessions: {},
     updateChannel: 'latest',
     schemaVersion: CURRENT_SCHEMA_VERSION,
+    lastUsedProjectParent: null,
   };
+}
+
+export function setLastUsedProjectParent(state: AppState, parent: string): AppState {
+  return { ...state, lastUsedProjectParent: parent };
 }
 
 function emptyProjectSessionState(): ProjectSessionState {
@@ -267,6 +273,10 @@ export function parseAppState(raw: unknown): AppState | null {
       ? obj.schemaVersion
       : 1;
   const projectSessions = parseProjectSessions(obj.projectSessions);
+  const lastUsedProjectParent =
+    typeof obj.lastUsedProjectParent === 'string' && obj.lastUsedProjectParent.length > 0
+      ? obj.lastUsedProjectParent
+      : null;
   return {
     recentProjects,
     lastOpenedProject,
@@ -278,5 +288,6 @@ export function parseAppState(raw: unknown): AppState | null {
     projectSessions,
     updateChannel,
     schemaVersion,
+    lastUsedProjectParent,
   };
 }

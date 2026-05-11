@@ -21,6 +21,8 @@ import {
 } from '@inkeep/open-knowledge';
 import {
   ensureProjectGit,
+  findEnclosingGitRoot,
+  findEnclosingProjectRoot,
   installUserSkill,
   isProcessAlive,
   readServerLock,
@@ -61,8 +63,14 @@ import {
   wrapperPathInBundle,
 } from './cli-install.ts';
 import { requestUserConsent, walkExceedsCap } from './consent-dialog.ts';
+import {
+  CreateNewProjectError,
+  folderState,
+  resolveDefaultProjectsRoot,
+  runCreateNew,
+} from './create-new-project.ts';
 import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
-import { promptForExistingFolder, promptForFolder } from './dialog-helpers.ts';
+import { promptForExistingFolder } from './dialog-helpers.ts';
 import {
   type DriverUtilityLike,
   isDriverBootSmokeMode,
@@ -95,7 +103,11 @@ import {
 } from './mcp-wiring.ts';
 import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow, tryCloseNavigator } from './navigator-window.ts';
-import { type OnboardingFlowKind, recordOnboardingFlow } from './onboarding-telemetry.ts';
+import {
+  type OnboardingFlowKind,
+  recordCreateNewBannerShown,
+  recordOnboardingFlow,
+} from './onboarding-telemetry.ts';
 import {
   applyReducedTransparency,
   type BrowserWindowVibrancyTarget,
@@ -115,6 +127,7 @@ import {
   parseAppState,
   type SchemaIncompatibilityDiagnostic,
   saveAppStateToDir,
+  setLastUsedProjectParent,
   setProjectSessionState,
 } from './state-store.ts';
 import { applyThemeApplied } from './theme-applied-handler.ts';
@@ -453,126 +466,108 @@ async function openProject(
       return;
     }
     flowKind = 'managed-promote';
-    if (entryPoint !== 'recents') {
+    if (entryPoint !== 'recents' && entryPoint !== 'create-new-nested-redirect') {
       toastPayload = { kind: 'ancestor-promote', ancestorPath: discovery.projectDir };
     }
   } else if (discovery.kind === 'managed') {
     flowKind = discovery.ancestorPromoted ? 'managed-promote' : 'managed-direct';
-    if (discovery.ancestorPromoted && entryPoint !== 'recents') {
+    if (
+      discovery.ancestorPromoted &&
+      entryPoint !== 'recents' &&
+      entryPoint !== 'create-new-nested-redirect'
+    ) {
       toastPayload = { kind: 'ancestor-promote', ancestorPath: discovery.projectDir };
     }
   } else {
-    const isSilent = entryPoint === 'start-fresh';
-    if (isSilent) {
-      flowKind = 'fresh-silent';
-      if (discovery.gitState === 'absent' || discovery.gitState === 'shell-only') {
-        await ensureProjectGit(discovery.projectDir);
-        didEnsureGit = true;
-      }
-      await initContent(discovery.projectDir, {
-        contentDir: discovery.defaultContentDir !== '.' ? discovery.defaultContentDir : undefined,
-      });
-      aiIntegrationsFailedCount = logAiIntegrationOutcomes(
-        writeProjectAiIntegrations(discovery.projectDir, [...ALL_EDITOR_IDS]),
-      );
-      if (discovery.gitRootPromoted) {
-        toastPayload = {
-          kind: 'git-root-promote',
-          gitRoot: discovery.projectDir,
-          contentDir: discovery.defaultContentDir,
-        };
-      }
-    } else {
-      let navigator = navigatorWindow;
+    let navigator = navigatorWindow;
+    if (!navigator) {
+      openNavigator();
+      navigator = navigatorWindow;
       if (!navigator) {
-        openNavigator();
-        navigator = navigatorWindow;
-        if (!navigator) {
-          dialog.showErrorBox(
-            'Cannot open this folder',
-            `${projectPath}\n\nFailed to open the Project Navigator.`,
-          );
-          return;
-        }
-        const navigatorWebContents = (navigator as unknown as { webContents: Electron.WebContents })
-          .webContents;
-        if (navigatorWebContents.isLoading()) {
-          await new Promise<void>((resolve, reject) => {
-            const onLoad = () => {
-              navigatorWebContents.removeListener('destroyed', onDestroyed);
-              resolve();
-            };
-            const onDestroyed = () => {
-              navigatorWebContents.removeListener('did-finish-load', onLoad);
-              reject(new Error('Navigator destroyed during load'));
-            };
-            navigatorWebContents.once('did-finish-load', onLoad);
-            navigatorWebContents.once('destroyed', onDestroyed);
-          });
-        }
-      }
-      const showPayload: OnboardingShowPayload = {
-        pickedPath: discovery.pickedPath,
-        projectDir: discovery.projectDir,
-        defaultContentDir: discovery.defaultContentDir,
-        gitState: discovery.gitState,
-        gitRootPromoted: discovery.gitRootPromoted,
-        warnings: validation.warnings.map((w) => ({ kind: w.kind })),
-        editorOptions: ALL_EDITOR_IDS.map((id) => ({
-          id: id as McpWiringEditorId,
-          label: EDITOR_TARGETS[id].label,
-          hasProjectConfig: EDITOR_TARGETS[id].projectConfigPath !== undefined,
-        })),
-      };
-      const decision = await requestUserConsent(
-        {
-          ipcMain,
-          navigator: (navigator as unknown as { webContents: Electron.WebContents }).webContents,
-          previewContent,
-        },
-        showPayload,
-      );
-      if (decision.outcome === 'cancel') {
-        recordOnboardingFlow({
-          flowKind: 'cancel',
-          entryPoint,
-          gitInitRequested: false,
-          contentDirChanged: false,
-          warningsCount,
-        });
+        dialog.showErrorBox(
+          'Cannot open this folder',
+          `${projectPath}\n\nFailed to open the Project Navigator.`,
+        );
         return;
       }
-      const { request } = decision;
-      contentDirChanged = request.contentDir !== discovery.defaultContentDir;
-      flowKind =
-        contentDirChanged ||
-        request.additionalIgnores.trim().length > 0 ||
-        request.editorIds.length !== ALL_EDITOR_IDS.length
-          ? 'fresh-customized'
-          : 'fresh-default';
-      if (
-        request.initGit &&
-        (discovery.gitState === 'absent' || discovery.gitState === 'shell-only')
-      ) {
-        await ensureProjectGit(discovery.projectDir);
-        didEnsureGit = true;
+      const navigatorWebContents = (navigator as unknown as { webContents: Electron.WebContents })
+        .webContents;
+      if (navigatorWebContents.isLoading()) {
+        await new Promise<void>((resolve, reject) => {
+          const onLoad = () => {
+            navigatorWebContents.removeListener('destroyed', onDestroyed);
+            resolve();
+          };
+          const onDestroyed = () => {
+            navigatorWebContents.removeListener('did-finish-load', onLoad);
+            reject(new Error('Navigator destroyed during load'));
+          };
+          navigatorWebContents.once('did-finish-load', onLoad);
+          navigatorWebContents.once('destroyed', onDestroyed);
+        });
       }
-      await initContent(discovery.projectDir, {
-        contentDir: request.contentDir !== '.' ? request.contentDir : undefined,
+    }
+    const showPayload: OnboardingShowPayload = {
+      pickedPath: discovery.pickedPath,
+      projectDir: discovery.projectDir,
+      defaultContentDir: discovery.defaultContentDir,
+      gitState: discovery.gitState,
+      gitRootPromoted: discovery.gitRootPromoted,
+      warnings: validation.warnings.map((w) => ({ kind: w.kind })),
+      editorOptions: ALL_EDITOR_IDS.map((id) => ({
+        id: id as McpWiringEditorId,
+        label: EDITOR_TARGETS[id].label,
+        hasProjectConfig: EDITOR_TARGETS[id].projectConfigPath !== undefined,
+      })),
+    };
+    const decision = await requestUserConsent(
+      {
+        ipcMain,
+        navigator: (navigator as unknown as { webContents: Electron.WebContents }).webContents,
+        previewContent,
+      },
+      showPayload,
+    );
+    if (decision.outcome === 'cancel') {
+      recordOnboardingFlow({
+        flowKind: 'cancel',
+        entryPoint,
+        gitInitRequested: false,
+        contentDirChanged: false,
+        warningsCount,
       });
-      if (request.additionalIgnores.trim().length > 0) {
-        appendOkIgnoreSync(discovery.projectDir, request.additionalIgnores);
-      }
-      aiIntegrationsFailedCount = logAiIntegrationOutcomes(
-        writeProjectAiIntegrations(discovery.projectDir, [...request.editorIds]),
-      );
-      if (discovery.gitRootPromoted) {
-        toastPayload = {
-          kind: 'git-root-promote',
-          gitRoot: discovery.projectDir,
-          contentDir: request.contentDir,
-        };
-      }
+      return;
+    }
+    const { request } = decision;
+    contentDirChanged = request.contentDir !== discovery.defaultContentDir;
+    flowKind =
+      contentDirChanged ||
+      request.additionalIgnores.trim().length > 0 ||
+      request.editorIds.length !== ALL_EDITOR_IDS.length
+        ? 'fresh-customized'
+        : 'fresh-default';
+    if (
+      request.initGit &&
+      (discovery.gitState === 'absent' || discovery.gitState === 'shell-only')
+    ) {
+      await ensureProjectGit(discovery.projectDir);
+      didEnsureGit = true;
+    }
+    await initContent(discovery.projectDir, {
+      contentDir: request.contentDir !== '.' ? request.contentDir : undefined,
+    });
+    if (request.additionalIgnores.trim().length > 0) {
+      appendOkIgnoreSync(discovery.projectDir, request.additionalIgnores);
+    }
+    aiIntegrationsFailedCount = logAiIntegrationOutcomes(
+      writeProjectAiIntegrations(discovery.projectDir, [...request.editorIds]),
+    );
+    if (discovery.gitRootPromoted) {
+      toastPayload = {
+        kind: 'git-root-promote',
+        gitRoot: discovery.projectDir,
+        contentDir: request.contentDir,
+      };
     }
   }
 
@@ -777,10 +772,6 @@ function registerIpcHandlers() {
 
   handle('ok:dialog:open-folder', async (_event, opts) => {
     return promptForExistingFolder(dialog, opts);
-  });
-
-  handle('ok:dialog:create-folder', async () => {
-    return promptForFolder(dialog);
   });
 
   const shellOpenExternal = handleShellOpenExternal({
@@ -1074,6 +1065,94 @@ function registerIpcHandlers() {
     if (ctx) {
       wm.closeProjectWindow(ctx.projectPath);
     }
+    return undefined;
+  });
+
+  handle('ok:fs:default-projects-root', async () => {
+    return resolveDefaultProjectsRoot(appState.lastUsedProjectParent, app.getPath('documents'));
+  });
+
+  handle('ok:fs:folder-state', async (_event, path) => {
+    if (typeof path !== 'string' || path.length === 0) {
+      throw new Error('ok:fs:folder-state rejected: path must be a non-empty string');
+    }
+    return folderState(path);
+  });
+
+  handle('ok:fs:find-enclosing-project-root', async (_event, path) => {
+    if (typeof path !== 'string' || path.length === 0) {
+      throw new Error(
+        'ok:fs:find-enclosing-project-root rejected: path must be a non-empty string',
+      );
+    }
+    return findEnclosingProjectRoot(path);
+  });
+
+  handle('ok:fs:find-enclosing-git-root', async (_event, path) => {
+    if (typeof path !== 'string' || path.length === 0) {
+      throw new Error('ok:fs:find-enclosing-git-root rejected: path must be a non-empty string');
+    }
+    return findEnclosingGitRoot(path);
+  });
+
+  handle('ok:project:create-new', async (_event, args) => {
+    let result: Awaited<ReturnType<typeof runCreateNew>>;
+    try {
+      result = await runCreateNew({
+        parent: args.parent,
+        name: args.name,
+        editors: args.editors,
+      });
+    } catch (err) {
+      if (err instanceof CreateNewProjectError) {
+        logIpcError({
+          event: 'ipc.error',
+          channel: 'ok:project:create-new',
+          reason: err.reason,
+          handler: 'runCreateNew',
+          cause: { message: err.message },
+        });
+      } else {
+        logIpcError({
+          event: 'ipc.error',
+          channel: 'ok:project:create-new',
+          reason: 'unexpected',
+          handler: 'runCreateNew',
+          cause: err,
+        });
+      }
+      throw err;
+    }
+
+    const aiFailedCount = logAiIntegrationOutcomes(result.aiIntegrations);
+
+    appState = setLastUsedProjectParent(appState, args.parent);
+    saveAppState(appState);
+
+    recordOnboardingFlow({
+      flowKind: result.variant,
+      entryPoint: 'create-new',
+      gitInitRequested: !result.gitRootPromoted,
+      contentDirChanged: result.defaultContentDir !== '.',
+      warningsCount: 0,
+      failedCount: aiFailedCount,
+    });
+
+    console.log(
+      `[create-new] created project at ${result.projectDir} (target: ${result.target}, variant: ${result.variant}, gitRootPromoted: ${result.gitRootPromoted})`,
+    );
+
+    await openProjectOrFallbackToNavigator(result.projectDir, 'create-new');
+    return undefined;
+  });
+
+  handle('ok:project:record-create-new-banner-shown', async (_event, banner) => {
+    if (banner !== 'nested' && banner !== 'nonempty' && banner !== 'git-confirm') {
+      throw new Error(
+        `ok:project:record-create-new-banner-shown rejected: unknown banner ${JSON.stringify(banner)}`,
+      );
+    }
+    recordCreateNewBannerShown(banner);
     return undefined;
   });
 

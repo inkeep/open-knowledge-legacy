@@ -25,7 +25,7 @@ const BUILD_EXISTS = existsSync(MAIN_ENTRY);
 const DESKTOP_PRODUCT_NAME = '@inkeep/open-knowledge-desktop';
 
 function seedTmpHome(prefix: string): string {
-  const tmpHome = realpathSync(mkdtempSync(join(tmpdir(), `ok-consent-dialog-${prefix}-`)));
+  const tmpHome = realpathSync(mkdtempSync(join(tmpdir(), `ok-create-new-${prefix}-`)));
   const userDataDir = join(tmpHome, 'Library', 'Application Support', DESKTOP_PRODUCT_NAME);
   mkdirSync(userDataDir, { recursive: true });
   writeFileSync(
@@ -40,22 +40,6 @@ function seedTmpHome(prefix: string): string {
     }),
   );
   return tmpHome;
-}
-
-function seedFreshNonGitProject(prefix: string): string {
-  return realpathSync(mkdtempSync(join(tmpdir(), `ok-consent-${prefix}-fresh-`)));
-}
-
-function seedGitRepoWithSubFolder(
-  tmpHome: string,
-  prefix: string,
-): { repoRoot: string; subFolder: string } {
-  const repoRoot = join(tmpHome, `ok-consent-${prefix}-git`);
-  mkdirSync(repoRoot, { recursive: true });
-  execSync('git init -q', { cwd: repoRoot });
-  const subFolder = join(repoRoot, 'docs');
-  mkdirSync(subFolder, { recursive: true });
-  return { repoRoot, subFolder };
 }
 
 interface LaunchOpts {
@@ -126,7 +110,7 @@ function trackForCleanup(...paths: string[]): void {
   cleanupTargets.push(...paths);
 }
 
-test.describe('Consent-dialog smoke', () => {
+test.describe('Create-new-project smoke', () => {
   test.skip(!SMOKE_ENABLED, 'Set OK_DESKTOP_E2E_SMOKE=1 to run Electron smoke tests.');
   test.skip(!DARWIN, 'Smoke harness is darwin-only.');
   test.skip(
@@ -142,23 +126,47 @@ test.describe('Consent-dialog smoke', () => {
     }
   });
 
-  test('Enter on a focused dialog input fires Start', async ({ captureStderrFor }) => {
-    const tmpHome = seedTmpHome('enter-to-start');
-    const projectDir = seedFreshNonGitProject('enter-to-start');
-    trackForCleanup(tmpHome, projectDir);
+  test('creates a new project at the picked location when target is free', async ({
+    captureStderrFor,
+  }) => {
+    const tmpHome = seedTmpHome('free');
+    const parent = join(tmpHome, 'projects-free');
+    mkdirSync(parent, { recursive: true });
+    const projectName = 'MySmokeProject';
+    const expectedTarget = join(parent, projectName);
+    trackForCleanup(tmpHome);
 
     let app: ElectronApplication | null = null;
     try {
-      app = await launchApp(tmpHome, { pickedPath: projectDir });
+      app = await launchApp(tmpHome, { pickedPath: parent });
       captureStderrFor(app);
       const navigator = await findWindowByMode(app, 'navigator');
 
-      await navigator.locator('[data-testid="nav-open"]').click();
-      const contentDir = navigator.locator('[data-testid="consent-content-dir"]');
-      await expect(contentDir).toBeVisible({ timeout: 15_000 });
+      await navigator.locator('[data-testid="nav-create-new"]').click();
 
-      await contentDir.focus();
-      await contentDir.press('Enter');
+      const dialog = navigator.locator('[data-testid="create-project-dialog"]');
+      await expect(dialog).toBeVisible({ timeout: 15_000 });
+
+      await expect(navigator.locator('[data-testid="create-name"]')).toBeFocused();
+
+      await navigator.locator('[data-testid="create-browse"]').click();
+      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(parent, {
+        timeout: 15_000,
+      });
+
+      await navigator.locator('[data-testid="create-name"]').fill(projectName);
+
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toContainText(
+        expectedTarget,
+        { timeout: 15_000 },
+      );
+      await expect(navigator.locator('[data-testid="create-banner-nested"]')).toHaveCount(0);
+      await expect(navigator.locator('[data-testid="create-banner-git-confirm"]')).toHaveCount(0);
+      await expect(navigator.locator('[data-testid="create-banner-nonempty"]')).toHaveCount(0);
+
+      const submit = navigator.locator('[data-testid="create-submit"]');
+      await expect(submit).toBeEnabled();
+      await submit.click();
 
       await expect
         .poll(() => countWindowsByMode(app as ElectronApplication, 'editor'), {
@@ -166,49 +174,22 @@ test.describe('Consent-dialog smoke', () => {
         })
         .toBeGreaterThanOrEqual(1);
       await expect
-        .poll(() => existsSync(join(projectDir, '.ok', 'config.yml')), { timeout: 15_000 })
+        .poll(() => existsSync(join(expectedTarget, '.ok', 'config.yml')), { timeout: 15_000 })
         .toBe(true);
     } finally {
       await closeAppSafely(app);
     }
   });
 
-  test('Browse button populates content.dir with project-relative path', async ({
+  test('blocks creation when parent is inside an existing OK project', async ({
     captureStderrFor,
   }) => {
-    const tmpHome = seedTmpHome('browse');
-    const projectDir = seedFreshNonGitProject('browse');
-    trackForCleanup(tmpHome, projectDir);
-
-    let app: ElectronApplication | null = null;
-    try {
-      app = await launchApp(tmpHome, { pickedPath: projectDir });
-      captureStderrFor(app);
-      const navigator = await findWindowByMode(app, 'navigator');
-
-      await navigator.locator('[data-testid="nav-open"]').click();
-
-      const contentDirInput = navigator.locator('[data-testid="consent-content-dir"]');
-      await expect(contentDirInput).toBeVisible({ timeout: 15_000 });
-
-      await contentDirInput.fill('docs');
-      await expect(contentDirInput).toHaveValue('docs');
-
-      const browseBtn = navigator.locator('[data-testid="consent-content-dir-browse"]');
-      await expect(browseBtn).toBeVisible();
-      await browseBtn.click();
-
-      await expect(contentDirInput).toHaveValue('.', { timeout: 15_000 });
-    } finally {
-      await closeAppSafely(app);
-    }
-  });
-
-  test('Pick Existing on a sub-folder of a git repo lands .ok/ at the git root', async ({
-    captureStderrFor,
-  }) => {
-    const tmpHome = seedTmpHome('git-root-promote');
-    const { repoRoot, subFolder } = seedGitRepoWithSubFolder(tmpHome, 'git-root-promote');
+    const tmpHome = seedTmpHome('nested');
+    const rootPath = join(tmpHome, 'existing-project');
+    mkdirSync(join(rootPath, '.ok'), { recursive: true });
+    writeFileSync(join(rootPath, '.ok', 'config.yml'), 'schemaVersion: 1\ncontent:\n  dir: "."\n');
+    const subFolder = join(rootPath, 'sub');
+    mkdirSync(subFolder, { recursive: true });
     trackForCleanup(tmpHome);
 
     let app: ElectronApplication | null = null;
@@ -217,14 +198,65 @@ test.describe('Consent-dialog smoke', () => {
       captureStderrFor(app);
       const navigator = await findWindowByMode(app, 'navigator');
 
-      await navigator.locator('[data-testid="nav-open"]').click();
+      await navigator.locator('[data-testid="nav-create-new"]').click();
+      await expect(navigator.locator('[data-testid="create-project-dialog"]')).toBeVisible({
+        timeout: 15_000,
+      });
 
-      const contentDir = navigator.locator('[data-testid="consent-content-dir"]');
-      await expect(contentDir).toBeVisible({ timeout: 15_000 });
-      await expect(contentDir).toHaveValue('docs');
+      await navigator.locator('[data-testid="create-browse"]').click();
+      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(subFolder, {
+        timeout: 15_000,
+      });
 
-      const startBtn = navigator.locator('[data-testid="consent-start"]');
-      await startBtn.click();
+      await navigator.locator('[data-testid="create-name"]').fill('Nested');
+
+      const nestedBanner = navigator.locator('[data-testid="create-banner-nested"]');
+      await expect(nestedBanner).toBeVisible({ timeout: 15_000 });
+      await expect(nestedBanner).toContainText(rootPath);
+      await expect(navigator.locator('[data-testid="create-banner-nested-open"]')).toBeVisible();
+      await expect(navigator.locator('[data-testid="create-submit"]')).toBeDisabled();
+    } finally {
+      await closeAppSafely(app);
+    }
+  });
+
+  test('promotes project root to git root and scopes content.dir to subpath', async ({
+    captureStderrFor,
+  }) => {
+    const tmpHome = seedTmpHome('git-confirm');
+    const repoRoot = join(tmpHome, 'website');
+    mkdirSync(repoRoot, { recursive: true });
+    execSync('git init -q', { cwd: repoRoot });
+    const pickedParent = join(repoRoot, 'notes');
+    mkdirSync(pickedParent, { recursive: true });
+    const projectName = 'MyProj';
+    const target = join(pickedParent, projectName);
+    trackForCleanup(tmpHome);
+
+    let app: ElectronApplication | null = null;
+    try {
+      app = await launchApp(tmpHome, { pickedPath: pickedParent });
+      captureStderrFor(app);
+      const navigator = await findWindowByMode(app, 'navigator');
+
+      await navigator.locator('[data-testid="nav-create-new"]').click();
+      await expect(navigator.locator('[data-testid="create-project-dialog"]')).toBeVisible({
+        timeout: 15_000,
+      });
+
+      await navigator.locator('[data-testid="create-browse"]').click();
+      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(pickedParent, {
+        timeout: 15_000,
+      });
+
+      await navigator.locator('[data-testid="create-name"]').fill(projectName);
+
+      const gitBanner = navigator.locator('[data-testid="create-banner-git-confirm"]');
+      await expect(gitBanner).toBeVisible({ timeout: 15_000 });
+      await expect(gitBanner).toContainText(repoRoot);
+      const submit = navigator.locator('[data-testid="create-submit"]');
+      await expect(submit).toBeEnabled();
+      await submit.click();
 
       await expect
         .poll(() => countWindowsByMode(app as ElectronApplication, 'editor'), {
@@ -234,10 +266,10 @@ test.describe('Consent-dialog smoke', () => {
       await expect
         .poll(() => existsSync(join(repoRoot, '.ok', 'config.yml')), { timeout: 15_000 })
         .toBe(true);
-      expect(existsSync(join(subFolder, '.ok', 'config.yml'))).toBe(false);
-
+      expect(existsSync(join(target, '.ok', 'config.yml'))).toBe(false);
+      expect(existsSync(target)).toBe(true);
       const cfg = readFileSync(join(repoRoot, '.ok', 'config.yml'), 'utf8');
-      expect(cfg).toContain('docs');
+      expect(cfg).toContain('notes/MyProj');
     } finally {
       await closeAppSafely(app);
     }

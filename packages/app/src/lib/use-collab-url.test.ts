@@ -352,7 +352,6 @@ describe('Electron host short-circuit (US-010)', () => {
       onMenuAction: () => () => {},
       dialog: {
         openFolder: async () => null,
-        createFolder: async () => null,
       },
       shell: {
         openExternal: async () => {},
@@ -380,7 +379,6 @@ describe('Electron host short-circuit (US-010)', () => {
       onMenuAction: () => () => {},
       dialog: {
         openFolder: async () => null,
-        createFolder: async () => null,
       },
       shell: {
         openExternal: async () => {},

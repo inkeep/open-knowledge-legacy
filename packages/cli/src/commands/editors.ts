@@ -1,11 +1,16 @@
 import { homedir } from 'node:os';
 import { basename, dirname, join, posix, resolve, sep, win32 } from 'node:path';
+import {
+  ALL_EDITOR_IDS as CORE_ALL_EDITOR_IDS,
+  EDITOR_LABELS as CORE_EDITOR_LABELS,
+  type EditorId as CoreEditorId,
+} from '@inkeep/open-knowledge-core';
 import { MCP_SERVER_NAME } from '@inkeep/open-knowledge-server';
 import { isObject } from '../utils/is-object.ts';
 
-export type EditorId = 'claude' | 'claude-desktop' | 'cursor' | 'codex';
-
-export const ALL_EDITOR_IDS: EditorId[] = ['claude', 'claude-desktop', 'cursor', 'codex'];
+export type EditorId = CoreEditorId;
+export const ALL_EDITOR_IDS: readonly EditorId[] = CORE_ALL_EDITOR_IDS;
+export const EDITOR_LABELS: Record<EditorId, string> = CORE_EDITOR_LABELS;
 
 const PUBLISHED_MCP_SERVER_COMMAND = 'npx';
 const PUBLISHED_MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
@@ -219,7 +224,7 @@ function createEditorTarget(
 export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
   claude: createEditorTarget({
     id: 'claude',
-    label: 'Claude Code',
+    label: EDITOR_LABELS.claude,
     configPath: (_cwd, home) => resolveClaudeCodeConfigPath({ home }),
     format: 'json',
     topLevelKey: 'mcpServers',
@@ -232,7 +237,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
   }),
   'claude-desktop': createEditorTarget({
     id: 'claude-desktop',
-    label: 'Claude Desktop',
+    label: EDITOR_LABELS['claude-desktop'],
     configPath: (_cwd, home) => resolveClaudeDesktopConfigPath({ home }),
     format: 'json',
     topLevelKey: 'mcpServers',
@@ -243,7 +248,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
   }),
   cursor: createEditorTarget({
     id: 'cursor',
-    label: 'Cursor',
+    label: EDITOR_LABELS.cursor,
     configPath: (_cwd, home) => resolveCursorConfigPath({ home }),
     format: 'json',
     topLevelKey: 'mcpServers',
@@ -256,7 +261,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
   }),
   codex: createEditorTarget({
     id: 'codex',
-    label: 'Codex',
+    label: EDITOR_LABELS.codex,
     configPath: (_cwd, home) => resolveCodexConfigPath({ home }),
     format: 'toml',
     topLevelKey: 'mcp_servers',

@@ -1,3 +1,4 @@
+import type { CreateNewBannerKind } from '@inkeep/open-knowledge-core';
 import { withSpanSync } from '@inkeep/open-knowledge-server';
 import type { EntryPoint } from '../shared/entry-point.ts';
 
@@ -5,9 +6,10 @@ export type OnboardingFlowKind =
   | 'managed-promote'
   | 'managed-promote-cancelled'
   | 'managed-direct'
-  | 'fresh-silent'
   | 'fresh-default'
   | 'fresh-customized'
+  | 'create-new-default'
+  | 'create-new-customized'
   | 'cancel';
 
 interface OnboardingTelemetryAttributes {
@@ -26,6 +28,18 @@ const WARNINGS_COUNT_CAP = 8;
 /** Cap on failed_count. Six editor IDs today; leave headroom while keeping
  *  the bucket count tight. */
 const FAILED_COUNT_CAP = 10;
+
+export function recordCreateNewBannerShown(banner: CreateNewBannerKind): void {
+  withSpanSync(
+    'ok.desktop.createNewBannerShown',
+    {
+      attributes: {
+        'ok.desktop.banner': banner,
+      },
+    },
+    () => undefined,
+  );
+}
 
 export function recordOnboardingFlow(attrs: OnboardingTelemetryAttributes): void {
   withSpanSync(

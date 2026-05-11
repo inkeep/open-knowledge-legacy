@@ -19,6 +19,7 @@ import { AuthModal } from './AuthModal';
 import { BetaBadge } from './BetaBadge';
 import { CloneDialog } from './CloneDialog';
 import { ConsentDialog } from './ConsentDialog';
+import { CreateProjectDialog } from './CreateProjectDialog';
 import { GithubIcon } from './icons/github';
 import { OkIcon } from './icons/ok';
 import { McpConsentDialog } from './McpConsentDialog';
@@ -38,6 +39,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
@@ -79,12 +81,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
       await openProject(bridge, path, 'pick-existing');
     }, 'Failed to open folder.');
 
-  const onStartFresh = () =>
-    runWithErrorState(async () => {
-      const path = await bridge.dialog.createFolder();
-      if (!path) return;
-      await openProject(bridge, path, 'start-fresh');
-    }, 'Failed to create project folder.');
+  const onCreate = () => setCreateDialogOpen(true);
 
   const onOpenRecent = (path: string) =>
     runWithErrorState(async () => {
@@ -126,16 +123,16 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           />
           <NavigatorCard
             title="Open folder on disk"
-            description="Open an existing folder as a project."
+            description="Use a folder you already have."
             onClick={onOpenFolder}
             dataTestId="nav-open"
             Icon={FolderOpenIcon}
           />
           <NavigatorCard
-            title="Start fresh"
-            description="Create a new folder for a brand-new project."
-            onClick={onStartFresh}
-            dataTestId="nav-fresh"
+            title="Create new project"
+            description="Make a new folder for a brand-new project."
+            onClick={onCreate}
+            dataTestId="nav-create-new"
             Icon={PlusIcon}
           />
         </section>
@@ -191,6 +188,12 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           for a Pick Existing / Recents / deep-link / drag-drop pick that
           resolves to a fresh kind. Navigator-only. */}
       <ConsentDialog />
+
+      <CreateProjectDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        bridge={bridge}
+      />
 
       <AuthModal
         open={authModalOpen}

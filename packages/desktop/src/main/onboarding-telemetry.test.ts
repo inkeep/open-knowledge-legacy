@@ -36,16 +36,16 @@ describe('recordOnboardingFlow — span name + attribute shape', () => {
 
   test('emits a span named `ok.desktop.onboardingConsent` with the canonical attribute set', () => {
     recordOnboardingFlow({
-      flowKind: 'fresh-silent',
-      entryPoint: 'start-fresh',
+      flowKind: 'create-new-default',
+      entryPoint: 'create-new',
       gitInitRequested: true,
       contentDirChanged: false,
       warningsCount: 0,
     });
     expect(capturedCalls).toHaveLength(1);
     expectAttrs(capturedCalls[0], {
-      'ok.desktop.flow_kind': 'fresh-silent',
-      'ok.desktop.entry_point': 'start-fresh',
+      'ok.desktop.flow_kind': 'create-new-default',
+      'ok.desktop.entry_point': 'create-new',
       'ok.desktop.git_init_requested': true,
       'ok.desktop.content_dir_changed': false,
       'ok.desktop.warnings_count': 0,
@@ -152,9 +152,10 @@ describe('recordOnboardingFlow — span name + attribute shape', () => {
     'managed-promote',
     'managed-promote-cancelled',
     'managed-direct',
-    'fresh-silent',
     'fresh-default',
     'fresh-customized',
+    'create-new-default',
+    'create-new-customized',
     'cancel',
   ] as const;
 
@@ -173,7 +174,8 @@ describe('recordOnboardingFlow — span name + attribute shape', () => {
   }
 
   const ENTRY_POINTS: readonly EntryPoint[] = [
-    'start-fresh',
+    'create-new',
+    'create-new-nested-redirect',
     'pick-existing',
     'recents',
     'deep-link',

@@ -1,5 +1,6 @@
 export {
   ALL_EDITOR_IDS,
+  EDITOR_LABELS,
   EDITOR_TARGETS,
   type EditorId,
   type EditorMcpTarget,

@@ -272,7 +272,12 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         signalThemeApplied: (): void => {},
         dialog: {
           openFolder: async () => null,
-          createFolder: async () => null,
+        },
+        fs: {
+          defaultProjectsRoot: async () => workerContentDir,
+          folderState: async () => 'free' as const,
+          findEnclosingProjectRoot: async () => null,
+          findEnclosingGitRoot: async () => null,
         },
         shell: shellStub,
         clipboard: {
@@ -288,6 +293,8 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
           }),
           setSessionState: async () => {},
           open: async () => {},
+          createNew: async () => {},
+          recordCreateNewBannerShown: async () => {},
           close: async () => {},
         },
         navigator: {

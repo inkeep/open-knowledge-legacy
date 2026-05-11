@@ -1,4 +1,9 @@
-import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
+import type { CreateNewBannerKind, EditorId, OkFolderState } from '@inkeep/open-knowledge-core';
+import type {
+  FindEnclosingGitRootResult,
+  FindEnclosingProjectRootResult,
+  ScaffoldPlan,
+} from '@inkeep/open-knowledge-server';
 import type { BuildAndOpenResult } from '../main/ipc/install-skill.ts';
 import type { SeedApplyResult, SeedListPacksResult, SeedPlanResult } from '../main/ipc/seed.ts';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
@@ -53,16 +58,13 @@ export interface HandoffStatsLine {
     | 'web-host-cursor-unsupported';
 }
 
-/** Editor IDs known to the first-launch MCP consent flow. Mirrors
- *  `EditorId` in `packages/cli/src/commands/editors.ts`. Desktop `main/` DOES
- *  dep `@inkeep/open-knowledge` (workspace dep for the
- *  `writeUserMcpConfigs` / `EDITOR_TARGETS` surface), but `shared/` modules
- *  stay zero-dep — any cross-package value import from the IPC surface
- *  forces every preload / renderer consumer to pull CLI internals into its
- *  bundle. Keeping the literal-union local preserves that split; drift with
- *  the CLI's `EditorId` is caught at typecheck via the `McpWiringCliSurface`
- *  interface in `main/mcp-wiring.ts` (which references BOTH types). */
-export type McpWiringEditorId = 'claude' | 'claude-desktop' | 'cursor' | 'codex';
+/** Editor IDs known to the first-launch MCP consent flow. Aliased to
+ *  `EditorId` from `@inkeep/open-knowledge-core` — single source of truth for
+ *  the literal union. The alias preserves the local name so existing
+ *  consumers (renderer + main) keep importing `McpWiringEditorId` from this
+ *  module while the actual type is structurally identical to the canonical
+ *  `EditorId`. */
+export type McpWiringEditorId = EditorId;
 
 /** Sensitive-path warning category mirrored across the IPC boundary —
  *  literal-union form so the renderer can switch on `kind` without pulling
@@ -178,7 +180,6 @@ export interface RequestChannels {
     args: [opts?: DialogOpenFolderOpts];
     result: string | null;
   };
-  'ok:dialog:create-folder': { args: []; result: string | null };
   'ok:shell:open-external': { args: [url: string]; result: undefined };
   'ok:shell:detect-protocol': {
     args: [scheme: string];
@@ -214,6 +215,36 @@ export interface RequestChannels {
   'ok:project:set-session-state': { args: [state: ProjectSessionState]; result: undefined };
   'ok:project:open': { args: [request: ProjectOpenRequest]; result: undefined };
   'ok:project:close': { args: []; result: undefined };
+  'ok:project:create-new': {
+    args: [args: { parent: string; name: string; editors: readonly McpWiringEditorId[] }];
+    result: undefined;
+  };
+  /** Persisted last-used parent directory, or a platform-sensible default
+   *  (`~/Documents/Open Knowledge/`) on first launch. */
+  'ok:fs:default-projects-root': { args: []; result: string };
+  /** Classify the candidate path: missing (`free`), present but empty,
+   *  or present with entries. Stat errors fall through to `free`. */
+  'ok:fs:folder-state': {
+    args: [path: string];
+    result: OkFolderState;
+  };
+  /** Upward-walk for the nearest `.ok/config.yml` ancestor; null when none
+   *  found inside the depth cap. Thin wrapper around the server-package helper. */
+  'ok:fs:find-enclosing-project-root': {
+    args: [path: string];
+    result: FindEnclosingProjectRootResult | null;
+  };
+  /** Upward-walk for the nearest `.git` ancestor (file or directory; worktrees
+   *  count); null when none found inside the depth cap. Thin wrapper around the
+   *  server-package helper. */
+  'ok:fs:find-enclosing-git-root': {
+    args: [path: string];
+    result: FindEnclosingGitRootResult | null;
+  };
+  'ok:project:record-create-new-banner-shown': {
+    args: [banner: CreateNewBannerKind];
+    result: undefined;
+  };
   'ok:navigator:open': { args: []; result: undefined };
   'ok:update:relaunch-now': { args: []; result: undefined };
   'ok:update:set-channel': { args: [request: { channel: OkUpdateChannel }]; result: undefined };

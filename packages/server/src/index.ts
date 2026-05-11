@@ -111,6 +111,29 @@ export {
   writeTracker,
 } from './file-watcher.ts';
 export {
+  type FindEnclosingGitRootResult,
+  findEnclosingGitRoot,
+} from './fs/find-git-root.ts';
+export {
+  type FindEnclosingProjectRootResult,
+  findEnclosingProjectRoot,
+} from './fs/find-project-root.ts';
+export {
+  classifyFsPath,
+  normalizeFsPath,
+  tracedAppendFileSync,
+  tracedLinkSync,
+  tracedMkdir,
+  tracedMkdirSync,
+  tracedRename,
+  tracedRenameSync,
+  tracedRmdirSync,
+  tracedRmSync,
+  tracedUnlinkSync,
+  tracedWriteFile,
+  tracedWriteFileSync,
+} from './fs-traced.ts';
+export {
   createOsProbe,
   type ExecFileLike,
   INSTALLED_AGENTS_SCHEMES,

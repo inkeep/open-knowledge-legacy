@@ -1,3 +1,7 @@
+import type { CreateNewBannerKind } from './constants/create-new-banner.ts';
+import type { EditorId } from './constants/editors.ts';
+import type { OkFolderState } from './constants/folder-state.ts';
+
 type OkDesktopMode = 'editor' | 'navigator';
 
 interface OkDesktopConfig {
@@ -36,7 +40,13 @@ interface ProjectSessionState {
   updatedAt: string | null;
 }
 
-type OkProjectEntryPoint = 'start-fresh' | 'pick-existing' | 'recents' | 'deep-link' | 'drag-drop';
+type OkProjectEntryPoint =
+  | 'create-new'
+  | 'create-new-nested-redirect'
+  | 'pick-existing'
+  | 'recents'
+  | 'deep-link'
+  | 'drag-drop';
 
 interface OkProjectOpenRequest {
   path: string;
@@ -79,7 +89,7 @@ interface OkStateSnapshot {
   } | null;
 }
 
-type OkMcpWiringEditorId = 'claude' | 'claude-desktop' | 'cursor' | 'codex';
+type OkMcpWiringEditorId = EditorId;
 
 interface OkMcpWiringShowPayload {
   readonly detectedEditors: readonly {
@@ -217,6 +227,17 @@ interface OkSeedPackInfo {
   folders: OkSeedPackFolderInfo[];
 }
 
+/** Pure-fs upward-walk result types mirrored from `@inkeep/open-knowledge-server`'s
+ *  `fs/` module. Structurally duplicated for the same reason as the seed shapes
+ *  above (core has no dep on server). */
+interface OkFindEnclosingProjectRootResult {
+  readonly rootPath: string;
+  readonly distance: number;
+}
+interface OkFindEnclosingGitRootResult {
+  readonly gitRoot: string;
+  readonly distance: number;
+}
 type OkSeedPlanResult = { ok: true; plan: OkScaffoldPlan } | { ok: false; error: OkSeedError };
 type OkSeedApplyResult =
   | {
@@ -290,7 +311,6 @@ export interface OkDesktopBridge {
     /** `dialog.showOpenDialog({ properties: ['openDirectory'] })`. Resolves to the selected path or `null` on cancel.
      *  `defaultPath` seeds the initial directory shown to the user. */
     openFolder(opts?: { defaultPath?: string }): Promise<string | null>;
-    createFolder(): Promise<string | null>;
   };
 
   shell: {
@@ -344,7 +364,20 @@ export interface OkDesktopBridge {
     getSessionState(): Promise<ProjectSessionState>;
     setSessionState(state: ProjectSessionState): Promise<void>;
     open(request: OkProjectOpenRequest): Promise<void>;
+    createNew(args: {
+      parent: string;
+      name: string;
+      editors: OkMcpWiringEditorId[];
+    }): Promise<void>;
+    recordCreateNewBannerShown(banner: CreateNewBannerKind): Promise<void>;
     close(): Promise<void>;
+  };
+
+  fs: {
+    defaultProjectsRoot(): Promise<string>;
+    folderState(path: string): Promise<OkFolderState>;
+    findEnclosingProjectRoot(path: string): Promise<OkFindEnclosingProjectRootResult | null>;
+    findEnclosingGitRoot(path: string): Promise<OkFindEnclosingGitRootResult | null>;
   };
 
   navigator: {

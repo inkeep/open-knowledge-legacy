@@ -11,6 +11,7 @@ import {
   removeRecentProject,
   type SaveAppStateFs,
   saveAppStateToDir,
+  setLastUsedProjectParent,
   setProjectSessionState,
 } from '../../src/main/state-store.ts';
 
@@ -280,6 +281,35 @@ describe('saveAppStateToDir (atomic write via tmp + rename)', () => {
     };
     const result = saveAppStateToDir('/fake/userdata', emptyState(), fs, { error: () => {} });
     expect(result).toBe(false);
+  });
+
+  test('lastUsedProjectParent: defaults to null on a fresh state', () => {
+    expect(emptyState().lastUsedProjectParent).toBeNull();
+  });
+
+  test('lastUsedProjectParent: setter immutably updates state', () => {
+    const next = setLastUsedProjectParent(emptyState(), '/Users/alice/Notes');
+    expect(next.lastUsedProjectParent).toBe('/Users/alice/Notes');
+    expect(next.recentProjects).toEqual([]);
+    expect(next.updateChannel).toBe('latest');
+  });
+
+  test('lastUsedProjectParent: parseAppState round-trips a valid string', () => {
+    const payload = { ...emptyState(), lastUsedProjectParent: '/Users/alice/Notes' };
+    const parsed = parseAppState(JSON.parse(JSON.stringify(payload)));
+    expect(parsed?.lastUsedProjectParent).toBe('/Users/alice/Notes');
+  });
+
+  test('lastUsedProjectParent: parseAppState coerces non-string to null', () => {
+    const corrupted = { ...emptyState(), lastUsedProjectParent: 42 };
+    const parsed = parseAppState(JSON.parse(JSON.stringify(corrupted)));
+    expect(parsed?.lastUsedProjectParent).toBeNull();
+  });
+
+  test('lastUsedProjectParent: parseAppState coerces empty string to null', () => {
+    const payload = { ...emptyState(), lastUsedProjectParent: '' };
+    const parsed = parseAppState(JSON.parse(JSON.stringify(payload)));
+    expect(parsed?.lastUsedProjectParent).toBeNull();
   });
 
   test('returns false when userData mkdir throws', () => {
