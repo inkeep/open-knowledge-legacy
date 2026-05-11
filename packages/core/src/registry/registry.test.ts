@@ -396,7 +396,7 @@ describe('builtInComponents manifest', () => {
     expect(propNames).toEqual(['formula', 'id', 'language'].sort());
   });
 
-  test('Math has `formula` as a required string with autoFocus', () => {
+  test('Math has `formula` as a required string with autoFocus + LaTeX CodeMirror language', () => {
     const math = builtInComponents.find((m) => m.name === 'Math');
     const formula = math?.props.find((p) => p.name === 'formula');
     expect(formula).toBeDefined();
@@ -404,6 +404,7 @@ describe('builtInComponents manifest', () => {
     expect(formula?.required).toBe(true);
     if (formula?.type === 'string') {
       expect(formula.autoFocus).toBe(true);
+      expect(formula.language).toBe('latex');
     }
   });
 
@@ -427,7 +428,7 @@ describe('builtInComponents manifest', () => {
     expect(propNames).toEqual(['chart', 'id', 'theme'].sort());
   });
 
-  test('Mermaid has `chart` as a required string with autoFocus', () => {
+  test('Mermaid has `chart` as a required string with autoFocus + Mermaid CodeMirror language', () => {
     const mermaid = builtInComponents.find((m) => m.name === 'Mermaid');
     const chart = mermaid?.props.find((p) => p.name === 'chart');
     expect(chart).toBeDefined();
@@ -435,6 +436,7 @@ describe('builtInComponents manifest', () => {
     expect(chart?.required).toBe(true);
     if (chart?.type === 'string') {
       expect(chart.autoFocus).toBe(true);
+      expect(chart.language).toBe('mermaid');
     }
   });
 

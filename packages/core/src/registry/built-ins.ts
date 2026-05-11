@@ -428,6 +428,7 @@ const mathProps: PropDef[] = [
     type: 'string',
     required: true,
     autoFocus: true,
+    language: 'latex',
     description: 'LaTeX math source (rendered with KaTeX in the browser)',
   },
   {
@@ -454,6 +455,7 @@ const mermaidProps: PropDef[] = [
     type: 'string',
     required: true,
     autoFocus: true,
+    language: 'mermaid',
     description:
       'Mermaid chart source (graph / flowchart / sequenceDiagram / class / state / etc.)',
   },

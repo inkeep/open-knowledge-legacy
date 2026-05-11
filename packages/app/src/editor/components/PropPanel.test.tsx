@@ -421,3 +421,25 @@ describe('PropPanel — descriptor.props narrowing (real registry)', () => {
     expect(propIds.length).toBe(13);
   });
 });
+
+describe('PropPanel — CodeMirror branch (string props with `language`)', () => {
+  test('Math.formula renders the CodeMirror wrapper with `data-prop-language="latex"`', () => {
+    const d = findBuiltIn('Math');
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).toContain('data-prop-codemirror=""');
+    expect(html).toContain('data-prop-language="latex"');
+    expect(html).toContain('id="prop-formula"');
+  });
+
+  test('Mermaid.chart renders the CodeMirror wrapper with `data-prop-language="mermaid"`', () => {
+    const d = findBuiltIn('Mermaid');
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).toContain('data-prop-codemirror=""');
+    expect(html).toContain('data-prop-language="mermaid"');
+    expect(html).toContain('id="prop-chart"');
+  });
+});

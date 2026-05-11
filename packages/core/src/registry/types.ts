@@ -17,6 +17,7 @@ export interface PropDefString extends PropDefBase {
   defaultValue?: string;
   accept?: readonly string[];
   autoFocus?: boolean;
+  language?: 'mermaid' | 'latex' | 'html' | 'json' | 'yaml' | 'javascript' | 'markdown';
 }
 
 export interface PropDefBoolean extends PropDefBase {
