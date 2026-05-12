@@ -414,10 +414,11 @@ describe('spawnCursor', () => {
       {
         platform: 'darwin',
         projectPath: '/Users/x/project',
-        getApplicationInfoForProtocol: async () => ({
-          name: 'Cursor',
-          path: '/Applications/Cursor.app/Contents/MacOS/Cursor',
-        }),
+        resolveCursorBinary: async () =>
+          '/Applications/Cursor.app/Contents/Resources/app/bin/cursor',
+        getApplicationInfoForProtocol: async () => {
+          throw new Error('protocol must not be consulted when CLI resolver succeeds');
+        },
         spawn: async (_exec, args) => {
           spawnedArgs = args;
           return { ok: true };
@@ -434,10 +435,11 @@ describe('spawnCursor', () => {
     const result = await spawnCursor(
       {
         platform: 'darwin',
-        getApplicationInfoForProtocol: async () => ({
-          name: 'Cursor',
-          path: '/Applications/Cursor.app/Contents/MacOS/Cursor',
-        }),
+        resolveCursorBinary: async () =>
+          '/Applications/Cursor.app/Contents/Resources/app/bin/cursor',
+        getApplicationInfoForProtocol: async () => {
+          throw new Error('protocol must not be consulted when CLI resolver succeeds');
+        },
         spawn: async () => {
           spawnCalled = true;
           return { ok: true };
@@ -449,19 +451,17 @@ describe('spawnCursor', () => {
     expect(spawnCalled).toBe(true);
   });
 
-  test('uses Electron-resolved path first (never trusts $PATH on its own)', async () => {
+  test('prefers Cursor CLI resolver over Electron protocol path for reliable folder opens', async () => {
     let spawnedExec: string | null = null;
     let spawnedArgs: ReadonlyArray<string> | null = null;
     const result = await spawnCursor(
       {
         platform: 'darwin',
-        getApplicationInfoForProtocol: async () => ({
-          name: 'Cursor',
-          path: '/Applications/Cursor.app/Contents/MacOS/Cursor',
-        }),
-        resolveCursorBinary: async () => {
-          throw new Error('fallback must not run when Electron succeeds');
+        getApplicationInfoForProtocol: async () => {
+          throw new Error('protocol must not be consulted when CLI resolver succeeds');
         },
+        resolveCursorBinary: async () =>
+          '/Applications/Cursor.app/Contents/Resources/app/bin/cursor',
         spawn: async (exec, args) => {
           spawnedExec = exec;
           spawnedArgs = args;
@@ -471,11 +471,11 @@ describe('spawnCursor', () => {
       '/Users/x/project',
     );
     expect(result).toEqual({ ok: true });
-    expect(spawnedExec).toBe('/Applications/Cursor.app/Contents/MacOS/Cursor');
+    expect(spawnedExec).toBe('/Applications/Cursor.app/Contents/Resources/app/bin/cursor');
     expect(spawnedArgs).toEqual(['/Users/x/project']);
   });
 
-  test('darwin bundle path is routed through `/usr/bin/open -a <bundle>` (spawn cannot exec a .app directory)', async () => {
+  test('falls back to Electron bundle path via `/usr/bin/open -a <bundle>` when CLI resolver fails', async () => {
     let spawnedExec: string | null = null;
     let spawnedArgs: ReadonlyArray<string> | null = null;
     const result = await spawnCursor(
@@ -485,6 +485,7 @@ describe('spawnCursor', () => {
           name: 'Cursor',
           path: '/Applications/Cursor.app',
         }),
+        resolveCursorBinary: async () => null,
         spawn: async (exec, args) => {
           spawnedExec = exec;
           spawnedArgs = args;
@@ -507,6 +508,7 @@ describe('spawnCursor', () => {
           name: 'Cursor',
           path: '/Applications/Cursor.app/',
         }),
+        resolveCursorBinary: async () => null,
         spawn: async (_exec, args) => {
           spawnedArgs = args;
           return { ok: true };
@@ -517,16 +519,33 @@ describe('spawnCursor', () => {
     expect(spawnedArgs).toEqual(['-a', '/Applications/Cursor.app', '/Users/x/project']);
   });
 
-  test('falls back to resolveCursorBinary when Electron throws', async () => {
+  test('falls back to Electron protocol path when CLI resolver fails', async () => {
     const result = await spawnCursor(
       {
         platform: 'linux',
-        getApplicationInfoForProtocol: async () => {
-          throw new Error('unsupported on linux');
-        },
-        resolveCursorBinary: async () => '/usr/local/bin/cursor',
+        getApplicationInfoForProtocol: async () => ({ name: 'Cursor', path: '/opt/Cursor/cursor' }),
+        resolveCursorBinary: async () => null,
         spawn: async (exec, args) => {
-          expect(exec).toBe('/usr/local/bin/cursor');
+          expect(exec).toBe('/opt/Cursor/cursor');
+          expect(args).toEqual(['/home/x/project']);
+          return { ok: true };
+        },
+      },
+      '/home/x/project',
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  test('falls back to Electron protocol handler when CLI resolver throws', async () => {
+    const result = await spawnCursor(
+      {
+        platform: 'linux',
+        getApplicationInfoForProtocol: async () => ({ name: 'Cursor', path: '/opt/Cursor/cursor' }),
+        resolveCursorBinary: async () => {
+          throw new Error('EACCES: permission denied');
+        },
+        spawn: async (exec, args) => {
+          expect(exec).toBe('/opt/Cursor/cursor');
           expect(args).toEqual(['/home/x/project']);
           return { ok: true };
         },
@@ -561,6 +580,8 @@ describe('spawnCursor', () => {
           name: 'Cursor',
           path: '/Applications/Cursor.app/Contents/MacOS/Cursor',
         }),
+        resolveCursorBinary: async () =>
+          '/Applications/Cursor.app/Contents/Resources/app/bin/cursor',
         spawn: async () => ({ ok: false, reason: 'timeout' }),
       },
       '/Users/x/project',
@@ -574,6 +595,7 @@ describe('spawnCursor', () => {
       {
         platform: 'linux',
         getApplicationInfoForProtocol: async () => ({ name: 'C', path: '/c' }),
+        resolveCursorBinary: async () => '/usr/bin/cursor',
         spawn: async (_exec, _args, t) => {
           seenTimeout = t;
           return { ok: true };
