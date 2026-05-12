@@ -56,9 +56,9 @@ const sirvServes: SirvLikeMiddleware = (_req, res, _fallback) => {
   res.end();
 };
 
-const admitAll: AssetServeFilter = { isExcluded: () => false };
+const admitAll: AssetServeFilter = { isPathIgnored: () => false };
 
-const excludeAll: AssetServeFilter = { isExcluded: () => true };
+const excludeAll: AssetServeFilter = { isPathIgnored: () => true };
 
 const INLINE = new Set(['png', 'jpg', 'pdf', 'mp4', 'm4v', 'svg']);
 const ASSETS = new Set([...INLINE, 'docx', 'csv', 'json', 'txt', 'zip']);
@@ -129,6 +129,17 @@ describe('createAssetServeMiddleware', () => {
       middleware(makeReq('/doc.pdf'), res, () => {});
       expect(captured.headers['Content-Disposition']).toBe('inline');
     });
+
+    test('SVG gets `inline` disposition AND a CSP sandbox header (top-level-nav script defense)', () => {
+      const middleware = buildMiddleware(sirvServes);
+      const { res, captured } = makeRes();
+      middleware(makeReq('/icon.svg'), res, () => {});
+      expect(captured.headers['Content-Disposition']).toBe('inline');
+      expect(captured.headers['Content-Security-Policy']).toBe(
+        "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+      );
+      expect(captured.headers['X-Content-Type-Options']).toBe('nosniff');
+    });
   });
 
   describe('.md / .mdx doc-ext bypass', () => {
@@ -168,19 +179,19 @@ describe('createAssetServeMiddleware', () => {
       expect(nextCalled).toBe(false);
     });
 
-    test('sirv fall-through on EXECUTABLE_BLOCKLIST path returns 404', () => {
+    test('EXECUTABLE_BLOCKLIST extension (not also an asset extension) falls through to next() before sirv', () => {
       let nextCalled = false;
       const middleware = buildMiddleware(sirvFallThrough);
       const { res, captured } = makeRes();
       middleware(makeReq('/malicious.dmg'), res, () => {
         nextCalled = true;
       });
-      expect(captured.status).toBe(404);
-      expect(captured.ended).toBe(true);
-      expect(nextCalled).toBe(false);
+      expect(nextCalled).toBe(true);
+      expect(captured.status).toBe(0);
+      expect(captured.headers).toEqual({});
     });
 
-    test('sirv fall-through on unknown extension falls through to next() (SPA fallback will handle)', () => {
+    test('unknown extension falls through to next() before sirv (not a servable content extension)', () => {
       let nextCalled = false;
       const middleware = buildMiddleware(sirvFallThrough);
       const { res, captured } = makeRes();
@@ -188,6 +199,7 @@ describe('createAssetServeMiddleware', () => {
         nextCalled = true;
       });
       expect(nextCalled).toBe(true);
+      expect(captured.headers).toEqual({});
       expect(captured.status).toBe(0);
       expect(captured.ended).toBe(false);
     });
@@ -234,11 +246,15 @@ describe('createAssetServeMiddleware', () => {
       expect(captured.headers['Content-Disposition']).toBe('inline');
     });
 
-    test('extensionless path routes to attachment (admitted-non-inline branch)', () => {
+    test('extensionless path falls through to next() (not a servable content extension)', () => {
+      let nextCalled = false;
       const middleware = buildMiddleware(sirvServes);
       const { res, captured } = makeRes();
-      middleware(makeReq('/README'), res, () => {});
-      expect(captured.headers['Content-Disposition']).toBe('attachment');
+      middleware(makeReq('/README'), res, () => {
+        nextCalled = true;
+      });
+      expect(nextCalled).toBe(true);
+      expect(captured.headers).toEqual({});
     });
 
     test('malformed percent-encoding (`/%`) falls through to next() — URIError caught', () => {

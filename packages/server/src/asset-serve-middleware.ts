@@ -13,7 +13,7 @@ export function assetContentTypeForPath(path: string): string | null {
 }
 
 export interface AssetServeFilter {
-  isExcluded(relativePath: string): boolean;
+  isPathIgnored(relativePath: string): boolean;
 }
 
 export type SirvLikeMiddleware = (
@@ -43,16 +43,23 @@ export function createAssetServeMiddleware(
     } catch {
       return next();
     }
-    if (!rel || contentFilter.isExcluded(rel)) return next();
-    res.setHeader('X-Content-Type-Options', 'nosniff');
     const ext = extname(rel).slice(1).toLowerCase();
     const isDocExt = ext === 'md' || ext === 'mdx';
+    if (!rel || contentFilter.isPathIgnored(rel) || (!isDocExt && !assetExtensions.has(ext)))
+      return next();
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     if (!isDocExt) {
       if (inlineExtensions.has(ext)) {
         res.setHeader('Content-Disposition', 'inline');
       } else {
         res.setHeader('Content-Disposition', 'attachment');
       }
+    }
+    if (ext === 'svg') {
+      res.setHeader(
+        'Content-Security-Policy',
+        "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+      );
     }
     contentSirv(req, res, () => {
       if (res.headersSent) return;

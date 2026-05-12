@@ -237,7 +237,7 @@ describe('mountMcpAndApi content-asset middleware', () => {
   async function startWithAssets(contentDir: string): Promise<{ port: number }> {
     const httpServer = createServer();
     const filter = {
-      isExcluded: (rel: string) => rel.startsWith('.ok/') || rel === 'excluded.png',
+      isPathIgnored: (rel: string) => rel.startsWith('.ok/') || rel === 'excluded.png',
     };
     const mount = mountMcpAndApi({
       httpServer,
