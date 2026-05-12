@@ -128,7 +128,61 @@ test('A11Y05: rawMdxFallback nested CodeMirror has accessible label', async ({ p
   expect(role, 'rawMdxFallback wrapper must have role="group"').toBe('group');
 });
 
-test.skip('A11Y07: Empty-container placeholder activatable via keyboard — pending compound descriptor', async () => {});
+test('A11Y07: Empty Tabs placeholder activatable via keyboard inserts a Tab', async ({
+  page,
+  api,
+}) => {
+  const docName = await setupDoc(page, api, '<Tabs></Tabs>');
+  await page.waitForFunction(() => Boolean(window.__activeEditor?.state.doc.childCount), null, {
+    timeout: 5000,
+  });
+
+  const placeholder = page.locator('.jsx-empty-child-placeholder').first();
+  await expect(
+    placeholder,
+    'empty <Tabs></Tabs> must render the empty-child placeholder',
+  ).toBeVisible({ timeout: 5000 });
+
+  await expect(placeholder).toHaveJSProperty('tagName', 'BUTTON');
+
+  await expect(placeholder).toHaveAccessibleName(/add tab/i);
+
+  await placeholder.focus();
+  await expect(placeholder).toBeFocused();
+
+  await page.keyboard.press('Enter');
+
+  await page.waitForFunction(
+    () => {
+      const editor = window.__activeEditor;
+      if (!editor) return false;
+      let firstChildName: string | null = null;
+      let tabsChildCount = -1;
+      editor.state.doc.descendants(
+        (n: {
+          type: { name: string };
+          attrs: { componentName?: string };
+          childCount: number;
+          firstChild?: { type: { name: string }; attrs: { componentName?: string } };
+        }) => {
+          if (firstChildName !== null) return false;
+          if (n.type.name === 'jsxComponent' && n.attrs.componentName === 'Tabs') {
+            tabsChildCount = n.childCount;
+            firstChildName = n.firstChild?.attrs?.componentName ?? null;
+            return false;
+          }
+        },
+      );
+      return tabsChildCount === 1 && firstChildName === 'Tab';
+    },
+    null,
+    { timeout: 5000 },
+  );
+
+  await expect(page.locator('.jsx-empty-child-placeholder')).toHaveCount(0);
+
+  expect(docName).toContain('a11y-');
+});
 
 test('A11Y09: Wildcard block chrome has accessible name', async ({ page, api }) => {
   await setupDoc(page, api, '<UnknownComponent prop="val">\n\nSome content\n\n</UnknownComponent>');

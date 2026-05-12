@@ -4,10 +4,10 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the 9 canonical + 10 compat descriptors + wildcard', () => {
+  test('returns the 11 canonical + 10 compat descriptors + wildcard', () => {
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(20);
+    expect(entries.length).toBe(22);
   });
 
   test('get returns registered component by name', () => {
@@ -76,6 +76,8 @@ describe('createRegistry', () => {
     expect(registry.has('Mermaid')).toBe(true);
     expect(registry.has('Pdf')).toBe(true);
     expect(registry.has('File')).toBe(true);
+    expect(registry.has('Tabs')).toBe(true);
+    expect(registry.has('Tab')).toBe(true);
     expect(registry.has('*')).toBe(true);
     expect(registry.has('Image')).toBe(false);
     expect(registry.has('Video')).toBe(false);
@@ -86,11 +88,11 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains 9 canonical + 10 compat entries (5-pack + Math + Mermaid + Pdf + File canonicals; source-form preservation + math/mermaid syntax + wiki-embed compats)', () => {
-    expect(builtInComponents.length).toBe(19);
+  test('contains 11 canonical + 10 compat entries (5-pack + Math + Mermaid + Pdf + File + Tabs + Tab canonicals; source-form preservation + math/mermaid syntax + wiki-embed compats)', () => {
+    expect(builtInComponents.length).toBe(21);
     const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
     const compat = builtInComponents.filter((m) => m.surface === 'compat');
-    expect(canonical.length).toBe(9);
+    expect(canonical.length).toBe(11);
     expect(compat.length).toBe(10);
   });
 
@@ -125,15 +127,40 @@ describe('builtInComponents manifest', () => {
     }
   });
 
-  test('no registered descriptor has emptyChildName (canonical pack is standalone-first — no compound parents)', () => {
+  test('only Tabs registers emptyChildName (single compound parent in the canonical pack)', () => {
     const containers = builtInComponents.filter((m) => m.emptyChildName);
     const names = containers.map((c) => `${c.name}→${c.emptyChildName}`).sort();
     expect(
       names,
-      names.length > 0
-        ? `Compound descriptor(s) with emptyChildName detected: ${names.join(', ')}. Re-enable A11Y07 in packages/app/tests/a11y/component-blocks.e2e.ts.`
-        : undefined,
-    ).toEqual([]);
+      `Unexpected compound descriptor set: ${names.join(', ')}. Either update this assertion (and extend A11Y07 coverage) or revert the emptyChildName addition.`,
+    ).toEqual(['Tabs→Tab']);
+  });
+
+  test('Tabs descriptor prop surface is exactly `id` (the deep-link anchor)', () => {
+    const tabs = builtInComponents.find((m) => m.name === 'Tabs');
+    expect(tabs).toBeDefined();
+    expect(tabs?.hasChildren).toBe(true);
+    expect(tabs?.emptyChildName).toBe('Tab');
+    expect(tabs?.props.map((p) => p.name)).toEqual(['id']);
+    const idProp = tabs?.props.find((p) => p.name === 'id');
+    expect(idProp?.type).toBe('string');
+    expect(idProp?.required).toBe(false);
+    expect(idProp?.advanced).toBe(true);
+  });
+
+  test('Tab descriptor prop surface — `label` (required + autoFocus) + `id` (advanced)', () => {
+    const tab = builtInComponents.find((m) => m.name === 'Tab');
+    expect(tab).toBeDefined();
+    expect(tab?.hasChildren).toBe(true);
+    expect(tab?.emptyChildName).toBeUndefined();
+    expect(tab?.props.map((p) => p.name).sort()).toEqual(['id', 'label']);
+    const labelProp = tab?.props.find((p) => p.name === 'label');
+    expect(labelProp?.type).toBe('string');
+    expect(labelProp?.required).toBe(true);
+    expect(labelProp?.autoFocus).toBe(true);
+    expect(labelProp?.defaultValue).toBe('Tab');
+    const idProp = tab?.props.find((p) => p.name === 'id');
+    expect(idProp?.advanced).toBe(true);
   });
 
   test('Callout has 15 first-class type enum values (GFM 5 + Obsidian-parity 10)', () => {

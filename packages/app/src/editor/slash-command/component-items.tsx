@@ -120,7 +120,17 @@ function createInsertCommand(descriptor: JsxComponentDescriptor): (editor: Edito
       }
     });
 
-    editor.chain().focus().insertContent(createChildNode(descriptor.name)).run();
+    const inserted = createChildNode(descriptor.name);
+    if (descriptor.name === 'Tabs') {
+      const tab1 = createChildNode('Tab');
+      const tab2 = createChildNode('Tab');
+      const tab1Attrs = tab1.attrs as Record<string, unknown>;
+      const tab2Attrs = tab2.attrs as Record<string, unknown>;
+      tab1Attrs.props = { ...(tab1Attrs.props as Record<string, unknown>), label: 'Tab 1' };
+      tab2Attrs.props = { ...(tab2Attrs.props as Record<string, unknown>), label: 'Tab 2' };
+      (inserted as Record<string, unknown>).content = [tab1, tab2];
+    }
+    editor.chain().focus().insertContent(inserted).run();
 
     let insertPos = -1;
     editor.state.doc.descendants((node, pos) => {
@@ -139,7 +149,7 @@ function createInsertCommand(descriptor: JsxComponentDescriptor): (editor: Edito
   };
 }
 
-const SLASH_HIDDEN_CANONICALS = new Set(['File']);
+const SLASH_HIDDEN_CANONICALS = new Set(['File', 'Tab']);
 
 function getCustomBlockComponentItems(): SlashCommandItem[] {
   return [

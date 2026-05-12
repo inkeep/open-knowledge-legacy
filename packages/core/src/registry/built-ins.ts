@@ -422,6 +422,34 @@ const wikiEmbedAudioProps: PropDef[] = [
   },
 ];
 
+const tabsProps: PropDef[] = [
+  {
+    name: 'id',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'HTML id attribute for deep-linking (e.g. `#install-tabs`)',
+  },
+];
+
+const tabProps: PropDef[] = [
+  {
+    name: 'label',
+    type: 'string',
+    required: true,
+    autoFocus: true,
+    defaultValue: 'Tab',
+    description: 'Tab strip label — shown in the clickable pill at the top',
+  },
+  {
+    name: 'id',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'HTML id attribute for deep-linking (e.g. `#tab-npm`)',
+  },
+];
+
 const mathProps: PropDef[] = [
   {
     name: 'formula',
@@ -672,6 +700,33 @@ export const builtInComponents: JsxComponentMeta[] = [
       'Standalone expand/collapse via native HTML5 <details>/<summary>. Group siblings with the `name` prop for exclusive-accordion UX.',
     searchTerms: ['toggle', 'accordion', 'expandable', 'details', 'disclosure', 'collapse', 'fold'],
     serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx, accordionProps),
+  },
+  {
+    name: 'Tabs',
+    surface: 'canonical',
+    hasChildren: true,
+    emptyChildName: 'Tab',
+    props: tabsProps,
+    icon: 'LayoutPanelTop',
+    category: 'content',
+    displayName: 'Tabs',
+    description:
+      'Horizontal tab strip + active panel below. Each `<Tab>` child is one panel; clickable pills at the top switch the active one. Active selection is ephemeral (resets on reload).',
+    searchTerms: ['tabs', 'tabbed', 'panels', 'tabgroup', 'switcher'],
+    serialize: (node, ctx) => emitMdxJsx('Tabs', node, ctx, tabsProps),
+  },
+  {
+    name: 'Tab',
+    surface: 'canonical',
+    hasChildren: true,
+    props: tabProps,
+    icon: 'PanelTop',
+    category: 'content',
+    displayName: 'Tab',
+    description:
+      'A single tab panel inside a `<Tabs>` container — carries the strip label and the block-content body.',
+    searchTerms: ['tab', 'panel'],
+    serialize: (node, ctx) => emitMdxJsx('Tab', node, ctx, tabProps),
   },
   {
     name: 'Math',
