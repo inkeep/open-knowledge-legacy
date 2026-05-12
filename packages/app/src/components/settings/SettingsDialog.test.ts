@@ -132,3 +132,38 @@ describe('SettingsDialog Sync section guards', () => {
     expect(SRC).toMatch(/<Switch[\s\S]*?id="settings-sync-toggle"/);
   });
 });
+
+describe('SettingsDialog SyncSection Switch — bound to local CRDT preference (not server status)', () => {
+  const syncSectionStart = SRC.indexOf('function SyncSection()');
+  const nextSiblingStart = SRC.indexOf('interface SettingsFieldProps', syncSectionStart);
+  const syncSectionSrc = SRC.slice(syncSectionStart, nextSiblingStart);
+
+  test('SyncSection isolation slice is non-empty (sanity)', () => {
+    expect(syncSectionStart).toBeGreaterThan(-1);
+    expect(nextSiblingStart).toBeGreaterThan(syncSectionStart);
+    expect(syncSectionSrc.length).toBeGreaterThan(200);
+  });
+
+  test('Switch.checked derives from the local CRDT preference, not status.syncEnabled', () => {
+    expect(syncSectionSrc).toMatch(/useConfigContext|projectLocalConfig/);
+    expect(syncSectionSrc).not.toMatch(/const enabled\s*=\s*.*status/);
+  });
+
+  test('useGitSyncStatus still used for hasRemote + dormant visibility gate', () => {
+    expect(syncSectionSrc).toContain('useGitSyncStatus');
+    expect(syncSectionSrc).toMatch(/!status\.hasRemote[\s\S]*?status\.state\s*===\s*'dormant'/);
+  });
+
+  test('Switch disabled prop gates against the cold-start window', () => {
+    expect(syncSectionSrc).toMatch(/disabled=\{disabledControl\}/);
+    expect(syncSectionSrc).toMatch(
+      /projectLocalSynced|projectLocalBinding\s*===\s*null|projectLocalConfig\s*===\s*null/,
+    );
+  });
+
+  test('write path is unchanged — useSyncEnabledWriter + EnableSyncConfirmDialog', () => {
+    expect(syncSectionSrc).toContain('useSyncEnabledWriter');
+    expect(syncSectionSrc).toContain('useEnableSyncWithConfirm');
+    expect(syncSectionSrc).toContain('EnableSyncConfirmDialog');
+  });
+});
