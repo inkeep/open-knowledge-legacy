@@ -382,7 +382,7 @@ export interface OkDesktopBridge {
           | {
               readonly kind: 'git-root-promote';
               readonly gitRoot: string;
-              readonly contentDir: string;
+              readonly pickedPath: string;
             },
       ) => void,
     ): OkUnsubscribe;

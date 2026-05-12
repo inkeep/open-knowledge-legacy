@@ -1,5 +1,6 @@
 import { toast as sonnerToast } from 'sonner';
 import type { OkDesktopBridge } from '@/lib/desktop-bridge-types';
+import { relativeToProject } from '@/lib/project-paths';
 
 const TOAST_DURATION_MS = 4000;
 
@@ -16,8 +17,10 @@ export function installOnboardingToastListener(opts: {
       });
       return;
     }
-    sonnerToast.success(`Initialized OK at ${payload.gitRoot} (scoped to ${payload.contentDir}/)`, {
-      duration: TOAST_DURATION_MS,
-    });
+    const subPath = relativeToProject(payload.gitRoot, payload.pickedPath) ?? payload.pickedPath;
+    sonnerToast.success(
+      `Initialized OK at ${payload.gitRoot} — opened parent of ${subPath} because it contains a .git folder`,
+      { duration: TOAST_DURATION_MS },
+    );
   });
 }

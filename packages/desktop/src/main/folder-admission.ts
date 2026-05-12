@@ -186,21 +186,16 @@ export async function discoverProject(
   const gitRoot = await gitTopLevel(realPicked);
   let projectDir = realPicked;
   let gitRootPromoted = false;
-  let defaultContentDir = '.';
   if (gitRoot !== null && isDescendantOfHome(gitRoot, home)) {
     projectDir = gitRoot;
     gitRootPromoted = gitRoot !== realPicked;
-    if (gitRootPromoted) {
-      const sub = relative(gitRoot, realPicked);
-      defaultContentDir = sub.length > 0 && !sub.startsWith('..') ? sub : '.';
-    }
   }
 
   return {
     kind: 'fresh',
     pickedPath: realPicked,
     projectDir,
-    defaultContentDir,
+    defaultContentDir: '.',
     gitState: computeGitState(projectDir),
     gitRootPromoted,
   };

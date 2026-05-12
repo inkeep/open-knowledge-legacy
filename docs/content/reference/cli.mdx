@@ -51,7 +51,7 @@ ok init [options]
 | `--scope <user\|project\|both>` | Where to write MCP config (default: both) |
 | `--no-mcp` | Skip writing editor MCP config |
 
-When invoked from a sub-folder of a git repo with no ancestor `.ok/`, `init` writes `.ok/` at the git working-tree root and `content.dir` is scoped to the relative sub-path. One `.ok/` per git repo.
+When invoked from a sub-folder of a git repo with no ancestor `.ok/`, `init` writes `.ok/` at the git working-tree root. `content.dir` defaults to `.` (the git root) — opened folder and content scope align by default. Narrow to a sub-path post-init by uncommenting `content.dir` in `.ok/config.yml`. One `.ok/` per git repo.
 
 See [Integrations](/docs/integrations/claude-code) for the per-editor config paths `init` writes to. Safe to re-run.
 

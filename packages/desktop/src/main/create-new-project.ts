@@ -72,9 +72,11 @@ interface CreateNewProjectSuccess {
    *  when no promotion happens; the enclosing git working-tree root when
    *  `discoverProject` promoted (one `.ok/` per git repo). */
   readonly projectDir: string;
-  /** Relative path from `projectDir` to `target`. `'.'` when no promotion;
-   *  scoped sub-path (e.g. `'notes/MyProj'`) under git-root promotion.
-   *  Written into the scaffolded `.ok/config.yml`'s `content.dir`. */
+  /** Always `'.'` — opened folder and content scope align by default,
+   *  even on git-root promotion. The picked sub-folder is intentionally
+   *  NOT used as a default scope; users narrow via post-init `content.dir`
+   *  in `.ok/config.yml`. Kept on the result shape for telemetry parity
+   *  with `discoverProject`'s return; treat as a constant. */
   readonly defaultContentDir: string;
   /** True when `discoverProject` promoted the project root upward to an
    *  enclosing git working-tree root strictly below `homeDir`. */

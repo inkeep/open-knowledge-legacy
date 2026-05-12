@@ -220,7 +220,7 @@ test.describe('Create-new-project smoke', () => {
     }
   });
 
-  test('promotes project root to git root and scopes content.dir to subpath', async ({
+  test('promotes project root to git root; content.dir defaults to the git root, not the picked sub-folder', async ({
     captureStderrFor,
   }) => {
     const tmpHome = seedTmpHome('git-confirm');
@@ -269,7 +269,8 @@ test.describe('Create-new-project smoke', () => {
       expect(existsSync(join(target, '.ok', 'config.yml'))).toBe(false);
       expect(existsSync(target)).toBe(true);
       const cfg = readFileSync(join(repoRoot, '.ok', 'config.yml'), 'utf8');
-      expect(cfg).toContain('notes/MyProj');
+      expect(cfg).not.toMatch(/^\s*dir:\s*notes\/MyProj/m);
+      expect(cfg).toMatch(/^# content:/m);
     } finally {
       await closeAppSafely(app);
     }

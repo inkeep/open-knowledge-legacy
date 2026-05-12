@@ -139,7 +139,7 @@ describe('resolveProjectRoot — git-root promotion', () => {
     });
 
     expect(result.projectRoot).toBe(repo);
-    expect(result.defaultContentDir).toBe('docs');
+    expect(result.defaultContentDir).toBe('.');
     expect(result.gitRootPromoted).toBe(true);
     expect(result.ancestorPromoted).toBe(false);
   });
@@ -188,7 +188,7 @@ describe('resolveProjectRoot — git-root promotion', () => {
     expect(result.defaultContentDir).toBe('.');
   });
 
-  test('promotes deep sub-path with multi-segment relative content dir', () => {
+  test('promotes deep sub-path; content scope still defaults to the git root', () => {
     const repo = resolve(fakeHome, 'myrepo');
     const subA = resolve(repo, 'a');
     const subB = resolve(subA, 'b');
@@ -200,7 +200,7 @@ describe('resolveProjectRoot — git-root promotion', () => {
     });
 
     expect(result.projectRoot).toBe(repo);
-    expect(result.defaultContentDir).toBe('a/b');
+    expect(result.defaultContentDir).toBe('.');
     expect(result.gitRootPromoted).toBe(true);
   });
 });
@@ -280,7 +280,7 @@ describe('resolveProjectRoot — integration with real git', () => {
     const result = resolveProjectRoot(docs, opts);
 
     expect(result.projectRoot).toBe(realpathSync(repo));
-    expect(result.defaultContentDir).toBe('docs');
+    expect(result.defaultContentDir).toBe('.');
     expect(result.gitRootPromoted).toBe(true);
   });
 

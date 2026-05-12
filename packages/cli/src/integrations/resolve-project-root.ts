@@ -12,9 +12,9 @@ export interface ResolveProjectRootResult {
    * or the git working-tree root. */
   readonly projectRoot: string;
   /** Path the caller should write to `config.yml`'s `content.dir`. Always
-   * `'.'` on the no-promotion or ancestor-promoted branches (ancestor
-   * projects open with their existing config unchanged). On
-   * `gitRootPromoted: true`, the picked sub-path relative to `projectRoot`. */
+   * `'.'`. On `gitRootPromoted: true`, the picked sub-folder is intentionally
+   * NOT used as a default scope — `projectRoot` and content scope align by
+   * default; the user can narrow via `content.dir` post-init. */
   readonly defaultContentDir: string;
   readonly ancestorPromoted: boolean;
   /** True iff the git working-tree root sat above `cwd` and won the
@@ -95,10 +95,9 @@ export function resolveProjectRoot(
         gitRootPromoted: false,
       };
     }
-    const sub = relative(gitRoot, realCwd);
     return {
       projectRoot: gitRoot,
-      defaultContentDir: sub.length > 0 && !sub.startsWith('..') ? sub : '.',
+      defaultContentDir: '.',
       ancestorPromoted: false,
       gitRootPromoted: true,
     };

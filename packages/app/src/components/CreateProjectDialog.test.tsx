@@ -87,14 +87,14 @@ describe('computeCascade', () => {
     ).toEqual({ kind: 'confirm-git', gitRoot: '/Users/me/repo' });
   });
 
-  test('confirm-git suppressed when gitRoot === parent (no promotion would happen)', () => {
+  test('confirm-git fires when parent IS the git root (banner explains content-dir alignment)', () => {
     expect(
       computeCascade({
         ...baseInput,
         enclosingGit: { gitRoot: '/Users/me/Projects', distance: 0 },
         targetState: 'free',
       }),
-    ).toEqual({ kind: 'free' });
+    ).toEqual({ kind: 'confirm-git', gitRoot: '/Users/me/Projects' });
   });
 
   test('block-nonempty fires when target exists with content', () => {

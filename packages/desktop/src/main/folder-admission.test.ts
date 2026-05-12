@@ -301,7 +301,7 @@ describe('discoverProject — fresh kind, git-root promotion (FR-2a)', () => {
     expect(result.kind).toBe('fresh');
     if (result.kind !== 'fresh') return;
     expect(result.projectDir).toBe(repo);
-    expect(result.defaultContentDir).toBe('docs');
+    expect(result.defaultContentDir).toBe('.');
     expect(result.gitRootPromoted).toBe(true);
     expect(result.gitState).toBe('present');
   });
@@ -644,7 +644,7 @@ describe('discoverProject — ancestor-promote bounded by boot budget (regressio
 });
 
 describe('discoverProject — integration with real git', () => {
-  test('real git init + sub-folder pick → gitRootPromoted with relative defaultContentDir', async () => {
+  test('real git init + sub-folder pick → gitRootPromoted; content dir defaults to git root', async () => {
     const repo = resolve(fakeHome, 'integration-repo');
     const docs = resolve(repo, 'docs');
     mkdirSync(docs, { recursive: true });
@@ -655,7 +655,7 @@ describe('discoverProject — integration with real git', () => {
     expect(result.kind).toBe('fresh');
     if (result.kind !== 'fresh') return;
     expect(result.projectDir).toBe(realpathSync(repo));
-    expect(result.defaultContentDir).toBe('docs');
+    expect(result.defaultContentDir).toBe('.');
     expect(result.gitRootPromoted).toBe(true);
     expect(result.gitState).toBe('present');
   });

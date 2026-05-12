@@ -449,7 +449,7 @@ async function openProject(
   let aiIntegrationsFailedCount = 0;
   let toastPayload:
     | { kind: 'ancestor-promote'; ancestorPath: string }
-    | { kind: 'git-root-promote'; gitRoot: string; contentDir: string }
+    | { kind: 'git-root-promote'; gitRoot: string; pickedPath: string }
     | null = null;
 
   if (discovery.kind === 'managed-requires-confirmation') {
@@ -575,7 +575,7 @@ async function openProject(
       toastPayload = {
         kind: 'git-root-promote',
         gitRoot: discovery.projectDir,
-        contentDir: request.contentDir,
+        pickedPath: discovery.pickedPath,
       };
     }
   }
@@ -1143,7 +1143,7 @@ function registerIpcHandlers() {
       flowKind: result.variant,
       entryPoint: 'create-new',
       gitInitRequested: !result.gitRootPromoted,
-      contentDirChanged: result.defaultContentDir !== '.',
+      contentDirChanged: false,
       warningsCount: 0,
       failedCount: aiFailedCount,
     });
