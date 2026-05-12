@@ -364,7 +364,7 @@ function ScrollPreservingContainer({
     <div
       ref={ref}
       data-testid="editor-scroll-container"
-      className="subtle-scrollbar h-full overflow-y-auto"
+      className="subtle-scrollbar h-full overflow-y-auto pt-14"
       style={{ overflowAnchor: 'auto' }}
     >
       {children}
@@ -577,7 +577,7 @@ function ActivityEntry({
                   the MAX intrinsic size across children, stretching the
                   visible editor to 8000px and creating bottom whitespace on
                   short docs — see globals.css §.ok-mode-hidden). */}
-                  <div className={`flex h-full flex-col ${!isSourceMode ? 'pt-6' : ''}`}>
+                  <div className="flex h-full flex-col">
                     {/* PropertyPanel: top-of-doc frontmatter table, sibling to the
                         dual-editor stack inside DocumentBoundary so it shares the
                         same suspend/error scope and remounts cleanly on doc switch.

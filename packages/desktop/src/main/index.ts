@@ -361,8 +361,8 @@ function openNavigator() {
     createWindow: (opts) => {
       const win = new BrowserWindow({
         ...DEFAULT_WIN_OPTS,
-        width: 720,
-        height: 520,
+        width: 800,
+        height: 750,
         webPreferences: {
           ...DEFAULT_WIN_OPTS.webPreferences,
           additionalArguments: withDebugFlagIfAllowed(opts.additionalArguments),

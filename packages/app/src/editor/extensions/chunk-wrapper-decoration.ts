@@ -32,6 +32,7 @@ export function chunkWrapperDecorationPlugin(): Plugin {
         const decos: Decoration[] = [];
         state.doc.forEach((node, pos) => {
           if (node.isInline) return;
+          if (node.type.name === 'jsxComponent') return;
           decos.push(
             Decoration.node(pos, pos + node.nodeSize, {
               class: OK_CHUNK_WRAPPER_CLASS,

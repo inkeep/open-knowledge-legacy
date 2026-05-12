@@ -1,4 +1,3 @@
-import { ListPlus, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { lazy, Suspense, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { AssetPreview } from '@/components/AssetPreview';
@@ -12,16 +11,11 @@ import { EmptyEditorState } from '@/components/EmptyEditorState';
 import { FolderOverview } from '@/components/FolderOverview';
 import { MountStalledAffordance } from '@/components/MountStalledAffordance';
 import { PropertyProvider, useProperties } from '@/components/PropertyContext';
-import { Button } from '@/components/ui/button.tsx';
-import { ButtonGroup } from '@/components/ui/button-group.tsx';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { mountPromiseHasResolved } from '@/editor/mount-promise';
 import { syncPromiseHasResolved } from '@/editor/sync-promise';
-import type { EditorModeValue } from '@/editor/use-editor-mode.ts';
 import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
 import { useDocumentStats } from '@/hooks/use-document-stats';
 import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
@@ -31,9 +25,8 @@ import { useSyncStatus } from '@/presence/use-sync-status';
 import { EditorActivityPool } from './EditorActivityPool';
 import { EditorFooter } from './EditorFooter';
 import type { EditorMode } from './EditorPane';
+import { EditorToolbar } from './EditorToolbar';
 import { shouldPaintOverlay } from './editor-area-overlay';
-import { Markdown } from './icons/markdown';
-import { Textbox } from './icons/textbox';
 
 const SettingsDialog = lazy(() =>
   import('@/components/settings/SettingsDialog').then((m) => ({ default: m.SettingsDialog })),
@@ -190,99 +183,18 @@ function EditorAreaInner({
     if (!activeDocName) return;
     requestAddProperty(activeDocName);
   }
-  const containerClass = 'shrink-0 rounded-lg bg-background/90 p-0.5 shadow-sm backdrop-blur';
 
-  const toggleButton = (
-    <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
-      <ToggleGroup
-        type="single"
-        value={isSourceMode ? 'source' : 'wysiwyg'}
-        onValueChange={(v: EditorModeValue | '') => {
-          if (v) onModeChange(v);
-        }}
-        aria-label="Editor mode"
-        variant="outline"
-        className={containerClass}
-      >
-        <Tooltip>
-          <ToggleGroupItem value="wysiwyg" aria-label="Visual editor" asChild>
-            <TooltipTrigger>
-              <Textbox />
-            </TooltipTrigger>
-          </ToggleGroupItem>
-          <TooltipContent side="bottom">Visual</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            {/**
-             * Wrap the disabled button in a <div> that can receive hover events since disabled <button> elements
-             * don't trigger pointer events in the browser
-             **/}
-            <div>
-              <ToggleGroupItem
-                value="source"
-                aria-label="Markdown source"
-                disabled={sourceDisabled}
-                className="rounded-s-none! border-s-0!"
-              >
-                <Markdown />
-              </ToggleGroupItem>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            {sourceDisabled
-              ? 'Source mode requires a live connection — your edits are saved and will appear when you reconnect.'
-              : 'Markdown'}
-          </TooltipContent>
-        </Tooltip>
-      </ToggleGroup>
-      <ButtonGroup className={containerClass}>
-        {!isSourceMode && (
-          <Tooltip>
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label="Add properties"
-              onClick={openAddPropertyForm}
-              data-testid="add-properties-button"
-              asChild
-            >
-              <TooltipTrigger>
-                <ListPlus />
-              </TooltipTrigger>
-            </Button>
-            <TooltipContent side="bottom">Add properties</TooltipContent>
-          </Tooltip>
-        )}
-        <Tooltip>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => {
-              if (isSheetMode) {
-                setSheetOpen((prev) => !prev);
-              } else if (isCollapsed) {
-                userCollapsedRef.current = false;
-                panelRef.current?.expand();
-              } else {
-                userCollapsedRef.current = true;
-                panelRef.current?.collapse();
-              }
-            }}
-            aria-label={showPanelOpen ? 'Show document panel' : 'Hide document panel'}
-            asChild
-          >
-            <TooltipTrigger>
-              {showPanelOpen ? <PanelRightOpen /> : <PanelRightClose />}
-            </TooltipTrigger>
-          </Button>
-          <TooltipContent side="bottom">
-            {showPanelOpen ? 'Show panel' : 'Hide panel'}
-          </TooltipContent>
-        </Tooltip>
-      </ButtonGroup>
-    </div>
-  );
+  function togglePanel() {
+    if (isSheetMode) {
+      setSheetOpen((prev) => !prev);
+    } else if (isCollapsed) {
+      userCollapsedRef.current = false;
+      panelRef.current?.expand();
+    } else {
+      userCollapsedRef.current = true;
+      panelRef.current?.collapse();
+    }
+  }
 
   const editorContent = (
     <div className="relative flex h-full flex-col">
@@ -363,7 +275,15 @@ function EditorAreaInner({
             </div>
           ) : null}
         </div>
-        {toggleButton}
+        <EditorToolbar
+          isSourceMode={isSourceMode}
+          sourceDisabled={sourceDisabled}
+          onModeChange={onModeChange}
+          showAddPropertyButton={!isSourceMode}
+          onAddProperty={openAddPropertyForm}
+          showPanelOpen={showPanelOpen}
+          onTogglePanel={togglePanel}
+        />
       </div>
       {showFooter && <EditorFooter stats={stats} />}
     </div>

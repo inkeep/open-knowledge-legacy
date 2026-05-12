@@ -17,6 +17,11 @@ const schema = new Schema({
     blockquote: { group: 'block', content: 'block+' },
     list: { group: 'block', content: 'listItem+' },
     listItem: { content: 'paragraph block*' },
+    jsxComponent: {
+      group: 'block',
+      content: 'block*',
+      attrs: { componentName: { default: 'Callout' } },
+    },
     text: { group: 'inline' },
   },
   marks: {},
@@ -117,6 +122,38 @@ describe('chunkWrapperDecorationPlugin — decoration emission', () => {
     for (const s of specs ?? []) {
       expect(s.attrs.class).toBe(OK_CHUNK_WRAPPER_CLASS);
     }
+  });
+
+  test('jsxComponent top-level block — excluded (paint chrome lives outside the border box)', () => {
+    const para1 = schema.node('paragraph', null, [schema.text('before')]);
+    const callout = schema.node('jsxComponent', { componentName: 'Callout' }, [
+      schema.node('paragraph', null, [schema.text('inside callout')]),
+    ]);
+    const para2 = schema.node('paragraph', null, [schema.text('after')]);
+    const doc = schema.node('doc', null, [para1, callout, para2]);
+    const state = makeState(doc);
+    const specs = decorationSpecs(state);
+    expect(specs).toHaveLength(2);
+    expect(specs?.[0].from).toBe(0);
+    expect(specs?.[0].to).toBe(para1.nodeSize);
+    expect(specs?.[1].from).toBe(para1.nodeSize + callout.nodeSize);
+    expect(specs?.[1].to).toBe(para1.nodeSize + callout.nodeSize + para2.nodeSize);
+    for (const s of specs ?? []) {
+      expect(s.attrs.class).toBe(OK_CHUNK_WRAPPER_CLASS);
+    }
+  });
+
+  test('doc of only jsxComponents — zero decorations emitted', () => {
+    const callout1 = schema.node('jsxComponent', { componentName: 'Callout' }, [
+      schema.node('paragraph', null, [schema.text('a')]),
+    ]);
+    const callout2 = schema.node('jsxComponent', { componentName: 'Callout' }, [
+      schema.node('paragraph', null, [schema.text('b')]),
+    ]);
+    const doc = schema.node('doc', null, [callout1, callout2]);
+    const state = makeState(doc);
+    const specs = decorationSpecs(state);
+    expect(specs).toBeNull();
   });
 
   test('list with multiple items — one decoration on the list, NOT per listItem (top-level only)', () => {
