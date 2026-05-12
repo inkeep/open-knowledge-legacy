@@ -18,6 +18,13 @@ interface KnownTabTargets {
 
 const LOCAL_TAB_SESSION_PREFIX = 'ok-editor-tabs-v1:';
 const FOLDER_TAB_PREFIX = '\u0000folder:';
+const DOC_TAB_INSTANCE_SEPARATOR = '\u0000doc-tab:';
+
+interface OpenDocTabOptions {
+  behavior: 'append' | 'replace-active';
+  currentTabId: string | null;
+  limit: number;
+}
 
 function isValidTabId(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0) return false;
@@ -27,6 +34,10 @@ function isValidTabId(value: unknown): value is string {
 
 export function docTabId(docName: string): string {
   return docName;
+}
+
+function duplicateDocTabId(docName: string, instance: number): string {
+  return `${docName}${DOC_TAB_INSTANCE_SEPARATOR}${instance}`;
 }
 
 export function folderTabId(folderPath: string): string {
@@ -60,6 +71,10 @@ export function parseEditorTabId(
   if (tabId.startsWith(FOLDER_TAB_PREFIX)) {
     return { kind: 'folder', folderPath: tabId.slice(FOLDER_TAB_PREFIX.length) };
   }
+  const duplicateSeparatorIndex = tabId.lastIndexOf(DOC_TAB_INSTANCE_SEPARATOR);
+  if (duplicateSeparatorIndex >= 0) {
+    return { kind: 'doc', docName: tabId.slice(0, duplicateSeparatorIndex) };
+  }
   return { kind: 'doc', docName: tabId };
 }
 
@@ -87,6 +102,76 @@ export function addOpenTab(tabs: readonly string[], tabId: string, limit: number
   if (!isValidTabId(tabId) || normalized.includes(tabId)) return normalized;
   const next = [...normalized, tabId];
   return next.length > limit ? next.slice(next.length - limit) : next;
+}
+
+export function replaceOpenTab(
+  tabs: readonly string[],
+  currentTabId: string | null,
+  nextTabId: string,
+  limit: number,
+): string[] {
+  const normalized = normalizeOpenTabs(tabs, limit);
+  if (!isValidTabId(nextTabId)) return normalized;
+  if (!currentTabId || currentTabId === nextTabId) return addOpenTab(normalized, nextTabId, limit);
+
+  const tabsWithoutNext = normalized.filter((tab) => tab !== nextTabId);
+  const currentIndex = tabsWithoutNext.indexOf(currentTabId);
+  if (currentIndex < 0) return addOpenTab(tabsWithoutNext, nextTabId, limit);
+
+  const next = [...tabsWithoutNext];
+  next[currentIndex] = nextTabId;
+  return normalizeOpenTabs(next, limit);
+}
+
+export function openDocTab(
+  tabs: readonly string[],
+  docName: string,
+  { behavior, currentTabId, limit }: OpenDocTabOptions,
+): { tabs: string[]; activeTabId: string } {
+  const normalized = normalizeOpenTabs(tabs, limit);
+  const canonicalTabId = docTabId(docName);
+  if (
+    behavior === 'append' &&
+    currentTabId &&
+    normalized.includes(currentTabId) &&
+    docNameForTabId(currentTabId) === docName
+  ) {
+    return {
+      tabs: normalized,
+      activeTabId: currentTabId,
+    };
+  }
+  if (behavior !== 'replace-active') {
+    return {
+      tabs: addOpenTab(normalized, canonicalTabId, limit),
+      activeTabId: canonicalTabId,
+    };
+  }
+
+  if (
+    currentTabId &&
+    normalized.includes(currentTabId) &&
+    docNameForTabId(currentTabId) === docName
+  ) {
+    return {
+      tabs: normalized,
+      activeTabId: currentTabId,
+    };
+  }
+
+  let nextTabId = canonicalTabId;
+  if (normalized.includes(canonicalTabId)) {
+    let instance = 1;
+    do {
+      nextTabId = duplicateDocTabId(docName, instance);
+      instance++;
+    } while (normalized.includes(nextTabId));
+  }
+
+  return {
+    tabs: replaceOpenTab(normalized, currentTabId, nextTabId, limit),
+    activeTabId: nextTabId,
+  };
 }
 
 export function removeOpenTab(tabs: readonly string[], tabId: string): string[] {

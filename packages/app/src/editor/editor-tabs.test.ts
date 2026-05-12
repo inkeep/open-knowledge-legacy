@@ -10,11 +10,13 @@ import {
   nextActiveTabAfterClose,
   nextActiveTabAfterCloseMany,
   normalizeOpenTabs,
+  openDocTab,
   parseEditorTabId,
   parseEditorTabSessionState,
   readLocalTabSessionState,
   remapOpenTabs,
   removeOpenTab,
+  replaceOpenTab,
   tabIdForNavigationTarget,
   writeLocalTabSessionState,
 } from './editor-tabs';
@@ -66,6 +68,10 @@ describe('editor tab state', () => {
 
   test('parses tab ids back to their navigation payload', () => {
     expect(parseEditorTabId(docTabId('docs/a'))).toEqual({ kind: 'doc', docName: 'docs/a' });
+    expect(parseEditorTabId('docs/a\u0000doc-tab:1')).toEqual({
+      kind: 'doc',
+      docName: 'docs/a',
+    });
     expect(parseEditorTabId(folderTabId('docs'))).toEqual({
       kind: 'folder',
       folderPath: 'docs',
@@ -79,6 +85,106 @@ describe('editor tab state', () => {
 
   test('addOpenTab keeps existing tabs in place', () => {
     expect(addOpenTab(['a', 'b'], 'a', 10)).toEqual(['a', 'b']);
+  });
+
+  test('replaceOpenTab dedupes the destination tab while replacing the active tab', () => {
+    expect(replaceOpenTab(['foo.md', 'bar.md', 'baz.md'], 'bar.md', 'foo.md', 10)).toEqual([
+      'foo.md',
+      'baz.md',
+    ]);
+  });
+
+  test('replaceOpenTab appends when there is no current tab', () => {
+    expect(replaceOpenTab(['foo.md'], null, 'bar.md', 10)).toEqual(['foo.md', 'bar.md']);
+  });
+
+  test('replaceOpenTab ignores invalid destination tab ids', () => {
+    expect(replaceOpenTab(['foo.md', '', 'bar.md'], 'foo.md', '', 10)).toEqual([
+      'foo.md',
+      'bar.md',
+    ]);
+  });
+
+  test('replaceOpenTab appends when the current tab is missing', () => {
+    expect(replaceOpenTab(['foo.md'], 'missing.md', 'bar.md', 10)).toEqual(['foo.md', 'bar.md']);
+  });
+
+  test('replaceOpenTab replaces document tabs with folder tabs', () => {
+    expect(
+      replaceOpenTab(['foo.md', folderTabId('docs')], 'foo.md', folderTabId('guides'), 10),
+    ).toEqual([folderTabId('guides'), folderTabId('docs')]);
+  });
+
+  test('openDocTab appends a new document tab', () => {
+    expect(
+      openDocTab(['foo.md'], 'bar.md', {
+        behavior: 'append',
+        currentTabId: 'foo.md',
+        limit: 10,
+      }),
+    ).toEqual({
+      tabs: ['foo.md', 'bar.md'],
+      activeTabId: 'bar.md',
+    });
+  });
+
+  test('openDocTab keeps the current tab when replace-active targets the same document', () => {
+    expect(
+      openDocTab(['foo.md'], 'foo.md', {
+        behavior: 'replace-active',
+        currentTabId: 'foo.md',
+        limit: 10,
+      }),
+    ).toEqual({
+      tabs: ['foo.md'],
+      activeTabId: 'foo.md',
+    });
+  });
+
+  test('openDocTab creates a duplicate tab when replacing another tab with an already-open document', () => {
+    const duplicateFooTab = 'foo.md\u0000doc-tab:1';
+
+    expect(
+      openDocTab(['foo.md', 'bar.md'], 'foo.md', {
+        behavior: 'replace-active',
+        currentTabId: 'bar.md',
+        limit: 10,
+      }),
+    ).toEqual({
+      tabs: ['foo.md', duplicateFooTab],
+      activeTabId: duplicateFooTab,
+    });
+  });
+
+  test('openDocTab skips already-occupied duplicate instance numbers', () => {
+    const duplicateFooTab1 = 'foo.md\u0000doc-tab:1';
+    const duplicateFooTab2 = 'foo.md\u0000doc-tab:2';
+
+    expect(
+      openDocTab(['foo.md', duplicateFooTab1, 'bar.md'], 'foo.md', {
+        behavior: 'replace-active',
+        currentTabId: 'bar.md',
+        limit: 10,
+      }),
+    ).toEqual({
+      tabs: ['foo.md', duplicateFooTab1, duplicateFooTab2],
+      activeTabId: duplicateFooTab2,
+    });
+  });
+
+  test('openDocTab append preserves an active duplicate tab for the same document', () => {
+    const duplicateFooTab = 'foo.md\u0000doc-tab:1';
+
+    expect(
+      openDocTab(['foo.md', duplicateFooTab], 'foo.md', {
+        behavior: 'append',
+        currentTabId: duplicateFooTab,
+        limit: 10,
+      }),
+    ).toEqual({
+      tabs: ['foo.md', duplicateFooTab],
+      activeTabId: duplicateFooTab,
+    });
   });
 
   test('removeOpenTab removes only the requested tab', () => {
