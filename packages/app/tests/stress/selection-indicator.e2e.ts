@@ -103,6 +103,30 @@ test('S3: nested Callout/Accordion — only innermost paints halo', async ({ pag
   expect(selectedCount).toBe(1);
 });
 
+test('S3b: outer-NodeSelection on Callout with nested Accordion — only outer paints halo', async ({
+  page,
+  api,
+}) => {
+  await setupDoc(page, api, '<Callout type="note">\n\n<Accordion title="Inner" />\n\n</Callout>\n');
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="accordion"]');
+
+  await selectFirstJsxComponent(page, 'Callout');
+
+  const outerCallout = page
+    .locator('.jsx-component-wrapper[data-component-type="callout"]')
+    .first();
+  const innerAccordion = page
+    .locator('.jsx-component-wrapper[data-component-type="accordion"]')
+    .first();
+
+  await expect(outerCallout).toHaveAttribute('data-selected', 'true', { timeout: 5_000 });
+  const innerDataSelected = await innerAccordion.getAttribute('data-selected');
+  expect(innerDataSelected).toBeNull();
+
+  const selectedCount = await page.locator('[data-selected="true"]').count();
+  expect(selectedCount).toBe(1);
+});
+
 test('S4: dragstart/dragend toggles data-dragging', async ({ page, api }) => {
   await setupDoc(page, api, '<img src="/p.png" alt="Draggable" />\n');
   await page.waitForSelector('.jsx-component-wrapper');
@@ -150,7 +174,7 @@ test('S6: prefers-reduced-motion:reduce → halo transition-duration is 0s', asy
   expect(transitionDuration === '0s' || transitionDuration === '').toBe(true);
 });
 
-test('S7: Breadcrumb shows ancestry; clicking ancestor flips selection', async ({ page, api }) => {
+test('S7: selecting a Callout/Accordion renders no breadcrumb chrome', async ({ page, api }) => {
   await setupDoc(
     page,
     api,
@@ -158,24 +182,20 @@ test('S7: Breadcrumb shows ancestry; clicking ancestor flips selection', async (
   );
   await page.waitForSelector('.jsx-component-wrapper[data-component-type="accordion"]');
 
+  await expect(page.locator('.jsx-component-breadcrumb')).toHaveCount(0);
+  await expect(page.locator('nav[aria-label="Block ancestor navigation"]')).toHaveCount(0);
+
+  await selectFirstJsxComponent(page, 'Callout');
+  const outer = page.locator('.jsx-component-wrapper[data-component-type="callout"]').first();
+  await expect(outer).toHaveAttribute('data-selected', 'true');
+  await expect(page.locator('.jsx-component-breadcrumb')).toHaveCount(0);
+  await expect(page.locator('nav[aria-label="Block ancestor navigation"]')).toHaveCount(0);
+
   await selectFirstJsxComponent(page, 'Accordion');
-
-  const breadcrumb = page.locator('.jsx-component-breadcrumb');
-  await expect(breadcrumb).toBeVisible();
-  await expect(breadcrumb).toContainText('Document');
-  await expect(breadcrumb).toContainText('Callout');
-  await expect(breadcrumb).toContainText('Accordion');
-
-  const outerButton = breadcrumb.locator('button', { hasText: 'Callout' });
-  await outerButton.dispatchEvent('click');
-
-  const outerContainer = page
-    .locator('.jsx-component-wrapper[data-component-type="callout"]')
-    .first();
-  await expect(outerContainer).toHaveAttribute('data-selected', 'true', { timeout: 2_000 });
   const inner = page.locator('.jsx-component-wrapper[data-component-type="accordion"]').first();
-  const innerAttr = await inner.getAttribute('data-selected');
-  expect(innerAttr).toBeNull();
+  await expect(inner).toHaveAttribute('data-selected', 'true');
+  await expect(page.locator('.jsx-component-breadcrumb')).toHaveCount(0);
+  await expect(page.locator('nav[aria-label="Block ancestor navigation"]')).toHaveCount(0);
 });
 
 test('S8: aria-live textContent announces the selected block', async ({ page, api }) => {
@@ -226,30 +246,6 @@ test('S9: three-axis composition — dragging dominates over selected + needs-co
   expect(haloState.transitionDuration).toBe('0s');
 
   await card.dispatchEvent('dragend');
-});
-
-test('S10: clicking "Document" breadcrumb anchor clears selection via programmatic origin', async ({
-  page,
-  api,
-}) => {
-  await setupDoc(page, api, '<img src="/p.png" alt="Target" />\n');
-  await page.waitForSelector('.jsx-component-wrapper');
-
-  await selectFirstJsxComponent(page, 'img');
-  const card = page.locator('.jsx-component-wrapper[data-component-type="img"]').first();
-  await expect(card).toHaveAttribute('data-selected', 'true');
-
-  const breadcrumb = page.getByRole('navigation', { name: 'Block ancestor navigation' });
-  await breadcrumb.getByRole('button', { name: 'Document' }).click();
-
-  await expect(page.locator('[data-selected="true"]')).toHaveCount(0, { timeout: 2_000 });
-
-  const selectionKind = await page.evaluate(() => {
-    const ed = window.__activeEditor;
-    if (!ed) return 'no-editor';
-    return ed.state.selection.empty ? 'empty' : 'not-empty';
-  });
-  expect(selectionKind).toBe('empty');
 });
 
 type InsetCase = { fixture: string; componentType: string; expectedInset: string };
@@ -399,55 +395,6 @@ test('S14: tr.setMeta(SELECTION_ORIGIN_META_KEY) sets data-selection-origin=prog
   await expect(card).toHaveAttribute('data-selection-origin', 'programmatic');
 });
 
-test('S15: Breadcrumb footer height is constant across rapid selection changes', async ({
-  page,
-  api,
-}) => {
-  await setupDoc(
-    page,
-    api,
-    '<img src="/a.png" alt="A" />\n\n<img src="/b.png" alt="B" />\n\n<img src="/c.png" alt="C" />\n',
-  );
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="img"]');
-
-  const breadcrumb = page.locator('.jsx-component-breadcrumb');
-  await expect(breadcrumb).toBeAttached();
-
-  const initialHeight = await breadcrumb.evaluate((el) => (el as HTMLElement).offsetHeight);
-  expect(initialHeight).toBeGreaterThanOrEqual(28);
-
-  const heights: number[] = [initialHeight];
-  for (let i = 0; i < 6; i++) {
-    await page.evaluate((idx) => {
-      const ed = window.__activeEditor;
-      if (!ed) return;
-      const positions: number[] = [];
-      ed.state.doc.descendants((node, pos) => {
-        if (node.type.name === 'jsxComponent' && node.attrs.componentName === 'img') {
-          positions.push(pos);
-        }
-        return true;
-      });
-      const pos = positions[idx % positions.length];
-      if (pos !== undefined) ed.chain().focus().setNodeSelection(pos).run();
-    }, i);
-    heights.push(await breadcrumb.evaluate((el) => (el as HTMLElement).offsetHeight));
-
-    await page.evaluate(() => {
-      const ed = window.__activeEditor;
-      if (ed) ed.chain().focus().setTextSelection(0).run();
-    });
-    heights.push(await breadcrumb.evaluate((el) => (el as HTMLElement).offsetHeight));
-  }
-
-  for (const h of heights) {
-    expect(h).toBeGreaterThanOrEqual(28);
-  }
-  const min = Math.min(...heights);
-  const max = Math.max(...heights);
-  expect(max - min).toBeLessThanOrEqual(1);
-});
-
 test('S16: axe-core — zero critical violations on selection-layer surfaces', async ({
   page,
   api,
@@ -463,7 +410,6 @@ test('S16: axe-core — zero critical violations on selection-layer surfaces', a
 
   const results = await new AxeBuilder({ page })
     .include('.ProseMirror')
-    .include('[aria-label="Block ancestor navigation"]')
     .include('[role="status"][aria-live="polite"]')
     .withTags(['wcag2a', 'wcag2aa'])
     .analyze();
@@ -481,48 +427,6 @@ test('S16: axe-core — zero critical violations on selection-layer surfaces', a
     throw new Error(`axe-core found ${blocking.length} critical violation(s):\n${summary}`);
   }
   expect(blocking.length).toBe(0);
-});
-
-test('S17: Tab from editor reaches every non-innermost breadcrumb button in order', async ({
-  page,
-  api,
-}) => {
-  await setupDoc(
-    page,
-    api,
-    '<Callout type="note">\n<Accordion title="Deep">\n\nbody\n\n</Accordion>\n</Callout>\n',
-  );
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="accordion"]');
-  await selectFirstJsxComponent(page, 'Accordion');
-
-  await page.locator('.ProseMirror').focus();
-
-  const seen: string[] = [];
-  for (let i = 0; i < 40; i++) {
-    await page.keyboard.press('Tab');
-    const focusedInfo = await page.evaluate(() => {
-      const el = document.activeElement as HTMLElement | null;
-      if (!el || el === document.body) return null;
-      const nav = el.closest('nav[aria-label="Block ancestor navigation"]');
-      const text = (el.textContent || '').trim();
-      return {
-        tag: el.tagName,
-        inNav: nav !== null,
-        text,
-        hasAriaCurrent: el.getAttribute('aria-current') === 'location',
-      };
-    });
-    if (!focusedInfo) continue;
-    if (focusedInfo.inNav) {
-      seen.push(focusedInfo.text);
-      expect(focusedInfo.hasAriaCurrent).toBe(false);
-    }
-    if (seen.length >= 2) break; // Document + Callout — that's the expected reachable set.
-  }
-
-  expect(seen).toContain('Document');
-  expect(seen).toContain('Callout');
-  expect(seen).not.toContain('Accordion');
 });
 
 test('S18: rapid selection changes coalesce into a single aria-live announcement', async ({

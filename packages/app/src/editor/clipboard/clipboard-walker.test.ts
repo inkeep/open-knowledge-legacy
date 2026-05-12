@@ -76,6 +76,7 @@ describe('ATTR_BLOCKLIST — surface contract', () => {
     expect(ATTR_BLOCKLIST.has('data-selected')).toBe(true);
     expect(ATTR_BLOCKLIST.has('data-has-child-selected')).toBe(true);
     expect(ATTR_BLOCKLIST.has('data-dragging')).toBe(true);
+    expect(ATTR_BLOCKLIST.has('data-range-selected')).toBe(true);
   });
 
   test('strips contenteditable + data-pm-slice', () => {

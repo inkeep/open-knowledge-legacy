@@ -48,6 +48,7 @@ describe('formatSelectionMessage', () => {
       ancestorChain: [],
       selectionOrigin: 'programmatic',
       isDragging: false,
+      rangeEncompassedBlockIds: new Set<string>(),
     };
     expect(formatSelectionMessage(editor, sel)).toBe('');
   });
@@ -59,6 +60,7 @@ describe('formatSelectionMessage', () => {
       ancestorChain: [{ bridgeId: 'b1', componentName: 'Callout', pos: 0 }],
       selectionOrigin: 'pointer',
       isDragging: false,
+      rangeEncompassedBlockIds: new Set<string>(),
     };
     const msg = formatSelectionMessage(editor, sel);
     expect(msg).toStartWith('Selected: ');
@@ -72,6 +74,7 @@ describe('formatSelectionMessage', () => {
       ancestorChain: [{ bridgeId: 'b1', componentName: 'FooBar', pos: 0 }],
       selectionOrigin: 'pointer',
       isDragging: false,
+      rangeEncompassedBlockIds: new Set<string>(),
     };
     const msg = formatSelectionMessage(editor, sel);
     expect(msg).toBe('Selected: FooBar (unregistered)');
@@ -92,6 +95,7 @@ describe('formatSelectionMessage', () => {
       ],
       selectionOrigin: 'pointer',
       isDragging: false,
+      rangeEncompassedBlockIds: new Set<string>(),
     };
     const msg = formatSelectionMessage(editor, sel);
     expect(msg).toBe('Selected: Image, 2 of 3 in Callout');
@@ -111,6 +115,7 @@ describe('formatSelectionMessage', () => {
       ],
       selectionOrigin: 'pointer',
       isDragging: false,
+      rangeEncompassedBlockIds: new Set<string>(),
     };
     const msg = formatSelectionMessage(editor, sel);
     expect(msg).toBe('Selected: Image in Callout');
@@ -130,6 +135,7 @@ describe('formatSelectionMessage', () => {
       ],
       selectionOrigin: 'pointer',
       isDragging: false,
+      rangeEncompassedBlockIds: new Set<string>(),
     };
     const msg = formatSelectionMessage(editor, sel);
     expect(msg).toContain('FooBar (unregistered)');

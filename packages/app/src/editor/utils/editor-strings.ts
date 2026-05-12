@@ -13,8 +13,6 @@ export function formatContainerAriaLabel(
   return `${componentLabel} with ${childCount} ${noun}`;
 }
 
-export const DOCUMENT_ROOT_LABEL = 'Document';
-
 export function getAutoFocusedPropName(props: PropDef[]): string | null {
   for (const p of props) {
     if (p.type !== 'string') continue;

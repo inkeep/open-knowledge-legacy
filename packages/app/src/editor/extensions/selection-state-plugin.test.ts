@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Schema } from '@tiptap/pm/model';
 import { EditorState, NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state';
+import { bridgeIdPluginKey } from './bridge-id-plugin.ts';
 import {
   type BlockSelection,
   computeSelectionApply,
@@ -34,7 +35,38 @@ const EMPTY: BlockSelection = {
   ancestorChain: [],
   selectionOrigin: 'programmatic',
   isDragging: false,
+  rangeEncompassedBlockIds: new Set<string>(),
 };
+
+/** Stub plugin that mirrors `BridgeIdPlugin`'s state shape so unit tests can
+ *  exercise the range-encompass derivation (which reads `posToId`). The real
+ *  plugin walks the doc on transactions; we walk once at init for the test
+ *  fixture, which is enough because the tests don't mutate doc content
+ *  (only selection state). Each jsxComponent gets a synthetic `b<pos>` id. */
+function makeStubBridgeIdPlugin() {
+  return new Plugin({
+    key: bridgeIdPluginKey,
+    state: {
+      init(_c, state) {
+        const posToId = new Map<number, string>();
+        state.doc.descendants((node, pos) => {
+          if (node.type.name === 'jsxComponent') {
+            posToId.set(pos, `b${pos}`);
+          }
+          return true;
+        });
+        return {
+          yElementToId: new WeakMap(),
+          posToId,
+          counter: posToId.size,
+        };
+      },
+      apply(_tr, value) {
+        return value;
+      },
+    },
+  });
+}
 
 /** Plugin stub that mirrors the real plugin's state shape so we can run
  *  `EditorState.create({plugins: [stub]})` and walk `apply` semantics. We
@@ -267,6 +299,124 @@ describe('computeSelectionApply (real plugin apply path)', () => {
     const after = computeSelectionApply(tr, prev, state.apply(tr), undefined);
     expect(after.selectionOrigin).toBe('keyboard');
     expect(after.isDragging).toBe(false);
+  });
+});
+
+describe('rangeEncompassedBlockIds (range-encompass soft halo derivation)', () => {
+  /** Doc builder that registers the stub bridge-id plugin so `posToId` is
+   *  populated — the rangeEncompass derivation reads it. */
+  function makeStateWithBridgeIds(doc: ReturnType<Schema['node']>) {
+    return EditorState.create({ doc, plugins: [makeStubBridgeIdPlugin(), makeStubPlugin()] });
+  }
+
+  test('TextSelection covering multiple jsxComponents populates the set', () => {
+    const callout = jsx('Callout', [p('b')]);
+    const accordion = jsx('Accordion', [p('d')]);
+    const doc = schema.node('doc', null, [p('a'), callout, p('c'), accordion, p('e')]);
+    const state = makeStateWithBridgeIds(doc);
+    const sel = deriveBlockSelection(state, EMPTY, { origin: 'programmatic' });
+    expect(sel.rangeEncompassedBlockIds.size).toBe(0);
+    const tr = state.tr.setSelection(TextSelection.create(state.doc, 0, state.doc.content.size));
+    const next = state.apply(tr);
+    const after = selectionStatePluginKey.getState(next);
+    expect(after).toBeDefined();
+    expect(after?.rangeEncompassedBlockIds.size).toBe(2);
+    expect(after?.selectedBlockId).toBeNull();
+  });
+
+  test('NodeSelection produces an empty range-encompassed set', () => {
+    const card = jsx('Callout', [p('body')]);
+    const doc = schema.node('doc', null, [card]);
+    let state = makeStateWithBridgeIds(doc);
+    state = state.apply(state.tr.setSelection(NodeSelection.create(doc, 0)));
+    const sel = selectionStatePluginKey.getState(state);
+    expect(sel?.selectedBlockId).not.toBeNull();
+    expect(sel?.rangeEncompassedBlockIds.size).toBe(0);
+  });
+
+  test('TextSelection inside a jsxComponent (no range) produces an empty set', () => {
+    const card = jsx('Callout', [p('body')]);
+    const doc = schema.node('doc', null, [card]);
+    let state = makeStateWithBridgeIds(doc);
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 3)));
+    const sel = selectionStatePluginKey.getState(state);
+    expect(sel?.rangeEncompassedBlockIds.size).toBe(0);
+  });
+
+  test('TextSelection range that does NOT fully contain a jsxComponent excludes it', () => {
+    const callout = jsx('Callout', [p('body')]);
+    const doc = schema.node('doc', null, [p('a'), callout, p('z')]);
+    let state = makeStateWithBridgeIds(doc);
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 0, 4)));
+    const sel = selectionStatePluginKey.getState(state);
+    expect(sel?.rangeEncompassedBlockIds.size).toBe(0);
+  });
+
+  test('identity preservation: two consecutive derive calls return ===', () => {
+    const callout = jsx('Callout', [p('body')]);
+    const doc = schema.node('doc', null, [p('a'), callout, p('z')]);
+    const state = makeStateWithBridgeIds(doc);
+    const sel1 = deriveBlockSelection(state, EMPTY);
+    const sel2 = deriveBlockSelection(state, sel1);
+    expect(sel2).toBe(sel1);
+  });
+
+  test('identity preservation under range coverage: same range → identical reference', () => {
+    const callout = jsx('Callout', [p('body')]);
+    const doc = schema.node('doc', null, [p('a'), callout, p('z')]);
+    let state = makeStateWithBridgeIds(doc);
+    state = state.apply(
+      state.tr.setSelection(TextSelection.create(state.doc, 0, state.doc.content.size)),
+    );
+    const prev = selectionStatePluginKey.getState(state) as BlockSelection;
+    const next = deriveBlockSelection(state, prev);
+    expect(next).toBe(prev);
+  });
+
+  test('two BlockSelections with same-size-but-different rangeEncompassed sets are NOT identity-equal', () => {
+    const docNode = schema.node('doc', null, [
+      p('a'),
+      jsx('Callout', [p('one')]),
+      p('mid'),
+      jsx('Callout', [p('two')]),
+      p('z'),
+    ]);
+    let state = makeStateWithBridgeIds(docNode);
+    const firstCalloutPos = 3; // <p>a</p>(0..2) → 3 is the first Callout start
+    const firstCalloutNode = state.doc.nodeAt(firstCalloutPos);
+    if (!firstCalloutNode || firstCalloutNode.type.name !== 'jsxComponent') {
+      throw new Error('test fixture: expected jsxComponent at pos 3');
+    }
+    const firstEnd = firstCalloutPos + firstCalloutNode.nodeSize;
+    state = state.apply(
+      state.tr.setSelection(TextSelection.create(state.doc, firstCalloutPos, firstEnd)),
+    );
+    const selA = selectionStatePluginKey.getState(state) as BlockSelection;
+    expect(selA.rangeEncompassedBlockIds.size).toBe(1);
+
+    let secondCalloutPos = -1;
+    state.doc.descendants((node, pos) => {
+      if (secondCalloutPos !== -1) return false;
+      if (node.type.name === 'jsxComponent' && pos > firstCalloutPos) {
+        secondCalloutPos = pos;
+        return false;
+      }
+      return true;
+    });
+    if (secondCalloutPos === -1) throw new Error('test fixture: second jsxComponent not found');
+    const secondCalloutNode = state.doc.nodeAt(secondCalloutPos);
+    if (!secondCalloutNode) throw new Error('test fixture: secondCallout disappeared');
+    const secondEnd = secondCalloutPos + secondCalloutNode.nodeSize;
+    state = state.apply(
+      state.tr.setSelection(TextSelection.create(state.doc, secondCalloutPos, secondEnd)),
+    );
+    const selB = selectionStatePluginKey.getState(state) as BlockSelection;
+    expect(selB.rangeEncompassedBlockIds.size).toBe(1);
+
+    expect(selB).not.toBe(selA);
+    const idsA = Array.from(selA.rangeEncompassedBlockIds);
+    const idsB = Array.from(selB.rangeEncompassedBlockIds);
+    expect(idsA[0]).not.toBe(idsB[0]);
   });
 });
 

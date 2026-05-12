@@ -77,6 +77,7 @@ export const ATTR_BLOCKLIST: ReadonlySet<string> = new Set([
   'data-selected',
   'data-has-child-selected',
   'data-dragging',
+  'data-range-selected',
   'contenteditable',
   'data-pm-slice',
 ]);

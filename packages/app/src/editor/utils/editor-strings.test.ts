@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { DOCUMENT_ROOT_LABEL, formatContainerAriaLabel, humanizePropName } from './editor-strings';
+import { formatContainerAriaLabel, humanizePropName } from './editor-strings';
 
 describe('formatContainerAriaLabel', () => {
   test('empty container emits "(empty)"', () => {
@@ -22,12 +22,6 @@ describe('formatContainerAriaLabel', () => {
 
   test('irregular noun is not inflected — "item/items" stays fixed', () => {
     expect(formatContainerAriaLabel('Feet', 'Foot', 3)).toBe('Feet with 3 items');
-  });
-});
-
-describe('DOCUMENT_ROOT_LABEL', () => {
-  test('is the expected English string (fine to change; codify here so a11y tests can import it)', () => {
-    expect(DOCUMENT_ROOT_LABEL).toBe('Document');
   });
 });
 

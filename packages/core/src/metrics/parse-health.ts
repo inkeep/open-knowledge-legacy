@@ -25,6 +25,9 @@ export interface ParseHealthMetrics {
   jsxMoveFailed: Record<string, number>;
   jsxStuckCopyFailed: Record<string, number>;
   jsxStuckDeleteFailed: Record<string, number>;
+  jsxPopoverCloseRestoreFailed: Record<string, number>;
+  jsxKeyboardDeleteFailed: Record<string, number>;
+  blockGripClickSelectFailed: Record<string, number>;
 }
 
 const metrics: {
@@ -36,6 +39,9 @@ const metrics: {
   jsxMoveFailed: Record<string, number>;
   jsxStuckCopyFailed: Record<string, number>;
   jsxStuckDeleteFailed: Record<string, number>;
+  jsxPopoverCloseRestoreFailed: Record<string, number>;
+  jsxKeyboardDeleteFailed: Record<string, number>;
+  blockGripClickSelectFailed: Record<string, number>;
 } = {
   parseFallback: { blockLevel: 0, wholeDoc: 0 },
   jsxRenderFailure: {},
@@ -45,6 +51,9 @@ const metrics: {
   jsxMoveFailed: {},
   jsxStuckCopyFailed: {},
   jsxStuckDeleteFailed: {},
+  jsxPopoverCloseRestoreFailed: {},
+  jsxKeyboardDeleteFailed: {},
+  blockGripClickSelectFailed: {},
 };
 
 export function incrementBlockFallback(): void {
@@ -84,6 +93,21 @@ export function incrementJsxStuckDeleteFailed(component: string): void {
   metrics.jsxStuckDeleteFailed[component] = (metrics.jsxStuckDeleteFailed[component] ?? 0) + 1;
 }
 
+export function incrementJsxPopoverCloseRestoreFailed(component: string): void {
+  metrics.jsxPopoverCloseRestoreFailed[component] =
+    (metrics.jsxPopoverCloseRestoreFailed[component] ?? 0) + 1;
+}
+
+export function incrementJsxKeyboardDeleteFailed(component: string): void {
+  metrics.jsxKeyboardDeleteFailed[component] =
+    (metrics.jsxKeyboardDeleteFailed[component] ?? 0) + 1;
+}
+
+export function incrementBlockGripClickSelectFailed(nodeType: string): void {
+  metrics.blockGripClickSelectFailed[nodeType] =
+    (metrics.blockGripClickSelectFailed[nodeType] ?? 0) + 1;
+}
+
 export function incrementYpsMismatchBlock(): void {
   ypsCounters().block++;
 }
@@ -104,6 +128,9 @@ export function getParseHealth(): ParseHealthMetrics {
     jsxMoveFailed: { ...metrics.jsxMoveFailed },
     jsxStuckCopyFailed: { ...metrics.jsxStuckCopyFailed },
     jsxStuckDeleteFailed: { ...metrics.jsxStuckDeleteFailed },
+    jsxPopoverCloseRestoreFailed: { ...metrics.jsxPopoverCloseRestoreFailed },
+    jsxKeyboardDeleteFailed: { ...metrics.jsxKeyboardDeleteFailed },
+    blockGripClickSelectFailed: { ...metrics.blockGripClickSelectFailed },
   };
 }
 
@@ -118,6 +145,12 @@ export function resetParseHealth(): void {
   for (const k of Object.keys(metrics.jsxMoveFailed)) delete metrics.jsxMoveFailed[k];
   for (const k of Object.keys(metrics.jsxStuckCopyFailed)) delete metrics.jsxStuckCopyFailed[k];
   for (const k of Object.keys(metrics.jsxStuckDeleteFailed)) delete metrics.jsxStuckDeleteFailed[k];
+  for (const k of Object.keys(metrics.jsxPopoverCloseRestoreFailed))
+    delete metrics.jsxPopoverCloseRestoreFailed[k];
+  for (const k of Object.keys(metrics.jsxKeyboardDeleteFailed))
+    delete metrics.jsxKeyboardDeleteFailed[k];
+  for (const k of Object.keys(metrics.blockGripClickSelectFailed))
+    delete metrics.blockGripClickSelectFailed[k];
   const yps = ypsCounters();
   yps.block = 0;
   yps.inline = 0;
