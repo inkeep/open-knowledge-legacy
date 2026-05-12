@@ -1,12 +1,18 @@
 import { RenamePathSuccessSchema } from '@inkeep/open-knowledge-core';
 import { FolderOpen, XIcon } from 'lucide-react';
-import { useEffect, useRef, useState, type WheelEvent } from 'react';
+import { type ReactNode, useEffect, useRef, useState, type WheelEvent } from 'react';
 import {
   buildRenamedNodePath,
   isValidNodeName,
   normalizeRenameValue,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import {
   InputGroup,
   InputGroupAddon,
@@ -84,12 +90,57 @@ function stripRenameExtensionSuffix(value: string, docExt: string): string {
   return extension ? value.slice(0, -extension.length) : value;
 }
 
+function EditorTabContextMenu({
+  children,
+  closeTab,
+  closeTabs,
+  disabled = false,
+  openTabs,
+  tabId,
+}: {
+  children: ReactNode;
+  closeTab: (tabId: string) => void;
+  closeTabs: (tabIds: readonly string[]) => void;
+  disabled?: boolean;
+  openTabs: readonly string[];
+  tabId: string;
+}) {
+  if (disabled) return children;
+
+  const otherTabIds = openTabs.filter((openTabId) => openTabId !== tabId);
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent className="min-w-40">
+        <ContextMenuItem onSelect={() => closeTab(tabId)}>Close</ContextMenuItem>
+        <ContextMenuItem
+          disabled={otherTabIds.length === 0}
+          onSelect={() => {
+            closeTabs(otherTabIds);
+          }}
+        >
+          Close others
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={() => {
+            closeTabs(openTabs);
+          }}
+        >
+          Close all
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
 export function EditorTabs() {
   const {
     activeDocName,
     activeTarget,
     closeAndClearForRename,
     closeTab,
+    closeTabs,
     openTabs,
     remapTabsForRename,
   } = useDocumentContext();
@@ -281,156 +332,42 @@ export function EditorTabs() {
           const { baseName, label, prefix } = tabParts(tab.folderPath, '/');
           const accessibleLabel = `${prefix}${label}`;
           return (
-            <div
+            <EditorTabContextMenu
               key={tabId}
-              role="presentation"
-              data-active-tab={isActive ? 'true' : undefined}
-              className={cn(
-                'group flex min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-lg border border-b-transparent py-1.5 relative',
-                isActive
-                  ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
-                  : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
-                isElectronHost && '[-webkit-app-region:no-drag]',
-              )}
-              onAuxClick={(event) => {
-                if (event.button !== 1) return;
-                event.preventDefault();
-                closeTab(tabId);
-              }}
+              tabId={tabId}
+              openTabs={openTabs}
+              closeTab={closeTab}
+              closeTabs={closeTabs}
             >
-              <button
-                type="button"
-                aria-label={accessibleLabel}
-                title={accessibleLabel}
-                className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                onClick={() => {
-                  navigateToTab(tabId);
-                }}
-              >
-                <FolderOpen aria-hidden="true" className="size-3.5 shrink-0" />
-                {prefix ? (
-                  <span
-                    className={cn('min-w-0 flex-1 truncate', isActive && 'text-muted-foreground')}
-                  >
-                    {prefix}
-                  </span>
-                ) : null}
-                <span
-                  className={cn(
-                    'flex min-w-0 items-center font-medium',
-                    prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
-                  )}
-                >
-                  <span className="min-w-0 truncate">{baseName}</span>
-                  <span className="shrink-0">/</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Close ${accessibleLabel}`}
-                className="mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-70 outline-none transition hover:bg-muted hover:text-foreground hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100"
-                onClick={(event) => {
-                  event.stopPropagation();
+              <div
+                role="presentation"
+                data-active-tab={isActive ? 'true' : undefined}
+                className={cn(
+                  'group flex min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-lg border border-b-transparent py-1.5 relative',
+                  isActive
+                    ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
+                    : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+                  isElectronHost && '[-webkit-app-region:no-drag]',
+                )}
+                onAuxClick={(event) => {
+                  if (event.button !== 1) return;
+                  event.preventDefault();
                   closeTab(tabId);
                 }}
               >
-                <XIcon aria-hidden="true" className="size-3.5" />
-              </button>
-              {isActive ? (
-                <div className="z-0 h-2 w-[calc(100%+16px)] absolute -left-[8px] -bottom-[2px] bg-background pointer-events-none" />
-              ) : null}
-            </div>
-          );
-        }
-
-        const docName = tab.docName;
-        const docExt = pageMeta.get(docName)?.docExt ?? '.md';
-        const { baseName, extension, label, prefix } = tabParts(docName, docExt);
-        const accessibleLabel = `${prefix}${label}`;
-        const isRenaming = renamingDocName === docName;
-        const renameErrorId = `editor-tab-rename-error-${tabDomIdPart(docName)}`;
-        return (
-          <div
-            key={tabId}
-            role="presentation"
-            data-active-tab={isActive ? 'true' : undefined}
-            className={cn(
-              'group flex min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-lg border border-b-transparent py-1.5 relative',
-              isActive
-                ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
-                : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
-              isRenaming && renameError && 'border-destructive',
-              isElectronHost && '[-webkit-app-region:no-drag]',
-            )}
-            onAuxClick={(event) => {
-              if (event.button !== 1) return;
-              event.preventDefault();
-              closeTab(tabId);
-            }}
-          >
-            {isRenaming ? (
-              <>
-                <InputGroup className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent">
-                  <InputGroupInput
-                    ref={renameInputRef}
-                    value={renameValue}
-                    disabled={isRenameLoading}
-                    aria-label={`Rename ${label}`}
-                    aria-invalid={renameError ? true : undefined}
-                    aria-describedby={renameError ? renameErrorId : undefined}
-                    aria-busy={isRenameLoading || undefined}
-                    title={renameError ?? docName}
-                    className="h-full min-w-0 px-2 py-0 text-xs"
-                    onChange={(event) => {
-                      setRenameValue(stripRenameExtensionSuffix(event.target.value, docExt));
-                      setRenameError(null);
-                      lastFailedValueRef.current = null;
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        void commitRename();
-                      } else if (event.key === 'Escape') {
-                        event.preventDefault();
-                        cancelRename();
-                      }
-                    }}
-                    onBlur={commitRename}
-                  />
-                  <InputGroupAddon align="inline-end" aria-hidden="true" className="pr-2 text-xs">
-                    <InputGroupText className="text-xs text-muted-foreground/60">
-                      {docExt}
-                    </InputGroupText>
-                  </InputGroupAddon>
-                </InputGroup>
-                {renameError ? (
-                  <span id={renameErrorId} role="alert" className="sr-only">
-                    {renameError}
-                  </span>
-                ) : null}
-              </>
-            ) : (
-              <>
                 <button
                   type="button"
                   aria-label={accessibleLabel}
                   title={accessibleLabel}
                   className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                   onClick={() => {
-                    navigateToDoc(docName);
-                  }}
-                  onDoubleClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    enterRenameMode(docName);
+                    navigateToTab(tabId);
                   }}
                 >
+                  <FolderOpen aria-hidden="true" className="size-3.5 shrink-0" />
                   {prefix ? (
                     <span
-                      className={cn(
-                        'min-w-0 flex-1 truncate text-muted-foreground/60',
-                        isActive && 'text-muted-foreground',
-                      )}
+                      className={cn('min-w-0 flex-1 truncate', isActive && 'text-muted-foreground')}
                     >
                       {prefix}
                     </span>
@@ -442,12 +379,12 @@ export function EditorTabs() {
                     )}
                   >
                     <span className="min-w-0 truncate">{baseName}</span>
-                    <span className="shrink-0">{extension}</span>
+                    <span className="shrink-0">/</span>
                   </span>
                 </button>
                 <button
                   type="button"
-                  aria-label={`Close ${label}`}
+                  aria-label={`Close ${accessibleLabel}`}
                   className="mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-70 outline-none transition hover:bg-muted hover:text-foreground hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100"
                   onClick={(event) => {
                     event.stopPropagation();
@@ -456,12 +393,141 @@ export function EditorTabs() {
                 >
                   <XIcon aria-hidden="true" className="size-3.5" />
                 </button>
-              </>
-            )}
-            {isActive ? (
-              <div className="z-0 h-2 w-[calc(100%+16px)] absolute -left-[8px] -bottom-[2px] bg-background pointer-events-none" />
-            ) : null}
-          </div>
+                {isActive ? (
+                  <div className="z-0 h-2 w-[calc(100%+16px)] absolute -left-[8px] -bottom-[2px] bg-background pointer-events-none" />
+                ) : null}
+              </div>
+            </EditorTabContextMenu>
+          );
+        }
+
+        const docName = tab.docName;
+        const docExt = pageMeta.get(docName)?.docExt ?? '.md';
+        const { baseName, extension, label, prefix } = tabParts(docName, docExt);
+        const accessibleLabel = `${prefix}${label}`;
+        const isRenaming = renamingDocName === docName;
+        const renameErrorId = `editor-tab-rename-error-${tabDomIdPart(docName)}`;
+        return (
+          <EditorTabContextMenu
+            key={tabId}
+            disabled={isRenaming}
+            tabId={tabId}
+            openTabs={openTabs}
+            closeTab={closeTab}
+            closeTabs={closeTabs}
+          >
+            <div
+              role="presentation"
+              data-active-tab={isActive ? 'true' : undefined}
+              className={cn(
+                'group flex min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-lg border border-b-transparent py-1.5 relative',
+                isActive
+                  ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
+                  : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+                isRenaming && renameError && 'border-destructive',
+                isElectronHost && '[-webkit-app-region:no-drag]',
+              )}
+              onAuxClick={(event) => {
+                if (event.button !== 1) return;
+                event.preventDefault();
+                closeTab(tabId);
+              }}
+            >
+              {isRenaming ? (
+                <>
+                  <InputGroup className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent">
+                    <InputGroupInput
+                      ref={renameInputRef}
+                      value={renameValue}
+                      disabled={isRenameLoading}
+                      aria-label={`Rename ${label}`}
+                      aria-invalid={renameError ? true : undefined}
+                      aria-describedby={renameError ? renameErrorId : undefined}
+                      aria-busy={isRenameLoading || undefined}
+                      title={renameError ?? docName}
+                      className="h-full min-w-0 px-2 py-0 text-xs"
+                      onChange={(event) => {
+                        setRenameValue(stripRenameExtensionSuffix(event.target.value, docExt));
+                        setRenameError(null);
+                        lastFailedValueRef.current = null;
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void commitRename();
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault();
+                          cancelRename();
+                        }
+                      }}
+                      onBlur={commitRename}
+                    />
+                    <InputGroupAddon align="inline-end" aria-hidden="true" className="pr-2 text-xs">
+                      <InputGroupText className="text-xs text-muted-foreground/60">
+                        {docExt}
+                      </InputGroupText>
+                    </InputGroupAddon>
+                  </InputGroup>
+                  {renameError ? (
+                    <span id={renameErrorId} role="alert" className="sr-only">
+                      {renameError}
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    aria-label={accessibleLabel}
+                    title={accessibleLabel}
+                    className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                    onClick={() => {
+                      navigateToDoc(docName);
+                    }}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      enterRenameMode(docName);
+                    }}
+                  >
+                    {prefix ? (
+                      <span
+                        className={cn(
+                          'min-w-0 flex-1 truncate text-muted-foreground/60',
+                          isActive && 'text-muted-foreground',
+                        )}
+                      >
+                        {prefix}
+                      </span>
+                    ) : null}
+                    <span
+                      className={cn(
+                        'flex min-w-0 items-center font-medium',
+                        prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
+                      )}
+                    >
+                      <span className="min-w-0 truncate">{baseName}</span>
+                      <span className="shrink-0">{extension}</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Close ${label}`}
+                    className="mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-70 outline-none transition hover:bg-muted hover:text-foreground hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeTab(tabId);
+                    }}
+                  >
+                    <XIcon aria-hidden="true" className="size-3.5" />
+                  </button>
+                </>
+              )}
+              {isActive ? (
+                <div className="z-0 h-2 w-[calc(100%+16px)] absolute -left-[8px] -bottom-[2px] bg-background pointer-events-none" />
+              ) : null}
+            </div>
+          </EditorTabContextMenu>
         );
       })}
     </div>
