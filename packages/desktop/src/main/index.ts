@@ -1417,6 +1417,14 @@ function bootPrimaryInstance(): void {
       appState = result.appState;
       pendingSchemaIncompatibility = result.pendingSchemaIncompatibility;
 
+      app.on('browser-window-created', (_event, win) => {
+        win.webContents.once('did-finish-load', () => {
+          const pending = appState.versionPendingInstall;
+          if (!pending) return;
+          sendToRenderer(win.webContents, 'ok:update:downloaded', { version: pending });
+        });
+      });
+
       void maybeOfferBrokenSymlinkRepair().catch((err) => {
         console.error('[main] broken-symlink repair prompt failed', {
           err: (err as Error).message,
