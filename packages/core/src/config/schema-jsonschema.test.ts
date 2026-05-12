@@ -39,16 +39,6 @@ const FIXTURES: Fixture[] = [
     shouldAccept: false,
   },
   {
-    name: 'preview.baseUrl valid URL',
-    input: { preview: { baseUrl: 'https://wiki.acme.com' } },
-    shouldAccept: true,
-  },
-  {
-    name: 'preview.baseUrl invalid URL',
-    input: { preview: { baseUrl: 'not a url' } },
-    shouldAccept: false,
-  },
-  {
     name: 'appearance.theme=dark accepted',
     input: { appearance: { theme: 'dark' } },
     shouldAccept: true,

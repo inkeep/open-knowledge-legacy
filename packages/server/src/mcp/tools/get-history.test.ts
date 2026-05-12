@@ -7,6 +7,7 @@ import {
   expect,
   test,
 } from 'bun:test';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
@@ -72,20 +73,12 @@ afterAll(() => {
 });
 
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-get-history-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -99,7 +92,7 @@ function makeDeps(): GetHistoryDeps {
 
 describe('get_history — previewUrl emission', () => {
   test('emits previewUrl + source alongside entries when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const { server, getTool } = createFakeServer();
     register(server, makeDeps());
 
@@ -107,8 +100,8 @@ describe('get_history — previewUrl emission', () => {
 
     expect(result.structuredContent).toMatchObject({
       entries: [{ hash: 'abc', date: '2026-04-01' }],
-      previewUrl: 'https://env.example/#/notes',
-      previewUrlSource: 'env',
+      previewUrl: `${uiBase}/#/notes`,
+      previewUrlSource: 'lock',
     });
   });
 

@@ -7,6 +7,7 @@ import {
   expect,
   test,
 } from 'bun:test';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
@@ -28,7 +29,6 @@ type ToolHandler = (args: { limit?: number }) => Promise<{
 let testServer: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeAll(() => {
   testServer = Bun.serve({
@@ -52,16 +52,9 @@ afterAll(() => {
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-hubs-test-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -84,7 +77,7 @@ function registerTool(): ToolHandler {
 
 describe('get_hubs — previewUrl + ui block', () => {
   test('each row includes previewUrl + previewUrlSource when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const handler = registerTool();
     const result = await handler({});
     const s = result.structuredContent as {
@@ -92,9 +85,9 @@ describe('get_hubs — previewUrl + ui block', () => {
       ui: { baseUrl: string | null; port: number | null };
     };
     expect(s.hubs).toHaveLength(2);
-    expect(s.hubs[0]?.previewUrl).toBe('https://env.example/#/architecture');
-    expect(s.hubs[0]?.previewUrlSource).toBe('env');
-    expect(s.ui).toEqual({ baseUrl: null, port: null });
+    expect(s.hubs[0]?.previewUrl).toBe(`${uiBase}/#/architecture`);
+    expect(s.hubs[0]?.previewUrlSource).toBe('lock');
+    expect(s.ui).toEqual({ baseUrl: uiBase, port: 5173 });
   });
 
   test('previewUrl null when resolver returns null', async () => {

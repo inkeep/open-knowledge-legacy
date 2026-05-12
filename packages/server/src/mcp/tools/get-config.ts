@@ -13,10 +13,10 @@ export const DESCRIPTION = [
   '',
   'Read returns the FULL merged config or a sub-tree when `path` is provided. There is no allowlist on reads — every field is readable.',
   '',
-  'Note: the `server.*`, `mcp.*`, and `github.*` config sub-trees were removed; their values are now built-in constants in `@inkeep/open-knowledge-core`. Reading those paths returns `exists: false`.',
+  'Note: the `server.*`, `mcp.*`, `github.*`, and `preview.*` config sub-trees were removed; their values are now built-in constants in `@inkeep/open-knowledge-core` (or hardcoded behavior, in the case of `preview.*`). Reading those paths returns `exists: false`.',
   '',
   '**Parameters:**',
-  '- `path` (optional) — Dotted-segments array. `["content"]` returns the content sub-tree; `["preview", "baseUrl"]` returns just that leaf. Omit for full config.',
+  '- `path` (optional) — Dotted-segments array. `["content"]` returns the content sub-tree; `["appearance", "theme"]` returns just that leaf. Omit for full config.',
   '- `cwd` (optional) — Project root (see `cwd` description below).',
 ].join('\n');
 
@@ -30,7 +30,7 @@ const InputSchema = {
     .array(z.string())
     .optional()
     .describe(
-      'Dotted path as array of segments (e.g. ["preview","baseUrl"]). Omit to return the full merged config.',
+      'Dotted path as array of segments (e.g. ["appearance","theme"]). Omit to return the full merged config.',
     ),
   cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
 } as const;

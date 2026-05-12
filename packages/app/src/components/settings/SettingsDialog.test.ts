@@ -91,11 +91,9 @@ describe('SettingsDialog source-level guards', () => {
     expect(SRC).toContain('useConfigForm(');
   });
 
-  test('mounts both user + project bindings simultaneously', () => {
-    expect(SRC).toContain('useConfigDocConnections');
-    expect(SRC).toMatch(
-      /CONFIG_DOC_NAME_USER[\s\S]*?CONFIG_DOC_NAME_PROJECT|CONFIG_DOC_NAME_PROJECT[\s\S]*?CONFIG_DOC_NAME_USER/,
-    );
+  test('mounts the user-scope ConfigBinding for the dialog lifetime', () => {
+    expect(SRC).toContain('useUserConfigDocConnection');
+    expect(SRC).toContain('CONFIG_DOC_NAME_USER');
   });
 });
 
@@ -122,8 +120,8 @@ describe('SettingsDialog Okignore section guards', () => {
 });
 
 describe('SettingsDialog Sync section guards', () => {
-  test('Sync section appears under THIS PROJECT in the combined "General" item', () => {
-    expect(SRC).toMatch(/activeId\s*===\s*['"]project-general['"]\s*\)[\s\S]*?<SyncSection\s*\/>/);
+  test('Sync section appears under THIS PROJECT as the dedicated "Sync" sidebar item', () => {
+    expect(SRC).toMatch(/activeId\s*===\s*['"]sync['"]\s*\)[\s\S]*?<SyncSection\s*\/>/);
   });
 
   test('Sync section toggle goes through the shared confirmation hook', () => {

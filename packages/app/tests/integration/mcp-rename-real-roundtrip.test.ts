@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConfigSchema } from '@inkeep/open-knowledge-server';
@@ -37,21 +37,10 @@ function getTool(registrations: RegisteredTool[], name: string): RegisteredTool 
 
 const cleanups: Array<() => Promise<void> | void> = [];
 const BASE_CONFIG = ConfigSchema.parse({});
-let originalPreviewEnv: string | undefined;
-
-beforeEach(() => {
-  originalPreviewEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-});
 
 afterEach(async () => {
   while (cleanups.length > 0) {
     await cleanups.pop()?.();
-  }
-  if (originalPreviewEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalPreviewEnv;
   }
 });
 

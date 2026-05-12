@@ -72,7 +72,7 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         args.cwd,
       );
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
-      const { cwd, config, url } = context;
+      const { cwd, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
@@ -95,7 +95,7 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
       const lockDir = resolveLockDir(cwd);
-      const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
+      const preview = resolvePreviewUrl(normalized.docName, { lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
       const systemSubscriberCount =

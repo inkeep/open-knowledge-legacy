@@ -7,6 +7,7 @@ import {
   expect,
   test,
 } from 'bun:test';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
@@ -28,7 +29,6 @@ type ToolHandler = (args: { docName: string }) => Promise<{
 let testServer: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeAll(() => {
   testServer = Bun.serve({
@@ -53,16 +53,9 @@ afterAll(() => {
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-forwardlinks-test-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -85,7 +78,7 @@ function registerTool(): ToolHandler {
 
 describe('get_forward_links — previewUrl + ui block', () => {
   test('doc entries get previewUrl; external entries get null previewUrl', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const handler = registerTool();
     const result = await handler({ docName: 'source' });
     const s = result.structuredContent as {
@@ -99,8 +92,8 @@ describe('get_forward_links — previewUrl + ui block', () => {
     };
     expect(s.forwardLinks).toHaveLength(2);
     expect(s.forwardLinks[0]?.kind).toBe('doc');
-    expect(s.forwardLinks[0]?.previewUrl).toBe('https://env.example/#/alpha');
-    expect(s.forwardLinks[0]?.previewUrlSource).toBe('env');
+    expect(s.forwardLinks[0]?.previewUrl).toBe(`${uiBase}/#/alpha`);
+    expect(s.forwardLinks[0]?.previewUrlSource).toBe('lock');
     expect(s.forwardLinks[1]?.kind).toBe('external');
     expect(s.forwardLinks[1]?.previewUrl).toBeNull();
     expect(s.forwardLinks[1]?.previewUrlSource).toBeUndefined();

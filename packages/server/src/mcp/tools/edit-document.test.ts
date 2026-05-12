@@ -7,6 +7,7 @@ import {
   expect,
   test,
 } from 'bun:test';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
@@ -104,22 +105,14 @@ afterAll(() => {
 });
 
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-edit-doc-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
   mockSubscriberCount = 1;
   mockSystemSubscriberCount = 1;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -199,7 +192,7 @@ describe('edit_document MCP tool', () => {
   });
 
   test('includes previewUrl + source in structuredContent when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const { server, getTool } = createFakeServer();
 
     register(server, makeDeps());
@@ -211,10 +204,10 @@ describe('edit_document MCP tool', () => {
     });
 
     expect(result.structuredContent).toEqual({
-      previewUrl: 'https://env.example/#/notes',
-      previewUrlSource: 'env',
+      previewUrl: `${uiBase}/#/notes`,
+      previewUrlSource: 'lock',
     });
-    expect(result.content[0]?.text).toContain('Preview: https://env.example/#/notes');
+    expect(result.content[0]?.text).toContain(`Preview: ${uiBase}/#/notes`);
   });
 
   test('omits structuredContent when resolver returns null AND subscribers>0', async () => {
@@ -233,7 +226,7 @@ describe('edit_document MCP tool', () => {
   });
 
   test('emits attach-preview-once hint with previewUrl when systemSubscriberCount=0', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     mockSubscriberCount = 0;
     mockSystemSubscriberCount = 0;
     const { server, getTool } = createFakeServer();
@@ -247,17 +240,15 @@ describe('edit_document MCP tool', () => {
     });
 
     expect(result.structuredContent).toMatchObject({
-      previewUrl: 'https://env.example/#/notes',
-      previewUrlSource: 'env',
+      previewUrl: `${uiBase}/#/notes`,
+      previewUrlSource: 'lock',
       warning: {
         action: 'attach-preview-once',
         message: 'Open the previewUrl in your preview browser.',
-        previewUrl: 'https://env.example/#/notes',
+        previewUrl: `${uiBase}/#/notes`,
       },
     });
-    expect(result.content[0]?.text).toContain(
-      'Open https://env.example/#/notes in your preview browser.',
-    );
+    expect(result.content[0]?.text).toContain(`Open ${uiBase}/#/notes in your preview browser.`);
   });
 
   test('emits attach-preview-once hint with null previewUrl when systemSubscriberCount=0 and no resolver source', async () => {

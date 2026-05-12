@@ -122,14 +122,14 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     expect(allowlisted).toEqual([]);
   });
 
-  test('project-strict fields cover content.dir + preview.baseUrl', () => {
+  test('project-strict fields cover content.dir', () => {
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
     const projectStrict = leaves
       .filter((l) => getFieldMeta(l.schema)?.scope === 'project')
       .map((l) => l.path.join('.'))
       .sort();
-    expect(projectStrict).toEqual(['content.dir', 'preview.baseUrl'].sort());
+    expect(projectStrict).toEqual(['content.dir']);
   });
 
   test('project-local-strict fields cover autoSync.enabled', () => {

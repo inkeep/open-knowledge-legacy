@@ -8,6 +8,7 @@ import simpleGit from 'simple-git';
 import { type Config, ConfigSchema } from '../../config/schema.ts';
 import type { EnrichedMeta } from '../../content/enrichment.ts';
 import { buildExecResult, DESCRIPTION, type ExecStructuredResult } from './exec.ts';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 import { buildReadResult } from './read-document.ts';
 
 describe('exec DESCRIPTION — STOP-rule anchoring (SPEC 2026-04-22 FR4 / US-007 / QA-009)', () => {
@@ -557,34 +558,26 @@ describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', (
 describe('exec — per-row previewUrl + top-level ui block (FR-2.2 / FR-2.6)', () => {
   test('emits previewUrl per enriched file + ui block when config provided', async () => {
     const project = await bootstrap();
-    const originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
-    try {
-      const contentDir = resolve(project, 'articles');
-      mkdirSync(contentDir, { recursive: true });
-      writeFileSync(resolve(contentDir, 'auth.md'), '---\ntitle: Auth\n---\nBody');
-      writeFileSync(resolve(contentDir, 'sso.md'), '---\ntitle: SSO\n---\nBody');
+    const uiBase = bindTestUiLock(project);
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), '---\ntitle: Auth\n---\nBody');
+    writeFileSync(resolve(contentDir, 'sso.md'), '---\ntitle: SSO\n---\nBody');
 
-      const result = (await buildExecResult(
-        { command: 'ls articles/' },
-        { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
-      )) as ExecResult;
+    const result = (await buildExecResult(
+      { command: 'ls articles/' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
 
-      const s = structured(result);
-      const files = fileEntries(s);
-      expect(files.length).toBe(2);
-      for (const f of files) {
-        const docName = f.path.replace(/\.(md|mdx)$/i, '');
-        expect((f as unknown as { previewUrl: string }).previewUrl).toBe(
-          `https://env.example/#/${docName}`,
-        );
-        expect((f as unknown as { previewUrlSource: string }).previewUrlSource).toBe('env');
-      }
-      expect(s.ui).toEqual({ baseUrl: null, port: null });
-    } finally {
-      if (originalEnv === undefined) delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-      else process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
+    const s = structured(result);
+    const files = fileEntries(s);
+    expect(files.length).toBe(2);
+    for (const f of files) {
+      const docName = f.path.replace(/\.(md|mdx)$/i, '');
+      expect((f as unknown as { previewUrl: string }).previewUrl).toBe(`${uiBase}/#/${docName}`);
+      expect((f as unknown as { previewUrlSource: string }).previewUrlSource).toBe('lock');
     }
+    expect(s.ui).toEqual({ baseUrl: uiBase, port: 5173 });
   });
 
   test('previewUrl null when resolver returns null', async () => {

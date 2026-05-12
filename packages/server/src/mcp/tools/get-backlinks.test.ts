@@ -7,6 +7,7 @@ import {
   expect,
   test,
 } from 'bun:test';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
@@ -28,7 +29,6 @@ type ToolHandler = (args: { docName: string }) => Promise<{
 let testServer: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeAll(() => {
   testServer = Bun.serve({
@@ -53,16 +53,9 @@ afterAll(() => {
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-backlinks-test-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -85,7 +78,7 @@ function registerTool(): ToolHandler {
 
 describe('get_backlinks — previewUrl + ui block', () => {
   test('each row includes previewUrl + previewUrlSource when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const handler = registerTool();
     const result = await handler({ docName: 'target' });
     const s = result.structuredContent as {
@@ -93,10 +86,10 @@ describe('get_backlinks — previewUrl + ui block', () => {
       ui: { baseUrl: string | null; port: number | null };
     };
     expect(s.backlinks).toHaveLength(2);
-    expect(s.backlinks[0]?.previewUrl).toBe('https://env.example/#/alpha');
-    expect(s.backlinks[0]?.previewUrlSource).toBe('env');
-    expect(s.backlinks[1]?.previewUrl).toBe('https://env.example/#/beta');
-    expect(s.ui).toEqual({ baseUrl: null, port: null });
+    expect(s.backlinks[0]?.previewUrl).toBe(`${uiBase}/#/alpha`);
+    expect(s.backlinks[0]?.previewUrlSource).toBe('lock');
+    expect(s.backlinks[1]?.previewUrl).toBe(`${uiBase}/#/beta`);
+    expect(s.ui).toEqual({ baseUrl: uiBase, port: 5173 });
   });
 
   test('previewUrl null when resolver returns null', async () => {

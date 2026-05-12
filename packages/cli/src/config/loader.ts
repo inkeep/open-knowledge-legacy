@@ -193,6 +193,11 @@ export function loadConfig(cwd?: string): LoadConfigResult {
   warnIfRemovedConfigKey(merged, ['mcp', 'tools', 'read_document', 'historyDepth']);
   warnIfRemovedConfigKey(merged, ['mcp', 'tools', 'grep', 'maxResults']);
   warnIfRemovedConfigKey(merged, ['mcp', 'tools', 'search', 'maxResults']);
+  warnIfRemovedConfigKey(
+    merged,
+    ['preview', 'baseUrl'],
+    'preview URLs now resolve only to the running UI process — start one with `ok ui`',
+  );
 
   const result = ConfigSchema.safeParse(merged);
   if (!result.success) {

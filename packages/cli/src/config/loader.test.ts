@@ -110,20 +110,20 @@ describe('loadConfig', () => {
     expect(sources).toHaveLength(1);
     expect(config.content.dir).toBe('docs');
     expect(config.appearance.theme).toBeUndefined();
-    expect(config.preview.baseUrl).toBeUndefined();
+    expect(config.autoSync.enabled).toBeNull();
   });
 
   test('project config overrides multiple sections at once', () => {
     writeWorkspaceConfig(`
 content:
   dir: docs
-preview:
-  baseUrl: https://wiki.acme.com
+appearance:
+  theme: dark
 `);
     const { config } = loadConfig(testDir);
 
     expect(config.content.dir).toBe('docs');
-    expect(config.preview.baseUrl).toBe('https://wiki.acme.com');
+    expect(config.appearance.theme).toBe('dark');
   });
 
   test('content.include in project config rejects with REMOVED_KEY error directing to .okignore', () => {
@@ -191,11 +191,6 @@ preview:
 
   test('appearance.theme outside the enum throws', () => {
     writeWorkspaceConfig('appearance:\n  theme: midnight\n');
-    expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
-  });
-
-  test('preview.baseUrl with non-URL value throws', () => {
-    writeWorkspaceConfig('preview:\n  baseUrl: "not a url"\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 

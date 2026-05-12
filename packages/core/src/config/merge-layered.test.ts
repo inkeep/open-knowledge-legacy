@@ -75,22 +75,13 @@ describe('mergeLayered — scope-aware leaf short-circuits', () => {
     expect(merged.appearance?.theme).toBeUndefined();
   });
 
-  test("scope: 'project' (preview.baseUrl) returns project, ignoring project-local", () => {
-    const user = makeConfig({ preview: { baseUrl: 'https://user.example.com' } });
-    const project = makeConfig({ preview: { baseUrl: 'https://project.example.com' } });
-    const projectLocal = makeConfig({ preview: { baseUrl: 'https://local.example.com' } });
+  test("scope: 'project' (content.dir) returns project, ignoring project-local", () => {
+    const user = makeConfig({ content: { dir: './user' } });
+    const project = makeConfig({ content: { dir: './project' } });
+    const projectLocal = makeConfig({ content: { dir: './local' } });
 
     const merged = mergeLayered(user, project, projectLocal);
-    expect(merged.preview?.baseUrl).toBe('https://project.example.com');
-  });
-
-  test("scope: 'project' falls back to user when project undefined (legacy semantic)", () => {
-    const user = makeConfig({ preview: { baseUrl: 'https://user.example.com' } });
-    const project = makeConfig({ preview: {} });
-    const projectLocal = makeConfig({ preview: { baseUrl: 'https://local.example.com' } });
-
-    const merged = mergeLayered(user, project, projectLocal);
-    expect(merged.preview?.baseUrl).toBe('https://user.example.com');
+    expect(merged.content?.dir).toBe('./project');
   });
 
   test("scope: 'project-local' (autoSync.enabled) returns project-local, ignoring project + user", () => {

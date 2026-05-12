@@ -6,24 +6,17 @@ import { resolve } from 'node:path';
 import simpleGit from 'simple-git';
 import { type Config, ConfigSchema } from '../../config/schema.ts';
 import { buildGrepResult } from './grep.ts';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 
 const DEFAULT_CONFIG: Config = ConfigSchema.parse({});
 
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-grep-test-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -79,7 +72,7 @@ describe('grep —.okignore exclusion', () => {
 
 describe('grep —previewUrl + ui block', () => {
   test('each result row includes previewUrl + previewUrlSource when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     mkdirSync(resolve(tmpDir, 'articles'), { recursive: true });
     writeFileSync(resolve(tmpDir, 'articles/auth.md'), '---\ntitle: Auth\n---\nneedle here\n');
     writeFileSync(resolve(tmpDir, 'articles/sso.md'), '---\ntitle: SSO\n---\nneedle too\n');
@@ -92,11 +85,11 @@ describe('grep —previewUrl + ui block', () => {
     expect(structured?.matchCount).toBe(2);
     expect(structured?.fileCount).toBe(2);
     for (const row of structured?.results ?? []) {
-      expect(row.previewUrl).toBe(`https://env.example/#/${row.docName}`);
-      expect(row.previewUrlSource).toBe('env');
+      expect(row.previewUrl).toBe(`${uiBase}/#/${row.docName}`);
+      expect(row.previewUrlSource).toBe('lock');
       expect(row.docName.endsWith('.md')).toBe(false);
     }
-    expect(structured?.ui).toEqual({ baseUrl: null, port: null });
+    expect(structured?.ui).toEqual({ baseUrl: uiBase, port: 5173 });
   });
 
   test('previewUrl null when resolver returns null', async () => {

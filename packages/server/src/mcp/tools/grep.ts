@@ -8,6 +8,7 @@ import { createContentFilter } from '../../content-filter.ts';
 import {
   buildListResolver,
   docNameFromPath,
+  PREVIEW_URL_SOURCES,
   type PreviewUrlSource,
   type UiInfo,
 } from './preview-url.ts';
@@ -233,7 +234,7 @@ const GrepResultRowSchema = z.object({
     }),
   ),
   previewUrl: z.string().nullable(),
-  previewUrlSource: z.enum(['electron-protocol', 'env', 'lock', 'config']).optional(),
+  previewUrlSource: z.enum(PREVIEW_URL_SOURCES).optional(),
 });
 
 const OutputSchema = {
