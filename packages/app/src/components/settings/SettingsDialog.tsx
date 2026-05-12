@@ -502,7 +502,32 @@ function SyncSection() {
   const { confirmOpen, setConfirmOpen, onToggleRequest, onConfirm } =
     useEnableSyncWithConfirm(writer);
 
-  if (status && !status.hasRemote && status.state === 'dormant') return null;
+  if (status && !status.hasRemote && status.state === 'dormant') {
+    return (
+      <section
+        aria-labelledby="settings-sync-title"
+        className="space-y-3"
+        data-testid="settings-sync-empty"
+      >
+        <div className="space-y-1">
+          <h2 id="settings-sync-title" className="text-base font-semibold">
+            Sync
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            No git remote was detected for this project. Set one up if you would like automatic git
+            syncing.
+          </p>
+        </div>
+        <div className="rounded-md border p-3 text-sm text-muted-foreground">
+          Add a remote with{' '}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+            git remote add origin &lt;url&gt;
+          </code>{' '}
+          in this project's directory, then restart Open Knowledge.
+        </div>
+      </section>
+    );
+  }
 
   const enabled = projectLocalConfig?.autoSync?.enabled ?? false;
   const disabledControl = !projectLocalSynced;
