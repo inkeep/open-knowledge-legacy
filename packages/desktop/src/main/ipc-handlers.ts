@@ -96,8 +96,8 @@ export async function detectProtocol(
 }
 
 interface SpawnCursorDeps {
-  getApplicationInfoForProtocol: (url: string) => Promise<AppInfo>;
   resolveCursorBinary?: (timeoutMs: number) => Promise<string | null>;
+  getApplicationInfoForProtocol: (url: string) => Promise<AppInfo>;
   spawn: (exec: string, args: ReadonlyArray<string>, timeoutMs: number) => Promise<SpawnOutcome>;
   platform: NodeJS.Platform;
   projectPath?: string;
@@ -155,16 +155,18 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
     return { ok: false, reason: 'invalid-path' };
   }
 
+  const resolver = deps.resolveCursorBinary ?? resolveCursorBinaryDefault;
   let binaryPath: string | null = null;
   try {
-    const info = await deps.getApplicationInfoForProtocol('cursor://');
-    if (info.path) binaryPath = info.path;
-  } catch {}
+    binaryPath = await resolver(deps.resolveTimeoutMs ?? WHICH_TIMEOUT_MS);
+  } catch {
+    binaryPath = null;
+  }
 
   if (!binaryPath) {
-    const fallback = deps.resolveCursorBinary ?? resolveCursorBinaryDefault;
     try {
-      binaryPath = await fallback(deps.resolveTimeoutMs ?? WHICH_TIMEOUT_MS);
+      const info = await deps.getApplicationInfoForProtocol('cursor://');
+      if (info.path) binaryPath = info.path;
     } catch {
       binaryPath = null;
     }
