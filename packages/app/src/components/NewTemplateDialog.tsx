@@ -115,7 +115,7 @@ function Body({
           Cancel
         </Button>
         <Button onClick={() => void form.submit()} disabled={!form.canSubmit}>
-          {form.isSaving ? 'Creating…' : 'Create template'}
+          {form.isSaving ? 'Creating' : 'Create template'}
         </Button>
       </DialogFooter>
     </>

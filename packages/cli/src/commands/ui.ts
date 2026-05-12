@@ -406,7 +406,7 @@ export function uiCommand(getConfig: () => Config): Command {
         const shutdown = (signal: NodeJS.Signals) => {
           if (shuttingDown) return;
           shuttingDown = true;
-          console.log(dim(`\n[ui] Shutting down (${signal})...`));
+          console.log(dim(`\n[ui] Shutting down (${signal})`));
           handle.detachSafetyNet();
           const finish = () => {
             try {
@@ -453,7 +453,7 @@ export function uiCommand(getConfig: () => Config): Command {
         const shutdown = (signal: NodeJS.Signals) => {
           if (shuttingDown) return;
           shuttingDown = true;
-          console.log(dim(`\n[ui-proxy] Shutting down (${signal})...`));
+          console.log(dim(`\n[ui-proxy] Shutting down (${signal})`));
           result.handle.close().finally(() => process.exit(process.exitCode ?? 0));
           setTimeout(() => process.exit(process.exitCode ?? 0), 2000).unref();
         };

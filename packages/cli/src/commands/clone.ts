@@ -91,7 +91,7 @@ async function runClone(
           lastPct = prog.pct;
           emit(opts.json, { type: 'progress', pct: prog.pct, stage: prog.stage });
           if (!opts.json) {
-            process.stderr.write(`\r  Cloning… ${prog.pct}%`);
+            process.stderr.write(`\r  Cloning ${prog.pct}%`);
           }
         }
       }

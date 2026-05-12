@@ -65,7 +65,7 @@ export const HelpPopover: FC = () => {
                 className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-azure-900/5 dark:hover:bg-white/20 hover:text-primary"
               >
                 <Download aria-hidden="true" className="size-4 shrink-0" />
-                <span>Install for Claude Chat &amp; Cowork…</span>
+                <span>Install for Claude Chat &amp; Cowork</span>
               </button>
             </li>
           </ul>

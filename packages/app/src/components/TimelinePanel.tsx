@@ -335,7 +335,7 @@ function EntryDiffPanel({ sha, docName, cache, diffLayout, panelId }: EntryDiffP
       {result.status === 'loading' && (
         <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
           <Loader2 className="size-3 animate-spin" />
-          Loading diff…
+          Loading diff
         </div>
       )}
       {result.status === 'error' && (
@@ -346,7 +346,7 @@ function EntryDiffPanel({ sha, docName, cache, diffLayout, panelId }: EntryDiffP
           fallback={
             <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
               <Loader2 className="size-3 animate-spin" />
-              Loading diff renderer…
+              Loading diff renderer
             </div>
           }
         >

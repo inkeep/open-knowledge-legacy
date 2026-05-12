@@ -25,7 +25,7 @@ async function runLogin(
   validateGitHubHost(host);
 
   if (!json) {
-    process.stderr.write(`Logging in to ${host}…\n`);
+    process.stderr.write(`Logging in to ${host}\n`);
   }
 
   let userCode: string | undefined;

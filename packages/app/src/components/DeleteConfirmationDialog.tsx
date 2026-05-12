@@ -44,7 +44,7 @@ export function DeleteConfirmationDialog({
         <Button variant="destructive" onClick={onDelete} disabled={isSubmitting}>
           {isSubmitting ? (
             <>
-              <Loader2 className="size-4 animate-spin" /> Deleting...
+              <Loader2 className="size-4 animate-spin" /> Deleting
             </>
           ) : (
             'Delete'

@@ -368,7 +368,7 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
   if (loading) {
     stateLabel = {
       icon: <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />,
-      text: 'Loading…',
+      text: 'Loading',
       className: 'text-muted-foreground',
     };
   } else if (externalTarget) {
@@ -469,7 +469,7 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
               disabled={creatingMode !== null}
               onClick={() => void handleCreatePage('missing')}
             >
-              {creatingMode === 'missing' ? 'Creating…' : 'Create page'}
+              {creatingMode === 'missing' ? 'Creating' : 'Create page'}
             </Button>
           ) : null}
           {isFolder && folderCreateSeed ? (
@@ -480,7 +480,7 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
               onClick={() => void handleCreatePage('folder-index')}
             >
               <FilePlus2 className="size-3.5" aria-hidden="true" />
-              {creatingMode === 'folder-index' ? 'Creating…' : 'Create index'}
+              {creatingMode === 'folder-index' ? 'Creating' : 'Create index'}
             </Button>
           ) : null}
           {/* Spacer pushes Edit + Remove to the right, separating

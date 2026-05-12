@@ -323,7 +323,7 @@ export async function runDiagnose(
     ),
   );
 
-  log('  sampling lsof...');
+  log('  sampling lsof');
   const lsofOutput = lsofFn(pid);
   if (lsofOutput) write('lsof.txt', lsofOutput);
 
@@ -335,7 +335,7 @@ export async function runDiagnose(
     let endpoints = endpointsFn(inspectorPort);
 
     if (!endpoints || endpoints.length === 0) {
-      log(`  no inspector on :${inspectorPort}, sending SIGUSR1 to pid ${pid}...`);
+      log(`  no inspector on :${inspectorPort}, sending SIGUSR1 to pid ${pid}`);
       try {
         sendSignal(pid, 'SIGUSR1');
         await sleepFn(2000);
@@ -349,7 +349,7 @@ export async function runDiagnose(
       write('inspector-endpoints.json', JSON.stringify(endpoints, null, 2));
       const wsUrl = (endpoints[0] as { webSocketDebuggerUrl?: string }).webSocketDebuggerUrl;
       if (wsUrl) {
-        log(`  capturing ${cpuProfileSecs}s CPU profile...`);
+        log(`  capturing ${cpuProfileSecs}s CPU profile`);
         const stats: ProcessStat[] = [];
         const ok = await profilerFn(wsUrl, profileMs, pid, outDir, (s) => stats.push(s));
         if (ok) {

@@ -235,7 +235,7 @@ export function InstallInClaudeDesktopDialog({
               <div className="flex items-center gap-2 text-sm">
                 <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
                 Building <InlineCode>openknowledge.skill</InlineCode> and opening the Claude Desktop
-                App…
+                App
               </div>
             )}
 
@@ -348,7 +348,7 @@ export function InstallInClaudeDesktopDialog({
           {phase.kind === 'downloading' && (
             <Button disabled>
               <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-              Installing…
+              Installing
             </Button>
           )}
           {phase.kind === 'handed-off' && <Button onClick={() => onOpenChange(false)}>Done</Button>}

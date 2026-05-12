@@ -21,7 +21,7 @@ function TagPillInput({
   value,
   onChange,
   onBlur,
-  placeholder = 'Add tag…',
+  placeholder = 'Add tag',
   id,
   disabled,
   'aria-describedby': ariaDescribedBy,

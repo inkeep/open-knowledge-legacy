@@ -74,7 +74,7 @@ export function ConnectingBanner() {
       aria-live="polite"
       className="fixed top-0 inset-x-0 z-50 bg-amber-500/95 text-amber-950 text-sm text-center py-2 px-4 shadow-md"
     >
-      Connecting — waiting for collab server…
+      Connecting — waiting for collab server
     </div>
   );
 }

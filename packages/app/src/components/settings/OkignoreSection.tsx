@@ -455,7 +455,7 @@ function OkignorePatternList({
       </DndContext>
       <AddPatternRow
         onAdd={onAdd}
-        placeholder="Add another pattern…"
+        placeholder="Add another pattern"
         rejectionFlashKey={rejectionFlashKey}
         filePaths={filePaths}
       />

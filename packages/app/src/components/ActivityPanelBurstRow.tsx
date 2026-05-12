@@ -77,13 +77,13 @@ export function ActivityPanelBurstRow({
       {expanded ? (
         <div className="bg-muted/20">
           {loading ? (
-            <div className="px-4 py-2 text-xs text-muted-foreground italic">Loading diff…</div>
+            <div className="px-4 py-2 text-xs text-muted-foreground italic">Loading diff</div>
           ) : loadError ? (
             <div className="px-4 py-2 text-xs text-destructive">Failed: {loadError}</div>
           ) : diff !== null ? (
             <Suspense
               fallback={
-                <div className="px-4 py-2 text-xs text-muted-foreground italic">Loading diff…</div>
+                <div className="px-4 py-2 text-xs text-muted-foreground italic">Loading diff</div>
               }
             >
               <LazyActivityPanelDiffView diff={diff} />

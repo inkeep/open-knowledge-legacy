@@ -69,13 +69,11 @@ describe('Switch Project affordance (source-level guards)', () => {
   const SRC_PATH = join(__dirname, 'ProjectSwitcher.tsx');
   const src = readFileSync(SRC_PATH, 'utf-8');
 
-  test('imports the shared label constant', () => {
-    expect(src).toContain('SWITCH_PROJECT_LABEL_WITH_ELLIPSIS');
-    expect(src).toContain("from '@/lib/desktop-labels'");
-  });
-
-  test('renders the Switch Project dropdown item with the correct testid', () => {
+  test('renders the Switch Project dropdown item with the correct testid and label', () => {
     expect(src).toContain('data-testid="project-switcher-switch-project"');
+    expect(src).toMatch(
+      /<DropdownMenuItem[^>]*data-testid="project-switcher-switch-project"[^>]*>\s*Switch Project\s*<\/DropdownMenuItem>/,
+    );
   });
 
   test('Switch Project item: onSelect routes through onSwitchProject which calls bridge.navigator.open()', () => {
@@ -93,7 +91,7 @@ describe('Switch Project affordance (source-level guards)', () => {
     expect(handler).toMatch(/bridge\.navigator\.open\(\)/);
   });
 
-  test('the new item sits BELOW "Open folder…" (Obsidian-pattern position)', () => {
+  test('the new item sits BELOW "Open folder" (Obsidian-pattern position)', () => {
     const openFolderIdx = src.indexOf('data-testid="project-switcher-open-folder"');
     const switchProjectIdx = src.indexOf('data-testid="project-switcher-switch-project"');
     expect(openFolderIdx).toBeGreaterThan(0);

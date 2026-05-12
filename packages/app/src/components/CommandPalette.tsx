@@ -59,7 +59,6 @@ import {
 import { useDocumentContext } from '@/editor/DocumentContext';
 import type { TagSummaryEntry } from '@/editor/extensions/tag-suggestion';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
-import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '@/lib/desktop-labels';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
@@ -389,9 +388,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
   const showProjectSwitch =
     !isTagMode &&
     bridge !== null &&
-    matchesCommandQuery(SWITCH_PROJECT_LABEL_WITH_ELLIPSIS, deferredQuery, [
-      'switch project navigator projects',
-    ]);
+    matchesCommandQuery('Switch Project', deferredQuery, ['switch project navigator projects']);
   const showSettings =
     !isTagMode && matchesCommandQuery('Settings', deferredQuery, ['preferences config']);
   const showInstallClaudeDesktop =
@@ -461,7 +458,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
           ref={inputRef}
           value={query}
           onValueChange={setQuery}
-          placeholder="Search files, folders, or commands…"
+          placeholder="Search files, folders, or commands"
         />
         {/* Filter-pills row — Slack-style. Always visible so the
             available filters are discoverable without typing a magic
@@ -489,7 +486,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
           </button>
         </div>
         <CommandList ref={listRef} className="subtle-scrollbar">
-          {showSearchLoading && !showNavigation ? <CommandEmpty>Searching…</CommandEmpty> : null}
+          {showSearchLoading && !showNavigation ? <CommandEmpty>Searching</CommandEmpty> : null}
           {!hasAnyResults ? (
             <CommandEmpty>
               {searchStatus === 'error' ? 'Search failed.' : 'No matching commands.'}
@@ -500,7 +497,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
             <CommandGroup
               heading={paletteMode.query ? `Tags matching "${paletteMode.query}"` : 'All tags'}
             >
-              {tagsListStatus === 'loading' ? <CommandEmpty>Loading tags…</CommandEmpty> : null}
+              {tagsListStatus === 'loading' ? <CommandEmpty>Loading tags</CommandEmpty> : null}
               {tagsListStatus === 'error' ? (
                 <CommandEmpty>Failed to load tags. Press Escape and re-open to retry.</CommandEmpty>
               ) : null}
@@ -530,7 +527,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
 
           {paletteMode.kind === 'tag-docs' ? (
             <CommandGroup heading={`Docs tagged #${paletteMode.tagName}`}>
-              {tagDocsStatus === 'loading' ? <CommandEmpty>Loading docs…</CommandEmpty> : null}
+              {tagDocsStatus === 'loading' ? <CommandEmpty>Loading docs</CommandEmpty> : null}
               {tagDocsStatus === 'error' ? (
                 <CommandEmpty>Failed to load docs. Press Escape and re-open to retry.</CommandEmpty>
               ) : null}
@@ -640,7 +637,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                 const enabled = installState.installed === true && handoffInput !== null;
                 const hint =
                   installState.installed === null
-                    ? 'Detecting…'
+                    ? 'Detecting'
                     : installState.installed === false
                       ? 'Not installed'
                       : null;
@@ -696,7 +693,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                   data-testid="command-palette-open-folder"
                 >
                   <FolderOpen />
-                  <span>Open folder on disk…</span>
+                  <span>Open folder on disk</span>
                   <CommandShortcut>⌘O</CommandShortcut>
                 </CommandItem>
               ) : null}
@@ -709,7 +706,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                   data-testid="command-palette-switch-project"
                 >
                   <LayoutGrid />
-                  <span>{SWITCH_PROJECT_LABEL_WITH_ELLIPSIS}</span>
+                  <span>Switch Project</span>
                   <CommandShortcut>⌘⇧N</CommandShortcut>
                 </CommandItem>
               ) : null}
@@ -725,7 +722,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                   data-testid="command-palette-settings"
                 >
                   <Settings />
-                  <span>Settings…</span>
+                  <span>Settings</span>
                   <CommandShortcut>⌘,</CommandShortcut>
                 </CommandItem>
               ) : null}
@@ -739,7 +736,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                   data-testid="command-palette-install-claude-desktop"
                 >
                   <Download />
-                  <span>Install for Claude Chat & Cowork (Desktop App)…</span>
+                  <span>Install for Claude Chat & Cowork (Desktop App)</span>
                 </CommandItem>
               ) : null}
               {showProjectRecents && bridge

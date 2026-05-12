@@ -110,18 +110,17 @@ describe('Switch Project entry (source-level guards)', () => {
     expect(src).not.toContain('command-palette-start-fresh');
   });
 
-  test('imports the shared label constant and the LayoutGrid icon', () => {
-    expect(src).toContain('SWITCH_PROJECT_LABEL_WITH_ELLIPSIS');
+  test('imports the LayoutGrid icon', () => {
     expect(src).toMatch(/import\s*\{[^}]*\bLayoutGrid\b[^}]*\}\s*from\s*'lucide-react'/);
   });
 
-  test('Switch Project block contains LayoutGrid icon, shared label, Cmd+Shift+N hint, and bridge.navigator.open() in the SAME CommandItem', () => {
+  test('Switch Project block contains LayoutGrid icon, "Switch Project" label, Cmd+Shift+N hint, and bridge.navigator.open() in the SAME CommandItem', () => {
     expect(
       switchProjectBlock,
       'CommandItem with command-palette-switch-project not found',
     ).toBeTruthy();
     expect(switchProjectBlock).toContain('<LayoutGrid');
-    expect(switchProjectBlock).toContain('SWITCH_PROJECT_LABEL_WITH_ELLIPSIS');
+    expect(switchProjectBlock).toContain('<span>Switch Project</span>');
     expect(switchProjectBlock).toContain('<CommandShortcut>⌘⇧N</CommandShortcut>');
     expect(switchProjectBlock).toMatch(/bridge\.navigator\.open\(\)/);
   });
@@ -152,10 +151,10 @@ describe('Settings entry (US-010 / FR-1 / D54 — source-level guards)', () => {
     expect(src).toMatch(/from\s*'@\/lib\/use-settings-route'/);
   });
 
-  test('Settings CommandItem carries the icon, the ⌘, shortcut hint, and the Settings… label', () => {
+  test('Settings CommandItem carries the icon, the ⌘, shortcut hint, and the Settings label', () => {
     expect(settingsBlock, 'CommandItem with command-palette-settings not found').toBeTruthy();
     expect(settingsBlock).toContain('<Settings');
-    expect(settingsBlock).toContain('Settings…');
+    expect(settingsBlock).toContain('<span>Settings</span>');
     expect(settingsBlock).toContain('<CommandShortcut>⌘,</CommandShortcut>');
   });
 

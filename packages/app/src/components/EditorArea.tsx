@@ -97,7 +97,7 @@ function EditorAreaInner({
   const deferredActiveDocName = useDeferredValue(activeDocName);
   const isNewDoc = activeTarget?.kind === 'missing';
   const showFooter = !!activeDocName && activeTarget?.kind !== 'folder';
-  const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
+  const editorPlaceholder = isNewDoc ? 'Start writing to create this page' : undefined;
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const { layout: docPanelLayout, autoCollapse } = useDocPanelLayout();

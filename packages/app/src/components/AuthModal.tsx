@@ -181,14 +181,14 @@ function DeviceFlowPanel({ onSuccess, onCancel, transport }: DeviceFlowPanelProp
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
-              Waiting for authorization…
+              Waiting for authorization
             </span>
             <span>Expires in {timeLabel}</span>
           </div>
         </>
       ) : (
         <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
-          {error ? null : 'Starting sign-in flow…'}
+          {error ? null : 'Starting sign-in flow'}
         </div>
       )}
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -298,6 +298,7 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
       <Input
         type="password"
         aria-label="Personal access token"
+        // biome-ignore lint/plugin/microcopy-ellipsis: token-prefix elision — placeholder shows the start of a GitHub PAT
         placeholder="ghp_…"
         value={pat}
         onChange={(e) => setPat(e.target.value)}
@@ -309,7 +310,7 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
       {error && <p className="text-sm text-destructive">{error}</p>}
       <div className="flex gap-2">
         <Button className="flex-1" onClick={() => void handleSubmit()} disabled={loading}>
-          {loading ? 'Validating…' : 'Add token'}
+          {loading ? 'Validating' : 'Add token'}
         </Button>
         <Button variant="ghost" onClick={onCancel} disabled={loading}>
           Cancel

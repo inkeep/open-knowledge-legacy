@@ -47,7 +47,7 @@ function LoadingState(): React.JSX.Element {
       aria-busy="true"
     >
       <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
-      <span className="text-sm">Loading agent activity…</span>
+      <span className="text-sm">Loading agent activity</span>
     </div>
   );
 }

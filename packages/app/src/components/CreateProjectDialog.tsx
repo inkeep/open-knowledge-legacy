@@ -377,7 +377,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
                   value={parentLoading ? '' : parent}
                   readOnly
                   disabled={busy}
-                  placeholder={parentLoading ? 'Loading…' : ''}
+                  placeholder={parentLoading ? 'Loading' : ''}
                   className="flex-1"
                   data-testid="create-location"
                 />
@@ -388,7 +388,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
                   onClick={() => void onBrowse()}
                   data-testid="create-browse"
                 >
-                  Browse…
+                  Browse
                 </Button>
               </div>
               <p
@@ -455,7 +455,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
               Cancel
             </Button>
             <Button type="submit" disabled={!canSubmit} data-testid="create-submit">
-              {busy ? 'Creating…' : 'Create'}
+              {busy ? 'Creating' : 'Create'}
             </Button>
           </DialogFooter>
         </form>

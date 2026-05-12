@@ -84,7 +84,7 @@ export function computeRowHint(args: {
   isElectronHost: boolean;
 }): string | null {
   const { installState } = args;
-  if (installState.installed === null) return 'Detecting…';
+  if (installState.installed === null) return 'Detecting';
   if (installState.installed === false) return 'Not installed';
   return null;
 }

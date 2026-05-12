@@ -281,7 +281,7 @@ export function NewItemDialog({
                 </p>
                 {templatesLoading ? (
                   <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                    Loading templates…
+                    Loading templates
                   </div>
                 ) : (
                   <>
@@ -424,7 +424,7 @@ export function NewItemDialog({
             Cancel
           </Button>
           <Button onClick={handleCreate} disabled={isSubmitDisabled}>
-            {busy ? 'Creating…' : 'Create'}
+            {busy ? 'Creating' : 'Create'}
           </Button>
         </DialogFooter>
       </DialogContent>

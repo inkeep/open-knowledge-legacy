@@ -87,11 +87,11 @@ function stateLabel(state: GitSyncStatus['state']): string {
     case 'idle':
       return 'Synced';
     case 'fetching':
-      return 'Fetching…';
+      return 'Fetching';
     case 'pulling':
-      return 'Pulling…';
+      return 'Pulling';
     case 'pushing':
-      return 'Pushing…';
+      return 'Pushing';
     case 'conflict':
       return 'Conflict';
     case 'offline':

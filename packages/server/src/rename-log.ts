@@ -153,7 +153,7 @@ export function loadRenameLogIndex(shadowDir: string): RenameLogIndex {
       const sample = line.slice(0, 80);
       const errMsg = (parseErr as Error).message;
       console.warn(
-        `[rename-log] WARN: corrupt entry at line ${i + 1} skipped (${errMsg}): ${sample}${line.length > 80 ? '...' : ''}`,
+        `[rename-log] WARN: corrupt entry at line ${i + 1} skipped (${errMsg}): ${sample}${line.length > 80 ? '…' : ''}`,
       );
       continue;
     }

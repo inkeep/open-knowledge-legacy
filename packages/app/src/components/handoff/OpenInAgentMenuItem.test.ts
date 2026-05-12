@@ -47,14 +47,14 @@ describe('computeRowHint — short inline status hint on the trigger row', () =>
     expect(hint).toBe('Not installed');
   });
 
-  test('pre-probe (installed:null) → "Detecting…"', async () => {
+  test('pre-probe (installed:null) → "Detecting"', async () => {
     const { computeRowHint } = await import('./OpenInAgentMenuItem');
     const hint = computeRowHint({
       target: targetById('codex'),
       installState: { installed: null },
       isElectronHost: true,
     });
-    expect(hint).toBe('Detecting…');
+    expect(hint).toBe('Detecting');
   });
 
   test('installed:false → "Not installed"', async () => {

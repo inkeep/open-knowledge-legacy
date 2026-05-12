@@ -23,7 +23,7 @@ export async function runSync(
   if (lock && lock.port > 0) {
     const url = `http://127.0.0.1:${lock.port}/api/sync/trigger`;
     if (!opts.json) {
-      process.stderr.write(`Triggering ${op} via running server (port ${lock.port})…\n`);
+      process.stderr.write(`Triggering ${op} via running server (port ${lock.port})\n`);
     }
     try {
       const res = await fetch(url, {
@@ -49,13 +49,13 @@ export async function runSync(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!opts.json) {
-        process.stderr.write(`Server trigger failed (${msg}), running directly…\n`);
+        process.stderr.write(`Server trigger failed (${msg}), running directly\n`);
       }
     }
   }
 
   if (!opts.json) {
-    process.stderr.write(`Running ${op} directly (no live server)…\n`);
+    process.stderr.write(`Running ${op} directly (no live server)\n`);
   }
 
   const git = simpleGit({ baseDir: cwd });

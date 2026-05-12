@@ -376,7 +376,7 @@ export async function runStartCommand(config: Config, opts: StartCommandOptions)
   const shutdown = async (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(dim(`\nShutting down (${signal})...`));
+    console.log(dim(`\nShutting down (${signal})`));
     try {
       await booted.destroy();
     } catch (err) {

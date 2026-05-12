@@ -7184,8 +7184,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     if (index < 0) return undefined;
     const start = Math.max(0, index - 80);
     const end = Math.min(content.length, index + normalizedQuery.length + 120);
-    const prefix = start > 0 ? '...' : '';
-    const suffix = end < content.length ? '...' : '';
+    const prefix = start > 0 ? '…' : '';
+    const suffix = end < content.length ? '…' : '';
     return `${prefix}${content.slice(start, end).replace(/\s+/g, ' ').trim()}${suffix}`;
   }
 

@@ -404,7 +404,7 @@ function ForwardLinksSection({ docName }: { docName: string }) {
           key={key}
           icon={<TriangleAlert className="size-3.5" />}
           iconColorClass="text-amber-600 dark:text-amber-400"
-          rowTooltip={creatingKey === key ? 'Creating page...' : 'Missing page — click to create'}
+          rowTooltip={creatingKey === key ? 'Creating page' : 'Missing page — click to create'}
           ariaLabel={
             creatingKey === key
               ? `Creating page: ${link.title}.`
@@ -437,7 +437,7 @@ function ForwardLinksSection({ docName }: { docName: string }) {
           href={navigateHref}
           hoverAction={{
             icon: <Plus className="size-3.5" />,
-            tooltip: creatingKey === key ? 'Creating index note...' : 'Create index note',
+            tooltip: creatingKey === key ? 'Creating index note' : 'Create index note',
             disabled: creatingKey !== null || seed === null,
             onClick: () => {
               if (seed) void handleCreatePage(seed, key);

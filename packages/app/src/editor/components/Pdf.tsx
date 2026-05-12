@@ -472,7 +472,7 @@ export function Pdf(props: PdfProps) {
           </aside>
         )}
         <div className="ok-pdf-pages" ref={containerRef} data-layout={layoutMode}>
-          {loading && <div className="ok-pdf-loading">Loading PDF…</div>}
+          {loading && <div className="ok-pdf-loading">Loading PDF</div>}
           {error && <div className="ok-pdf-error">Failed to load PDF: {error}</div>}
           {/* Render canvas slots regardless of loading so refs exist when
               the render effect runs. Stable allocation keyed on page

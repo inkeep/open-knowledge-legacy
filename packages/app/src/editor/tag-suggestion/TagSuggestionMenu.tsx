@@ -57,7 +57,7 @@ export function TagSuggestionMenu({
         style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
         onMouseDown={preventFocusSteal}
       >
-        Loading tags…
+        Loading tags
       </div>
     );
   }

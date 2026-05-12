@@ -237,7 +237,7 @@ function ConsentDialogForm({ payload, store, toast }: ConsentDialogFormProps) {
                   onClick={() => void onBrowseContentDir()}
                   data-testid="consent-content-dir-browse"
                 >
-                  Browse…
+                  Browse
                 </Button>
               </div>
               {browseError !== null ? (
@@ -361,7 +361,7 @@ export function isContentDirSafe(value: string): boolean {
 }
 
 function renderProbeLine(probe: OkOnboardingProbeContentResult | null): string {
-  if (probe === null) return 'Counting markdown files…';
+  if (probe === null) return 'Counting markdown files';
   if (!probe.ok) return `Preview unavailable: ${probe.error}`;
   const countDisplay = probe.truncated ? '≥ 50,000' : String(probe.count);
   if (probe.sample.length === 0) {

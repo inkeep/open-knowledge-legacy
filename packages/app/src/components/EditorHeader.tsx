@@ -116,7 +116,7 @@ export function EditorHeader({
                 <Save className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{saving ? 'Saving…' : 'Checkpoint version'}</TooltipContent>
+            <TooltipContent>{saving ? 'Saving' : 'Checkpoint version'}</TooltipContent>
           </Tooltip>
         )}
         {activeDocName && <OpenInAgentMenu input={handoffInput} />}

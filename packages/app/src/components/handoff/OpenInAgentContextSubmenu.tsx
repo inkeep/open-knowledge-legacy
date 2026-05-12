@@ -63,7 +63,7 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
         <Sparkles aria-hidden="true" />
-        Open in…
+        Open in
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent>
         {installedTargets.map((target) => {

@@ -87,8 +87,8 @@ function clampTextToWidth(
 
   const words = text.split(/\s+/).filter(Boolean);
   const wordCandidates = uniqueNonEmpty([
-    words.length >= 3 ? `${words.slice(0, 2).join(' ')} ... ${words.at(-1) ?? ''}` : undefined,
-    words.length >= 2 ? `${words[0]} ... ${words.at(-1) ?? ''}` : undefined,
+    words.length >= 3 ? `${words.slice(0, 2).join(' ')} … ${words.at(-1) ?? ''}` : undefined,
+    words.length >= 2 ? `${words[0]} … ${words.at(-1) ?? ''}` : undefined,
   ]);
 
   for (const candidate of wordCandidates) {
@@ -105,33 +105,30 @@ function clampMiddleByCharacters(
   maxWidthPx: number,
   measureWidthPx: (text: string) => number,
 ): string {
-  const ellipsis = '...';
+  const ellipsis = '…';
   if (measureWidthPx(ellipsis) > maxWidthPx) {
     return '';
   }
 
-  let low = 1;
-  let high = Math.max(1, Math.floor((text.length - ellipsis.length) / 2));
-  let best = '';
-
-  while (low <= high) {
-    const keep = Math.floor((low + high) / 2);
+  const maxKeep = Math.max(1, Math.floor((text.length - ellipsis.length) / 2));
+  for (let keep = maxKeep; keep >= 1; keep--) {
+    if (text[keep] !== ' ' || text[text.length - keep - 1] !== ' ') continue;
     const candidate = `${text.slice(0, keep)}${ellipsis}${text.slice(-keep)}`;
-
-    if (measureWidthPx(candidate) <= maxWidthPx) {
-      best = candidate;
-      low = keep + 1;
-    } else {
-      high = keep - 1;
-    }
+    if (measureWidthPx(candidate) <= maxWidthPx) return candidate;
   }
 
-  if (best) {
-    return best;
+  for (let i = text.length - 1; i >= 1; i--) {
+    if (text[i] !== ' ') continue;
+    const candidate = `${text.slice(0, i)}${ellipsis}`;
+    if (measureWidthPx(candidate) <= maxWidthPx) return candidate;
   }
 
-  const minimal = `${text[0] ?? ''}${ellipsis}`;
-  return measureWidthPx(minimal) <= maxWidthPx ? minimal : ellipsis;
+  for (let n = text.length - 1; n >= 1; n--) {
+    const candidate = `${text.slice(0, n)}${ellipsis}`;
+    if (measureWidthPx(candidate) <= maxWidthPx) return candidate;
+  }
+
+  return measureWidthPx(ellipsis) <= maxWidthPx ? ellipsis : '';
 }
 
 function splitStructuredSegments(label: string): string[] {

@@ -343,7 +343,7 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
           ) : phase.kind === 'applying' ? (
             <Button disabled>
               <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-              Setting up…
+              Setting up
             </Button>
           ) : null}
         </DialogFooter>
@@ -367,7 +367,7 @@ function PackPicker({
       {packs === null ? (
         <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
           <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-          Loading packs…
+          Loading packs
         </div>
       ) : (
         <RadioGroup
@@ -488,7 +488,7 @@ function SeedDialogBody({
     return (
       <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
         <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-        Computing scaffold plan…
+        Computing scaffold plan
       </div>
     );
   }
