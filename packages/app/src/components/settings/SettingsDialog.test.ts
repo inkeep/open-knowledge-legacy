@@ -95,13 +95,8 @@ describe('SettingsDialog source-level guards', () => {
 });
 
 describe('SettingsDialog Channel section guards', () => {
-  test('imports ChannelSection from a sibling module', () => {
-    expect(SRC).toMatch(/from\s+['"]\.\/ChannelSection['"]/);
-    expect(SRC).toContain('ChannelSection');
-  });
-
-  test('Channel section appears under USER in the "Preferences" item', () => {
-    expect(SRC).toMatch(/activeId\s*===\s*['"]preferences['"]\s*\)[\s\S]*?<ChannelSection\s*\/>/);
+  test('no longer renders a channel switcher', () => {
+    expect(SRC).not.toContain('ChannelSection');
   });
 });
 

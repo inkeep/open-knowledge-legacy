@@ -53,7 +53,11 @@ import { appendOkIgnoreSync } from './append-okignore.ts';
 import { openAssetSafely, revealAssetSafely } from './asset-allowlist.ts';
 import { popAssetMenu } from './asset-menu.ts';
 import { attachAssetSafetyNet } from './asset-safety-net.ts';
-import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
+import {
+  bootAutoUpdater,
+  channelFromVersion,
+  type StartAutoUpdaterHandle,
+} from './auto-updater.ts';
 import { runBootstrap } from './bootstrap.ts';
 import {
   createBrokenSymlinkRepairHandler,
@@ -133,9 +137,7 @@ import {
 import { applyThemeApplied } from './theme-applied-handler.ts';
 import { applyThemeSource, isOkThemeSource } from './theme-handler.ts';
 import {
-  applyConfirmDowngrade,
   applyResetIncompatible,
-  applySetChannel,
   applyStateQuery,
   type UpdateStateHandlerDeps,
 } from './update-state-handlers.ts';
@@ -1175,22 +1177,10 @@ function registerIpcHandlers() {
       appState = s;
     },
     saveAppState,
-    setUpdaterChannel: (channel) => {
-      autoUpdaterHandle?.setChannel(channel);
-    },
-    confirmDowngrade: async () => {
-      if (!autoUpdaterHandle) {
-        throw new Error('Auto-updater is not available — please restart the app');
-      }
-      await autoUpdaterHandle.confirmDowngrade();
-    },
+    getBuildChannel: () => channelFromVersion(app.getVersion()),
     getPendingSchemaIncompatibility,
     clearPendingSchemaIncompatibility,
   });
-  handle('ok:update:set-channel', async (_event, request) =>
-    applySetChannel(updateStateDeps(), request),
-  );
-  handle('ok:update:confirm-downgrade', async () => applyConfirmDowngrade(updateStateDeps()));
   handle('ok:state:reset-incompatible', async () => applyResetIncompatible(updateStateDeps()));
   handle('ok:state:query', async () => applyStateQuery(updateStateDeps()));
 
@@ -1473,7 +1463,6 @@ function bootPrimaryInstance(): void {
           const all = BrowserWindow.getAllWindows();
           return all[0] ?? null;
         },
-        getAllWindows: () => BrowserWindow.getAllWindows(),
         getAppVersion: () => app.getVersion(),
         isPackaged: app.isPackaged,
         forceDevBypass: process.env.OK_UPDATER_FORCE_DEV === '1',

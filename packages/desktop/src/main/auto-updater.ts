@@ -23,7 +23,6 @@ export interface UpdaterLike {
   on(event: 'error', listener: (err: Error & { code?: string }) => void): this;
   off(event: string, listener: (...args: unknown[]) => void): this;
   checkForUpdates(): Promise<unknown>;
-  downloadUpdate(): Promise<unknown>;
   quitAndInstall(): void;
 }
 
@@ -44,7 +43,6 @@ export type DispatchKind =
   | 'error-classified'
   | 'error-unclassified'
   | 'relaunch-now'
-  | 'downgrade-warning-fired'
   | 'skipped-dev-mode';
 
 interface StartAutoUpdaterOpts {
@@ -75,8 +73,6 @@ type CheckNowResult =
 
 export interface StartAutoUpdaterHandle {
   destroy(): void;
-  setChannel(channel: UpdateChannel): void;
-  confirmDowngrade(): Promise<void>;
   checkForUpdatesNow(): Promise<unknown>;
 }
 
@@ -129,63 +125,12 @@ export function applyChannelSettings(
   updater.allowDowngrade = channel === 'latest';
 }
 
-export function compareSemver(a: string, b: string): -1 | 0 | 1 | null {
-  const parsedA = parseSemver(a);
-  const parsedB = parseSemver(b);
-  if (!parsedA || !parsedB) return null;
-
-  for (let i = 0; i < 3; i++) {
-    const ai = parsedA.main[i] ?? 0;
-    const bi = parsedB.main[i] ?? 0;
-    if (ai !== bi) return ai < bi ? -1 : 1;
-  }
-
-  if (parsedA.pre.length === 0 && parsedB.pre.length === 0) return 0;
-  if (parsedA.pre.length === 0) return 1;
-  if (parsedB.pre.length === 0) return -1;
-
-  const max = Math.max(parsedA.pre.length, parsedB.pre.length);
-  for (let i = 0; i < max; i++) {
-    const aPart = parsedA.pre[i];
-    const bPart = parsedB.pre[i];
-    if (aPart === undefined) return -1;
-    if (bPart === undefined) return 1;
-    const aNumeric = /^\d+$/.test(aPart);
-    const bNumeric = /^\d+$/.test(bPart);
-    if (aNumeric && bNumeric) {
-      const an = Number(aPart);
-      const bn = Number(bPart);
-      if (an !== bn) return an < bn ? -1 : 1;
-    } else if (aNumeric) {
-      return -1;
-    } else if (bNumeric) {
-      return 1;
-    } else if (aPart !== bPart) {
-      return aPart < bPart ? -1 : 1;
-    }
-  }
-  return 0;
-}
-
-interface ParsedSemver {
-  main: [number, number, number];
-  pre: readonly string[];
-}
-
-function parseSemver(version: string): ParsedSemver | null {
-  if (typeof version !== 'string' || version === '') return null;
+export function channelFromVersion(version: string): UpdateChannel {
+  if (typeof version !== 'string' || version === '') return 'latest';
   const stripped = version.split('+', 1)[0] ?? version;
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([\w.-]+))?$/.exec(stripped);
-  if (!match) return null;
-  const [, majorRaw, minorRaw, patchRaw, preRaw] = match;
-  const major = Number(majorRaw);
-  const minor = Number(minorRaw);
-  const patch = Number(patchRaw);
-  if (!Number.isFinite(major) || !Number.isFinite(minor) || !Number.isFinite(patch)) return null;
-  return {
-    main: [major, minor, patch],
-    pre: preRaw ? preRaw.split('.') : [],
-  };
+  const match = /^\d+\.\d+\.\d+(?:-([\w.-]+))?$/.exec(stripped);
+  if (!match) return 'latest';
+  return match[1] ? 'beta' : 'latest';
 }
 
 export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHandle {
@@ -211,7 +156,8 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
 
   updater.autoDownload = true;
   updater.autoInstallOnAppQuit = true;
-  applyChannelSettings(updater, readState().updateChannel);
+  const buildChannel = channelFromVersion(getAppVersion());
+  applyChannelSettings(updater, buildChannel);
 
   updater.forceDevUpdateConfig = forceDevBypass;
   if (feedUrl) {
@@ -303,7 +249,6 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     logger.info('checking-for-update');
   };
 
-  let pendingDowngrade = false;
   let menuCheckPending = false;
 
   const runMenuDrivenCheck = (): Promise<unknown> => {
@@ -327,41 +272,11 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   const onUpdateAvailable = (info: { version?: string }): void => {
     logger.info('update-available', { version: info.version });
     markCheckSucceeded();
-
-    const availableVersion = info.version;
-    if (typeof availableVersion !== 'string' || availableVersion === '') return;
-    if (readState().updateChannel !== 'latest') return;
-    const currentVersion = getAppVersion();
-    const cmp = compareSemver(availableVersion, currentVersion);
-    if (cmp === null) {
-      logger.warn('compareSemver returned null — downgrade check skipped', {
-        availableVersion,
-        currentVersion,
-      });
-      return;
-    }
-    if (cmp !== -1) return;
-
-    updater.autoDownload = false;
-    pendingDowngrade = true;
-    broadcast('ok:update:downgrade-warning', {
-      currentVersion,
-      targetVersion: availableVersion,
-    });
-    logger.info('downgrade detected — autoDownload paused awaiting user confirmation', {
-      currentVersion,
-      targetVersion: availableVersion,
-    });
-    onDispatch?.('downgrade-warning-fired');
-    if (menuCheckPending) {
-      menuCheckPending = false;
-    }
   };
 
   const onUpdateAvailableForMenuCheck = (info: { version?: string }): void => {
     if (!menuCheckPending) return;
     menuCheckPending = false;
-    if (pendingDowngrade) return;
     showCheckNowResult?.({
       kind: 'available',
       currentVersion: getAppVersion(),
@@ -546,36 +461,6 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   }
 
   return {
-    setChannel(channel: UpdateChannel): void {
-      applyChannelSettings(updater, channel);
-      pendingDowngrade = false;
-      updater.autoDownload = true;
-      if (getAllWindows) {
-        for (const win of getAllWindows()) {
-          sendToRenderer(win.webContents, 'ok:state:update-channel-changed', { channel });
-        }
-      }
-      logger.info('channel changed at runtime', { channel });
-    },
-    async confirmDowngrade(): Promise<void> {
-      if (!pendingDowngrade) {
-        logger.warn('confirmDowngrade invoked without pending downgrade — ignoring');
-        return;
-      }
-      pendingDowngrade = false;
-      updater.autoDownload = true;
-      try {
-        await updater.downloadUpdate();
-        logger.info('downgrade confirmed — downloadUpdate completed');
-      } catch (err) {
-        pendingDowngrade = true;
-        updater.autoDownload = false;
-        logger.warn('downloadUpdate failed after confirmDowngrade', {
-          message: err instanceof Error ? err.message : String(err),
-        });
-        throw err;
-      }
-    },
     checkForUpdatesNow(): Promise<unknown> {
       logger.info('check-now invoked from menu');
       return runMenuDrivenCheck();

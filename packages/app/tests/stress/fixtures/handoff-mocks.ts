@@ -265,8 +265,6 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         onUpdateDownloaded: () => () => {},
         onWhatsNew: () => () => {},
         onUpdateStuckHint: () => () => {},
-        onUpdateDowngradeWarning: () => () => {},
-        onChannelChanged: () => () => {},
         onDeepLink: () => () => {},
         setThemeSource: async (): Promise<{ ok: true }> => ({ ok: true }),
         signalThemeApplied: (): void => {},
@@ -311,8 +309,6 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         },
         update: {
           relaunchNow: async () => {},
-          setChannel: async () => {},
-          confirmDowngrade: async () => {},
           checkNow: async () => {},
         },
         state: {

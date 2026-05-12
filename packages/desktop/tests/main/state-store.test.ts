@@ -291,7 +291,7 @@ describe('saveAppStateToDir (atomic write via tmp + rename)', () => {
     const next = setLastUsedProjectParent(emptyState(), '/Users/alice/Notes');
     expect(next.lastUsedProjectParent).toBe('/Users/alice/Notes');
     expect(next.recentProjects).toEqual([]);
-    expect(next.updateChannel).toBe('latest');
+    expect(next.schemaVersion).toBe(1);
   });
 
   test('lastUsedProjectParent: parseAppState round-trips a valid string', () => {

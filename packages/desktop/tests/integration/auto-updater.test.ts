@@ -263,81 +263,18 @@ describe('startAutoUpdater — initial configuration (parent §8.10 LOCKED)', ()
     expect(rig.updater.forceDevUpdateConfig).toBe(false);
   });
 
-  test('default state (channel=latest) → allowPrerelease=false + allowDowngrade=true', () => {
-    const { rig } = makeRig();
+  test('stable build version → channel=latest, allowPrerelease=false, allowDowngrade=true', () => {
+    const { rig } = makeRig({ appVersion: '0.4.0' });
+    expect(rig.updater.channel).toBe('latest');
     expect(rig.updater.allowPrerelease).toBe(false);
     expect(rig.updater.allowDowngrade).toBe(true);
   });
-});
 
-describe('handle.setChannel — runtime channel switch', () => {
-  test('switching to beta sets channel + allowPrerelease=true + allowDowngrade=false', () => {
-    const { rig, handle } = makeRig();
-    handle.setChannel('beta');
+  test('prerelease build version → channel=beta, allowPrerelease=true, allowDowngrade=false', () => {
+    const { rig } = makeRig({ appVersion: '0.4.0-beta.36' });
     expect(rig.updater.channel).toBe('beta');
     expect(rig.updater.allowPrerelease).toBe(true);
     expect(rig.updater.allowDowngrade).toBe(false);
-  });
-
-  test('switching back to latest sets channel + allowPrerelease=false + allowDowngrade=true', () => {
-    const { rig, handle } = makeRig({ updateChannel: 'beta' });
-    handle.setChannel('latest');
-    expect(rig.updater.channel).toBe('latest');
-    expect(rig.updater.allowPrerelease).toBe(false);
-    expect(rig.updater.allowDowngrade).toBe(true);
-  });
-
-  test('round-trip latest → beta → latest leaves all three properties on the latest profile', () => {
-    const { rig, handle } = makeRig();
-    handle.setChannel('beta');
-    handle.setChannel('latest');
-    expect(rig.updater.channel).toBe('latest');
-    expect(rig.updater.allowPrerelease).toBe(false);
-    expect(rig.updater.allowDowngrade).toBe(true);
-  });
-
-  test('does NOT trigger an extra checkForUpdates — switch takes effect on the next periodic check', () => {
-    const { rig, handle } = makeRig();
-    rig.updater.checkForUpdates.mockClear();
-    handle.setChannel('beta');
-    expect(rig.updater.checkForUpdates).not.toHaveBeenCalled();
-  });
-});
-
-describe('ok:update:set-channel IPC handler contract (US-007 AC3)', () => {
-  test('beta switch persists AppState.updateChannel AND flips updater config', () => {
-    const { rig, handle } = makeRig();
-    rig.state = { ...rig.state, updateChannel: 'beta' };
-    handle.setChannel('beta');
-
-    expect(rig.state.updateChannel).toBe('beta');
-    expect(rig.updater.channel).toBe('beta');
-    expect(rig.updater.allowPrerelease).toBe(true);
-    expect(rig.updater.allowDowngrade).toBe(false);
-  });
-
-  test('latest switch persists AppState.updateChannel AND flips updater config back', () => {
-    const { rig, handle } = makeRig({ updateChannel: 'beta' });
-    rig.state = { ...rig.state, updateChannel: 'latest' };
-    handle.setChannel('latest');
-
-    expect(rig.state.updateChannel).toBe('latest');
-    expect(rig.updater.channel).toBe('latest');
-    expect(rig.updater.allowPrerelease).toBe(false);
-    expect(rig.updater.allowDowngrade).toBe(true);
-  });
-
-  test('round-trip latest→beta→latest leaves AppState and updater consistent', () => {
-    const { rig, handle } = makeRig();
-    rig.state = { ...rig.state, updateChannel: 'beta' };
-    handle.setChannel('beta');
-    rig.state = { ...rig.state, updateChannel: 'latest' };
-    handle.setChannel('latest');
-
-    expect(rig.state.updateChannel).toBe('latest');
-    expect(rig.updater.channel).toBe('latest');
-    expect(rig.updater.allowPrerelease).toBe(false);
-    expect(rig.updater.allowDowngrade).toBe(true);
   });
 });
 
@@ -365,204 +302,6 @@ describe('schemaVersion boot-incompatibility check (US-007 AC5)', () => {
     const persisted = { ...emptyState(), schemaVersion: MAX_SUPPORTED_SCHEMA_VERSION + 1 };
     const result = evaluateSchemaCompatibility(persisted, MAX_SUPPORTED_SCHEMA_VERSION, '0.4.0');
     expect(result.status).toBe('incompatible');
-  });
-});
-
-describe('multi-window state-sync broadcast (US-007 AC6, FR14)', () => {
-  test('latest→beta switch fires ok:state:update-channel-changed to every supplied window', () => {
-    const { rig, handle } = makeRig({ extraWindowCount: 2 });
-    handle.setChannel('beta');
-
-    expect(rig.windows).toHaveLength(3);
-    for (const win of rig.windows) {
-      const events = win.filter((c) => c.channel === 'ok:state:update-channel-changed');
-      expect(events).toHaveLength(1);
-      expect(events[0]?.payload).toEqual({ channel: 'beta' });
-    }
-  });
-
-  test('beta→latest switch broadcasts the new channel to every window', () => {
-    const { rig, handle } = makeRig({ updateChannel: 'beta', extraWindowCount: 1 });
-    handle.setChannel('latest');
-
-    expect(rig.windows).toHaveLength(2);
-    for (const win of rig.windows) {
-      const events = win.filter((c) => c.channel === 'ok:state:update-channel-changed');
-      expect(events).toHaveLength(1);
-      expect(events[0]?.payload).toEqual({ channel: 'latest' });
-    }
-  });
-
-  test('round-trip emits one event per switch per window — no debounce, no dedupe', () => {
-    const { rig, handle } = makeRig({ extraWindowCount: 1 });
-    handle.setChannel('beta');
-    handle.setChannel('latest');
-    handle.setChannel('beta');
-
-    for (const win of rig.windows) {
-      const events = win.filter((c) => c.channel === 'ok:state:update-channel-changed');
-      expect(events).toHaveLength(3);
-      expect(events.map((e) => (e.payload as { channel: string }).channel)).toEqual([
-        'beta',
-        'latest',
-        'beta',
-      ]);
-    }
-  });
-
-  test('no getAllWindows wired (default fixture) → handle.setChannel is a no-op for state-sync', () => {
-    const { rig, handle } = makeRig();
-    handle.setChannel('beta');
-
-    expect(rig.updater.channel).toBe('beta');
-    expect(rig.windows).toHaveLength(1);
-    expect(
-      rig.windows[0]?.filter((c) => c.channel === 'ok:state:update-channel-changed') ?? [],
-    ).toHaveLength(0);
-  });
-
-  test('getAllWindows returning an empty list → broadcast no-ops without throwing', () => {
-    const updater = new FakeUpdater();
-    const ipc = makeFakeIpc();
-    const clock = makeFakeClock();
-    const captured: CapturedSend[] = [];
-    const primaryWindow = makeFakeWindow(captured);
-    let state: AppState = emptyState();
-    const handle = startAutoUpdater({
-      updater,
-      ipcMain: ipc,
-      readState: () => state,
-      writeState: (next) => {
-        state = next;
-      },
-      getPrimaryWindow: () => primaryWindow,
-      getAllWindows: () => [],
-      getAppVersion: () => '0.3.1',
-      isPackaged: true,
-      clock,
-      now: () => new Date(),
-    });
-
-    expect(() => handle.setChannel('beta')).not.toThrow();
-    expect(updater.channel).toBe('beta');
-    expect(captured.filter((c) => c.channel === 'ok:state:update-channel-changed')).toHaveLength(0);
-  });
-});
-
-describe('downgrade-warning path (FR9, US-006)', () => {
-  test('latest channel + older available version → fires warning + pauses autoDownload', () => {
-    const { rig } = makeRig({ appVersion: '0.4.0-beta.3', updateChannel: 'latest' });
-    rig.updater.emit('update-available', { version: '0.3.0' });
-
-    const warning = rig.captured.filter((c) => c.channel === 'ok:update:downgrade-warning');
-    expect(warning).toHaveLength(1);
-    expect(warning[0]?.payload).toEqual({
-      currentVersion: '0.4.0-beta.3',
-      targetVersion: '0.3.0',
-    });
-    expect(rig.updater.autoDownload).toBe(false);
-    expect(rig.dispatches).toContain('downgrade-warning-fired' as DispatchKind);
-  });
-
-  test('latest channel + newer available version → no warning, autoDownload stays true (M3 path)', () => {
-    const { rig } = makeRig({ appVersion: '0.3.0', updateChannel: 'latest' });
-    rig.updater.emit('update-available', { version: '0.4.0' });
-
-    expect(rig.captured.filter((c) => c.channel === 'ok:update:downgrade-warning')).toHaveLength(0);
-    expect(rig.updater.autoDownload).toBe(true);
-    expect(rig.dispatches).not.toContain('downgrade-warning-fired' as DispatchKind);
-  });
-
-  test('beta channel never fires downgrade warning even if available < running', () => {
-    const { rig } = makeRig({ appVersion: '0.4.0-beta.5', updateChannel: 'beta' });
-    rig.updater.emit('update-available', { version: '0.4.0-beta.3' });
-
-    expect(rig.captured.filter((c) => c.channel === 'ok:update:downgrade-warning')).toHaveLength(0);
-    expect(rig.updater.autoDownload).toBe(true);
-  });
-
-  test('confirmDowngrade resumes by calling updater.downloadUpdate AND restores autoDownload', async () => {
-    const { rig, handle } = makeRig({ appVersion: '0.4.0-beta.3', updateChannel: 'latest' });
-    rig.updater.emit('update-available', { version: '0.3.0' });
-    expect(rig.updater.autoDownload).toBe(false);
-
-    await handle.confirmDowngrade();
-    expect(rig.updater.downloadUpdate).toHaveBeenCalledTimes(1);
-    expect(rig.updater.autoDownload).toBe(true);
-  });
-
-  test('confirmDowngrade without pending downgrade is a no-op (defensive)', async () => {
-    const { rig, handle } = makeRig();
-    rig.updater.downloadUpdate.mockClear();
-    await handle.confirmDowngrade();
-    expect(rig.updater.downloadUpdate).not.toHaveBeenCalled();
-  });
-
-  test('confirmDowngrade rejects when downloadUpdate rejects so IPC propagates the failure', async () => {
-    const { rig, handle } = makeRig({ appVersion: '0.4.0-beta.3', updateChannel: 'latest' });
-    rig.updater.emit('update-available', { version: '0.3.0' });
-    expect(rig.updater.autoDownload).toBe(false);
-
-    rig.updater.downloadUpdate.mockImplementationOnce(
-      () => Promise.reject(new Error('network drop')) as unknown as Promise<unknown[]>,
-    );
-
-    await expect(handle.confirmDowngrade()).rejects.toThrow('network drop');
-  });
-
-  test('confirmDowngrade re-arms pendingDowngrade + autoDownload after rejection so retry works', async () => {
-    const { rig, handle } = makeRig({ appVersion: '0.4.0-beta.3', updateChannel: 'latest' });
-    rig.updater.emit('update-available', { version: '0.3.0' });
-    expect(rig.updater.autoDownload).toBe(false);
-
-    rig.updater.downloadUpdate.mockImplementationOnce(
-      () => Promise.reject(new Error('network drop')) as unknown as Promise<unknown[]>,
-    );
-    await expect(handle.confirmDowngrade()).rejects.toThrow('network drop');
-
-    expect(rig.updater.autoDownload).toBe(false);
-    rig.updater.downloadUpdate.mockClear();
-    await handle.confirmDowngrade();
-    expect(rig.updater.downloadUpdate).toHaveBeenCalledTimes(1);
-    expect(rig.updater.autoDownload).toBe(true);
-  });
-
-  test('setChannel("beta") after downgrade-warning ("Stay on Beta") restores autoDownload=true', () => {
-    const { rig, handle } = makeRig({ appVersion: '0.4.0-beta.3', updateChannel: 'latest' });
-    rig.updater.emit('update-available', { version: '0.3.0' });
-    expect(rig.updater.autoDownload).toBe(false);
-
-    handle.setChannel('beta');
-    expect(rig.updater.autoDownload).toBe(true);
-    rig.updater.downloadUpdate.mockClear();
-    handle.confirmDowngrade();
-    expect(rig.updater.downloadUpdate).not.toHaveBeenCalled();
-  });
-
-  test('malformed available version (empty) is handled gracefully — no warning, autoDownload preserved', () => {
-    const { rig } = makeRig({ appVersion: '0.4.0-beta.3', updateChannel: 'latest' });
-    rig.updater.emit('update-available', { version: '' });
-
-    expect(rig.captured.filter((c) => c.channel === 'ok:update:downgrade-warning')).toHaveLength(0);
-    expect(rig.updater.autoDownload).toBe(true);
-  });
-
-  test('compareSemver returning null (unparseable version) skips warning and preserves autoDownload', () => {
-    const { rig } = makeRig({ appVersion: '0.4.0-beta.3', updateChannel: 'latest' });
-    rig.updater.emit('update-available', { version: 'not-semver' });
-
-    expect(rig.captured.filter((c) => c.channel === 'ok:update:downgrade-warning')).toHaveLength(0);
-    expect(rig.updater.autoDownload).toBe(true);
-    expect(rig.dispatches).not.toContain('downgrade-warning-fired' as DispatchKind);
-  });
-
-  test('same version as running does not trigger downgrade warning (cmp === 0)', () => {
-    const { rig } = makeRig({ appVersion: '0.4.0-beta.3', updateChannel: 'latest' });
-    rig.updater.emit('update-available', { version: '0.4.0-beta.3' });
-
-    expect(rig.captured.filter((c) => c.channel === 'ok:update:downgrade-warning')).toHaveLength(0);
-    expect(rig.updater.autoDownload).toBe(true);
-    expect(rig.dispatches).not.toContain('downgrade-warning-fired' as DispatchKind);
   });
 });
 
@@ -1194,7 +933,6 @@ describe('check-now → showCheckNowResult feedback dispatch', () => {
     const showCheckNowResult = mock(() => {});
     const { rig } = makeRig({
       appVersion: '0.4.0-beta.13',
-      updateChannel: 'beta',
       showCheckNowResult,
     });
     rig.ipc.invoke('ok:update:check-now');
@@ -1217,20 +955,6 @@ describe('check-now → showCheckNowResult feedback dispatch', () => {
       kind: 'error',
       message: 'network timeout',
     });
-  });
-
-  test('downgrade-warning branch of update-available SKIPS dialog (toast handles it)', () => {
-    const showCheckNowResult = mock(() => {});
-    const { rig } = makeRig({
-      appVersion: '0.5.0-beta.0',
-      updateChannel: 'latest',
-      showCheckNowResult,
-    });
-    rig.ipc.invoke('ok:update:check-now');
-    rig.updater.emit('update-available', { version: '0.4.5' });
-    expect(showCheckNowResult).not.toHaveBeenCalled();
-    const warning = rig.captured.filter((c) => c.channel === 'ok:update:downgrade-warning');
-    expect(warning).toHaveLength(1);
   });
 
   test('periodic check (NO menu-check) does NOT fire showCheckNowResult', () => {
