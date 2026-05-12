@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { buildSourceModeHtml, handleCopyOrCut } from './source-clipboard.ts';
+import { buildSourceModeHtml, handleCopyOrCut, handlePaste } from './source-clipboard.ts';
 
 interface FakeElement {
   tagName: string;
@@ -238,5 +238,71 @@ describe('handleCopyOrCut — empty-selection no-op + wrapper integration', () =
     expect(result).toBe(true);
     expect(view.dispatchCalls).toHaveLength(0);
     expect(dt.data['text/plain']).toBe(markdown);
+  });
+});
+
+function makePasteEvent(data: Record<string, string>): ClipboardEvent & { prevented: boolean } {
+  const event = {
+    prevented: false,
+    clipboardData: {
+      types: Object.keys(data),
+      getData: (mime: string) => data[mime] ?? '',
+    },
+    preventDefault() {
+      this.prevented = true;
+    },
+  };
+  return event as unknown as ClipboardEvent & { prevented: boolean };
+}
+
+describe('handlePaste — source mode paste dispatch', () => {
+  test('VS Code clipboard metadata does not wrap text/plain in a fenced code block', () => {
+    const event = makePasteEvent({
+      'vscode-editor-data': '{"mode":"markdown"}',
+      'text/plain': '# Pasted markdown\n\nPlain paragraph.',
+    });
+    const view = makeFakeView({ from: 0, to: 0, text: '' });
+
+    const handled = handlePaste(event, view as unknown as never, {
+      ydoc: {} as never,
+      ytext: {} as never,
+    });
+
+    expect(handled).toBe(false);
+    expect(event.prevented).toBe(false);
+    expect(view.dispatchCalls).toHaveLength(0);
+  });
+
+  test('VS Code TypeScript payload does not insert a fenced code block', () => {
+    const event = makePasteEvent({
+      'vscode-editor-data': '{"mode":"typescript"}',
+      'text/plain': 'const x = 1;',
+    });
+    const view = makeFakeView({ from: 0, to: 0, text: '' });
+
+    const handled = handlePaste(event, view as unknown as never, {
+      ydoc: {} as never,
+      ytext: {} as never,
+    });
+
+    expect(handled).toBe(false);
+    expect(event.prevented).toBe(false);
+    expect(view.dispatchCalls).toHaveLength(0);
+  });
+
+  test('VS Code paste with text/html still delegates to CM6 default (Branch A wins over Branch D)', () => {
+    const event = makePasteEvent({
+      'vscode-editor-data': '{"mode":"typescript"}',
+      'text/plain': 'const x = 1;',
+      'text/html': '<div style="color:#d4d4d4"><span>const x = 1;</span></div>',
+    });
+    const view = makeFakeView({ from: 0, to: 0, text: '' });
+    const handled = handlePaste(event, view as unknown as never, {
+      ydoc: {} as never,
+      ytext: {} as never,
+    });
+    expect(handled).toBe(false);
+    expect(event.prevented).toBe(false);
+    expect(view.dispatchCalls).toHaveLength(0);
   });
 });

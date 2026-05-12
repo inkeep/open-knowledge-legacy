@@ -8,19 +8,21 @@
  * uses PM's hooks instead per precedent #19(b)). User-facing behavior is
  * symmetric across both views:
  *
- *   - Copy/cut write text/plain = markdown source AND text/html = canonical
- *     rendered HTML (via the shared mdast-to-html module). Cross-view
- *     byte-identical output.
+ *   - Copy/cut write text/plain = markdown source AND text/html =
+ *     source-shaped HTML wrapper (via `buildSourceModeHtml` — a
+ *     `<pre class="mdx-component"><code>` envelope, NOT rendered output).
  *
- *   - Paste routes through a 5-branch dispatcher parallel to WYSIWYG's
- *     5-branch (A/B/C/D/E). Source's insertion IS markdown text, so the
+ *   - Paste routes through a branch dispatcher parallel to WYSIWYG paste,
+ *     except source-mode never upgrades editor-origin text into a fenced code
+ *     block. Source's insertion IS markdown text, so the
  *     markdown-first tiebreak (Branch B), the Branch C `data-pm-slice`
  *     check, and Branch E all resolve to "let CM6 default text/plain
- *     verbatim insert run" — the dispatcher's value here is structural,
- *     not behavioral. The tiebreak fires AHEAD of Branch C and Branch D
- *     for the narrow case where external markdown carries a rich-HTML
- *     preview; without it Branch D's `htmlToMdast` would normalize bytes
- *     that the user pasted as canonical markdown.
+ *     verbatim insert run"; Branch D remains the converter for generic HTML.
+ *     The dispatcher's value here is structural, not behavioral. The
+ *     tiebreak fires AHEAD of Branch C and Branch D for the narrow case
+ *     where external markdown carries a rich-HTML preview; without it
+ *     Branch D's `htmlToMdast` would normalize bytes that the user pasted
+ *     as canonical markdown.
  *
  *   - Cmd+Shift+V detected via `pasteShiftHeld(event)` (keyboard-event
  *     tracker — ClipboardEvent does not expose shiftKey natively).
@@ -121,7 +123,11 @@ export function handleCopyOrCut(
   }
 }
 
-function handlePaste(event: ClipboardEvent, view: EditorView, deps: SourceClipboardDeps): boolean {
+export function handlePaste(
+  event: ClipboardEvent,
+  view: EditorView,
+  deps: SourceClipboardDeps,
+): boolean {
   const dt = event.clipboardData;
   if (!dt || dt.types.length === 0) return false;
 
@@ -129,6 +135,7 @@ function handlePaste(event: ClipboardEvent, view: EditorView, deps: SourceClipbo
   const source = detectSource(dt);
   const plain = dt.getData('text/plain');
   const html = dt.getData('text/html');
+  const vscodeData = dt.getData('vscode-editor-data');
 
   if (pasteShiftHeld(event)) {
     logSourceDetected({ view: 'source', branch: 'shift', source });
@@ -136,15 +143,10 @@ function handlePaste(event: ClipboardEvent, view: EditorView, deps: SourceClipbo
     return false;
   }
 
-  const vscodeData = dt.getData('vscode-editor-data');
   if (vscodeData && plain) {
-    const handled = tryBranchAVscode(view, vscodeData, plain, source);
-    if (handled) {
-      event.preventDefault();
-      logSourceDetected({ view: 'source', branch: 'A', source });
-      logIfSlow(start, { op: 'paste', view: 'source', branch: 'A', source });
-      return true;
-    }
+    logSourceDetected({ view: 'source', branch: 'A', source });
+    logIfSlow(start, { op: 'paste', view: 'source', branch: 'A', source });
+    return false;
   }
 
   if (plain && html && isMarkdown(plain)) {
@@ -186,38 +188,6 @@ function handlePaste(event: ClipboardEvent, view: EditorView, deps: SourceClipbo
   logSourceDetected({ view: 'source', branch: 'E', source });
   logIfSlow(start, { op: 'paste', view: 'source', branch: 'E', source });
   return false;
-}
-
-const LANG_IDENT = /^[A-Za-z0-9_+-]+$/;
-
-function tryBranchAVscode(
-  view: EditorView,
-  vscodeData: string,
-  text: string,
-  source: ClipboardSource,
-): boolean {
-  try {
-    const meta = JSON.parse(vscodeData) as { mode?: string };
-    const rawLang = typeof meta.mode === 'string' ? meta.mode : '';
-    const lang = LANG_IDENT.test(rawLang) ? rawLang : '';
-    const block = `\`\`\`${lang}\n${text}\n\`\`\`\n`;
-    const { from, to } = view.state.selection.main;
-    view.dispatch({
-      changes: { from, to, insert: block },
-      selection: { anchor: from + block.length },
-    });
-    return true;
-  } catch (err) {
-    logConversionFail({
-      view: 'source',
-      stage: 'branchA',
-      source,
-      branch: 'A',
-      reason: (err as Error)?.message ?? 'unknown',
-      errorClass: classifyError(err),
-    });
-    return false;
-  }
 }
 
 function tryBranchDHtml(
