@@ -47,3 +47,29 @@ describe('EditorTabs source-level guards — tab-strip drag region', () => {
     expect(SRC).toContain('onWheel={scrollTabListOnWheel}');
   });
 });
+
+describe('EditorTabs source-level guards — tab context menu', () => {
+  test('uses the shadcn/Radix context menu primitives for tab actions', () => {
+    expect(SRC).toContain("from '@/components/ui/context-menu'");
+    expect(SRC).toContain('<ContextMenuTrigger asChild>');
+    expect(SRC).toContain('<ContextMenuContent');
+  });
+
+  test('BOTH folder-tab and document-tab branches wrap with EditorTabContextMenu', () => {
+    const matches = SRC.match(/<EditorTabContextMenu[\s\n]/g);
+    expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  test('tab context menu exposes close, close-others, and close-all actions', () => {
+    expect(SRC).toContain('>Close</ContextMenuItem>');
+    expect(SRC).toMatch(/>\s*Close others\s*<\/ContextMenuItem>/);
+    expect(SRC).toMatch(/>\s*Close all\s*<\/ContextMenuItem>/);
+  });
+
+  test('bulk tab context actions route through closeTabs, not repeated single closes', () => {
+    expect(SRC).toContain('const otherTabIds = openTabs.filter');
+    expect(SRC).toContain('disabled={otherTabIds.length === 0}');
+    expect(SRC).toContain('closeTabs(otherTabIds)');
+    expect(SRC).toContain('closeTabs(openTabs)');
+  });
+});
