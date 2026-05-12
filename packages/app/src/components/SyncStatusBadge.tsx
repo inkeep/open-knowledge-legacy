@@ -5,6 +5,7 @@ import {
 } from '@/hooks/use-enable-sync-with-confirm';
 import type { GitSyncStatus } from '@/hooks/use-git-sync-status';
 import { useGitSyncStatusDetailed } from '@/hooks/use-git-sync-status';
+import { useConfigContext } from '@/lib/config-provider';
 import { EnableSyncConfirmDialog } from './EnableSyncConfirmDialog';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
@@ -151,7 +152,8 @@ function PopoverBody({
   onOpenConflictResolver,
   onSetIdentity,
 }: PopoverBodyProps) {
-  const enabled = status.syncEnabled;
+  const { projectLocalConfig, projectLocalSynced } = useConfigContext();
+  const enabled = projectLocalConfig?.autoSync?.enabled ?? false;
   const writer = useSyncEnabledWriter();
   const { confirmOpen, setConfirmOpen, onToggleRequest, onConfirm } =
     useEnableSyncWithConfirm(writer);
@@ -165,6 +167,7 @@ function PopoverBody({
         </div>
         <Switch
           checked={enabled}
+          disabled={!projectLocalSynced}
           onCheckedChange={onToggleRequest}
           aria-label={enabled ? 'Disable sync' : 'Enable sync'}
         />

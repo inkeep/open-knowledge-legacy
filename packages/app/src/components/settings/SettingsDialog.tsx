@@ -497,14 +497,15 @@ function SchemaSection({
 
 function SyncSection() {
   const status = useGitSyncStatus();
+  const { projectLocalConfig, projectLocalSynced } = useConfigContext();
   const writer = useSyncEnabledWriter();
   const { confirmOpen, setConfirmOpen, onToggleRequest, onConfirm } =
     useEnableSyncWithConfirm(writer);
 
   if (status && !status.hasRemote && status.state === 'dormant') return null;
 
-  const enabled = status?.syncEnabled ?? false;
-  const disabledControl = status === null;
+  const enabled = projectLocalConfig?.autoSync?.enabled ?? false;
+  const disabledControl = !projectLocalSynced;
 
   return (
     <section aria-labelledby="settings-sync-title" className="space-y-3">

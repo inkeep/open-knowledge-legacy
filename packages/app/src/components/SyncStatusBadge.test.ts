@@ -33,3 +33,36 @@ describe('SyncStatusBadge source-level guards', () => {
     expect(SRC).toContain('EnableSyncConfirmDialog');
   });
 });
+
+describe('SyncStatusBadge PopoverBody Switch — bound to local CRDT preference (not server status)', () => {
+  const popoverBodyStart = SRC.indexOf('function PopoverBody(');
+  const publicComponentStart = SRC.indexOf('export function SyncStatusBadge(');
+  const popoverBodySrc = SRC.slice(popoverBodyStart, publicComponentStart);
+
+  test('PopoverBody isolation slice is non-empty (sanity)', () => {
+    expect(popoverBodyStart).toBeGreaterThan(-1);
+    expect(publicComponentStart).toBeGreaterThan(popoverBodyStart);
+    expect(popoverBodySrc.length).toBeGreaterThan(200);
+  });
+
+  test('Switch.checked derives from the local CRDT preference, not status.syncEnabled', () => {
+    expect(popoverBodySrc).toMatch(/useConfigContext|projectLocalConfig/);
+    expect(popoverBodySrc).not.toMatch(/const enabled\s*=\s*.*status/);
+  });
+
+  test('write path is unchanged — projectLocalBinding.patch() via useSyncEnabledWriter', () => {
+    expect(popoverBodySrc).toContain('useSyncEnabledWriter');
+    expect(popoverBodySrc).toContain('useEnableSyncWithConfirm');
+    expect(popoverBodySrc).toContain('onToggleRequest');
+  });
+
+  test('useGitSyncStatusDetailed still drives badge state/label/visibility', () => {
+    expect(SRC).toContain('useGitSyncStatusDetailed');
+    expect(SRC).toMatch(/<BadgeIcon\s+status=\{status\}/);
+  });
+
+  test('Switch disabled prop gates against the cold-start window', () => {
+    expect(popoverBodySrc).toMatch(/projectLocalSynced/);
+    expect(popoverBodySrc).toMatch(/disabled=\{!projectLocalSynced\}/);
+  });
+});
