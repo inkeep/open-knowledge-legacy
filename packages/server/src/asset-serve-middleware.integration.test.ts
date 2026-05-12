@@ -68,11 +68,18 @@ describe('asset-serve middleware (narrow integration)', () => {
     writeFileSync(join(contentDir, 'docs', 'doc.pdf'), 'fake-pdf-bytes');
     writeFileSync(join(contentDir, 'docs', 'clip.m4v'), 'fake-m4v-bytes');
     writeFileSync(join(contentDir, 'docs', 'song.flac'), 'fake-flac-bytes');
+    writeFileSync(
+      join(contentDir, 'docs', 'diagram.svg'),
+      '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+    );
 
     writeFileSync(join(contentDir, 'docs', 'spec.docx'), 'fake-docx-bytes');
     writeFileSync(join(contentDir, 'docs', 'data.csv'), 'a,b\n1,2\n');
     writeFileSync(join(contentDir, 'docs', 'notes.txt'), 'some text');
     writeFileSync(join(contentDir, 'docs', 'archive.zip'), 'fake-zip-bytes');
+
+    mkdirSync(join(contentDir, 'assets', 'images', 'characters'), { recursive: true });
+    writeFileSync(join(contentDir, 'assets', 'images', 'characters', 'aang.png'), 'fake-png-bytes');
 
     harness = await startHarness(contentDir);
   });
@@ -95,6 +102,16 @@ describe('asset-serve middleware (narrow integration)', () => {
         expect(res.headers.get('content-disposition')).toBe('inline');
         expect(res.headers.get('x-content-type-options')).toBe('nosniff');
       }
+    });
+
+    test('SVG serves inline AND with a CSP sandbox header (mirrors handleAsset)', async () => {
+      const res = await fetch(`${harness.baseURL}/docs/diagram.svg`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-disposition')).toBe('inline');
+      expect(res.headers.get('content-security-policy')).toBe(
+        "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+      );
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     });
 
     test('non-inline admitted extensions get `Content-Disposition: attachment`', async () => {
@@ -166,25 +183,54 @@ describe('asset-serve middleware (narrow integration)', () => {
       expect(body).not.toContain('spa fallback sentinel');
     });
 
-    test('missing asset at root (no sibling .md) falls through to SPA fallback', async () => {
+    test('missing asset at root returns 404 (fail-closed for asset extensions, regardless of sibling-doc context)', async () => {
       const res = await fetch(`${harness.baseURL}/missing.m4v`);
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(404);
+      const ct = res.headers.get('content-type') ?? '';
+      expect(ct).not.toMatch(/^text\/html/);
       const body = await res.text();
-      expect(body).toContain('spa fallback sentinel');
+      expect(body).not.toContain('spa fallback sentinel');
     });
 
-    test('blocklisted-extension paths are excluded by the content filter (defense in depth)', async () => {
+    test('blocklisted-extension paths fall through to the SPA handler (never streamed)', async () => {
       const res = await fetch(`${harness.baseURL}/docs/malicious.dmg`);
       expect(res.status).toBe(200);
       const body = await res.text();
       expect(body).toContain('spa fallback sentinel');
+      expect(res.headers.get('content-disposition')).toBeNull();
     });
 
-    test('unknown extension (not in asset or blocklist set) falls through to SPA fallback', async () => {
+    test('missing unknown extension (not in asset or blocklist set) falls through to SPA fallback', async () => {
       const res = await fetch(`${harness.baseURL}/docs/anything.xyz`);
       expect(res.status).toBe(200);
       const body = await res.text();
       expect(body).toContain('spa fallback sentinel');
+    });
+  });
+
+  describe('Doc-referenced assets in dedicated asset directories', () => {
+    test('asset in `assets/.../` with no sibling `.md` is served (the `![](../../assets/...)` pattern)', async () => {
+      const res = await fetch(`${harness.baseURL}/assets/images/characters/aang.png`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-disposition')).toBe('inline');
+      expect(res.headers.get('content-type')).toMatch(/^image\/png/);
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+      const body = await res.text();
+      expect(body).not.toContain('spa fallback sentinel');
+    });
+
+    test('a `.gitignore`/`.okignore`-excluded asset is still refused even in a dedicated assets dir', async () => {
+      writeFileSync(join(contentDir, '.okignore'), 'assets/secret/\n');
+      mkdirSync(join(contentDir, 'assets', 'secret'), { recursive: true });
+      writeFileSync(join(contentDir, 'assets', 'secret', 'token.png'), 'sensitive-bytes');
+      await harness.close();
+      harness = await startHarness(contentDir);
+
+      const res = await fetch(`${harness.baseURL}/assets/secret/token.png`);
+      expect(res.status).toBe(200);
+      const body = await res.text();
+      expect(body).toContain('spa fallback sentinel');
+      expect(res.headers.get('content-disposition')).toBeNull();
     });
   });
 
