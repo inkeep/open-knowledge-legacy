@@ -10,6 +10,7 @@ export {
 } from './config/read-config-safely.ts';
 export {
   resolveConfigPath,
+  USER_CONFIG_FILENAME,
   type WriteConfigPatchOptions,
   type WriteConfigPatchResult,
   type WriteConfigPatchSuccess,

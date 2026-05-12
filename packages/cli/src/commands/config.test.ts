@@ -27,7 +27,7 @@ function projectConfigPath(cwd: string): string {
 }
 
 function userConfigPath(home: string): string {
-  return join(home, OK_DIR, CONFIG_FILENAME);
+  return join(home, OK_DIR, 'global.yml');
 }
 
 function writeConfigYaml(absPath: string, content: string): void {
@@ -43,14 +43,14 @@ describe('runValidate', () => {
       loadConfigFn: () =>
         ({
           config: {} as never,
-          sources: ['/home/test/.ok/config.yml'],
+          sources: ['/home/test/project/.ok/config.yml'],
         }) as never,
       log: (msg) => stderr.push(msg),
       error: (msg) => stderr.push(msg),
     });
     expect(outcome.ok).toBe(true);
     expect(stderr.some((m) => m.includes('✓ Configuration valid'))).toBe(true);
-    expect(stderr.some((m) => m.includes('/home/test/.ok/config.yml'))).toBe(true);
+    expect(stderr.some((m) => m.includes('/home/test/project/.ok/config.yml'))).toBe(true);
     expect(stdout).toEqual([]);
   });
 

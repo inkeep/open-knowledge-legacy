@@ -50,7 +50,7 @@ export function buildConfigYmlContent(_version: string, options?: BuildConfigYml
 #
 # Precedence (lowest -> highest):
 #   Built-in defaults
-#     -> ~/${OK_DIR}/config.yml         (user defaults)
+#     -> ~/${OK_DIR}/global.yml         (user defaults)
 #     -> ./${OK_DIR}/config.yml         (this file)
 #
 # Schema reference: packages/cli/src/config/schema.ts

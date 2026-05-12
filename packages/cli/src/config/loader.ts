@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import {
   type ConfigIssue,
@@ -8,7 +7,7 @@ import {
   humanFormat,
   locateIssue,
 } from '@inkeep/open-knowledge-core';
-import { readConfigSafely } from '@inkeep/open-knowledge-core/server';
+import { readConfigSafely, resolveConfigPath } from '@inkeep/open-knowledge-core/server';
 import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
 import { type Document, parseDocument } from 'yaml';
 import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
@@ -153,7 +152,7 @@ export function loadConfig(cwd?: string): LoadConfigResult {
   const workingDir = cwd ?? process.cwd();
   const sources: string[] = [];
 
-  const userConfigPath = resolve(homedir(), OK_DIR, CONFIG_FILENAME);
+  const userConfigPath = resolveConfigPath('user', workingDir);
   const userResult = readConfigSafely({ absPath: userConfigPath });
   let merged: Record<string, unknown> = {};
   if (userResult.valid && userResult.source !== undefined) {

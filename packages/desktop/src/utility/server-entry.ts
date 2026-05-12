@@ -17,7 +17,7 @@ export interface UtilityInitMessage {
   type: 'init';
   opts: Pick<
     BootServerOptions,
-    'contentDir' | 'projectDir' | 'port' | 'host' | 'debounce' | 'maxDebounce'
+    'contentDir' | 'projectDir' | 'port' | 'host' | 'debounce' | 'maxDebounce' | 'localOpCliArgs'
   > & {
     didEnsureGit?: boolean;
     consentVersion?: number;

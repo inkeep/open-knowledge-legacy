@@ -99,9 +99,9 @@ describe('configDocAbsPath', () => {
     );
   });
 
-  test('user doc resolves under homedirOverride/.ok/config.yml', () => {
+  test('user doc resolves under homedirOverride/.ok/global.yml', () => {
     expect(configDocAbsPath(CONFIG_DOC_NAME_USER, fx.ctx)).toBe(
-      join(fx.homedir, '.ok', 'config.yml'),
+      join(fx.homedir, '.ok', 'global.yml'),
     );
   });
 

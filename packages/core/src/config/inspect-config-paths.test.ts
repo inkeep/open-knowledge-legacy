@@ -43,7 +43,7 @@ describe('inspectConfigPaths', () => {
 
   test('reports `user: true` when the path is set in user YAML', () => {
     const { cwd, home } = makeTempProject();
-    writeFileSync(join(home, '.ok', 'config.yml'), 'appearance:\n  theme: dark\n');
+    writeFileSync(join(home, '.ok', 'global.yml'), 'appearance:\n  theme: dark\n');
     const result = inspectConfigPaths([['appearance', 'theme']], {
       cwd,
       homedirOverride: home,
@@ -61,7 +61,7 @@ describe('inspectConfigPaths', () => {
       'mcp:\n  tools:\n    grep:\n      maxResults: 100\n',
     );
     writeFileSync(
-      join(home, '.ok', 'config.yml'),
+      join(home, '.ok', 'global.yml'),
       'mcp:\n  tools:\n    grep:\n      maxResults: 50\n',
     );
     const result = inspectConfigPaths([['mcp', 'tools', 'grep', 'maxResults']], {
@@ -80,7 +80,7 @@ describe('inspectConfigPaths', () => {
       join(cwd, '.ok', 'config.yml'),
       'mcp:\n  tools:\n    grep:\n      maxResults: 100\n',
     );
-    writeFileSync(join(home, '.ok', 'config.yml'), 'appearance:\n  theme: dark\n');
+    writeFileSync(join(home, '.ok', 'global.yml'), 'appearance:\n  theme: dark\n');
     const result = inspectConfigPaths(
       [
         ['mcp', 'tools', 'grep', 'maxResults'],

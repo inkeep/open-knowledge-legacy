@@ -246,6 +246,15 @@ appearance:
   test('user-global config is sidelined on schema-invalid (cold-start recovery)', () => {
     expect(() => loadConfig(testDir)).not.toThrow();
   });
+
+  test('user-global reads from `~/.ok/global.yml` (not `config.yml`)', () => {
+    const okDir = resolve(fakeHome, OK_DIR);
+    mkdirSync(okDir, { recursive: true });
+    writeFileSync(resolve(okDir, 'global.yml'), 'appearance:\n  theme: dark\n', 'utf-8');
+    const { config, sources } = loadConfig(testDir);
+    expect(config.appearance.theme).toBe('dark');
+    expect(sources).toContain(resolve(okDir, 'global.yml'));
+  });
 });
 
 describe('createProjectConfigResolver', () => {

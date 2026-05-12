@@ -187,6 +187,27 @@ describe('WindowManager', () => {
     expect(env.windows[0]?.loadFile).toHaveBeenCalledWith('/fake/renderer/index.html');
   });
 
+  test('createProjectWindow forwards localOpCliArgs into the utility init IPC payload', async () => {
+    const wm = new WindowManager(env.deps);
+    const expectedCliArgs = ['/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh'];
+    const promise = wm.createProjectWindow({
+      projectPath: '/tmp/cli-args-plumbed',
+      localOpCliArgs: expectedCliArgs,
+    });
+
+    const utility = env.utilities[0];
+    if (!utility) throw new Error('utility not forked');
+    expect(utility.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'init',
+        opts: expect.objectContaining({ localOpCliArgs: expectedCliArgs }),
+      }),
+    );
+
+    utility.fire({ type: 'ready', port: 51235, apiOrigin: 'http://localhost:51235' });
+    await promise;
+  });
+
   test('opening the same project twice focuses the existing window (D44 case a)', async () => {
     const wm = new WindowManager(env.deps);
     const p1 = wm.createProjectWindow({ projectPath: '/tmp/p1' });
