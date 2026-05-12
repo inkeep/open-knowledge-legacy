@@ -14,7 +14,7 @@ import {
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { getLocalDir } from './config/paths.ts';
 import type { ContentFilter } from './content-filter.ts';
-import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
+import { isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 
 const WIKI_LINK_RE = /\[\[([^\n#[\]|]+)(?:#([^\n[\]|]+))?(?:\|([^\n[\]]+))?\]\]/y;
 
@@ -1137,49 +1137,24 @@ export class BacklinkIndex {
     this.mtimesByBranch.delete(branch);
   }
 
-  private rebuildFileList(dir: string, docs: string[]): void {
-    let entries: Dirent[];
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch (err) {
-      console.warn(`[backlinks] Failed to read directory ${dir}:`, err);
-      return;
-    }
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        const relDir = relative(this.contentDir, fullPath);
-        if (this.contentFilter && relDir && this.contentFilter.isDirExcluded(relDir)) continue;
-        this.rebuildFileList(fullPath, docs);
-        continue;
-      }
-      if (!entry.isFile() || !isSupportedDocFile(entry.name)) continue;
-
-      const relPath = relative(this.contentDir, fullPath);
-      if (this.contentFilter?.isExcluded(relPath)) continue;
-      docs.push(stripDocExtension(relPath));
-    }
-  }
-
-  listDocsOnDisk(): string[] {
-    if (!existsSync(this.contentDir)) return [];
-    const docs: string[] = [];
-    this.rebuildFileList(this.contentDir, docs);
-    const unique = Array.from(new Set(docs));
-    return unique.sort((a, b) => a.localeCompare(b));
-  }
-
   async rebuildFromDisk(branch = this.activeBranch): Promise<void> {
     const state = createEmptyState();
     const mtimes = new Map<string, number>();
-    const allDocs = this.listDocsOnDisk();
+    const rawDocs: Array<{ docName: string; filePath: string }> = [];
+    this.walkForPaths(this.contentDir, rawDocs);
+
+    const seen = new Set<string>();
+    const allDocs = rawDocs.filter(({ docName }) => {
+      if (seen.has(docName)) return false;
+      seen.add(docName);
+      return true;
+    });
 
     const BATCH_SIZE = 50;
     for (let i = 0; i < allDocs.length; i += BATCH_SIZE) {
       const batch = allDocs.slice(i, i + BATCH_SIZE);
       const settled = await Promise.allSettled(
-        batch.map(async (docName) => {
-          const filePath = resolve(this.contentDir, `${docName}${getDocExtension(docName)}`);
+        batch.map(async ({ docName, filePath }) => {
           const [fileStat, markdown] = await Promise.all([
             stat(filePath),
             readFile(filePath, 'utf-8'),

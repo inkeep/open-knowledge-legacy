@@ -270,6 +270,34 @@ export function hocuspocusPlugin(): Plugin {
         }
       });
 
+      const assetMiddleware = createAssetServeMiddleware({
+        contentFilter: currentSrv.contentFilter,
+        contentSirv: sirv(CONTENT_DIR, { dev: true, dotfiles: false }),
+        inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,
+        assetExtensions: ASSET_EXTENSIONS,
+        blocklistExtensions: EXECUTABLE_BLOCKLIST_EXTENSIONS,
+      });
+      server.middlewares.use((req, res, next) => {
+        const url = req.url ?? '';
+        const path = url.split('?')[0] ?? '';
+        const queryStart = url.indexOf('?');
+        const query = queryStart >= 0 ? url.slice(queryStart) : '';
+        const params = query ? new URLSearchParams(query) : null;
+        if (
+          path.startsWith('/@vite/') ||
+          path.startsWith('/@fs/') ||
+          path.startsWith('/@id/') ||
+          path === '/@react-refresh' ||
+          path.startsWith('/node_modules/') ||
+          path === '/favicon.svg' ||
+          params?.has('import') ||
+          params?.has('html-proxy')
+        ) {
+          return next();
+        }
+        return assetMiddleware(req, res, next);
+      });
+
       server.middlewares.use(async (req, res, next) => {
         const url = req.url?.split('?')[0];
         if (url?.startsWith('/api/')) {
@@ -300,16 +328,6 @@ export function hocuspocusPlugin(): Plugin {
         }
         next();
       });
-
-      server.middlewares.use(
-        createAssetServeMiddleware({
-          contentFilter: currentSrv.contentFilter,
-          contentSirv: sirv(CONTENT_DIR, { dev: true, dotfiles: false }),
-          inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,
-          assetExtensions: ASSET_EXTENSIONS,
-          blocklistExtensions: EXECUTABLE_BLOCKLIST_EXTENSIONS,
-        }),
-      );
 
       server.httpServer?.on('close', async () => {
         shuttingDown = true;

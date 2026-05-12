@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,11 @@ import {
   extractWikiLinksFromMarkdown,
   resolveMarkdownHref,
 } from './backlink-index.ts';
+import { _resetDocExtensionsForTests } from './doc-extensions.ts';
+
+beforeEach(() => {
+  _resetDocExtensionsForTests();
+});
 
 describe('extractWikiLinksFromMarkdown', () => {
   test('extracts wiki-link targets with context snippets', () => {
@@ -368,6 +373,50 @@ describe('BacklinkIndex', () => {
           snippet: 'See beta.',
         },
       ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rebuildFromDisk indexes .mdx files at cold-start (empty extension registry)', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-rebuild-mdx-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+
+    try {
+      writeFileSync(join(contentDir, 'alpha.mdx'), '# Alpha\n\nSee [[beta]].\n', 'utf-8');
+      writeFileSync(join(contentDir, 'beta.mdx'), '# Beta\n', 'utf-8');
+      writeFileSync(join(contentDir, 'gamma.md'), '# Gamma\n\nSee [[beta]].\n', 'utf-8');
+
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      await index.rebuildFromDisk();
+
+      expect(index.getBacklinks('beta')).toEqual([
+        { source: 'alpha', anchor: null, snippet: 'See beta.' },
+        { source: 'gamma', anchor: null, snippet: 'See beta.' },
+      ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rebuildFromDisk first-wins dedup when both .md and .mdx exist for the same docName', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-dedup-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+
+    try {
+      writeFileSync(join(contentDir, 'alpha.md'), '# Alpha\n\nSee [[beta]].\n', 'utf-8');
+      writeFileSync(join(contentDir, 'alpha.mdx'), '# Alpha\n\nSee [[gamma]].\n', 'utf-8');
+      writeFileSync(join(contentDir, 'beta.md'), '# Beta\n', 'utf-8');
+      writeFileSync(join(contentDir, 'gamma.md'), '# Gamma\n', 'utf-8');
+
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      await index.rebuildFromDisk();
+
+      const fwd = index.getForwardLinks('alpha');
+      expect(fwd).toHaveLength(1);
+      expect(['beta', 'gamma']).toContain(fwd[0]);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
