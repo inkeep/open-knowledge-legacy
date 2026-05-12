@@ -131,6 +131,11 @@ describe('SettingsDialog Sync section guards', () => {
     expect(SRC).toMatch(/<label\s+htmlFor="settings-sync-toggle"/);
     expect(SRC).toMatch(/<Switch[\s\S]*?id="settings-sync-toggle"/);
   });
+
+  test('Sync section renders an empty state when no git remote is detected', () => {
+    expect(SRC).toContain('No git remote was detected');
+    expect(SRC).toMatch(/data-testid="settings-sync-empty"/);
+  });
 });
 
 describe('SettingsDialog SyncSection Switch — bound to local CRDT preference (not server status)', () => {
