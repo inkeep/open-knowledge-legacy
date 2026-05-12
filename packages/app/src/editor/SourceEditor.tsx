@@ -26,6 +26,8 @@ import {
 import { createSourcePolishExtension } from './source-polish';
 import { attachTypingBurstDetector } from './typing-burst-detector';
 
+const TOOLBAR_OVERLAP_PX = 56;
+
 interface SourceEditorProps {
   docName: string;
   ytext: Y.Text;
@@ -134,6 +136,7 @@ export function SourceEditor({
                   height: '100%',
                 },
               }),
+              EditorView.scrollMargins.of(() => ({ top: TOOLBAR_OVERLAP_PX })),
             ],
           });
           const view = new EditorView({ state, parent: el });

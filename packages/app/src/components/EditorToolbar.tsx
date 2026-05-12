@@ -26,7 +26,7 @@ export function EditorToolbar({
   onTogglePanel,
 }: EditorToolbarProps) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-10">
+    <div data-testid="editor-toolbar" className="pointer-events-none absolute inset-x-0 top-0 z-10">
       <div className="grid grid-cols-3 items-center px-2 py-2 bg-background">
         <div />
         <div className="pointer-events-auto flex justify-center">
