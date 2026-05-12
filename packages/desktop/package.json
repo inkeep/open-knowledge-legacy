@@ -1,7 +1,7 @@
 {
   "name": "@inkeep/open-knowledge-desktop",
   "productName": "Open Knowledge",
-  "version": "0.4.0",
+  "version": "0.4.1-beta.0",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
