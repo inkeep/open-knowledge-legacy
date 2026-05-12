@@ -332,4 +332,11 @@ describe('buildConfigYmlContent', () => {
     const out = buildConfigYmlContent('1.0.0', { contentDir: 'with spaces/sub' });
     expect(out).toContain('content:\n  dir: "with spaces/sub"');
   });
+
+  it('precedence header points to user-global `~/.ok/global.yml`, not `config.yml`', () => {
+    const out = buildConfigYmlContent('1.0.0');
+    expect(out).toContain('~/.ok/global.yml');
+    expect(out).toContain('./.ok/config.yml');
+    expect(out).not.toContain('~/.ok/config.yml');
+  });
 });

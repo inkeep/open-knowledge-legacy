@@ -267,6 +267,13 @@ function isDebugKeyringSmokeAllowed(): boolean {
   return !app.isPackaged || process.env.OK_DEBUG_KEYRING_SMOKE === '1';
 }
 
+function resolveLocalOpCliArgs(): string[] {
+  if (app.isPackaged) {
+    return [wrapperPathInBundle(app.getPath('exe'))];
+  }
+  return ['open-knowledge'];
+}
+
 function runDriverBootSmokeInProduction(): void {
   runDriverBootSmoke({
     fork: (entry) => utilityProcess.fork(entry, [], {}) as unknown as DriverUtilityLike,
@@ -585,6 +592,7 @@ async function openProject(
     pendingDeepLinkDoc,
     didEnsureGit,
     consentVersion: 1,
+    localOpCliArgs: resolveLocalOpCliArgs(),
   });
   attachAssetSafetyNet(ctx.window.webContents, {
     editorOrigin: ctx.apiOrigin,
@@ -1249,12 +1257,7 @@ function registerIpcHandlers() {
   });
 
   const localOpDeps: LocalOpDeps = {
-    resolveCliArgs: () => {
-      if (app.isPackaged) {
-        return [wrapperPathInBundle(app.getPath('exe'))];
-      }
-      return ['open-knowledge'];
-    },
+    resolveCliArgs: resolveLocalOpCliArgs,
     state: createLocalOpState(),
   };
   handle('ok:local-op:auth:start', async (event) => {

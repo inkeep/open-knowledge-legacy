@@ -28,7 +28,7 @@ function projectConfigPath(): string {
 }
 
 function userConfigPath(homeOverride: string): string {
-  return join(homeOverride, '.ok', 'config.yml');
+  return join(homeOverride, '.ok', 'global.yml');
 }
 
 describe('writeConfigPatch — project scope', () => {
@@ -183,7 +183,7 @@ describe('writeConfigPatch — project-local scope', () => {
 });
 
 describe('writeConfigPatch — user scope', () => {
-  test('lazy first-write of ~/.ok/config.yml creates parent dir', async () => {
+  test('lazy first-write of ~/.ok/global.yml creates parent dir', async () => {
     const home = mkdtempSync(join(tmpdir(), 'ok-write-config-patch-home-'));
     try {
       expect(existsSync(join(home, '.ok'))).toBe(false);
@@ -320,7 +320,7 @@ describe('resolveConfigPath', () => {
 
   test('user scope ignores cwd, uses homedirOverride', () => {
     expect(resolveConfigPath('user', '/abs/proj', '/home/alice')).toBe(
-      '/home/alice/.ok/config.yml',
+      '/home/alice/.ok/global.yml',
     );
   });
 

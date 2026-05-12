@@ -16,6 +16,8 @@ import { applyPatchToDocument, toConfigIssue } from './yaml-patch.ts';
 
 const CONFIG_FILENAME = 'config.yml';
 
+export const USER_CONFIG_FILENAME = 'global.yml';
+
 function schemaUrl(scope: WriteScope): string {
   const filename =
     scope === 'user'
@@ -54,7 +56,7 @@ export function resolveConfigPath(
 ): string {
   if (scope === 'user') {
     const home = homedirOverride ?? homedir();
-    return resolve(home, OK_DIR, CONFIG_FILENAME);
+    return resolve(home, OK_DIR, USER_CONFIG_FILENAME);
   }
   const absCwd = isAbsolute(cwd) ? cwd : resolve(cwd);
   if (scope === 'project-local') {

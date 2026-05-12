@@ -114,6 +114,7 @@ interface CreateProjectWindowOpts {
   pendingDeepLinkDoc?: string;
   didEnsureGit?: boolean;
   consentVersion?: number;
+  localOpCliArgs?: string[];
 }
 
 export interface WindowManagerDeps {
@@ -303,6 +304,7 @@ export class WindowManager {
           host: 'localhost',
           didEnsureGit: opts.didEnsureGit === true,
           consentVersion: opts.consentVersion ?? 1,
+          ...(opts.localOpCliArgs ? { localOpCliArgs: opts.localOpCliArgs } : {}),
         },
       });
 

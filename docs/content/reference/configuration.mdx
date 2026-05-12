@@ -6,7 +6,7 @@ description: The .ok/config.yml schema, environment variables, and CLI flags.
 Open Knowledge reads YAML config from three places:
 
 - **Project** — `./.ok/config.yml` (this project, committed to git)
-- **User** — `~/.ok/config.yml` (every project on your machine)
+- **User** — `~/.ok/global.yml` (every project on your machine)
 - **Project-local** — `./.ok/local/config.yml` (this project on this machine; gitignored). Holds per-machine-per-project preferences such as `autoSync.enabled`. Maintained by the editor (auto-sync onboarding modal, sync popover, Settings pane Sync section); you don't normally hand-edit it.
 
 All files are optional; defaults cover everything.
