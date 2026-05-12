@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { type Config, ConfigSchema } from '../../config/schema.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { type DeleteDocumentDeps, register } from './delete-document.ts';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR, type ServerInstance } from './shared.ts';
 
 interface ToolResult {
@@ -37,23 +38,15 @@ function getRegisteredTool(registrations: RegisteredTool[], name: string): Regis
 
 const originalFetch = globalThis.fetch;
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 const BASE_CONFIG: Config = ConfigSchema.parse({});
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-delete-doc-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
   globalThis.fetch = originalFetch;
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -246,7 +239,7 @@ describe('delete_document MCP tool', () => {
   });
 
   test('emits previousPreviewUrl for the deleted docName when a preview source resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const { server, registrations } = createCapturingServer();
 
     globalThis.fetch = (async () =>
@@ -263,7 +256,7 @@ describe('delete_document MCP tool', () => {
     expect(result.structuredContent).toMatchObject({
       ok: true,
       deletedDocNames: ['old-page'],
-      previousPreviewUrl: 'https://env.example/#/old-page',
+      previousPreviewUrl: `${uiBase}/#/old-page`,
     });
   });
 });

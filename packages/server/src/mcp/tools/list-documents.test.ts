@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { type Config, ConfigSchema } from '../../config/schema.ts';
 import { register } from './list-documents.ts';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 import type { ServerInstance } from './shared.ts';
 
 const BASE_CONFIG: Config = ConfigSchema.parse({});
@@ -17,7 +18,6 @@ type ToolHandler = (args: { dir?: string }) => Promise<{
 let testServer: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeAll(() => {
   testServer = Bun.serve({
@@ -42,16 +42,9 @@ afterAll(() => {
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-list-docs-test-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -74,7 +67,7 @@ function registerTool(serverUrl: string | undefined): ToolHandler {
 
 describe('list_documents — previewUrl + ui block', () => {
   test('each row includes previewUrl + previewUrlSource when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const handler = registerTool(baseUrl);
     const result = await handler({});
     const s = result.structuredContent as {
@@ -83,10 +76,10 @@ describe('list_documents — previewUrl + ui block', () => {
     };
     expect(s.documents).toHaveLength(2);
     expect(s.documents.some((row) => row.docName === undefined)).toBe(false);
-    expect(s.documents[0]?.previewUrl).toBe('https://env.example/#/alpha');
-    expect(s.documents[0]?.previewUrlSource).toBe('env');
-    expect(s.documents[1]?.previewUrl).toBe('https://env.example/#/notes/beta');
-    expect(s.ui).toEqual({ baseUrl: null, port: null });
+    expect(s.documents[0]?.previewUrl).toBe(`${uiBase}/#/alpha`);
+    expect(s.documents[0]?.previewUrlSource).toBe('lock');
+    expect(s.documents[1]?.previewUrl).toBe(`${uiBase}/#/notes/beta`);
+    expect(s.ui).toEqual({ baseUrl: uiBase, port: 5173 });
   });
 
   test('previewUrl null when resolver returns null', async () => {

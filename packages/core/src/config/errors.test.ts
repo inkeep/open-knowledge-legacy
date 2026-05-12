@@ -146,14 +146,14 @@ describe('humanFormat', () => {
           issueCode: 'invalid_type',
         },
         {
-          path: ['preview', 'baseUrl'],
-          message: 'Invalid URL',
-          issueCode: 'invalid_string',
+          path: ['appearance', 'theme'],
+          message: 'Invalid enum value',
+          issueCode: 'invalid_enum_value',
         },
       ],
     });
     expect(out).toContain('mcp.tools.grep.maxResults: Expected number');
-    expect(out).toContain('preview.baseUrl: Invalid URL');
+    expect(out).toContain('appearance.theme: Invalid enum value');
   });
 
   test('SCHEMA_INVALID with empty issues falls back to generic message', () => {

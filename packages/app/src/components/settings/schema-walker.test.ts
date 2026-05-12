@@ -47,11 +47,6 @@ describe('resolveLeafSchema against ConfigSchema', () => {
     expect(getEnumOptions(leaf)).toEqual(['light', 'dark', 'system']);
   });
 
-  test('descends to an optional URL leaf', () => {
-    const leaf = requireLeaf(['preview', 'baseUrl']);
-    expect(getLeafTypeTag(leaf)).toBe('string');
-  });
-
   test('returns undefined for non-existent path', () => {
     expect(resolveLeafSchema(ConfigSchema, ['does', 'not', 'exist'])).toBeUndefined();
   });
@@ -64,6 +59,5 @@ describe('getFieldDefault against ConfigSchema', () => {
 
   test('returns undefined for fields without .default()', () => {
     expect(getFieldDefault(requireLeaf(['appearance', 'theme']))).toBeUndefined();
-    expect(getFieldDefault(requireLeaf(['preview', 'baseUrl']))).toBeUndefined();
   });
 });

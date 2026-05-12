@@ -7,6 +7,7 @@ import {
   expect,
   test,
 } from 'bun:test';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
@@ -100,20 +101,12 @@ afterAll(() => {
 
 const BASE_CONFIG: Config = ConfigSchema.parse({});
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-suggest-links-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -195,7 +188,7 @@ describe('suggest_links MCP tool', () => {
   });
 
   test('emits previewUrl + source when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const { server, getTool } = createFakeServer();
 
     register(server, makeDeps(baseUrl));
@@ -203,8 +196,8 @@ describe('suggest_links MCP tool', () => {
     const result = await getTool().handler({ docName: 'project-alpha' });
 
     expect(result.structuredContent).toMatchObject({
-      previewUrl: 'https://env.example/#/project-alpha',
-      previewUrlSource: 'env',
+      previewUrl: `${uiBase}/#/project-alpha`,
+      previewUrlSource: 'lock',
     });
   });
 });

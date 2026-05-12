@@ -70,33 +70,6 @@ describe('ConfigSchema', () => {
     });
     expect(config.content.dir).toBe('docs');
   });
-
-  test('preview block absent parses to empty default', () => {
-    const config = ConfigSchema.parse({});
-    expect(config.preview).toEqual({});
-  });
-
-  test('preview.baseUrl with valid URL is accepted', () => {
-    const config = ConfigSchema.parse({
-      preview: { baseUrl: 'https://wiki.acme.com' },
-    });
-    expect(config.preview?.baseUrl).toBe('https://wiki.acme.com');
-  });
-
-  test('preview.baseUrl with invalid URL fails parsing', () => {
-    const result = ConfigSchema.safeParse({
-      preview: { baseUrl: 'not a url' },
-    });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0].path).toContain('baseUrl');
-    }
-  });
-
-  test('preview object without baseUrl is accepted', () => {
-    const config = ConfigSchema.parse({ preview: {} });
-    expect(config.preview?.baseUrl).toBeUndefined();
-  });
 });
 
 describe('ConfigSchema (upload surface removed per 2026-04-24 amendment)', () => {

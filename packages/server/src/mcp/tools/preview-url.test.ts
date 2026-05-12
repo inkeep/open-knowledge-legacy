@@ -5,33 +5,22 @@ const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { OK_DIR } from '@inkeep/open-knowledge-core';
-import { type Config, ConfigSchema } from '../../config/schema.ts';
+import { LOCAL_DIR, OK_DIR } from '@inkeep/open-knowledge-core';
 import { acquireUiLock, updateUiLockPort } from '../../ui-lock.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
 
-const BASE_CONFIG: Config = ConfigSchema.parse({});
-
 let tmpDir: string;
 let lockDir: string;
-let originalEnv: string | undefined;
 let originalElectronProtocolEnv: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-preview-url-'));
-  lockDir = resolve(tmpDir, OK_DIR);
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  lockDir = resolve(tmpDir, OK_DIR, LOCAL_DIR);
   originalElectronProtocolEnv = process.env.OK_ELECTRON_PROTOCOL_HOST;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
   delete process.env.OK_ELECTRON_PROTOCOL_HOST;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   if (originalElectronProtocolEnv === undefined) {
     delete process.env.OK_ELECTRON_PROTOCOL_HOST;
   } else {
@@ -43,45 +32,22 @@ afterEach(async () => {
 describe('resolvePreviewUrl — electron-protocol branch (M4 AC8)', () => {
   test('emits openknowledge:// URL when OK_ELECTRON_PROTOCOL_HOST=1 + contentDir is real', () => {
     process.env.OK_ELECTRON_PROTOCOL_HOST = '1';
-    const result = resolvePreviewUrl('docs/a', {
-      config: BASE_CONFIG,
-      lockDir,
-      contentDir: tmpDir,
-    });
+    const result = resolvePreviewUrl('docs/a', { lockDir, contentDir: tmpDir });
 
     expect(result?.source).toBe('electron-protocol');
     expect(result?.url).toMatch(/^openknowledge:\/\/open\?project=.+&doc=docs%2Fa$/);
   });
 
-  test('wins over env when both set (highest precedence)', () => {
-    process.env.OK_ELECTRON_PROTOCOL_HOST = '1';
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
-    const result = resolvePreviewUrl('docs/a', {
-      config: BASE_CONFIG,
-      lockDir,
-      contentDir: tmpDir,
-    });
-    expect(result?.source).toBe('electron-protocol');
-  });
-
   test('encoded project + doc per-segment via encodeURIComponent', () => {
     process.env.OK_ELECTRON_PROTOCOL_HOST = '1';
-    const result = resolvePreviewUrl('sub/My Doc.md', {
-      config: BASE_CONFIG,
-      lockDir,
-      contentDir: tmpDir,
-    });
+    const result = resolvePreviewUrl('sub/My Doc.md', { lockDir, contentDir: tmpDir });
     expect(result?.url).toContain('doc=sub%2FMy%20Doc.md');
   });
 
-  test('falls through to http sources when OK_ELECTRON_PROTOCOL_HOST is absent', () => {
+  test('falls through to lock when OK_ELECTRON_PROTOCOL_HOST is absent', () => {
     acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
     updateUiLockPort(lockDir, 5173);
-    const result = resolvePreviewUrl('docs/a', {
-      config: BASE_CONFIG,
-      lockDir,
-      contentDir: tmpDir,
-    });
+    const result = resolvePreviewUrl('docs/a', { lockDir, contentDir: tmpDir });
     expect(result?.source).toBe('lock');
   });
 
@@ -89,11 +55,7 @@ describe('resolvePreviewUrl — electron-protocol branch (M4 AC8)', () => {
     process.env.OK_ELECTRON_PROTOCOL_HOST = '0';
     acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
     updateUiLockPort(lockDir, 5173);
-    const result = resolvePreviewUrl('docs/a', {
-      config: BASE_CONFIG,
-      lockDir,
-      contentDir: tmpDir,
-    });
+    const result = resolvePreviewUrl('docs/a', { lockDir, contentDir: tmpDir });
     expect(result?.source).toBe('lock');
   });
 
@@ -101,22 +63,19 @@ describe('resolvePreviewUrl — electron-protocol branch (M4 AC8)', () => {
     process.env.OK_ELECTRON_PROTOCOL_HOST = '1';
     acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
     updateUiLockPort(lockDir, 5173);
-    const result = resolvePreviewUrl('docs/a', {
-      config: BASE_CONFIG,
-      lockDir,
-    });
+    const result = resolvePreviewUrl('docs/a', { lockDir });
     expect(result?.source).toBe('lock');
   });
 
   test('falls through when contentDir does not exist on disk (realpath throws)', () => {
     process.env.OK_ELECTRON_PROTOCOL_HOST = '1';
-    const config = { ...BASE_CONFIG, preview: { baseUrl: 'https://fallback.example' } };
+    acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateUiLockPort(lockDir, 5173);
     const result = resolvePreviewUrl('docs/a', {
-      config,
       lockDir,
       contentDir: '/nonexistent/path/that/should/never/exist/xyz',
     });
-    expect(result?.source).toBe('config');
+    expect(result?.source).toBe('lock');
   });
 
   test('attach-mode contract: desktop attach to running CLI emits http://, not openknowledge://', () => {
@@ -124,11 +83,7 @@ describe('resolvePreviewUrl — electron-protocol branch (M4 AC8)', () => {
 
     acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
     updateUiLockPort(lockDir, 5173);
-    const result = resolvePreviewUrl('docs/a', {
-      config: BASE_CONFIG,
-      lockDir,
-      contentDir: tmpDir,
-    });
+    const result = resolvePreviewUrl('docs/a', { lockDir, contentDir: tmpDir });
 
     expect(result?.source).toBe('lock');
     expect(result?.url.startsWith('http://')).toBe(true);
@@ -136,116 +91,65 @@ describe('resolvePreviewUrl — electron-protocol branch (M4 AC8)', () => {
   });
 });
 
-describe('resolvePreviewUrl — priority', () => {
-  test('env wins over lock and config', () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+describe('resolvePreviewUrl — priority + lock edges', () => {
+  test('electron-protocol wins over lock when both available', () => {
+    process.env.OK_ELECTRON_PROTOCOL_HOST = '1';
     acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
     updateUiLockPort(lockDir, 5173);
-    const config = { ...BASE_CONFIG, preview: { baseUrl: 'https://config.example' } };
-
-    const result = resolvePreviewUrl('docs/a', { config, lockDir });
-
-    expect(result).toEqual({ url: 'https://env.example/#/docs/a', source: 'env' });
+    const result = resolvePreviewUrl('docs/a', { lockDir, contentDir: tmpDir });
+    expect(result?.source).toBe('electron-protocol');
   });
 
-  test('lock wins over config when env absent', () => {
+  test('lock returns http://localhost URL when ui.lock is bound', () => {
     acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
     updateUiLockPort(lockDir, 5173);
-    const config = { ...BASE_CONFIG, preview: { baseUrl: 'https://wiki.acme.com' } };
-
-    const result = resolvePreviewUrl('docs/a', { config, lockDir });
-
+    const result = resolvePreviewUrl('docs/a', { lockDir });
     expect(result).toEqual({ url: 'http://localhost:5173/#/docs/a', source: 'lock' });
   });
 
-  test('config used when env + lock absent', () => {
-    const config = { ...BASE_CONFIG, preview: { baseUrl: 'https://wiki.acme.com' } };
-
-    const result = resolvePreviewUrl('docs/a', { config, lockDir });
-
-    expect(result).toEqual({ url: 'https://wiki.acme.com/#/docs/a', source: 'config' });
-  });
-
-  test('null when nothing resolves', () => {
-    const result = resolvePreviewUrl('docs/a', { config: BASE_CONFIG, lockDir });
-    expect(result).toBeNull();
-  });
-});
-
-describe('resolvePreviewUrl — lock branch edge cases', () => {
-  test('lock with port=0 falls through to config', () => {
+  test('lock with port=0 returns null (no further sources)', () => {
     acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
-    const config = { ...BASE_CONFIG, preview: { baseUrl: 'https://x.example' } };
-
-    const result = resolvePreviewUrl('docs/a', { config, lockDir });
-
-    expect(result).toEqual({ url: 'https://x.example/#/docs/a', source: 'config' });
+    const result = resolvePreviewUrl('docs/a', { lockDir });
+    expect(result).toBeNull();
   });
 
   test('lock always uses localhost, ignores hostname field', () => {
     acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
     updateUiLockPort(lockDir, 4242);
-
-    const result = resolvePreviewUrl('docs/a', { config: BASE_CONFIG, lockDir });
-
+    const result = resolvePreviewUrl('docs/a', { lockDir });
     expect(result?.url.startsWith('http://localhost:4242/')).toBe(true);
   });
-});
 
-describe('resolvePreviewUrl — malformed sources', () => {
-  test('invalid env URL falls through', () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'not a url';
-    const config = { ...BASE_CONFIG, preview: { baseUrl: 'https://ok.example' } };
-
-    const result = resolvePreviewUrl('docs/a', { config, lockDir });
-
-    expect(result).toEqual({ url: 'https://ok.example/#/docs/a', source: 'config' });
-  });
-
-  test('invalid config URL → null (no fallback)', () => {
-    const config = { ...BASE_CONFIG, preview: { baseUrl: 'not a url' } } as Config;
-
-    const result = resolvePreviewUrl('docs/a', { config, lockDir });
-
-    expect(result).toBeNull();
-  });
-
-  test('empty string env is ignored', () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = '';
-    const result = resolvePreviewUrl('docs/a', { config: BASE_CONFIG, lockDir });
+  test('null when no lock and no electron-protocol', () => {
+    const result = resolvePreviewUrl('docs/a', { lockDir });
     expect(result).toBeNull();
   });
 });
 
-describe('resolvePreviewUrl — docName encoding', () => {
+describe('resolvePreviewUrl — docName encoding (via lock branch)', () => {
+  beforeEach(() => {
+    acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateUiLockPort(lockDir, 5173);
+  });
+
   test('simple nested path', () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
-    const result = resolvePreviewUrl('notes/meeting', { config: BASE_CONFIG, lockDir });
-    expect(result?.url).toBe('https://x.example/#/notes/meeting');
+    const result = resolvePreviewUrl('notes/meeting', { lockDir });
+    expect(result?.url).toBe('http://localhost:5173/#/notes/meeting');
   });
 
   test('spaces and em-dashes encoded', () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
-    const result = resolvePreviewUrl('notes/My Doc — 2026', { config: BASE_CONFIG, lockDir });
-    expect(result?.url).toBe('https://x.example/#/notes/My%20Doc%20%E2%80%94%202026');
+    const result = resolvePreviewUrl('notes/My Doc — 2026', { lockDir });
+    expect(result?.url).toBe('http://localhost:5173/#/notes/My%20Doc%20%E2%80%94%202026');
   });
 
   test('question marks and hash signs encoded per-segment', () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
-    const result = resolvePreviewUrl('weird/? name', { config: BASE_CONFIG, lockDir });
-    expect(result?.url).toBe('https://x.example/#/weird/%3F%20name');
+    const result = resolvePreviewUrl('weird/? name', { lockDir });
+    expect(result?.url).toBe('http://localhost:5173/#/weird/%3F%20name');
   });
 
   test('percent literal encoded', () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
-    const result = resolvePreviewUrl('with%percent', { config: BASE_CONFIG, lockDir });
-    expect(result?.url).toBe('https://x.example/#/with%25percent');
-  });
-
-  test('trailing slash baseUrl does not produce double slash', () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example/';
-    const result = resolvePreviewUrl('docs/a', { config: BASE_CONFIG, lockDir });
-    expect(result?.url).toBe('https://x.example/#/docs/a');
+    const result = resolvePreviewUrl('with%percent', { lockDir });
+    expect(result?.url).toBe('http://localhost:5173/#/with%25percent');
   });
 });
 
@@ -263,6 +167,11 @@ describe('resolvePreviewUrl — round-trip via docNameFromHash', () => {
     }
   }
 
+  beforeEach(() => {
+    acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateUiLockPort(lockDir, 5173);
+  });
+
   test.each([
     'docs/a',
     'notes/My Doc — 2026',
@@ -273,8 +182,7 @@ describe('resolvePreviewUrl — round-trip via docNameFromHash', () => {
     'leading-dash',
     'unicode/日本語',
   ])('round-trip: %s', (docName: string) => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
-    const result = resolvePreviewUrl(docName, { config: BASE_CONFIG, lockDir });
+    const result = resolvePreviewUrl(docName, { lockDir });
     expect(result).not.toBeNull();
     const hashIdx = result?.url.indexOf('#') ?? -1;
     expect(hashIdx).toBeGreaterThan(-1);
@@ -284,8 +192,7 @@ describe('resolvePreviewUrl — round-trip via docNameFromHash', () => {
   });
 
   test('trailing slash docName: decoder is lossy but safe', () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
-    const result = resolvePreviewUrl('trail/', { config: BASE_CONFIG, lockDir });
+    const result = resolvePreviewUrl('trail/', { lockDir });
     const hash = result?.url.slice(result.url.indexOf('#'));
     expect(hash).toBe('#/trail/');
   });

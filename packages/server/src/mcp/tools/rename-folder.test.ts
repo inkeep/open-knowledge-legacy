@@ -1,4 +1,5 @@
 import { describe as _bunDescribe, afterEach, beforeEach, expect, test } from 'bun:test';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
@@ -39,23 +40,15 @@ function getRegisteredTool(registrations: RegisteredTool[], name: string): Regis
 
 const originalFetch = globalThis.fetch;
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 const BASE_CONFIG: Config = ConfigSchema.parse({});
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-rename-folder-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
   globalThis.fetch = originalFetch;
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -288,7 +281,7 @@ describe('rename_folder MCP tool', () => {
   });
 
   test('emits previewUrls keyed by toDocName for each renamed doc', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const { server, registrations } = createCapturingServer();
 
     globalThis.fetch = (async () =>
@@ -311,10 +304,10 @@ describe('rename_folder MCP tool', () => {
     expect(result.structuredContent).toMatchObject({
       ok: true,
       previewUrls: {
-        'essays/auth': 'https://env.example/#/essays/auth',
-        'essays/login': 'https://env.example/#/essays/login',
+        'essays/auth': `${uiBase}/#/essays/auth`,
+        'essays/login': `${uiBase}/#/essays/login`,
       },
-      previewUrlSource: 'env',
+      previewUrlSource: 'lock',
     });
   });
 

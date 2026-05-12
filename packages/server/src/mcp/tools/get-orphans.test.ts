@@ -7,6 +7,7 @@ import {
   expect,
   test,
 } from 'bun:test';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
@@ -35,7 +36,6 @@ interface RegisteredTool {
 let testServer: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeAll(() => {
   testServer = Bun.serve({
@@ -62,16 +62,9 @@ afterAll(() => {
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-orphans-test-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -131,7 +124,7 @@ describe('get_orphans tool', () => {
   });
 
   test('each row includes previewUrl + previewUrlSource when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const tool = registerTool(baseUrl);
 
     const result = await tool.handler({});
@@ -139,9 +132,9 @@ describe('get_orphans tool', () => {
       orphans: Array<{ docName: string; previewUrl: string; previewUrlSource: string }>;
       ui: { baseUrl: string | null; port: number | null };
     };
-    expect(s.orphans[0]?.previewUrl).toBe('https://env.example/#/lonely-page');
-    expect(s.orphans[0]?.previewUrlSource).toBe('env');
-    expect(s.ui).toEqual({ baseUrl: null, port: null });
+    expect(s.orphans[0]?.previewUrl).toBe(`${uiBase}/#/lonely-page`);
+    expect(s.orphans[0]?.previewUrlSource).toBe('lock');
+    expect(s.ui).toEqual({ baseUrl: uiBase, port: 5173 });
   });
 
   test('per-row previewUrl is null when resolver returns null', async () => {

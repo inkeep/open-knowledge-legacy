@@ -34,14 +34,6 @@ describe('getLeafFieldMeta', () => {
     });
   });
 
-  test('returns metadata for the project-strict preview.baseUrl leaf', () => {
-    const meta = getLeafFieldMeta(ConfigSchema, ['preview', 'baseUrl']);
-    expect(meta).toEqual({
-      scope: 'project',
-      agentSettable: false,
-    });
-  });
-
   test('returns metadata for the user-scope appearance.theme leaf', () => {
     const meta = getLeafFieldMeta(ConfigSchema, ['appearance', 'theme']);
     expect(meta).toEqual({

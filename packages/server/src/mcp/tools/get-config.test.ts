@@ -11,8 +11,8 @@ import type { ServerInstance } from './shared.ts';
 
 const BASE_CONFIG: Config = ConfigSchema.parse({
   content: { dir: '.' },
-  preview: { baseUrl: 'https://example.com/wiki' },
   appearance: { theme: 'dark' },
+  autoSync: { enabled: true },
 });
 
 interface ToolResult {
@@ -48,7 +48,7 @@ describe('get_config tool', () => {
     const result = await handler({});
     expect(result.isError).toBeUndefined();
     const value = result.structuredContent?.value as Record<string, unknown>;
-    expect(value.preview).toBeDefined();
+    expect(value.appearance).toBeDefined();
     expect((value.content as { dir: string }).dir).toBe('.');
   });
 
@@ -63,8 +63,8 @@ describe('get_config tool', () => {
   test('returns scalar leaf when path resolves to a primitive', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-'));
     const handler = captureRegistration(cwd);
-    const result = await handler({ path: ['preview', 'baseUrl'] });
-    expect(result.structuredContent?.value).toBe('https://example.com/wiki');
+    const result = await handler({ path: ['content', 'dir'] });
+    expect(result.structuredContent?.value).toBe('.');
   });
 
   test('returns null + exists:false for a nonexistent path', async () => {
@@ -86,21 +86,18 @@ describe('get_config tool', () => {
   test('reads any field — no allowlist gating on read', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-'));
     const handler = captureRegistration(cwd);
-    const result = await handler({ path: ['preview', 'baseUrl'] });
+    const result = await handler({ path: ['appearance', 'theme'] });
     expect(result.isError).toBeUndefined();
-    expect(result.structuredContent?.value).toBe('https://example.com/wiki');
+    expect(result.structuredContent?.value).toBe('dark');
   });
 
   test('reflects on-disk config when caller passes a resolver that loads it', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-disk-'));
     mkdirSync(join(cwd, '.ok'), { recursive: true });
-    writeFileSync(
-      join(cwd, '.ok', 'config.yml'),
-      'preview:\n  baseUrl: https://disk.example.com/wiki\n',
-    );
+    writeFileSync(join(cwd, '.ok', 'config.yml'), 'appearance:\n  theme: light\n');
     const merged: Config = {
       ...BASE_CONFIG,
-      preview: { baseUrl: 'https://disk.example.com/wiki' },
+      appearance: { theme: 'light' },
     };
     let captured: ToolHandler | null = null;
     const server = {
@@ -117,8 +114,8 @@ describe('get_config tool', () => {
     });
     if (!captured) throw new Error('tool not registered');
     const result = await (captured as ToolHandler)({
-      path: ['preview', 'baseUrl'],
+      path: ['appearance', 'theme'],
     });
-    expect(result.structuredContent?.value).toBe('https://disk.example.com/wiki');
+    expect(result.structuredContent?.value).toBe('light');
   });
 });

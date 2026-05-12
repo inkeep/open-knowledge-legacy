@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { type Config, ConfigSchema } from '../../config/schema.ts';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 import type { ServerInstance } from './shared.ts';
 import { register } from './write-document.ts';
 
@@ -78,23 +79,15 @@ afterAll(() => {
 });
 
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-write-doc-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
   mockSubscriberCount = 1;
   mockSystemSubscriberCount = 1;
   lastWriteRequest = undefined;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -108,7 +101,7 @@ function makeDeps() {
 
 describe('write_document — previewUrl emission', () => {
   test('emits previewUrl + source when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const { server, getTool } = createFakeServer();
     register(server, makeDeps());
 
@@ -119,11 +112,11 @@ describe('write_document — previewUrl emission', () => {
     });
 
     expect(result.structuredContent).toEqual({
-      previewUrl: 'https://env.example/#/docs/test',
-      previewUrlSource: 'env',
+      previewUrl: `${uiBase}/#/docs/test`,
+      previewUrlSource: 'lock',
     });
     expect(result.content[0]?.text).toContain('Written successfully (append)');
-    expect(result.content[0]?.text).toContain('Preview: https://env.example/#/docs/test');
+    expect(result.content[0]?.text).toContain(`Preview: ${uiBase}/#/docs/test`);
   });
 
   test('omits structuredContent when nothing resolves AND subscribers>0', async () => {
@@ -141,7 +134,7 @@ describe('write_document — previewUrl emission', () => {
   });
 
   test('emits attach-preview-once hint with previewUrl when systemSubscriberCount=0', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     mockSubscriberCount = 0;
     mockSystemSubscriberCount = 0;
     const { server, getTool } = createFakeServer();
@@ -154,16 +147,16 @@ describe('write_document — previewUrl emission', () => {
     });
 
     expect(result.structuredContent).toMatchObject({
-      previewUrl: 'https://env.example/#/docs/test',
-      previewUrlSource: 'env',
+      previewUrl: `${uiBase}/#/docs/test`,
+      previewUrlSource: 'lock',
       warning: {
         action: 'attach-preview-once',
         message: 'Open the previewUrl in your preview browser.',
-        previewUrl: 'https://env.example/#/docs/test',
+        previewUrl: `${uiBase}/#/docs/test`,
       },
     });
     expect(result.content[0]?.text).toContain(
-      'Open https://env.example/#/docs/test in your preview browser.',
+      `Open ${uiBase}/#/docs/test in your preview browser.`,
     );
   });
 
@@ -222,7 +215,7 @@ describe('write_document — previewUrl emission', () => {
   });
 
   test('strips .md extension before building preview URL', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const { server, getTool } = createFakeServer();
     register(server, makeDeps());
 
@@ -233,8 +226,8 @@ describe('write_document — previewUrl emission', () => {
     });
 
     expect(result.structuredContent).toEqual({
-      previewUrl: 'https://x.example/#/docs/test',
-      previewUrlSource: 'env',
+      previewUrl: `${uiBase}/#/docs/test`,
+      previewUrlSource: 'lock',
     });
   });
 });

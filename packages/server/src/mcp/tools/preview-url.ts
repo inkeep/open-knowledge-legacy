@@ -1,10 +1,10 @@
 import { realpathSync } from 'node:fs';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
-import type { Config } from '../../config/schema.ts';
 import { readUiLock } from '../../ui-lock.ts';
 import { type ConfigOrResolver, resolveConfig } from './shared.ts';
 
-export type PreviewUrlSource = 'electron-protocol' | 'env' | 'lock' | 'config';
+export const PREVIEW_URL_SOURCES = ['electron-protocol', 'lock'] as const;
+export type PreviewUrlSource = (typeof PREVIEW_URL_SOURCES)[number];
 
 interface PreviewUrlResult {
   url: string;
@@ -12,7 +12,6 @@ interface PreviewUrlResult {
 }
 
 interface PreviewUrlContext {
-  config: Config;
   lockDir: string;
   contentDir?: string;
 }
@@ -24,23 +23,8 @@ export interface PreviewUrlDeps {
   resolveCwd: (explicit?: string) => Promise<string>;
 }
 
-const ENV_VAR = 'OPEN_KNOWLEDGE_PREVIEW_BASE_URL';
-
 function encodeDocName(docName: string): string {
   return docName.split('/').map(encodeURIComponent).join('/');
-}
-
-function stripTrailingSlash(base: string): string {
-  return base.endsWith('/') ? base.slice(0, -1) : base;
-}
-
-function isValidUrl(candidate: string): boolean {
-  try {
-    new URL(candidate);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export async function resolvePreviewUrlForTool(
@@ -52,7 +36,7 @@ export async function resolvePreviewUrlForTool(
   const config = await resolveConfig(deps.config, effectiveCwd);
   const contentDir = resolveContentDir(config, effectiveCwd);
   const lockDir = resolveLockDir(effectiveCwd);
-  return resolvePreviewUrl(docName, { config, lockDir, contentDir });
+  return resolvePreviewUrl(docName, { lockDir, contentDir });
 }
 
 export interface UiInfo {
@@ -82,7 +66,7 @@ export async function buildListResolver(
   const config = await resolveConfig(deps.config, effectiveCwd);
   const contentDir = resolveContentDir(config, effectiveCwd);
   const lockDir = resolveLockDir(effectiveCwd);
-  const ctx: PreviewUrlContext = { config, lockDir, contentDir };
+  const ctx: PreviewUrlContext = { lockDir, contentDir };
   return {
     resolve: (docName: string) => resolvePreviewUrl(docName, ctx),
     ui: resolveUiInfo(ctx),
@@ -114,11 +98,6 @@ export function resolvePreviewUrl(
     }
   }
 
-  const envBase = process.env[ENV_VAR];
-  if (envBase && isValidUrl(envBase)) {
-    return { url: `${stripTrailingSlash(envBase)}${hash}`, source: 'env' };
-  }
-
   try {
     const lock = readUiLock(ctx.lockDir);
     if (lock && lock.port > 0) {
@@ -129,13 +108,8 @@ export function resolvePreviewUrl(
     }
   } catch (err) {
     process.stderr.write(
-      `[preview-url] readUiLock failed at ${ctx.lockDir}, falling through to config: ${err instanceof Error ? err.message : String(err)}\n`,
+      `[preview-url] readUiLock failed at ${ctx.lockDir}: ${err instanceof Error ? err.message : String(err)}\n`,
     );
-  }
-
-  const configBase = ctx.config.preview?.baseUrl;
-  if (configBase && isValidUrl(configBase)) {
-    return { url: `${stripTrailingSlash(configBase)}${hash}`, source: 'config' };
   }
 
   return null;

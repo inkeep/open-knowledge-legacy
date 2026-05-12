@@ -32,14 +32,6 @@ export const ConfigSchema = z.looseObject({
     .default({
       dir: '.',
     }),
-  preview: z
-    .looseObject({
-      baseUrl: z
-        .url()
-        .register(fieldRegistry, { scope: 'project', agentSettable: false })
-        .optional(),
-    })
-    .default({}),
   appearance: z
     .looseObject({
       theme: z

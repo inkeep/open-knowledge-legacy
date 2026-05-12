@@ -1,4 +1,5 @@
 import { describe as _bunDescribe, afterEach, beforeEach, expect, test } from 'bun:test';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
@@ -19,20 +20,12 @@ type ToolHandler = (args: { sourceDocNames?: string[] }) => Promise<{
 }>;
 
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-dead-links-test-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -113,7 +106,7 @@ describe('get_dead_links MCP tool', () => {
   });
 
   test('each target + source row includes previewUrl + previewUrlSource when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const server = Bun.serve({
       port: 0,
       fetch() {
@@ -151,11 +144,11 @@ describe('get_dead_links MCP tool', () => {
         }>;
         ui: { baseUrl: string | null; port: number | null };
       };
-      expect(s.deadLinks[0]?.previewUrl).toBe('https://env.example/#/missing-target');
-      expect(s.deadLinks[0]?.previewUrlSource).toBe('env');
-      expect(s.deadLinks[0]?.sources[0]?.previewUrl).toBe('https://env.example/#/alpha');
-      expect(s.deadLinks[0]?.sources[0]?.previewUrlSource).toBe('env');
-      expect(s.ui).toEqual({ baseUrl: null, port: null });
+      expect(s.deadLinks[0]?.previewUrl).toBe(`${uiBase}/#/missing-target`);
+      expect(s.deadLinks[0]?.previewUrlSource).toBe('lock');
+      expect(s.deadLinks[0]?.sources[0]?.previewUrl).toBe(`${uiBase}/#/alpha`);
+      expect(s.deadLinks[0]?.sources[0]?.previewUrlSource).toBe('lock');
+      expect(s.ui).toEqual({ baseUrl: uiBase, port: 5173 });
     } finally {
       server.stop();
     }

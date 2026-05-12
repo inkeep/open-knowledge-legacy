@@ -88,73 +88,49 @@ const FIELDS_APPEARANCE: FieldDef[] = [
   },
 ];
 
-const FIELDS_PREVIEW: FieldDef[] = [
-  {
-    path: ['preview', 'baseUrl'],
-    label: 'Preview base URL',
-    description: 'URL of your team’s deployed wiki (project-only).',
-  },
-];
-
 interface ConfigDocConnection {
   provider: HocuspocusProvider;
   binding: ConfigBinding;
   synced: boolean;
 }
 
-function useConfigDocConnections(
+function useUserConfigDocConnection(
   collabUrl: string | null,
   enabled: boolean,
-): { user: ConfigDocConnection | null; project: ConfigDocConnection | null } {
-  const [state, setState] = useState<{
-    user: ConfigDocConnection | null;
-    project: ConfigDocConnection | null;
-  }>({ user: null, project: null });
+): ConfigDocConnection | null {
+  const [state, setState] = useState<ConfigDocConnection | null>(null);
 
   useEffect(() => {
     if (!enabled || collabUrl === null) {
-      setState({ user: null, project: null });
+      setState(null);
       return;
     }
 
-    const make = (
-      docName: string,
-      scope: Scope,
-    ): { conn: ConfigDocConnection; cleanup: () => void } => {
-      const ydoc = new Y.Doc();
-      const provider = new HocuspocusProvider({ url: collabUrl, name: docName, document: ydoc });
-      const binding = bindConfigDoc(provider, scope);
-      const conn: ConfigDocConnection = { provider, binding, synced: false };
+    const ydoc = new Y.Doc();
+    const provider = new HocuspocusProvider({
+      url: collabUrl,
+      name: CONFIG_DOC_NAME_USER,
+      document: ydoc,
+    });
+    const binding = bindConfigDoc(provider, 'user');
+    const conn: ConfigDocConnection = { provider, binding, synced: false };
 
-      const onSynced = () => {
-        setState((prev) => {
-          const cur = prev[scope];
-          if (cur?.provider !== provider) return prev;
-          return { ...prev, [scope]: { ...cur, synced: true } };
-        });
-      };
-      provider.on('synced', onSynced);
-
-      return {
-        conn,
-        cleanup: () => {
-          provider.off('synced', onSynced);
-          binding.dispose();
-          provider.destroy();
-          ydoc.destroy();
-        },
-      };
+    const onSynced = () => {
+      setState((prev) => {
+        if (prev?.provider !== provider) return prev;
+        return { ...prev, synced: true };
+      });
     };
+    provider.on('synced', onSynced);
 
-    const userConn = make(CONFIG_DOC_NAME_USER, 'user');
-    const projectConn = make(CONFIG_DOC_NAME_PROJECT, 'project');
-
-    setState({ user: userConn.conn, project: projectConn.conn });
+    setState(conn);
 
     return () => {
-      userConn.cleanup();
-      projectConn.cleanup();
-      setState({ user: null, project: null });
+      provider.off('synced', onSynced);
+      binding.dispose();
+      provider.destroy();
+      ydoc.destroy();
+      setState(null);
     };
   }, [collabUrl, enabled]);
 
@@ -168,7 +144,7 @@ interface SettingsDialogProps {
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { collabUrl } = useDocumentContext();
-  const connections = useConfigDocConnections(collabUrl, open);
+  const userConn = useUserConfigDocConnection(collabUrl, open);
   const { okignoreBinding, okignoreSynced } = useConfigContext();
 
   const [activeId, setActiveId] = useState<string>('preferences');
@@ -195,7 +171,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       label: 'This project',
       enabled: hasProject,
       items: [
-        { id: 'project-general', label: 'General' },
+        { id: 'sync', label: 'Sync' },
         { id: 'project-templates', label: 'Templates' },
         { id: 'okignore', label: 'Ignore patterns' },
       ],
@@ -222,8 +198,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         <div className="min-h-0 overflow-y-auto overscroll-contain subtle-scrollbar p-6">
           <SettingsContent
             activeId={activeId}
-            userBinding={connections.user?.synced ? connections.user.binding : null}
-            projectBinding={connections.project?.synced ? connections.project.binding : null}
+            userBinding={userConn?.synced ? userConn.binding : null}
             okignoreBinding={okignoreBinding}
             okignoreSynced={okignoreSynced}
           />
@@ -350,7 +325,6 @@ function SettingsSidebarGroup({
 interface SettingsContentProps {
   activeId: string;
   userBinding: ConfigBinding | null;
-  projectBinding: ConfigBinding | null;
   okignoreBinding: OkignoreBinding | null;
   okignoreSynced: boolean;
 }
@@ -358,7 +332,6 @@ interface SettingsContentProps {
 function SettingsContent({
   activeId,
   userBinding,
-  projectBinding,
   okignoreBinding,
   okignoreSynced,
 }: SettingsContentProps) {
@@ -380,23 +353,8 @@ function SettingsContent({
       </div>
     );
   }
-  if (activeId === 'project-general') {
-    return (
-      <div className="space-y-8">
-        <SyncSection />
-        {projectBinding ? (
-          <BoundSchemaSection
-            title="Preview"
-            description="Where the preview tab points when no local UI is running."
-            scope="project"
-            binding={projectBinding}
-            fields={FIELDS_PREVIEW}
-          />
-        ) : (
-          <SectionSkeleton />
-        )}
-      </div>
-    );
+  if (activeId === 'sync') {
+    return <SyncSection />;
   }
   if (activeId === 'user-templates') {
     return <UserTemplatesSection />;

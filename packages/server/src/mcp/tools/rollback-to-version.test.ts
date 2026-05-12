@@ -7,6 +7,7 @@ import {
   expect,
   test,
 } from 'bun:test';
+import { bindTestUiLock } from './preview-url-test-helpers.ts';
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
@@ -80,20 +81,12 @@ afterAll(() => {
 });
 
 let tmpDir: string;
-let originalEnv: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-rollback-'));
-  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
-  if (originalEnv === undefined) {
-    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
-  } else {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
-  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -109,15 +102,15 @@ const sha = '0123456789abcdef0123456789abcdef01234567';
 
 describe('rollback_to_version — previewUrl emission', () => {
   test('emits previewUrl + source when resolver resolves', async () => {
-    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const uiBase = bindTestUiLock(tmpDir);
     const { server, getTool } = createFakeServer();
     register(server, makeDeps());
 
     const result = await getTool().handler({ docName: 'notes', commitSha: sha });
 
     expect(result.structuredContent).toEqual({
-      previewUrl: 'https://env.example/#/notes',
-      previewUrlSource: 'env',
+      previewUrl: `${uiBase}/#/notes`,
+      previewUrlSource: 'lock',
     });
     expect(result.content[0]?.text).toContain('Restored "notes"');
   });
