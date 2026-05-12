@@ -89,7 +89,7 @@ export function computeCascade(input: {
   if (enclosingProject !== null) {
     return { kind: 'block-nested', rootPath: enclosingProject.rootPath };
   }
-  if (enclosingGit !== null && enclosingGit.gitRoot !== parent) {
+  if (enclosingGit !== null) {
     return { kind: 'confirm-git', gitRoot: enclosingGit.gitRoot };
   }
   if (targetState === 'exists-nonempty') return { kind: 'block-nonempty' };
@@ -507,9 +507,8 @@ function CascadeBanner({ cascade, onOpenNested }: CascadeBannerProps) {
         data-testid="create-banner-git-confirm"
       >
         <p>
-          Open Knowledge initializes at the git root. Only the contents of your new folder will be
-          tracked by Open Knowledge. The project file (<code>.ok/config.yml</code>) is placed at{' '}
-          <code className="font-mono break-all">{cascade.gitRoot}</code> — one project per git repo.
+          Open Knowledge will be initialized at <code>{cascade.gitRoot}</code> — the parent of your
+          new folder, because it contains a <code>.git</code> folder (one project per git repo).
         </p>
       </div>
     );

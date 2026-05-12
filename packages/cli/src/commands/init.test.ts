@@ -1322,7 +1322,7 @@ describe('runInit — projectRoot threading', () => {
     expect(existsSync(join(repo, OK_DIR, 'config.yml'))).toBe(true);
     const { config: rootConfig } = loadConfig(result.projectRoot);
     expect(rootConfig).toBeDefined();
-    expect(rootConfig.content.dir).toBe('subdir');
+    expect(rootConfig.content.dir).toBe('.');
   });
 });
 

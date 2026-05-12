@@ -20,6 +20,7 @@ import type {
   OkOnboardingShowPayload,
   OkOnboardingWarningKind,
 } from '@/lib/desktop-bridge-types';
+import { isContentDirSafe, relativeToProject } from '@/lib/project-paths';
 
 const PROBE_THROTTLE_MS = 750;
 
@@ -194,9 +195,13 @@ function ConsentDialogForm({ payload, store, toast }: ConsentDialogFormProps) {
           <DialogBody className="space-y-4">
             {payload.gitRootPromoted ? (
               <p className="text-sm text-muted-foreground">
-                OK will be initialized at <code>{payload.projectDir}</code> (one .ok/ per git repo).
-                Scoped to <code>{payload.defaultContentDir}/</code> — change "Content directory" if
-                you want a different scope.
+                OK will be initialized at <code>{payload.projectDir}</code> — the parent of{' '}
+                <code>
+                  {relativeToProject(payload.projectDir, payload.pickedPath) ?? payload.pickedPath}
+                </code>{' '}
+                because it contains a <code>.git</code> folder (one .ok/ per git repo).{' '}
+                <code>Content directory</code> defaults to <code>.</code> (the whole repo); type a
+                sub-folder below to narrow it.
               </p>
             ) : null}
 
@@ -330,34 +335,6 @@ function ConsentDialogForm({ payload, store, toast }: ConsentDialogFormProps) {
       </DialogContent>
     </Dialog>
   );
-}
-
-export function relativeToProject(projectDir: string, picked: string): string | null {
-  const normalize = (p: string): string =>
-    p.replace(/\\/g, '/').replace(/\/+$/, '') || (p.startsWith('/') ? '/' : '');
-  const root = normalize(projectDir);
-  const target = normalize(picked);
-  if (root === target) return '.';
-  const prefix = root.endsWith('/') ? root : `${root}/`;
-  if (!target.startsWith(prefix)) return null;
-  return target.slice(prefix.length);
-}
-
-export function isContentDirSafe(value: string): boolean {
-  if (value === '' || value === '.') return true;
-  if (value.startsWith('/') || /^[A-Za-z]:/.test(value)) return false;
-  const segments = value.replace(/\\/g, '/').split('/');
-  let depth = 0;
-  for (const seg of segments) {
-    if (seg === '' || seg === '.') continue;
-    if (seg === '..') {
-      depth -= 1;
-      if (depth < 0) return false;
-    } else {
-      depth += 1;
-    }
-  }
-  return true;
 }
 
 function renderProbeLine(probe: OkOnboardingProbeContentResult | null): string {

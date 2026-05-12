@@ -221,7 +221,7 @@ test.describe('Consent-dialog smoke', () => {
 
       const contentDir = navigator.locator('[data-testid="consent-content-dir"]');
       await expect(contentDir).toBeVisible({ timeout: 15_000 });
-      await expect(contentDir).toHaveValue('docs');
+      await expect(contentDir).toHaveValue('.');
 
       const startBtn = navigator.locator('[data-testid="consent-start"]');
       await startBtn.click();
@@ -237,7 +237,8 @@ test.describe('Consent-dialog smoke', () => {
       expect(existsSync(join(subFolder, '.ok', 'config.yml'))).toBe(false);
 
       const cfg = readFileSync(join(repoRoot, '.ok', 'config.yml'), 'utf8');
-      expect(cfg).toContain('docs');
+      expect(cfg).not.toMatch(/^\s*dir:\s*docs/m);
+      expect(cfg).toMatch(/^# content:/m);
     } finally {
       await closeAppSafely(app);
     }

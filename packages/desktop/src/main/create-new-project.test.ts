@@ -199,7 +199,7 @@ describe('runCreateNew — happy paths', () => {
 });
 
 describe('runCreateNew — git-root promotion', () => {
-  test('scaffolds .ok/config.yml at git root, not at target, with content.dir scoped to subpath', async () => {
+  test('scaffolds .ok/config.yml at git root; content.dir defaults to the git root, not the picked sub-folder', async () => {
     const tmpReal = realpathSync(tmpRoot);
     const fakeHome = resolve(tmpReal, 'home');
     const repo = resolve(fakeHome, 'repo');
@@ -218,7 +218,7 @@ describe('runCreateNew — git-root promotion', () => {
 
     expect(result.projectDir).toBe(repo);
     expect(result.target).toBe(target);
-    expect(result.defaultContentDir).toBe('notes/MyProj');
+    expect(result.defaultContentDir).toBe('.');
     expect(result.gitRootPromoted).toBe(true);
     expect(result.variant).toBe('create-new-default');
 
@@ -228,8 +228,7 @@ describe('runCreateNew — git-root promotion', () => {
     expect(existsSync(target)).toBe(true);
 
     const cfg = readFileSync(resolve(repo, '.ok/config.yml'), 'utf8');
-    expect(cfg).toContain('content:');
-    expect(cfg).toMatch(/dir:\s*notes\/MyProj/);
+    expect(cfg).not.toMatch(/^\s*dir:\s*notes\/MyProj/m);
   });
 
   test('no promotion when parent has no enclosing git repo — projectDir === target, content.dir === "."', async () => {

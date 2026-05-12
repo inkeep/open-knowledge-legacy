@@ -26,7 +26,9 @@ export interface EventChannels {
       | {
           readonly kind: 'git-root-promote';
           readonly gitRoot: string;
-          readonly contentDir: string;
+          /** The sub-folder the user originally picked; surfaces in the
+           * toast so the user can see what got promoted to what. */
+          readonly pickedPath: string;
         };
   };
 

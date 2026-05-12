@@ -22,7 +22,7 @@ Edits made anywhere reflect everywhere; an open Settings pane refreshes live.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `content.dir` | string | `"."` | Content directory, relative to project root. Auto-set to the relative sub-path when `.ok/` is scaffolded at the git working-tree root from a sub-folder. Excluded paths live in `.okignore` — see [Ignore patterns](/docs/features/ignore-patterns). |
+| `content.dir` | string | `"."` | Content directory, relative to project root. Defaults to `.` (the project root) even when `.ok/` is scaffolded at the git working-tree root from a sub-folder — opened folder and content scope align by default. To narrow scope to a sub-folder, uncomment `content.dir` in `.ok/config.yml` post-init. Excluded paths live in `.okignore` — see [Ignore patterns](/docs/features/ignore-patterns). |
 | `appearance.theme` | `"light" \| "dark" \| "system"` | (unset) | Editor theme. |
 | `autoSync.enabled` | `boolean \| null` | `null` | Per-machine git auto-sync toggle. Lives in project-local config. `null` means "unanswered" — the editor's onboarding modal triggers on first remote-detected open. |
 

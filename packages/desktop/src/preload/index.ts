@@ -306,7 +306,7 @@ const bridge: OkDesktopBridge = {
           | {
               readonly kind: 'git-root-promote';
               readonly gitRoot: string;
-              readonly contentDir: string;
+              readonly pickedPath: string;
             },
       ) => void,
     ) {
@@ -317,7 +317,7 @@ const bridge: OkDesktopBridge = {
           | {
               readonly kind: 'git-root-promote';
               readonly gitRoot: string;
-              readonly contentDir: string;
+              readonly pickedPath: string;
             },
       ) => cb(payload);
       // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)

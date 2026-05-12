@@ -49,10 +49,10 @@ The same dialog runs when you open from Recents, drag-and-drop, or an `openknowl
 **Create new project** opens an in-app dialog for making a new project folder. You type a **Name**, pick a **Location** (the parent directory) via **Browse…**, and tick which AI editors to wire up. The dialog evaluates the resolved `<parent>/<name>` path before you submit:
 
 - If the parent sits inside an existing Open Knowledge project, the dialog blocks the create and offers to open the enclosing project instead.
-- If the parent sits inside a git working tree (and no Open Knowledge project is present), the dialog confirms that `.ok/config.yml` will land at the git root, with `content.dir` scoped to your new folder. One project per git repo.
+- If the parent sits inside a git working tree (and no Open Knowledge project is present), the dialog confirms that `.ok/config.yml` will land at the git root. `content.dir` defaults to `.` (the project root) — opened folder and content scope align by default. Narrow to a sub-folder post-init by uncommenting `content.dir` in `.ok/config.yml`. One project per git repo.
 - If the resolved target folder already exists with content, the dialog points you back to **Open folder on disk**.
 
-When the picked folder lives inside a git repository, `.ok/` lands at the git working-tree root with `content.dir` scoped to the relative sub-path. The rule is the same for both flows.
+When the picked folder lives inside a git repository, `.ok/` lands at the git working-tree root with `content.dir` defaulting to `.` (the project root). The rule is the same for both flows.
 
 ### Update channels
 

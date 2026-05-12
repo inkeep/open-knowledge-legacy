@@ -540,7 +540,7 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     console.log(`[ok] Opened existing project at ${projectRoot}`);
   } else if (resolution.gitRootPromoted && willScaffold) {
     console.log(
-      `[ok] Initialized OK at ${projectRoot} (scoped to ${resolution.defaultContentDir}/)`,
+      `[ok] Initialized OK at ${projectRoot} — opened parent of ${relative(projectRoot, cwd)} because it contains a .git folder`,
     );
   }
 
