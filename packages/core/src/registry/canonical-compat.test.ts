@@ -14,10 +14,22 @@ describe('canonical/compat split — registry shape', () => {
     }
   });
 
-  test('exactly 9 canonical descriptors (5-pack + Math + Mermaid + Pdf + File)', () => {
-    expect(canonicalDescriptors.length).toBe(9);
+  test('exactly 11 canonical descriptors (5-pack + Math + Mermaid + Pdf + File + Tabs + Tab)', () => {
+    expect(canonicalDescriptors.length).toBe(11);
     expect(canonicalDescriptors.map((m) => m.name).sort()).toEqual(
-      ['Accordion', 'Callout', 'File', 'Math', 'Mermaid', 'Pdf', 'audio', 'img', 'video'].sort(),
+      [
+        'Accordion',
+        'Callout',
+        'File',
+        'Math',
+        'Mermaid',
+        'Pdf',
+        'Tab',
+        'Tabs',
+        'audio',
+        'img',
+        'video',
+      ].sort(),
     );
   });
 

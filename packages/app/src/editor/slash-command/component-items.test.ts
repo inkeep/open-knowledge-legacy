@@ -6,7 +6,18 @@ describe('getComponentItems (slash menu)', () => {
     const items = getComponentItems();
     const labels = items.map((i) => i.label).sort();
     expect(labels).toEqual(
-      ['Accordion', 'Audio', 'Callout', 'File', 'Image', 'Math', 'Mermaid', 'PDF', 'Video'].sort(),
+      [
+        'Accordion',
+        'Audio',
+        'Callout',
+        'File',
+        'Image',
+        'Math',
+        'Mermaid',
+        'PDF',
+        'Tabs',
+        'Video',
+      ].sort(),
     );
   });
 
@@ -73,6 +84,28 @@ describe('createChildNode — default props on slash insert', () => {
     expect(props.controls).toBe(true);
     expect(props.src).toBe('');
     expect(props.title).toBeUndefined();
+  });
+
+  test('Tab: defaultValue label="Tab", empty paragraph body, id unset', () => {
+    const node = createChildNode('Tab');
+    expect((node as { type?: string }).type).toBe('jsxComponent');
+    expect((node.attrs as { componentName?: string }).componentName).toBe('Tab');
+    const props = (node.attrs as { props?: Record<string, unknown> }).props ?? {};
+    expect(props.label).toBe('Tab');
+    expect(props.id).toBeUndefined();
+    const content = (node as { content?: unknown[] }).content;
+    expect(Array.isArray(content)).toBe(true);
+    expect((content as Array<{ type: string }>).length).toBe(1);
+    expect((content as Array<{ type: string }>)[0].type).toBe('paragraph');
+  });
+
+  test('Tabs: id unset by default (no synthetic id="" emitted on roundtrip)', () => {
+    const node = createChildNode('Tabs');
+    const props = (node.attrs as { props?: Record<string, unknown> }).props ?? {};
+    expect(props.id).toBeUndefined();
+    const content = (node as { content?: unknown[] }).content;
+    expect(Array.isArray(content)).toBe(true);
+    expect((content as Array<{ type: string }>)[0].type).toBe('paragraph');
   });
 });
 

@@ -6,6 +6,8 @@ import { Image } from './Image.tsx';
 import { MathView } from './Math.tsx';
 import { MermaidView } from './Mermaid.tsx';
 import { Pdf } from './Pdf.tsx';
+import { Tab } from './Tab.tsx';
+import { Tabs } from './Tabs.tsx';
 import { Video } from './Video.tsx';
 
 function UnregisteredBadgeRender(props: { children?: React.ReactNode }) {
@@ -21,6 +23,8 @@ export const componentMap: Record<string, React.ComponentType<any>> = {
   Pdf,
   File,
   Accordion,
+  Tabs,
+  Tab,
   Math: MathView,
   Mermaid: MermaidView,
   '*': UnregisteredBadgeRender,
