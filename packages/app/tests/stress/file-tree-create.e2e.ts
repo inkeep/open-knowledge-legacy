@@ -365,9 +365,6 @@ test.describe('FileTree sidebar create', () => {
         0,
         { timeout: 10_000 },
       );
-      await expect(
-        page.getByRole('button', { name: `${secondDoc}.md`, exact: true }),
-      ).toBeVisible();
       await expect(sidebarTreeItem(page, `${firstDoc}.md`)).toHaveCount(0, { timeout: 10_000 });
       await expect(sidebarTreeItem(page, `${secondDoc}.md`)).toBeVisible();
       expect(existsSync(join(workerServer.contentDir, `${firstDoc}.md`))).toBe(false);

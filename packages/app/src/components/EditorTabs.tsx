@@ -1,5 +1,5 @@
 import { RenamePathSuccessSchema } from '@inkeep/open-knowledge-core';
-import { FolderOpen, XIcon } from 'lucide-react';
+import { FolderOpen, PlusIcon, XIcon } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState, type WheelEvent } from 'react';
 import {
   buildRenamedNodePath,
@@ -21,11 +21,12 @@ import {
 } from '@/components/ui/input-group';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { docTabId, parseEditorTabId, tabIdForNavigationTarget } from '@/editor/editor-tabs';
-import { hashFromDocName, hashFromFolderPath } from '@/lib/doc-hash';
+import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged } from '@/lib/documents-events';
 import { parseServerResponse, parseSuccessOrWarn } from '@/lib/parse-server-response';
 import { cn } from '@/lib/utils';
 import { usePageList } from './PageListContext';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 const TAB_RENAME_EXTENSIONS = ['.md', '.mdx'] as const;
 
@@ -53,22 +54,6 @@ function navigateToDoc(docName: string) {
   const nextHash = hashFromDocName(docName);
   if (window.location.hash !== nextHash) {
     window.location.hash = nextHash;
-  }
-}
-
-function navigateToFolder(folderPath: string) {
-  const nextHash = hashFromFolderPath(folderPath);
-  if (window.location.hash !== nextHash) {
-    window.location.hash = nextHash;
-  }
-}
-
-function navigateToTab(tabId: string) {
-  const tab = parseEditorTabId(tabId);
-  if (tab.kind === 'doc') {
-    navigateToDoc(tab.docName);
-  } else {
-    navigateToFolder(tab.folderPath);
   }
 }
 
@@ -137,10 +122,18 @@ function EditorTabContextMenu({
 export function EditorTabs() {
   const {
     activeDocName,
+    activeTabId: activeContextTabId,
+    activeNewTabId,
     activeTarget,
+    activateTab,
+    activateNewTab,
     closeAndClearForRename,
+    closeNewTab,
     closeTab,
     closeTabs,
+    isNewTabActive,
+    newTabIds,
+    openNewTab,
     openTabs,
     remapTabsForRename,
   } = useDocumentContext();
@@ -155,12 +148,18 @@ export function EditorTabs() {
   const cancelRequestedRef = useRef(false);
   const lastFailedValueRef = useRef<string | null>(null);
   const activeDocNameRef = useRef(activeDocName);
-  const activeTabId = activeTarget
-    ? tabIdForNavigationTarget(activeTarget)
-    : activeDocName
-      ? docTabId(activeDocName)
-      : null;
-  const activeTabScrollKey = activeTabId ? `${activeTabId}\u0000${openTabs.join('\u0000')}` : '';
+  const activeTabId =
+    activeContextTabId ??
+    (activeTarget
+      ? tabIdForNavigationTarget(activeTarget)
+      : activeDocName
+        ? docTabId(activeDocName)
+        : null);
+  const activeTabScrollKey = isNewTabActive
+    ? `${activeNewTabId ?? '__new-tab__'}\u0000${openTabs.join('\u0000')}\u0000${newTabIds.join('\u0000')}`
+    : activeTabId
+      ? `${activeTabId}\u0000${openTabs.join('\u0000')}`
+      : '';
 
   useEffect(() => {
     activeDocNameRef.current = activeDocName;
@@ -312,8 +311,6 @@ export function EditorTabs() {
     }
   }
 
-  if (openTabs.length === 0) return null;
-
   const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
 
   return (
@@ -361,7 +358,7 @@ export function EditorTabs() {
                   title={accessibleLabel}
                   className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                   onClick={() => {
-                    navigateToTab(tabId);
+                    activateTab(tabId);
                   }}
                 >
                   <FolderOpen aria-hidden="true" className="size-3.5 shrink-0" />
@@ -385,7 +382,12 @@ export function EditorTabs() {
                 <button
                   type="button"
                   aria-label={`Close ${accessibleLabel}`}
-                  className="mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-70 outline-none transition hover:bg-muted hover:text-foreground hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100"
+                  className={cn(
+                    'mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
+                    isActive
+                      ? 'opacity-100'
+                      : 'opacity-0 hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100',
+                  )}
                   onClick={(event) => {
                     event.stopPropagation();
                     closeTab(tabId);
@@ -482,7 +484,7 @@ export function EditorTabs() {
                     title={accessibleLabel}
                     className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                     onClick={() => {
-                      navigateToDoc(docName);
+                      activateTab(tabId);
                     }}
                     onDoubleClick={(event) => {
                       event.preventDefault();
@@ -512,8 +514,13 @@ export function EditorTabs() {
                   </button>
                   <button
                     type="button"
-                    aria-label={`Close ${label}`}
-                    className="mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-70 outline-none transition hover:bg-muted hover:text-foreground hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100"
+                    aria-label={`Close ${accessibleLabel}`}
+                    className={cn(
+                      'mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
+                      isActive
+                        ? 'opacity-100'
+                        : 'opacity-0 hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100',
+                    )}
                     onClick={(event) => {
                       event.stopPropagation();
                       closeTab(tabId);
@@ -530,6 +537,70 @@ export function EditorTabs() {
           </EditorTabContextMenu>
         );
       })}
+      {newTabIds.map((tabId) => {
+        const isActive = tabId === activeNewTabId;
+        return (
+          <div
+            key={tabId}
+            role="presentation"
+            data-active-tab={isActive ? 'true' : undefined}
+            className={cn(
+              'group flex min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-lg border border-b-transparent py-1.5 relative',
+              isActive
+                ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
+                : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+              isElectronHost && '[-webkit-app-region:no-drag]',
+            )}
+            onAuxClick={(event) => {
+              if (event.button !== 1) return;
+              event.preventDefault();
+              closeNewTab(tabId);
+            }}
+          >
+            <button
+              type="button"
+              aria-label="Activate new tab"
+              title="New tab"
+              className="flex h-full min-w-0 flex-1 items-center overflow-hidden px-2 text-left font-medium text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              onClick={() => activateNewTab(tabId)}
+            >
+              <span className="min-w-0 truncate text-muted-foreground">New tab</span>
+            </button>
+            <button
+              type="button"
+              aria-label="Close new tab"
+              className={cn(
+                'mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
+                isActive
+                  ? 'opacity-100'
+                  : 'opacity-0 hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100',
+              )}
+              onClick={(event) => {
+                event.stopPropagation();
+                closeNewTab(tabId);
+              }}
+            >
+              <XIcon aria-hidden="true" className="size-3.5" />
+            </button>
+            {isActive ? (
+              <div className="z-0 h-2 w-[calc(100%+16px)] absolute -left-[8px] -bottom-[2px] bg-background pointer-events-none" />
+            ) : null}
+          </div>
+        );
+      })}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label="New tab"
+            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+            onClick={openNewTab}
+          >
+            <PlusIcon aria-hidden="true" className="size-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>New tab</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

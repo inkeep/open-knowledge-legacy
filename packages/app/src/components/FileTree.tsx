@@ -128,8 +128,10 @@ import { useSidebar } from './ui/sidebar';
 
 const MARKDOWN_TREE_EXTENSION_PATTERN = /\.(md|mdx)$/i;
 
-function navigateTo(targetPath: string) {
-  window.location.hash = hashFromDocName(targetPath);
+function replaceHashWithoutNavigation(hash: string) {
+  if (window.location.hash === hash) return;
+  const { pathname, search } = window.location;
+  window.history.replaceState(null, '', `${pathname}${search}${hash}`);
 }
 
 function parseAlreadyExistsRenamePath(message: string): string | null {
@@ -636,6 +638,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     closeTab,
     closeDocument,
     closeAndClearForRename,
+    isNewTabActive,
     openTarget,
     prewarm,
     remapTabsForRename,
@@ -644,16 +647,24 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const { resolvedTheme } = useTheme();
   const { addPage } = usePageList();
   function navigateToWithPulse(targetPath: string) {
-    navigateTo(targetPath);
+    openTarget(
+      {
+        kind: 'doc',
+        target: targetPath,
+        docName: targetPath,
+      },
+      { tabBehavior: 'replace-active' },
+    );
+    replaceHashWithoutNavigation(hashFromDocName(targetPath));
     notifySidebarFileSelected();
   }
   function navigateToFolderWithPulse(folderPath: string) {
     const nextHash = hashFromFolderPath(folderPath);
-    if (window.location.hash !== nextHash) {
-      const { pathname, search } = window.location;
-      window.history.replaceState(null, '', `${pathname}${search}${nextHash}`);
-    }
-    openTarget({ kind: 'folder', target: folderPath, folderPath });
+    openTarget(
+      { kind: 'folder', target: folderPath, folderPath },
+      { tabBehavior: 'replace-active' },
+    );
+    replaceHashWithoutNavigation(nextHash);
     notifySidebarFileSelected();
   }
   const [documents, setDocuments] = useState<FileEntry[]>([]);
@@ -665,6 +676,26 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
 
   const documentsRef = useRef(documents);
+  function activateTreePath(treePath: string, entries: readonly FileEntry[] = documents) {
+    const action = resolveFileTreeSelectionAction(treePath, entries);
+    if (action.kind === 'none') {
+      console.debug(
+        '[FileTree] Dropped selection for unknown docName:',
+        treePathToAppPath(treePath),
+      );
+      return;
+    }
+    if (action.kind === 'asset') {
+      window.location.hash = action.hash;
+      notifySidebarFileSelected();
+      return;
+    }
+    if (action.kind === 'folder') {
+      navigateToFolderWithPulse(action.path);
+      return;
+    }
+    navigateToWithPulse(action.path);
+  }
   const activeDocNameRef = useRef(activeDocName);
   const assetTreePaths = new Set(
     documents.filter(isAssetEntry).map((entry) => fileEntryToTreePath(entry)),
@@ -690,7 +721,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     selectedFilePath,
     selectedFolderPath,
     navigationPath: activeNavigationPath,
-  } = resolveFileTreeSelection(activeTarget, activeDocName);
+  } = resolveFileTreeSelection(activeTarget, isNewTabActive ? null : activeDocName);
   const activeTreePath = selectedFilePath
     ? docNameToTreePath(
         selectedFilePath,
@@ -769,6 +800,14 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       return null;
     },
   });
+
+  function normalizeSelectionPath(treePath: string): string {
+    const item = model.getItem(treePath) ?? model.getItem(folderPathToTreeDirectoryPath(treePath));
+    if (item?.isDirectory()) {
+      return folderPathToTreeDirectoryPath(treeDirectoryPathToFolderPath(item.getPath()));
+    }
+    return treePath;
+  }
 
   const treePaths = documentsToTreePaths(documents);
   const treePathsSignature = treePathSignature(treePaths);
@@ -1019,7 +1058,19 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   }, [model, treePathsSignature]);
 
   useEffect(() => {
-    if (!activeTreePath) return;
+    const releaseSelectionSuppression = () => {
+      queueMicrotask(() => {
+        suppressSelectionRef.current = false;
+      });
+    };
+    suppressSelectionRef.current = true;
+    if (!activeTreePath) {
+      for (const selectedPath of model.getSelectedPaths()) {
+        model.getItem(selectedPath)?.deselect();
+      }
+      releaseSelectionSuppression();
+      return;
+    }
     const ancestorPaths = activeAncestorTreePathsSignature
       ? activeAncestorTreePathsSignature.split('\0')
       : [];
@@ -1030,13 +1081,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       }
     }
     const item = model.getItem(activeTreePath);
-    if (!item) return;
-    suppressSelectionRef.current = true;
+    if (!item) {
+      releaseSelectionSuppression();
+      return;
+    }
     selectOnlyTreeItem(model, item);
     item.focus();
-    queueMicrotask(() => {
-      suppressSelectionRef.current = false;
-    });
+    releaseSelectionSuppression();
   }, [activeAncestorTreePathsSignature, activeTreePath, model]);
 
   useEffect(() => {
@@ -1461,27 +1512,8 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     handleSelectionChangeRef.current = (selectedPaths) => {
       if (suppressSelectionRef.current) return;
       if (selectedPaths.length !== 1) return;
-      const action = resolveFileTreeSelectionAction(selectedPaths[0], documentsRef.current);
-      if (action.kind === 'none') {
-        const selected = selectedPaths[0];
-        if (selected) {
-          console.debug(
-            '[FileTree] Dropped selection for unknown docName:',
-            treePathToAppPath(selected),
-          );
-        }
-        return;
-      }
-      if (action.kind === 'asset') {
-        window.location.hash = action.hash;
-        notifySidebarFileSelected();
-        return;
-      }
-      if (action.kind === 'folder') {
-        navigateToFolderWithPulse(action.path);
-        return;
-      }
-      navigateToWithPulse(action.path);
+      const selected = selectedPaths[0];
+      if (selected) activateTreePath(normalizeSelectionPath(selected), documents);
     };
     handleRenameErrorRef.current = (message) => {
       if (recoverMarkdownRenameConflict(message)) return;
@@ -1749,6 +1781,32 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     scheduleHoverPrewarm(docName, (nextDocName) => prewarm(nextDocName));
   }
 
+  function handleTreeClickCapture(event: ReactMouseEvent<HTMLElement>) {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+    const item = findTreeItemElement(event.nativeEvent);
+    if (!item || item.getAttribute('aria-selected') !== 'true') return;
+
+    const rawPath = item.dataset.itemPath;
+    if (!rawPath) return;
+
+    const path =
+      item.dataset.itemType === 'folder' ? folderPathToTreeDirectoryPath(rawPath) : rawPath;
+    if (model.getSelectedPaths().length !== 1) return;
+
+    if (item.dataset.itemType === 'folder') {
+      const folderPath = treeDirectoryPathToFolderPath(path);
+      if (window.location.hash === hashFromFolderPath(folderPath)) return;
+      queueMicrotask(() => navigateToFolderWithPulse(folderPath));
+      return;
+    }
+
+    const docName = treeFilePathToDocName(path);
+    if (window.location.hash === hashFromDocName(docName)) return;
+    queueMicrotask(() => activateTreePath(path));
+  }
+
   if (loading) {
     return <FileTreeSkeleton />;
   }
@@ -1791,6 +1849,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           }
           model={model}
           style={createFileTreeStyle(resolvedTheme)}
+          onClickCapture={handleTreeClickCapture}
           onMouseMove={handleTreeMouseMove}
           onMouseLeave={cancelCurrentHoverPrewarm}
           renderContextMenu={(item, context) => (
@@ -1852,9 +1911,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 }
 
 function findTreeItemPath(event: MouseEvent): string | null {
+  return findTreeItemElement(event)?.dataset.itemPath ?? null;
+}
+
+function findTreeItemElement(event: MouseEvent): HTMLElement | null {
   for (const entry of event.composedPath()) {
     if (entry instanceof HTMLElement && entry.dataset.itemPath) {
-      return entry.dataset.itemPath;
+      return entry;
     }
   }
   return null;
