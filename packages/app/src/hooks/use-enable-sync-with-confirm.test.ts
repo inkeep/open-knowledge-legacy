@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const HERE = new URL('.', import.meta.url).pathname;
-const SRC = readFileSync(join(HERE, 'use-enable-sync-with-confirm.ts'), 'utf8');
+import SRC from './use-enable-sync-with-confirm?raw';
 
 describe('useEnableSyncWithConfirm module', () => {
   test('exports the hook + the project-local writer adapter', async () => {

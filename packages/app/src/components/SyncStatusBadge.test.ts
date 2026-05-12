@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const HERE = new URL('.', import.meta.url).pathname;
-const SRC = readFileSync(join(HERE, 'SyncStatusBadge.tsx'), 'utf8');
+import SRC from './SyncStatusBadge?raw';
 
 describe('SyncStatusBadge module', () => {
   test('exports the SyncStatusBadge component', async () => {

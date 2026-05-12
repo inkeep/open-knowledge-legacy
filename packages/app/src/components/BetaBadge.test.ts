@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const SRC = readFileSync(join(__dirname, 'BetaBadge.tsx'), 'utf8');
+import SRC from './BetaBadge?raw';
 
 describe('BetaBadge module', () => {
   test('exports BetaBadge component', async () => {

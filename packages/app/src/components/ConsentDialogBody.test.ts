@@ -1,10 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { isContentDirSafe, relativeToProject } from './ConsentDialogBody';
-
-const HERE = new URL('.', import.meta.url).pathname;
-const SRC = readFileSync(join(HERE, 'ConsentDialogBody.tsx'), 'utf8');
+import SRC from './ConsentDialogBody?raw';
 
 describe('isContentDirSafe', () => {
   test.each([

@@ -1,6 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   basenamePreview,
   CreateProjectDialog,
@@ -8,9 +6,7 @@ import {
   joinPathPreview,
   parseCreateNewError,
 } from './CreateProjectDialog';
-
-const HERE = new URL('.', import.meta.url).pathname;
-const SRC = readFileSync(join(HERE, 'CreateProjectDialog.tsx'), 'utf8');
+import SRC from './CreateProjectDialog?raw';
 
 describe('joinPathPreview', () => {
   test('joins parent + name with forward slash by default', () => {

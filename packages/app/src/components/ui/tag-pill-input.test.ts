@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const SRC = readFileSync(join(__dirname, 'tag-pill-input.tsx'), 'utf8');
+import SRC from './tag-pill-input?raw';
 
 describe('TagPillInput module', () => {
   test('exports TagPillInput component', async () => {

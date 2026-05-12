@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const SRC = readFileSync(join(__dirname, 'FileSidebar.tsx'), 'utf8');
+import SRC from './FileSidebar?raw';
 
 describe('FileSidebar module', () => {
   test('exports the FileSidebar component', async () => {

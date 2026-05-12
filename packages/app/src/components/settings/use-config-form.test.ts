@@ -1,6 +1,4 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type {
   Config,
   ConfigBindingPatchResult,
@@ -15,6 +13,7 @@ import {
   type RunCommitForm,
   runCommit,
 } from './use-config-form';
+import SRC from './use-config-form?raw';
 
 describe('applyExternalUpdate', () => {
   test('calls form.reset with keepDirtyValues + keepDirty + keepTouched', () => {
@@ -377,11 +376,7 @@ describe('useConfigForm module shape', () => {
   });
 });
 
-const HOOK_SRC = readFileSync(join(__dirname, 'use-config-form.ts'), 'utf8');
-
 describe('useConfigForm source-level guards', () => {
-  const SRC = HOOK_SRC;
-
   test('initializes useForm with binding.current() as defaultValues + no resolver', () => {
     expect(SRC).toContain('useForm');
     expect(SRC).toContain('defaultValues: binding.current()');
