@@ -1,0 +1,309 @@
+---
+title: Gbrain workflow
+description: Entity-grounded second brain in Open Knowledge — typed dossiers for people, companies, meetings, concepts. The Gbrain starter pack scaffolds the full layout in one click. Pattern inspired by Garry Tan's gbrain.
+---
+
+An entity-grounded second brain — typed dossiers for every person you meet, every company you track, every meeting you sit through. Each dossier has a top section your agent rewrites as new evidence arrives ("compiled truth") and an append-only timeline below ("evidence trail"). Open Knowledge ships this layout as the **Gbrain starter pack** — one click in the pack picker and you have the folder structure, the templates, and the agent-readable folder frontmatter in place. The pattern is inspired by Garry Tan's [gbrain](https://github.com/garrytan/gbrain); OK ships its own implementation of the layout.
+
+The point of this guide is to show how **Open Knowledge's features compose** to make this pattern feel native: the starter-pack picker scaffolds the entire layout in one click; per-folder templates + agent-readable folder frontmatter teach the LLM the conventions without you writing a schema doc; the WYSIWYG editor lets you hand-curate without thinking about markdown syntax; the agent activity panel attributes every edit (yours and the agent's); `get_dead_links`, `get_backlinks`, `save_version`, and the standard MCP tools (`write_document`, `edit_document`, `search`, `exec`) compose into routines that take ten minutes a week instead of an hour. Every step below uses three or four of these together — that's the product.
+
+## Who this is for
+
+- **You want a brain that knows people, companies, and your relationships** — not just a stack of source documents.
+- **You're new to LLM-curated PKM** and the entity-tracking posture matches how you think.
+
+## Before you begin
+
+- **The Open Knowledge desktop app.** Install via the [DMG](../get-started/install.mdx#macos-desktop-app); the desktop bundle ships its own CLI. Linux: install the CLI (`npm install -g @inkeep/open-knowledge`) for now.
+- **An MCP-capable agent assistant** — [Claude Code](../integrations/claude-code.mdx), [Cursor](../integrations/cursor.mdx), or [Codex](../integrations/codex.mdx). The OK desktop app's first-launch flow detects them and wires them up.
+
+That's the whole toolchain. Everything below uses OK's MCP server + your agent — no other software required.
+
+## The scenario
+
+You meet a founder over coffee on Tuesday. By Wednesday morning, your agent knows who they are, what they're building, who their co-founders are, that you previously met their seed investor, and every concrete thing they said yesterday — in their words, with the date. You walk into Wednesday's calls already briefed. Zero post-meeting research.
+
+## What's in your vault after one Tuesday
+
+```
+your-vault/
+├── USER.md                              ← your profile (created by the pack)
+├── SOUL.md                              ← agent identity / values
+├── ACCESS_POLICY.md                     ← what the agent may surface
+├── HEARTBEAT.md                         ← cadence cues
+├── log.md                               ← append-only audit trail
+├── people/
+│   ├── jane-founder.md                  ← compiled truth + timeline
+│   └── alex-seed-investor.md            ← (previously created)
+├── companies/
+│   └── jane-co.md
+├── meetings/
+│   └── 2026-05-12-jane-founder-coffee.md
+├── concepts/
+├── originals/                            ← your own thinking
+└── media/                                ← transcripts, voice notes
+```
+
+A typical `people/jane-founder.md` after the meeting + one enrichment pass:
+
+```markdown
+---
+title: Jane Founder
+type: person
+tags: [founder, ai-infra]
+---
+
+## Compiled truth
+
+Co-founder + CEO of [[Jane Co]], stealth AI infra play. Met through
+[[Alex Seed Investor]]. Sharp on cost-per-token economics; less developed
+on go-to-market.
+
+---
+
+## Timeline
+
+2026-05-12: Coffee meeting (see [[2026-05-12-jane-founder-coffee]]).
+2026-05-13: Agent enrichment — LinkedIn confirms 4y at hyperscaler; OSS profiler at 5.1k stars.
+```
+
+Compiled truth is rewritable as evidence arrives. Timeline is append-only. The split is what makes the workflow trustworthy.
+
+## Setup
+
+### 1. Pick the Gbrain pack (one click)
+
+Launch the OK desktop app, drag-and-drop or open a project folder, then click the empty-state **Pick a starter pack** → select **Gbrain** → confirm a subfolder if you want it nested (default `vault/`). Apply.
+
+You get six folders (`people/`, `companies/`, `meetings/`, `concepts/`, `originals/`, `media/`), six templates (`person`, `company`, `meeting`, `concept`, `original`, `transcript`), agent-readable folder descriptions in each `.ok/frontmatter.yml`, and five root files (`USER.md`, `SOUL.md`, `ACCESS_POLICY.md`, `HEARTBEAT.md`, `log.md`).
+
+CLI equivalent: `ok seed --pack gbrain --root vault`. Idempotent.
+
+### 2. Fill in `USER.md` (60 seconds)
+
+Open `USER.md` in the editor. Add your name, role, focus areas. That's enough for every future agent prompt to know who you are. `SOUL.md`, `ACCESS_POLICY.md`, and `HEARTBEAT.md` are stubs to grow into.
+
+### Do you need to install `gbrain` itself? No — but here's what it adds if you do
+
+**You don't need it.** The pack + OK's MCP tools (`write_document`, `edit_document`, `get_dead_links`, `get_backlinks`, `save_version`, `search`, `exec`) + your agent assistant cover every workflow in this guide. Most users stop here.
+
+If you want a few capabilities OK doesn't ship, Garry Tan's [`gbrain`](https://github.com/garrytan/gbrain) installs alongside OK and points at the same vault directory. It adds:
+
+- **Scheduled `dream` cycle** — 11 phases run on a cron: `lint → backlinks → sync → synthesize → extract → patterns → recompute_emotional_weight → consolidate → embed → orphans → purge`. Operates in Postgres.
+- **`voice-note-ingest` skill** — captures voice memos verbatim and routes content into pack folders (`originals/` / `concepts/` / `people/` / `companies/`) plus gbrain-native folders it creates as needed (`ideas/` / `personal/` / `voice-notes/`) based on content classification.
+- **Vector retrieval** — pgvector with HNSW cosine search; runs on PGLite (default, embedded) or Postgres. Sits on top of OK's BM25 + literal `grep`.
+- **34 skills total** — person enrichment tiers, meeting ingestion, briefing generation, archive crawling, soul-audit, and more.
+
+Setup if you want it:
+
+```bash
+git clone https://github.com/garrytan/gbrain && cd gbrain && bun install && bun link
+gbrain init                                       # user-level — creates ~/.gbrain/ only
+```
+
+`gbrain init` is entirely user-level. It creates `~/.gbrain/` (config + PGLite database + gbrain's own identity stubs) and doesn't touch your OK vault. To bulk-load your vault into gbrain's Postgres, then keep it in sync:
+
+```bash
+gbrain import ~/your-ok-vault --no-embed          # first-time bulk load (re-scans every time)
+gbrain embed --stale                              # generate embeddings for the new content
+
+gbrain sync --repo ~/your-ok-vault                # daily incremental sync (uses git history)
+gbrain sync --repo ~/your-ok-vault --watch        # active-editing session
+gbrain sync --install-cron                        # scheduled
+```
+
+Both gbrain's MCP server and OK's register with your agent assistant. The pack-only path stays fully supported; gbrain is purely additive.
+
+**Compatibility:** gbrain operates entirely from `~/.gbrain/` — config, Postgres database, gbrain's own user-level identity files all live there. `gbrain import` / `sync` read your OK vault one-way into Postgres; gbrain doesn't write canonical dossiers back. The pack's templates + OK's MCP tools + your agent are how new dossiers land in the vault. No file collision; install in either order.
+
+## A worked example, end to end
+
+Tuesday 10am through Wednesday 5pm. Everything below uses the OK desktop app + your agent assistant (or any MCP-capable host).
+
+### Tuesday 10:00 — In the cafe
+
+Open OK on your laptop. New file in the sidebar: `meetings/2026-05-12-jane-founder-coffee.md`. The pack's `meeting` template lands the right frontmatter automatically:
+
+```markdown
+---
+title: Jane Founder coffee
+type: meeting
+date: 2026-05-12
+attendees: [[Jane Founder]]
+tags: [meeting, ai-infra]
+---
+
+## Notes
+
+Jane runs [[Jane Co]] — stealth AI infra play, 6 months in, three people,
+agent-runtime observability. Background: 4 years at a hyperscaler, shipped
+an OSS profiler. Pulled in by [[Alex Seed Investor]].
+
+Pitch: cost-per-token telemetry for multi-agent systems. Sharp on unit
+economics; go-to-market less developed.
+
+Quote: "the agent runtime is the new kernel."
+
+## Action items
+
+- [ ] Intro to two design partners next week.
+```
+
+The `[[Jane Co]]` and `[[Alex Seed Investor]]` wikilinks render as redlinks for now — their dossiers don't exist yet. The CRDT flushes the file to disk in under a second.
+
+### Tuesday 10:45 — Walking to the next call
+
+Open your agent assistant on your phone (or back at your desk):
+
+```
+> from meetings/2026-05-12-jane-founder-coffee.md, create or update
+> dossiers for everyone mentioned, using the gbrain pack's person and
+> company templates. Don't enrich yet — just extract the entities and
+> seed the timeline entries.
+```
+
+The agent calls `mcp__open-knowledge__write_document` with the `person` template for `people/jane-founder.md`, the `company` template for `companies/jane-co.md`, and `edit_document` to append a timeline entry to the existing `people/alex-seed-investor.md` (*"2026-05-12: Introduced Jane Founder to me. See [[2026-05-12-jane-founder-coffee]]."*).
+
+OK's activity panel shows three fresh agent edits. The wikilinks in your meeting note are no longer redlinks.
+
+### Tuesday 9:00 PM — Agent-driven enrichment
+
+```
+> enrich people/jane-founder.md and companies/jane-co.md from public
+> sources — LinkedIn, GitHub, recent press. Rewrite the compiled-truth
+> section if you find load-bearing facts; append timeline entries citing
+> what you found. Don't touch existing timeline entries.
+```
+
+The agent uses its web-fetch capability plus the pack's frontmatter rules (it reads the folder descriptions on each `list_documents` call, so it knows compiled-truth-above / timeline-below discipline). Edits land via `mcp__open-knowledge__edit_document`. The OK editor renders the diff in real time; the activity panel logs each write.
+
+### Wednesday 7:00 AM — Briefing
+
+```
+> morning briefing — today's calendar plus per-attendee context from
+> people/ and companies/, with talking points
+```
+
+The agent reads the dossiers and returns a brief. You scan it, spot that the agent inferred Alex was Jane's seed lead (he wasn't — he just made the intro). You open `people/jane-founder.md` in the OK editor and fix that line in WYSIWYG. The activity panel logs your edit alongside the agent's; both attributions stack cleanly.
+
+Save a version (`mcp__open-knowledge__save_version`) so a later enrichment pass doesn't quietly overwrite your correction.
+
+### Wednesday 5:00 PM — Your own thinking lands in `originals/`
+
+Post-call, you have a take. Open `originals/2026-05-13-jane-co-thoughts.md` in the OK editor — the pack's `original` template kicks in:
+
+```markdown
+---
+title: Jane Co — first read
+type: idea
+date: 2026-05-13
+tags: [original, ai-infra, jane-co]
+---
+
+After Alex this morning + the meeting yesterday with [[Jane Founder]]:
+[[Jane Co]]'s cost-per-token framing is sharp but they're under-baking
+GTM. The OSS profiler is the wedge nobody's mentioned in pitch. Three
+things to watch: hiring a GTM lead in Q3, profiler-community acceptance
+of the runtime-cost taxonomy, Alex's read on the team.
+```
+
+OK's CRDT flushes. The agent picks this up on the next maintenance pass — the wikilinks become inbound backlinks on both dossiers; the substantive claim becomes timeline material.
+
+Two days, end-to-end. No clipboard copy. No external sync.
+
+**What just composed.** The 48-hour arc above used: the **Gbrain pack** (folder structure + templates + folder frontmatter), the **WYSIWYG editor** (visual editing without markdown syntax), **CRDT auto-flush** (your edits land on disk in under a second), **agent activity attribution** (every write traceable to a human or an agent), `mcp__open-knowledge__write_document` (typed dossier creation), `mcp__open-knowledge__edit_document` (surgical compiled-truth + timeline updates), `mcp__open-knowledge__save_version` (snapshot before risky enrichment), and the **wikilink graph + folder frontmatter** that lets the agent operate on the entity layer without you re-explaining the conventions per prompt. The same vault. One product.
+
+## Second worked example: dead links → triage → WYSIWYG
+
+Entity vaults accumulate redlinks fast: a typed `[[Jane Co]]` before the dossier existed, a typo `[[Alex Investo]]`, a placeholder `[[2026-Q3 Plan]]` for a doc you'll write later. OK's `get_dead_links` audit + your agent + the WYSIWYG editor close the loop in about 10 minutes a week.
+
+### 1. Audit
+
+```
+> run get_dead_links across the vault and group results by missing target
+```
+
+`mcp__open-knowledge__get_dead_links` returns a map of each missing target plus the source docs pointing at it.
+
+### 2. Agent triage
+
+```
+> for each dead target, read the source line and decide:
+> (a) new entity → create a dossier with the right pack template,
+> (b) typo → propose the corrected wikilink,
+> (c) intentional placeholder → leave it; add to originals/_intentional-redlinks.md
+> show me the plan before you act.
+```
+
+The agent reads source lines, greps `people/` / `companies/` for closest-name matches, returns a plan:
+
+- `[[Jane Co]]` → (a) new company. Create `companies/jane-co.md` from the `company` template; initial timeline entries from the two source backlinks; enrich from public sources.
+- `[[Alex Investo]]` → (b) typo. Closest match: `Alex Investor`. Fix the source line.
+- `[[2026-Q3 Plan]]` → (c) placeholder. One-line entry in `originals/_intentional-redlinks.md`.
+
+You approve.
+
+### 3. Execute + WYSIWYG correction
+
+The agent runs `write_document`, `edit_document` for the typo, and a follow-up enrichment pass on the new dossier.
+
+Open `companies/jane-co.md` in the OK editor. The agent's compiled-truth sentence reads:
+
+> Stealth AI infra play. Public profile shows seed round (undisclosed amount) led by [[Alex Investor]] (April 2026). Three people. No press beyond the announce post.
+
+You know something the agent doesn't — Jane mentioned a fourth hire starting next month. You append in WYSIWYG:
+
+> Three people. Fourth hire (eng) starts June 2026.
+
+Your edit is attributed in the activity panel as a human write, stacked next to the agent's earlier edits. The mid-paragraph insertion lands without you touching frontmatter or markdown syntax.
+
+### 4. Confirm clean
+
+```
+> run get_dead_links again — confirm the three resolved
+```
+
+The audit returns one remaining redlink (`[[2026-Q3 Plan]]`, intentional) plus the placeholder index entry. Graph is whole.
+
+### Why this loop matters
+
+Five OK features compose into the routine:
+
+- `get_dead_links` finds structural breakage at vault scale in one call.
+- The agent triages — reads source context via `read_document` and `grep`, classifies each dead link, routes to the right tool.
+- The pack's `<folder>/.ok/templates/` + `<folder>/.ok/frontmatter.yml` mean every dossier the agent creates starts in the right shape, with the right body convention, with no per-prompt reminders.
+- The WYSIWYG editor + CRDT auto-flush make hand-curation a 5-second mid-paragraph insertion, attributed correctly in the activity panel.
+- `save_version` + `rollback_to_version` give you cheap insurance against a future enrichment pass overwriting human-curated facts.
+
+Ten minutes weekly instead of an hour of cleanup. None of it requires anything beyond OK + your agent host.
+
+## Routine
+
+A maintenance cadence that scales. None of it requires anything beyond OK + your agent.
+
+| Cadence | What |
+|---|---|
+| **After each meeting** | Drop raw notes into `meetings/<date>-<slug>.md`. The `meeting` template handles frontmatter. |
+| **End of day** | Ask the agent: *"process today's meeting notes — update or create dossiers for everyone mentioned. Append timeline entries; don't rewrite compiled truth unless you have clear new evidence."* |
+| **Weekly** | Run the dead-link audit above. Also: *"find entities whose compiled-truth is contradicted by recent timeline entries; propose rewrites for me to review."* |
+| **Monthly** | *"audit `people/` and `companies/` — dossiers untouched in 90+ days, dossiers with empty timelines, dossiers whose wikilinks have decayed."* |
+
+You're orchestrating, not implementing. The OK MCP tools (`exec`, `search`, `read_document`, `edit_document`, `get_backlinks`, `get_dead_links`, `get_orphans`, `save_version`, `rollback_to_version`) cover every step.
+
+## Tips
+
+- **Wikilinks are the graph.** Every `[[Jane Co]]` mention creates a backlink. The graph self-wires.
+- **Never rewrite the timeline.** Append-only is what makes compiled-truth rewrites trustworthy.
+- **`save_version` before risky enrichment.** Snapshot + rollback are first-class — cheap insurance for hand-curated facts.
+
+## Looking for source-grounded knowledge instead?
+
+This guide is the **entity-grounded** posture. If what you want is a citation-traceable wiki — *"what do we know about X, with evidence?"* — see the [Karpathy LLM wiki workflow](./karpathy-llm-wiki.mdx). Different pattern, same Open Knowledge editor.
+
+## Further reading
+
+- **[Agent activity](../features/agent-activity.mdx)** — how every agent edit lands in the shadow repo with attribution
+- **[Claude Code](../integrations/claude-code.mdx)**, **[Cursor](../integrations/cursor.mdx)**, **[Codex](../integrations/codex.mdx)** — agent-assistant integrations
+- **[`STARTER_PACKS` registry](https://github.com/inkeep/open-knowledge-legacy/blob/main/packages/server/src/seed/starter.ts)** — canonical source for the Gbrain pack content
+- **[Garry Tan's gbrain](https://github.com/garrytan/gbrain)** — the pattern this layout is inspired by
+- **[Karpathy LLM wiki workflow](./karpathy-llm-wiki.mdx)** — source-grounded counterpart

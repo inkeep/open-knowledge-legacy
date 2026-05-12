@@ -119,9 +119,10 @@ describe('STARTER_FOLDER_FRONTMATTER_FILENAME', () => {
 });
 
 describe('STARTER_PACKS — all packs structural validation', () => {
-  test('STARTER_PACK_IDS contains exactly the 5 expected packs (pinned to detect silent additions/deletions)', () => {
-    expect(STARTER_PACK_IDS.length).toBe(5);
+  test('STARTER_PACK_IDS contains exactly the 6 expected packs (pinned to detect silent additions/deletions)', () => {
+    expect(STARTER_PACK_IDS.length).toBe(6);
     expect([...STARTER_PACK_IDS].sort()).toEqual([
+      'gbrain',
       'knowledge-base',
       'plain-notes',
       'software-lifecycle',
@@ -198,6 +199,17 @@ describe('STARTER_PACKS — all packs structural validation', () => {
     }
   });
 
+  test('every template body has a description: frontmatter line (load-bearing customer convention)', () => {
+    for (const pack of Object.values(STARTER_PACKS)) {
+      for (const [name, body] of Object.entries(pack.templates)) {
+        expect(
+          body,
+          `Pack "${pack.id}" template "${name}" missing description: frontmatter line`,
+        ).toMatch(/^description:\s*\S/m);
+      }
+    }
+  });
+
   test('no template body is registered without being referenced from some folder', () => {
     for (const pack of Object.values(STARTER_PACKS)) {
       const referenced = new Set<string>();
@@ -221,6 +233,54 @@ describe('STARTER_PACKS — all packs structural validation', () => {
           pack.defaultSubfolder,
           `Pack "${pack.id}" defaultSubfolder "${pack.defaultSubfolder}" should be kebab-case.`,
         ).toMatch(/^[a-z][a-z0-9-]*$/);
+      }
+    }
+  });
+
+  test('every rootFile body has frontmatter with a non-empty title', () => {
+    for (const pack of Object.values(STARTER_PACKS)) {
+      for (const [filename, body] of Object.entries(pack.rootFiles ?? {})) {
+        expect(
+          body.startsWith('---\n'),
+          `Pack "${pack.id}" rootFile "${filename}" missing frontmatter`,
+        ).toBe(true);
+        expect(body, `Pack "${pack.id}" rootFile "${filename}" missing title:`).toContain('title:');
+      }
+    }
+  });
+
+  test('every rootFile body uses only v1 substitution tokens', () => {
+    const ALLOWED = new Set(['date', 'user']);
+    for (const pack of Object.values(STARTER_PACKS)) {
+      for (const [filename, body] of Object.entries(pack.rootFiles ?? {})) {
+        const tokens = [...body.matchAll(/\{\{([^{}\n]+?)\}\}/g)].map((m) => (m[1] ?? '').trim());
+        for (const token of tokens) {
+          expect(
+            ALLOWED.has(token),
+            `Pack "${pack.id}" rootFile "${filename}" uses unknown token "{{${token}}}" — only {{date}} and {{user}} are allowed in v1.`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  test('every rootFile filename is safe (no path separators, no leading dot, non-empty)', () => {
+    for (const pack of Object.values(STARTER_PACKS)) {
+      for (const filename of Object.keys(pack.rootFiles ?? {})) {
+        expect(filename.length, `Pack "${pack.id}" has an empty rootFile filename`).toBeGreaterThan(
+          0,
+        );
+        expect(
+          filename,
+          `Pack "${pack.id}" rootFile "${filename}" contains path separator`,
+        ).not.toContain('/');
+        expect(
+          filename,
+          `Pack "${pack.id}" rootFile "${filename}" contains backslash`,
+        ).not.toContain('\\');
+        expect(filename, `Pack "${pack.id}" rootFile "${filename}" is a dotfile`).not.toMatch(
+          /^\./,
+        );
       }
     }
   });

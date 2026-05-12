@@ -3,7 +3,8 @@ export type PackId =
   | 'software-lifecycle'
   | 'plain-notes'
   | 'worldbuilding'
-  | 'writing-pipeline';
+  | 'writing-pipeline'
+  | 'gbrain';
 
 export const DEFAULT_PACK_ID: PackId = 'knowledge-base';
 
@@ -898,6 +899,292 @@ tags: [published]
 `,
 };
 
+const GBRAIN_FOLDERS: readonly StarterFolder[] = [
+  {
+    path: 'people',
+    title: 'People',
+    description:
+      'Person dossiers. Compiled-truth section above `---` (overwritten as new evidence arrives); append-only timeline below (`YYYY-MM-DD:` entries, never edit existing ones — only append). Frontmatter `type: person`. Linked to `companies/` (affiliations, founders, investors) and `meetings/` (attendance). Agent: when a meeting note mentions a person not yet captured, stub a file here; route new facts into either compiled-truth (if they update current understanding) or timeline (raw evidence). Never rewrite the timeline.',
+    tags: ['person', 'entity', 'dossier'],
+    starterTemplate: 'person',
+  },
+  {
+    path: 'companies',
+    title: 'Companies',
+    description:
+      'Company dossiers. Same body convention as `people/`: compiled-truth above `---`, append-only timeline below. Frontmatter `type: company`. Linked to `people/` (founders, employees, investors) and `meetings/`. Agent: when a person dossier references a company not yet captured, stub a file here; surface company-to-person edges when both exist.',
+    tags: ['company', 'entity', 'dossier'],
+    starterTemplate: 'company',
+  },
+  {
+    path: 'meetings',
+    title: 'Meetings',
+    description:
+      'Meeting notes. Filename `YYYY-MM-DD-<slug>.md`. Frontmatter carries `date`, `attendees: [[wikilinks]]`, and `type: meeting`. Body is raw notes with `[[wiki-links]]` to people, companies, concepts mentioned. Agent: after a meeting note lands, extract entity mentions and append timeline entries to each referenced dossier. Do NOT rewrite the meeting note — it is the verbatim record.',
+    tags: ['meeting', 'note'],
+    starterTemplate: 'meeting',
+  },
+  {
+    path: 'concepts',
+    title: 'Concepts',
+    description:
+      'Evergreen idea pages — abstract patterns, frameworks, recurring concepts that surface across people / companies / meetings. Compiled-truth + timeline convention. Frontmatter `type: concept`. Agent: when a meeting note or person dossier references a concept (e.g. "agent-runtime observability") not yet captured, stub a file here; thread links so the concept becomes a hub for everywhere it appears.',
+    tags: ['concept', 'idea', 'evergreen'],
+    starterTemplate: 'concept',
+  },
+  {
+    path: 'originals',
+    title: 'Originals',
+    description:
+      "Your own thinking — untransformed. Frontmatter `type: idea`. Use freely; use `[[wiki-links]]` for anything that should become its own entity. Agent: treat originals as authoritative source material when extracting facts — these are the user's words, not inferences. Append timeline entries to referenced dossiers when a clear new claim appears, citing the original by wikilink.",
+    tags: ['original', 'thinking', 'user'],
+    starterTemplate: 'original',
+  },
+  {
+    path: 'media',
+    title: 'Media',
+    description:
+      'Bulk transcripts, voice notes, articles, large attachments. Frontmatter `type: transcript` (template provided). Often `.okignore`-d so the OK index stays light. If gbrain is installed alongside OK, the `media-ingest` skill produces transcripts + backlinks here (video / audio / PDF / books), and the `voice-note-ingest` skill captures voice memos verbatim while routing the extracted content into the right entity dossier. Without gbrain, the agent does both on request. Keep raw — analysis belongs in dossiers, not here.',
+    tags: ['media', 'transcript', 'bulk'],
+    starterTemplate: 'transcript',
+  },
+] as const;
+
+const GBRAIN_TEMPLATES: Readonly<Record<string, string>> = {
+  person: `---
+title: Person Name
+description: One-line characterization — who they are, why they matter to you.
+type: person
+created: {{date}}
+author: {{user}}
+tags: [person]
+---
+
+## Compiled truth
+
+(Your current best understanding. Overwritten as new evidence arrives.)
+
+---
+
+## Timeline
+
+{{date}}: First entry. Append-only — never edit existing entries, only add new \`YYYY-MM-DD:\` lines.
+`,
+  company: `---
+title: Company Name
+description: One-line company summary — what they do, who's involved.
+type: company
+created: {{date}}
+author: {{user}}
+tags: [company]
+---
+
+## Compiled truth
+
+(Your current best understanding of the company. Overwritten as new evidence arrives.)
+
+---
+
+## Timeline
+
+{{date}}: First entry.
+`,
+  meeting: `---
+title: Meeting Title
+description: One-line meeting summary — fill in after the meeting.
+type: meeting
+date: {{date}}
+attendees: []
+author: {{user}}
+tags: [meeting]
+---
+
+## Notes
+
+(Raw notes from the meeting. Use \`[[wiki-links]]\` for people, companies, concepts mentioned.)
+
+## Action items
+
+- [ ]
+`,
+  concept: `---
+title: Concept Name
+description: One-line concept summary — what it names and why it recurs.
+type: concept
+created: {{date}}
+author: {{user}}
+tags: [concept]
+---
+
+## Compiled truth
+
+(Your current best understanding of the concept. Rewrite as evidence accumulates.)
+
+---
+
+## Timeline
+
+{{date}}: First entry.
+`,
+  original: `---
+title: Idea Title
+description: One-line summary of the idea or take.
+type: idea
+date: {{date}}
+author: {{user}}
+tags: [original]
+---
+
+(Your own thinking. Use \`[[wiki-links]]\` for anything that should become its own entity.)
+`,
+  transcript: `---
+title: Transcript
+description: One-line transcript summary — source and key topic.
+type: transcript
+date: {{date}}
+source:
+duration:
+author: {{user}}
+tags: [transcript, media]
+---
+
+## Source
+
+(URL, file, or device captured from.)
+
+## Transcript
+
+(Paste raw transcript. The gbrain \`media-ingest\` skill — if installed — produces structured transcripts with backlinks to mentioned entities (video / audio / PDF / books). For voice memos specifically, gbrain's \`voice-note-ingest\` captures verbatim then routes into the right entity dossier. Without gbrain, ask your agent to do it on demand.)
+`,
+};
+
+const GBRAIN_LOG_MD = `---
+title: Work Log
+description: Append-only audit trail. After each turn that creates, edits, or restructures content in the vault, append one dated entry here (one per turn, not per file). gbrain users — your dream-cycle runs land here too.
+---
+
+# Work Log
+
+Append-only audit trail. **Append a dated entry after any turn that creates, edits, or restructures content in the vault** — one entry per turn, not per file.
+
+What to log:
+
+- New entity dossiers stubbed (\`people/\` / \`companies/\` / \`concepts/\`)
+- Meeting notes captured
+- \`dream\` runs (if gbrain is installed alongside) — gbrain writes the phase summary here
+- Original-thinking captures
+- Folder restructures or rule changes
+
+**Reference docs as markdown links, not bare paths.** Every doc you touched should appear as \`[name](./path/to/doc.md)\` so the log shows up in \`get_backlinks\` for those docs.
+
+<!-- Example entry shape:
+
+## YYYY-MM-DD — <short title>
+
+- <what was done>
+- Dossiers updated: [Jane Founder](./people/jane-founder.md), [Jane Co](./companies/jane-co.md)
+- Meetings logged: [2026-05-12 coffee](./meetings/2026-05-12-jane-founder-coffee.md)
+- Open follow-ups: <topic-1>, <topic-2>
+
+-->
+`;
+
+const GBRAIN_USER_MD = `---
+title: User profile
+description: Who you are. Agent reads this on every briefing / enrichment pass. Keep current.
+---
+
+# User profile
+
+**Name:**
+
+**Role:**
+
+**Current focus areas:**
+
+- ...
+
+**Network anchors:** (people you talk to most; use \`[[wikilinks]]\` once \`people/\` dossiers exist)
+
+- [[]]
+
+**Communication style:** (how you prefer briefings, summaries, suggestions)
+
+`;
+
+const GBRAIN_SOUL_MD = `---
+title: Agent identity
+description: Agent persona, values, voice. If you run gbrain alongside, this is the output of its \`soul-audit\` skill — a 6-phase interview. Fill in by hand or run \`gbrain soul-audit\`.
+---
+
+# Agent identity (SOUL.md)
+
+**Persona name:**
+
+**Voice + tone:** (how the agent speaks — formal / casual / direct / hedged / etc.)
+
+**Values:** (what the agent optimizes for when faced with trade-offs)
+
+- ...
+
+**What to avoid:** (postures / framings / topics the agent should never adopt)
+
+- ...
+
+**Run \`gbrain soul-audit\` to populate this via a guided interview.** Or write it by hand — anything here informs every gbrain skill that loads SOUL.md on each call.
+`;
+
+const GBRAIN_ACCESS_POLICY_MD = `---
+title: Access policy
+description: What the agent may read, write, and surface. gbrain's 4-tier privacy model — but useful even without gbrain.
+---
+
+# Access policy
+
+## Tier 1 — Public
+
+(Things the agent may surface in any briefing or shared context.)
+
+## Tier 2 — Internal / professional
+
+(Things the agent may use to inform briefings + dossiers, but should not surface to external parties without prompting.)
+
+## Tier 3 — Personal
+
+(Things the agent may use to anchor briefings, but should never write into a dossier that might be shared.)
+
+## Tier 4 — Restricted
+
+(Things the agent should never read or surface. Use \`.okignore\` to enforce hard exclusion at the file level.)
+
+`;
+
+const GBRAIN_HEARTBEAT_MD = `---
+title: Operational cadence
+description: When the agent does scheduled work — daily briefings, end-of-day dossier maintenance, weekly audits. If gbrain is installed, its \`dream\` schedule also lands here.
+---
+
+# Heartbeat
+
+## Daily
+
+- **Morning briefing** (\`gbrain briefing\` or ad-hoc agent prompt): today's calendar + per-attendee dossier context.
+- **End of day**: ingest the day's meeting notes; let \`dream\` (or a manual agent prompt) extract entity mentions and update dossiers overnight.
+
+## Nightly (\`gbrain dream\` if installed)
+
+- 11-phase maintenance cycle: lint → backlinks → sync → synthesize → extract → patterns → recompute_emotional_weight → consolidate → embed → orphans → purge.
+
+## Weekly
+
+- Audit: dossiers untouched in 30+ days, contradictions between compiled-truth and recent timeline entries.
+
+## Monthly
+
+- Run OK's \`get_dead_links\` across the vault — triage redlinks into new entities (gbrain creates dossiers), typo fixes (OK edits in place), or intentional placeholders.
+
+`;
+
 export const STARTER_PACKS: Readonly<Record<PackId, StarterPack>> = {
   'knowledge-base': {
     id: 'knowledge-base',
@@ -944,6 +1231,22 @@ export const STARTER_PACKS: Readonly<Record<PackId, StarterPack>> = {
     defaultSubfolder: 'writing',
     folders: WRITING_PIPELINE_FOLDERS,
     templates: WRITING_PIPELINE_TEMPLATES,
+  },
+  gbrain: {
+    id: 'gbrain',
+    name: 'Gbrain',
+    description:
+      "Track people, companies, and meetings — each gets a dossier with a rewritable summary and an append-only timeline. Inspired by Garry Tan's gbrain.",
+    defaultSubfolder: 'vault',
+    folders: GBRAIN_FOLDERS,
+    templates: GBRAIN_TEMPLATES,
+    rootFiles: {
+      'log.md': GBRAIN_LOG_MD,
+      'USER.md': GBRAIN_USER_MD,
+      'SOUL.md': GBRAIN_SOUL_MD,
+      'ACCESS_POLICY.md': GBRAIN_ACCESS_POLICY_MD,
+      'HEARTBEAT.md': GBRAIN_HEARTBEAT_MD,
+    },
   },
 };
 
