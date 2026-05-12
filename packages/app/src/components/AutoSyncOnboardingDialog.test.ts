@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const HERE = new URL('.', import.meta.url).pathname;
-const SRC = readFileSync(join(HERE, 'AutoSyncOnboardingDialog.tsx'), 'utf8');
+import SRC from './AutoSyncOnboardingDialog?raw';
 
 describe('AutoSyncOnboardingDialog module', () => {
   test('exports AutoSyncOnboardingDialog component', async () => {

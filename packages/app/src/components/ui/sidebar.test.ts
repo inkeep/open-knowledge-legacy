@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const HERE = new URL('.', import.meta.url).pathname;
-const SRC = readFileSync(join(HERE, 'sidebar.tsx'), 'utf8');
+import SRC from './sidebar?raw';
 
 describe('getInitialSidebarWidth source-level guards', () => {
   test('decodeURIComponent is wrapped in a try/catch that returns defaultWidth', () => {

@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const SRC = readFileSync(join(__dirname, 'SettingsDialog.tsx'), 'utf8');
+import SRC from './SettingsDialog?raw';
 
 describe('SettingsDialog module', () => {
   test('exports SettingsDialog component', async () => {

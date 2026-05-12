@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const SRC = readFileSync(join(__dirname, 'ChannelSection.tsx'), 'utf8');
+import SRC from './ChannelSection?raw';
 
 describe('ChannelSection module', () => {
   test('exports ChannelSection component', async () => {
