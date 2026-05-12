@@ -1,4 +1,5 @@
 import { offset } from '@floating-ui/dom';
+import { incrementBlockGripClickSelectFailed } from '@inkeep/open-knowledge-core';
 import { type Editor, Extension } from '@tiptap/core';
 import { DragHandlePlugin, normalizeNestedOptions } from '@tiptap/extension-drag-handle';
 import type { Node as PmNode } from '@tiptap/pm/model';
@@ -11,7 +12,25 @@ const HANDLE_HEIGHT = 20;
 const MAX_SINGLE_LINE_HEIGHT = 44;
 const BODY_LINE_HEIGHT = 28;
 
-function createBlockControlsElement(): { container: HTMLElement; addBtn: HTMLButtonElement } {
+function describeBlockForGrip(node: PmNode | null): string {
+  if (!node) return 'Select block';
+  if (node.type.name === 'jsxComponent') {
+    const componentName = (node.attrs.componentName as string | undefined) ?? '';
+    if (componentName) {
+      const descriptor = getDescriptor(componentName);
+      const label =
+        descriptor.name === '*' ? componentName : (descriptor.displayName ?? descriptor.name);
+      if (label) return `Select ${label}`;
+    }
+  }
+  return `Select ${node.type.name}`;
+}
+
+function createBlockControlsElement(): {
+  container: HTMLElement;
+  addBtn: HTMLButtonElement;
+  grip: HTMLButtonElement;
+} {
   const container = document.createElement('div');
   container.className = 'ok-block-controls';
   container.setAttribute(OPT_OUT_ATTR, 'true');
@@ -28,15 +47,17 @@ function createBlockControlsElement(): { container: HTMLElement; addBtn: HTMLBut
     e.stopPropagation();
   });
 
-  const grip = document.createElement('div');
+  const grip = document.createElement('button');
   grip.className = 'ok-drag-grip';
-  grip.setAttribute('aria-hidden', 'true');
-  grip.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-grip-vertical-icon lucide-grip-vertical"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>`;
+  grip.setAttribute('type', 'button');
+  grip.setAttribute('aria-label', 'Select block');
+  grip.setAttribute('tabindex', '-1');
+  grip.innerHTML = `<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-grip-vertical-icon lucide-grip-vertical"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>`;
 
   container.appendChild(addBtn);
   container.appendChild(grip);
 
-  return { container, addBtn };
+  return { container, addBtn, grip };
 }
 
 function addBlockBelow(editor: Editor, hoveredNodePos: number, hoveredNode: PmNode): void {
@@ -82,11 +103,42 @@ export const BlockDragHandle = Extension.create({
     let currentNode: PmNode | null = null;
     let currentNodePos = -1;
 
-    const { container, addBtn } = createBlockControlsElement();
+    const { container, addBtn, grip } = createBlockControlsElement();
 
     addBtn.addEventListener('click', () => {
       if (currentNode && currentNodePos >= 0) {
         addBlockBelow(editor, currentNodePos, currentNode);
+      }
+    });
+
+    grip.addEventListener('click', () => {
+      if (currentNodePos < 0) return;
+      const targetNode = currentNode;
+      const nodeType = targetNode?.type.name ?? 'unknown';
+      try {
+        const dispatched = editor.chain().focus().setNodeSelection(currentNodePos).run();
+        if (!dispatched) {
+          incrementBlockGripClickSelectFailed(nodeType);
+          console.warn(
+            JSON.stringify({
+              event: 'block-grip-click-select-failed',
+              nodeType,
+              componentName: String(targetNode?.attrs.componentName ?? '').slice(0, 200),
+              reason: 'chain-dispatch-returned-false',
+            }),
+          );
+        }
+      } catch (err) {
+        if (!(err instanceof RangeError)) throw err;
+        incrementBlockGripClickSelectFailed(nodeType);
+        console.warn(
+          JSON.stringify({
+            event: 'block-grip-click-select-failed',
+            nodeType,
+            componentName: String(targetNode?.attrs.componentName ?? '').slice(0, 200),
+            reason: err.message.slice(0, 500),
+          }),
+        );
       }
     });
 
@@ -97,6 +149,7 @@ export const BlockDragHandle = Extension.create({
         onNodeChange({ node, pos }: { node: PmNode | null; pos: number }) {
           currentNode = node;
           currentNodePos = pos ?? -1;
+          grip.setAttribute('aria-label', describeBlockForGrip(node));
         },
         computePositionConfig: {
           placement: 'left-start',

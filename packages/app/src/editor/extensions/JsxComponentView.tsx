@@ -10,8 +10,9 @@
  * in commit `252bce2b` — the "zero permanent chrome" principle won. The
  * descriptor identity is surfaced through: (a) the rendered fumadocs
  * component's own visual style (every built-in has a distinct shape), (b)
- * the breadcrumb in `EditorHeader` when the block is selected, (c) the
- * `aria-label` group summary announced to AT on focus.
+ * the `SelectionAnnouncer` aria-live region announcing the block name on
+ * selection change, (c) the `aria-label` group summary announced to AT on
+ * focus.
  *
  * Three render branches:
  *   Branch 1 (Wildcard `'*'`): does NOT render a persistent chip — the
@@ -36,7 +37,9 @@
 import {
   incrementJsxAutoConvertFailed,
   incrementJsxAutoConvertSucceeded,
+  incrementJsxKeyboardDeleteFailed,
   incrementJsxMoveFailed,
+  incrementJsxPopoverCloseRestoreFailed,
   incrementJsxRenderFailure,
   incrementJsxStuckCopyFailed,
   incrementJsxStuckDeleteFailed,
@@ -191,11 +194,15 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
   const blockSelection = useBlockSelection(editor);
   const wrapperBridgeId = typeof pos === 'number' ? getWrapperBridgeId(editor.state, pos) : null;
-  const isInnermostSelected =
-    wrapperBridgeId !== null && blockSelection?.selectedBlockId === wrapperBridgeId;
+  const isRangeEncompassed =
+    wrapperBridgeId !== null &&
+    (blockSelection?.rangeEncompassedBlockIds.has(wrapperBridgeId) ?? false);
+  const chainLeafBridgeId = blockSelection?.ancestorChain.at(-1)?.bridgeId ?? null;
+  const isInnermostInChain = wrapperBridgeId !== null && chainLeafBridgeId === wrapperBridgeId;
+  const isInnermostSelected = selected && !isRangeEncompassed && isInnermostInChain;
   const hasChildSelected =
     wrapperBridgeId !== null &&
-    !isInnermostSelected &&
+    !isInnermostInChain &&
     (blockSelection?.ancestorChain.some((entry) => entry.bridgeId === wrapperBridgeId) ?? false);
   const selectionOrigin =
     isInnermostSelected && blockSelection ? blockSelection.selectionOrigin : undefined;
@@ -420,10 +427,46 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     : undefined;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    const target = e.target as HTMLElement;
+
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      if (!isInnermostSelected) return;
+      if (!e.currentTarget.contains(target)) return;
+      if (target.matches('input, textarea')) return;
+      const p = typeof getPos === 'function' ? getPos() : undefined;
+      if (typeof p !== 'number') return;
+      e.preventDefault();
+      try {
+        const dispatched = editor.chain().focus().setNodeSelection(p).deleteSelection().run();
+        if (!dispatched) {
+          incrementJsxKeyboardDeleteFailed(descriptor.name);
+          console.warn(
+            JSON.stringify({
+              event: 'jsx-component-keyboard-delete-failed',
+              component: descriptor.name,
+              rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+              reason: 'chain-dispatch-returned-false',
+            }),
+          );
+        }
+      } catch (err) {
+        if (!(err instanceof RangeError)) throw err;
+        incrementJsxKeyboardDeleteFailed(descriptor.name);
+        console.warn(
+          JSON.stringify({
+            event: 'jsx-component-keyboard-delete-failed',
+            component: descriptor.name,
+            rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+            reason: err.message.slice(0, 500),
+          }),
+        );
+      }
+      return;
+    }
+
     if (e.key !== 'Enter' && e.key !== ' ') return;
     if (!selected) return;
     if (!hasEditableProps) return;
-    const target = e.target as HTMLElement;
     if (target.closest('.jsx-component-chrome')) return;
     if (target.closest('input, textarea, select, button')) return;
     e.preventDefault();
@@ -433,18 +476,34 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   const handleOpenChange = (open: boolean) => {
     setPopoverOpen(open);
     if (open) return;
-    if (!isSelfClosingLeaf) return;
     requestAnimationFrame(() => {
       const p = typeof getPos === 'function' ? getPos() : undefined;
       if (typeof p !== 'number') return;
-      const curNode = editor.state.doc.nodeAt(p);
-      if (!curNode) return;
-      const nodeEnd = p + curNode.nodeSize;
-      const selFrom = editor.state.selection.from;
-      if (selFrom < p || selFrom >= nodeEnd) return;
-      const $end = editor.state.doc.resolve(Math.min(nodeEnd, editor.state.doc.content.size));
-      const nextSel = TextSelection.near($end, 1);
-      editor.view.dispatch(editor.state.tr.setSelection(nextSel).scrollIntoView());
+      try {
+        const curNode = editor.state.doc.nodeAt(p);
+        if (!curNode) return;
+        const nodeEnd = p + curNode.nodeSize;
+        const selFrom = editor.state.selection.from;
+        if (selFrom < p || selFrom >= nodeEnd) return;
+        if (isSelfClosingLeaf) {
+          const $end = editor.state.doc.resolve(Math.min(nodeEnd, editor.state.doc.content.size));
+          const nextSel = TextSelection.near($end, 1);
+          editor.view.dispatch(editor.state.tr.setSelection(nextSel).scrollIntoView());
+        } else {
+          editor.chain().setNodeSelection(p).run();
+        }
+      } catch (err) {
+        if (!(err instanceof RangeError)) throw err;
+        incrementJsxPopoverCloseRestoreFailed(descriptor.name);
+        console.warn(
+          JSON.stringify({
+            event: 'jsx-component-popover-close-restore-failed',
+            component: descriptor.name,
+            rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+            reason: err.message.slice(0, 500),
+          }),
+        );
+      }
     });
   };
 
@@ -466,6 +525,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         })()}
         data-selected={isInnermostSelected ? 'true' : undefined}
         data-has-child-selected={hasChildSelected ? 'true' : undefined}
+        data-range-selected={isRangeEncompassed ? 'true' : undefined}
         data-selection-origin={selectionOrigin}
         data-dragging={isDraggingSelf ? 'true' : undefined}
         data-needs-config={needsConfig ? 'true' : undefined}
@@ -659,8 +719,36 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
             className="jsx-chrome-btn jsx-chrome-btn--delete"
             aria-label={`Delete ${descriptor.displayName ?? descriptor.name}`}
             onClick={() => {
-              if (typeof pos === 'number') {
-                editor.chain().focus().setNodeSelection(pos).deleteSelection().run();
+              if (typeof pos !== 'number') return;
+              try {
+                const dispatched = editor
+                  .chain()
+                  .focus()
+                  .setNodeSelection(pos)
+                  .deleteSelection()
+                  .run();
+                if (!dispatched) {
+                  incrementJsxKeyboardDeleteFailed(descriptor.name);
+                  console.warn(
+                    JSON.stringify({
+                      event: 'jsx-component-chrome-delete-failed',
+                      component: descriptor.name,
+                      rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+                      reason: 'chain-dispatch-returned-false',
+                    }),
+                  );
+                }
+              } catch (err) {
+                if (!(err instanceof RangeError)) throw err;
+                incrementJsxKeyboardDeleteFailed(descriptor.name);
+                console.warn(
+                  JSON.stringify({
+                    event: 'jsx-component-chrome-delete-failed',
+                    component: descriptor.name,
+                    rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+                    reason: err.message.slice(0, 500),
+                  }),
+                );
               }
             }}
           >

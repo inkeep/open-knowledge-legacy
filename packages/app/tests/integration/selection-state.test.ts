@@ -22,6 +22,7 @@ const EMPTY: BlockSelection = {
   ancestorChain: [],
   selectionOrigin: 'programmatic',
   isDragging: false,
+  rangeEncompassedBlockIds: new Set<string>(),
 };
 
 /** Minimal stub plugin mirroring the real plugin's state derivation —

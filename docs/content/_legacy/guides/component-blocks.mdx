@@ -279,6 +279,27 @@ settings panel — typing a URL replaces it with the rendered media.
 
 ## Editing props
 
+A selection halo paints around the component when it's the operation
+target — pressing Delete or Backspace removes that block, arrow keys
+move between blocks, and `Enter` opens the settings panel. There are
+three ways to enter that state from the mouse or keyboard:
+
+- **Click the grip handle.** Hovering any block reveals a `+` and a
+  6-dot gripper in the left margin. Clicking the gripper selects the
+  block; dragging it reorders the block. Works on every block type
+  (paragraphs, headings, components).
+- **Press `Esc` from inside the component body.** The cursor exits
+  the body and the wrapping component becomes the selection.
+- **Insert from the slash menu.** A freshly-inserted component is
+  selected automatically so you can fill its required props.
+
+Clicking inside a component's editable body (Callout text, Accordion
+content) places the cursor for editing — the component's own visual
+identity (background tint, disclosure chrome) indicates which block
+you're in, with no halo. For self-closing media leaves (Image, Video,
+Audio) there's no editable body, so clicking the block selects it
+directly.
+
 When a component is selected, a hover chrome bar appears at the
 top-right with three groups of actions (rendered as up to four icon
 buttons depending on the block's position within its parent):
@@ -307,6 +328,7 @@ CRDT, and every keystroke propagates to other connected clients.
 |---|---|
 | Open settings panel (when a component is selected) | `Enter` or `Space` |
 | Close settings panel and return focus to the component | `Esc` |
+| Delete the selected component | `Backspace` or `Delete` |
 | Move selection between blocks | `↑` / `↓` |
 | Move a top-level block up / down | `Cmd`+`Shift`+`↑` / `↓` (macOS) · `Ctrl`+`Shift`+`↑` / `↓` (Linux / Windows) |
 
@@ -318,9 +340,6 @@ into the selection layer rather than retrofitted per-block:
 - **Selection announcer.** Selecting a block emits an `aria-live="polite"`
   announcement with the block's descriptor name so screen readers narrate
   the focused element.
-- **Breadcrumb ancestry.** The selection footer renders an
-  `aria-label`-tagged list of ancestor components so keyboard users can
-  jump to any enclosing container.
 - **Halo palette.** The block selection halo degrades to a solid outline
   under Windows High Contrast Mode (`forced-colors: active`) — no color
   information is lost.

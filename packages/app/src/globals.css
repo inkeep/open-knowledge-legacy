@@ -777,7 +777,7 @@
 /* Content-column children. The `.tiptap-editor` wrapper is a 3-column named
  * grid ([full-start] margin [content-start] content [content-end] margin
  * [full-end]). Direct children default to `grid-column: content` so editor
- * chrome — EditorContent, Breadcrumb footer, future <nav>/<header>/<footer>
+ * chrome — EditorContent, future <nav>/<header>/<footer>
  * — lands in the content column. An earlier version of this rule targeted
  * `> div` specifically, which worked while every child was a <div> but
  * silently broke semantic elements: a direct <nav> child auto-placed into
@@ -1168,6 +1168,21 @@
   @apply text-muted-foreground/60;
 }
 
+/* When any JSX prop panel is open in this editor, suppress the slash-command
+ * placeholder on empty paragraphs — the placeholder competes for attention
+ * with the focused panel. Scope is narrow on purpose: the trigger must live
+ * inside `.jsx-component-chrome` so other open popovers (BubbleMenu, color
+ * picker, future link panels routed through InteractionLayerStore) keep the
+ * placeholder visible. `:has()` is supported on Chrome 105+, Safari 15.4+,
+ * Firefox 121+; older Firefox sees the pre-fix behavior (placeholder still
+ * visible behind the panel) as graceful degradation. */
+.tiptap-editor:has(
+    .jsx-component-chrome button[data-slot="popover-trigger"][data-state="open"]
+  ) .ProseMirror
+  p.is-empty::before {
+  content: none;
+}
+
 /* DragHandlePlugin container — absolutely positioned flex row of grip + "+"
    created imperatively by `BlockDragHandle` (see
    `packages/app/src/editor/extensions/drag-handle.ts`). Per FR-15 / FR-16. */
@@ -1200,7 +1215,10 @@
   background-color: oklch(0 0 0 / 6%);
 }
 
-/* Drag grip */
+/* Drag grip — rendered as a <button> for a11y (click handler binds to a
+   semantic interactive element discoverable by screen readers). Default
+   <button> chrome (border, padding, system background) is reset so the
+   visual is unchanged from when this was a <div>. */
 .ok-drag-grip {
   display: flex;
   align-items: center;
@@ -1210,12 +1228,26 @@
   cursor: grab;
   color: oklch(0.72 0 0);
   border-radius: 3px;
+  border: none;
+  background: transparent;
+  padding: 0;
 }
 .ok-drag-grip:hover {
   background-color: oklch(0 0 0 / 6%);
 }
 .ok-drag-grip:active {
   cursor: grabbing;
+}
+
+/* Keyboard focus indicator — mirrors the editor-wide pattern used by
+   .tag, [data-link], a.ok-file-attachment, and task-list checkboxes.
+   The grip carries tabindex="-1" today, so the indicator only fires on
+   explicit `.focus()` calls; the add button is reachable via Tab while
+   its hover-only chrome is visible. */
+.ok-add-block-btn:focus-visible,
+.ok-drag-grip:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
 }
 
 /* Visibility fade — DragHandlePlugin sets inline visibility: hidden */
@@ -1609,6 +1641,18 @@ button:active:not(:disabled) {
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+  /* Soft "this block is in your range" halo for JSX wrappers that the
+   * browser's native text-selection paint can't reach (their chrome is
+   * contentEditable=false). Top-level color token consumed by the soft-
+   * halo paint rule; distinct from the instance-scoped `--selection-halo-*`
+   * family (precedent #33) that lives on `.jsx-component-wrapper` and
+   * gets overridden per `[data-component-type]`. Hue tracks --primary
+   * (~259) so the in-range halo reads as brand-coherent; alpha is
+   * intentionally lower than the focused `--ring` halo so range-encompass
+   * is visibly subordinate to NodeSelection. A future global `::selection`
+   * override would introduce a sibling `--selection` token at higher alpha
+   * for body prose. */
+  --selection-soft: oklch(0.66 0.18 259 / 0.18);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -1665,6 +1709,9 @@ button:active:not(:disabled) {
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+  /* Dark-mode soft range halo — slightly brighter + higher alpha so the
+   * 18%-on-white equivalent reads cleanly on dark backgrounds. */
+  --selection-soft: oklch(0.72 0.16 259 / 0.32);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -1918,6 +1965,36 @@ html.electron-mode [data-slot="sidebar-inner"] {
 @media (forced-colors: active) {
   .ProseMirror .jsx-component-wrapper[data-selected="true"]::after {
     border-color: CanvasText;
+  }
+}
+
+/* Soft "in your range" halo for JSX wrappers covered by a TextSelection /
+ * AllSelection. The wrapper's chrome is contentEditable=false, so the
+ * browser-native text highlight never reaches it; this rule paints a
+ * subtle filled treatment so range-encompass is visually legible.
+ *
+ * Painted via `background` on the ::after pseudo-element (not the wrapper)
+ * so it composes with the existing inset / radius / z-index:-1 tokens —
+ * the soft tone tucks behind the wrapper content the same way the full
+ * halo does. Specificity-wise, when both attributes happen to be set the
+ * full halo wins (selectedness > range-encompass); the `:not()` guard
+ * makes the intent explicit at the CSS layer in case a future code path
+ * sets both attrs simultaneously. */
+.ProseMirror .jsx-component-wrapper[data-range-selected="true"]:not([data-selected="true"])::after {
+  background: var(--selection-soft);
+  opacity: 1;
+}
+
+/* Forced-colors (Windows High Contrast): use the system Highlight color so
+ * the in-range halo remains visible when the user's OS forces a high-
+ * contrast palette. The `:not()` guard mirrors the standard rule above:
+ * keeps the soft in-range tint from compositing with the full-halo
+ * selection paint if a future code path were to set both attributes. */
+@media (forced-colors: active) {
+  .ProseMirror
+    .jsx-component-wrapper[data-range-selected="true"]:not([data-selected="true"])::after {
+    background: Highlight;
+    opacity: 0.5;
   }
 }
 
@@ -3242,6 +3319,14 @@ html.electron-mode [data-slot="sidebar-inner"] {
 .jsx-chrome-btn[data-active="true"] {
   background: var(--accent);
   color: var(--accent-foreground);
+}
+/* Keyboard focus indicator — mirrors the editor-wide pattern used by
+   .tag, [data-link], file-attachment links, and the drag-handle controls.
+   Chrome buttons are tab-reachable when the wrapper has roving tabIndex=0,
+   so the focus ring is load-bearing for keyboard-only operation. */
+.jsx-chrome-btn:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
 }
 /* Delete icon — subtle red tint on hover, not a full red background */
 .jsx-chrome-btn--delete:hover {

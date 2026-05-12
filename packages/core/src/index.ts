@@ -289,9 +289,12 @@ export {
 export {
   getParseHealth,
   incrementBlockFallback,
+  incrementBlockGripClickSelectFailed,
   incrementJsxAutoConvertFailed,
   incrementJsxAutoConvertSucceeded,
+  incrementJsxKeyboardDeleteFailed,
   incrementJsxMoveFailed,
+  incrementJsxPopoverCloseRestoreFailed,
   incrementJsxPropDropped,
   incrementJsxRenderFailure,
   incrementJsxStuckCopyFailed,

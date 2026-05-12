@@ -1,6 +1,6 @@
 import { type Editor, Extension } from '@tiptap/core';
 import type { Node as PMNode } from '@tiptap/pm/model';
-import type { EditorState } from '@tiptap/pm/state';
+import type { EditorState, Selection } from '@tiptap/pm/state';
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
 import { bridgeIdPluginKey } from './bridge-id-plugin.ts';
@@ -21,6 +21,7 @@ export interface BlockSelection {
   readonly ancestorChain: readonly BlockChainEntry[];
   readonly selectionOrigin: SelectionOrigin;
   readonly isDragging: boolean;
+  readonly rangeEncompassedBlockIds: ReadonlySet<string>;
 }
 
 /** PM transaction meta key — consumers that want to override origin
@@ -45,11 +46,14 @@ const SELECTION_REFRESH_META_KEY = 'selectionStatePlugin/refresh';
 
 export const selectionStatePluginKey = new PluginKey<BlockSelection>('selectionState');
 
+const EMPTY_RANGE_SET: ReadonlySet<string> = new Set<string>();
+
 const EMPTY_SELECTION: BlockSelection = {
   selectedBlockId: null,
   ancestorChain: [],
   selectionOrigin: 'programmatic',
   isDragging: false,
+  rangeEncompassedBlockIds: EMPTY_RANGE_SET,
 };
 
 /** Imperative read — returns the current plugin state or a safe empty value
@@ -99,6 +103,27 @@ export function getWrapperBridgeId(state: EditorState, pos: number): string {
   return bridgeIdPluginKey.getState(state)?.posToId.get(pos) ?? `pos-${pos}`;
 }
 
+function deriveRangeEncompassedBlockIds(
+  state: EditorState,
+  selection: Selection,
+): ReadonlySet<string> {
+  if (selection instanceof NodeSelection) return EMPTY_RANGE_SET;
+  const { from, to } = selection;
+  if (from >= to) return EMPTY_RANGE_SET;
+  const posToId = bridgeIdPluginKey.getState(state)?.posToId;
+  if (!posToId) return EMPTY_RANGE_SET;
+  let ids: Set<string> | null = null;
+  for (const [pos, id] of posToId) {
+    if (pos < from) continue;
+    const node = state.doc.nodeAt(pos);
+    if (!node) continue;
+    if (pos + node.nodeSize > to) continue;
+    if (!ids) ids = new Set<string>();
+    ids.add(id);
+  }
+  return ids ?? EMPTY_RANGE_SET;
+}
+
 export function deriveBlockSelection(
   state: EditorState,
   prev: BlockSelection,
@@ -106,11 +131,13 @@ export function deriveBlockSelection(
 ): BlockSelection {
   const chain = deriveAncestorChain(state, state.selection);
   const innermost = chain[chain.length - 1];
+  const rangeEncompassedBlockIds = deriveRangeEncompassedBlockIds(state, state.selection);
   const next: BlockSelection = {
     selectedBlockId: innermost?.bridgeId ?? null,
     ancestorChain: chain,
     selectionOrigin: overrides.origin ?? prev.selectionOrigin,
     isDragging: overrides.isDragging ?? prev.isDragging,
+    rangeEncompassedBlockIds,
   };
   if (blockSelectionEqual(prev, next)) return prev;
   return next;
@@ -128,6 +155,10 @@ function blockSelectionEqual(a: BlockSelection, b: BlockSelection): boolean {
     if (x.bridgeId !== y.bridgeId) return false;
     if (x.componentName !== y.componentName) return false;
     if (x.pos !== y.pos) return false;
+  }
+  if (a.rangeEncompassedBlockIds.size !== b.rangeEncompassedBlockIds.size) return false;
+  for (const id of a.rangeEncompassedBlockIds) {
+    if (!b.rangeEncompassedBlockIds.has(id)) return false;
   }
   return true;
 }
@@ -203,6 +234,8 @@ export const SelectionStatePlugin = Extension.create({
       view(view: EditorView) {
         RUNTIME.set(plugin, { pendingOrigin: null, isDragging: false });
 
+        const dragHost = view.dom.parentElement ?? view.dom;
+
         const onDragStart = () => {
           const runtime = RUNTIME.get(plugin);
           if (!runtime) return;
@@ -216,15 +249,15 @@ export const SelectionStatePlugin = Extension.create({
           scheduleRefresh(editor);
         };
 
-        view.dom.addEventListener('dragstart', onDragStart, true);
-        view.dom.addEventListener('dragend', onDragEnd, true);
-        view.dom.addEventListener('drop', onDragEnd, true);
+        dragHost.addEventListener('dragstart', onDragStart, true);
+        dragHost.addEventListener('dragend', onDragEnd, true);
+        dragHost.addEventListener('drop', onDragEnd, true);
 
         return {
           destroy: () => {
-            view.dom.removeEventListener('dragstart', onDragStart, true);
-            view.dom.removeEventListener('dragend', onDragEnd, true);
-            view.dom.removeEventListener('drop', onDragEnd, true);
+            dragHost.removeEventListener('dragstart', onDragStart, true);
+            dragHost.removeEventListener('dragend', onDragEnd, true);
+            dragHost.removeEventListener('drop', onDragEnd, true);
             RUNTIME.delete(plugin);
           },
         };

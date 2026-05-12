@@ -14,7 +14,6 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { EditorContent } from '@tiptap/react';
 import { initProseMirrorDoc, yCursorPlugin, ySyncPluginKey } from '@tiptap/y-tiptap';
 import { type FC, use, useEffect, useRef, useState } from 'react';
-import { Breadcrumb } from '@/components/editor/Breadcrumb';
 import { SelectionAnnouncer } from '@/components/editor/SelectionAnnouncer';
 import { parkTiptapEditor } from './editor-cache';
 import { InteractionLayerView } from './interaction-layer';
@@ -591,10 +590,8 @@ const TiptapEditorChrome: FC<TiptapEditorChromeProps> = ({
        * view.dom on remount. Editor identity preserved across navigation.
        */}
       <EditorContent editor={editor} className="h-full" />
-      {/* Selection layer footer — ancestry breadcrumb + aria-live announcer.
-          Breadcrumb renders only when a block is selected; announcer is
-          always in the DOM (role=status + sr-only) and updates imperatively. */}
-      <Breadcrumb editor={editor} />
+      {/* Aria-live announcer for selection changes. Always in the DOM
+          (role=status + sr-only) and updates imperatively. */}
       <SelectionAnnouncer editor={editor} />
       {/*
        * <InteractionLayerView> renders the singleton PropPanel / Toolbar /
