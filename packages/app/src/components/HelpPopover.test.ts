@@ -18,7 +18,7 @@ describe('HelpPopover Setup section', () => {
   });
 
   test('does NOT render a Settings entry (moved to <SettingsButton />)', () => {
-    expect(src).not.toContain('Settings…');
+    expect(src).not.toContain('<span>Settings</span>');
     expect(src).not.toContain('SETTINGS_OPEN_HASH');
     expect(src).not.toContain('help-popover-settings');
   });

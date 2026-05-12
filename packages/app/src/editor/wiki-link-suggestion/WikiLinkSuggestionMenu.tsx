@@ -63,7 +63,7 @@ export function WikiLinkSuggestionMenu({
         style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
         onMouseDown={preventFocusSteal}
       >
-        {mode === 'anchor' ? `Loading headings for ${pageTarget}…` : 'Loading pages…'}
+        {mode === 'anchor' ? `Loading headings for ${pageTarget}` : 'Loading pages'}
       </div>
     );
   }

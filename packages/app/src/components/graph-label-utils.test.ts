@@ -24,7 +24,7 @@ describe('graph label clamp helpers', () => {
 
     const label = pickGraphLabelText(descriptors.get('docs/db-sync'), 32, (text) => text.length);
 
-    expect(label).toBe('Database comparison ... sync');
+    expect(label).toBe('Database comparison … sync');
   });
 
   test('falls back to compressed path labels for path-like titles', () => {
@@ -44,13 +44,29 @@ describe('graph label clamp helpers', () => {
     expect(label).toBe('architecture / review');
   });
 
-  test('character-clamps when even the topic segment is too wide', () => {
+  test('falls back to word-boundary end-truncation when no candidate with full topic fits', () => {
     const descriptors = buildGraphLabelDescriptors([
       { id: 'docs/guide', label: 'Installation and configuration guide' },
     ]);
 
     const label = pickGraphLabelText(descriptors.get('docs/guide'), 16, (text) => text.length);
 
-    expect(label).toBe('Instal... guide');
+    expect(label).toBe('Installation…');
+  });
+
+  test('uses word-boundary middle-clamp when symmetric word boundaries fit (tier 1)', () => {
+    const descriptors = buildGraphLabelDescriptors([{ id: 'docs/sym', label: 'abc xyz xyz abc' }]);
+
+    const label = pickGraphLabelText(descriptors.get('docs/sym'), 7, (text) => text.length);
+
+    expect(label).toBe('abc…abc');
+  });
+
+  test('falls back to character end-truncation when no word boundary exists (tier 3)', () => {
+    const descriptors = buildGraphLabelDescriptors([{ id: 'docs/long', label: 'aaaaaa' }]);
+
+    const label = pickGraphLabelText(descriptors.get('docs/long'), 3, (text) => text.length);
+
+    expect(label).toBe('aa…');
   });
 });

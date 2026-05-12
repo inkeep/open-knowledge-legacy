@@ -3,23 +3,23 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
-const FIXTURE_REL = 'biome-plugins/__fixtures__/no-resolved-value-theme-source.fixture.tsx';
+const FIXTURE_REL = 'biome-plugins/__fixtures__/microcopy-ellipsis.fixture.tsx';
 
-describe('1-way theme contract — no-resolved-value-theme-source GritQL plugin', () => {
-  test('fires on exactly 3 positive cases (and on no negative case)', () => {
+describe('microcopy-ellipsis GritQL plugin', () => {
+  test('fires on exactly 2 positive cases (and on no negative case)', () => {
     const result = spawnSync('bunx', ['biome', 'check', FIXTURE_REL], {
       cwd: REPO_ROOT,
       encoding: 'utf-8',
     });
     expect(result.status).not.toBe(0);
     const output = `${result.stdout}\n${result.stderr}`;
-    const fires = (output.match(/1-way theme contract:/g) ?? []).length;
-    expect(fires).toBe(3);
+    const fires = (output.match(/Microcopy: drop the trailing/g) ?? []).length;
+    expect(fires).toBe(2);
   });
 
   test('plugin is registered in biome.jsonc', () => {
     const config = require(join(REPO_ROOT, 'biome.jsonc'));
     const plugins = config.plugins ?? [];
-    expect(plugins).toContain('./biome-plugins/no-resolved-value-theme-source.grit');
+    expect(plugins).toContain('./biome-plugins/microcopy-ellipsis.grit');
   });
 });

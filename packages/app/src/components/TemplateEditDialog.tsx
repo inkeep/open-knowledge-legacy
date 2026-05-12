@@ -165,7 +165,7 @@ function TemplateEditForm({
           Cancel
         </Button>
         <Button onClick={() => void form.submit()} disabled={!form.canSubmit}>
-          {form.isSaving ? 'Saving…' : 'Save'}
+          {form.isSaving ? 'Saving' : 'Save'}
         </Button>
       </DialogFooter>
     </>

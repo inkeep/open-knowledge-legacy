@@ -100,7 +100,7 @@ export function TagDialogBody({ fetchState, tag, onSelectDoc }: TagDialogBodyPro
   if (fetchState.kind === 'idle' || fetchState.kind === 'loading') {
     return (
       <p className="text-muted-foreground text-sm" data-testid="tag-dialog-loading">
-        Loading…
+        Loading
       </p>
     );
   }

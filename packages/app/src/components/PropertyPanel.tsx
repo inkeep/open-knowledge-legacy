@@ -103,7 +103,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
 
   function commitPatch(patch: FrontmatterPatch): PatchResult {
     if (!binding) {
-      return { ok: false, error: 'Connecting…' };
+      return { ok: false, error: 'Connecting' };
     }
     const result = binding.patch(patch);
     if (result.ok) return { ok: true };
@@ -162,7 +162,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   }
 
   function renameProperty(oldKey: string, newKey: string): PatchResult {
-    if (!binding) return { ok: false, error: 'Connecting…' };
+    if (!binding) return { ok: false, error: 'Connecting' };
     if (oldKey === newKey) return { ok: true };
     const result = binding.rename(oldKey, newKey);
     if (result.ok) return { ok: true };

@@ -218,7 +218,7 @@ describe('launchDesktop — spawn shape (FR11)', () => {
     expect(captured.args).toEqual(['-b', DESKTOP_BUNDLE_ID]);
     expect(captured.opts).toEqual({ detached: true, stdio: 'ignore' });
     expect(unrefCalled).toBe(true);
-    expect(logged).toContain('Launching Open Knowledge desktop…');
+    expect(logged).toContain('Launching Open Knowledge desktop');
     expect(logged).toContain('OK_FORCE_BROWSER=1');
     expect(logged).toContain('ok start');
   });

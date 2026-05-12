@@ -72,7 +72,7 @@ describe('ActivityPanelFileRow (static render)', () => {
         fetchBurstDiff={noopFetch}
       />,
     );
-    expect(off).not.toContain('writing…');
+    expect(off).not.toContain('>writing<');
 
     const on = render(
       <ActivityPanelFileRow
@@ -85,7 +85,7 @@ describe('ActivityPanelFileRow (static render)', () => {
         fetchBurstDiff={noopFetch}
       />,
     );
-    expect(on).toContain('writing…');
+    expect(on).toContain('>writing<');
   });
 
   test('collapsed row renders both undo buttons in the header, confirm dialog not shown', () => {

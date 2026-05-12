@@ -29,6 +29,7 @@ export default {
     'packages/server/src/http/request-validation.ts': ['exports', 'types'],
     'packages/server/src/http/error-response.ts': ['exports'],
     'packages/app/src/editor/http-client.ts': ['types'],
+    'biome-plugins/__fixtures__/**': ['files'],
   },
   workspaces: {
     'packages/app': {

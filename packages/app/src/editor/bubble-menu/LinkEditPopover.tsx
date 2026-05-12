@@ -65,7 +65,7 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
           <input
             ref={inputRef}
             type="url"
-            placeholder="Paste link..."
+            placeholder="Paste link"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={handleKeyDown}

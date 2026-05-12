@@ -492,7 +492,7 @@ function FileTreeMenu({
               }}
             >
               <FilePlus aria-hidden="true" />
-              New from template…
+              New from template
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={anyActionBusy}

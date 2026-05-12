@@ -149,7 +149,7 @@ export function ActivityPanelFileRow({
         </span>
         {isWriting ? (
           <span className="shrink-0 text-[11px] text-primary animate-pulse" role="status">
-            writing…
+            writing
           </span>
         ) : null}
       </div>

@@ -186,7 +186,7 @@ function McpConsentDialogForm({ payload, store, toast }: McpConsentDialogFormPro
             disabled={busy || selection.size === 0}
             data-testid="mcp-consent-add"
           >
-            {busy ? 'Working...' : 'Add'}
+            {busy ? 'Working' : 'Add'}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,5 +1,10 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.4.11/schema.json",
+  "plugins": [
+    "./biome-plugins/microcopy-ellipsis.grit",
+    "./biome-plugins/no-loosely-typed-webcontents-ipc.grit",
+    "./biome-plugins/no-resolved-value-theme-source.grit"
+  ],
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "formatter": {
     "enabled": true,

@@ -169,7 +169,7 @@ export function CloneDialog({
       setCloning(true);
     }
 
-    const toastId = toast.loading('Starting clone…', { duration: Number.POSITIVE_INFINITY });
+    const toastId = toast.loading('Starting clone', { duration: Number.POSITIVE_INFINITY });
     toastIdRef.current = toastId;
 
     const handle = resolvedTransport.start({
@@ -276,7 +276,7 @@ export function CloneDialog({
                 <Input
                   id="repo-filter"
                   aria-label="Filter repositories"
-                  placeholder="Filter repositories…"
+                  placeholder="Filter repositories"
                   value={repoFilter}
                   onChange={(e) => setRepoFilter(e.target.value)}
                   disabled={cloning || (loadingRepos && repos === null)}
@@ -372,7 +372,7 @@ export function CloneDialog({
                 disabled={!urlInput.trim()}
                 aria-describedby={usePicker ? 'clone-picker-hint' : undefined}
               >
-                {usePicker ? 'Clone…' : 'Clone'}
+                Clone
               </Button>
               {usePicker && (
                 <span id="clone-picker-hint" className="sr-only">

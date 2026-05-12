@@ -103,7 +103,7 @@ function ManualResolveDialog({ file, onResolve, onAbort }: ManualResolveDialogPr
             <DialogTitle>Resolving: {file}</DialogTitle>
           </DialogHeader>
           <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-            Loading…
+            Loading
           </div>
         </DialogContent>
       </Dialog>

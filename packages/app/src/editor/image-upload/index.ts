@@ -33,7 +33,7 @@ function createSkeletonWidget(file?: File): HTMLElement {
     'image-upload-skeleton w-full h-40 rounded-md bg-muted animate-pulse motion-reduce:animate-none my-2';
   el.setAttribute('data-upload-widget', 'loading');
   el.setAttribute('role', 'status');
-  el.setAttribute('aria-label', file?.name ? `Uploading ${file.name}…` : 'Uploading file…');
+  el.setAttribute('aria-label', file?.name ? `Uploading ${file.name}` : 'Uploading file');
   return el;
 }
 

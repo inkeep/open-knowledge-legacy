@@ -10,7 +10,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { SidebarMenuButton } from '@/components/ui/sidebar';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
-import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '@/lib/desktop-labels';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
 
 export const runWithToast = (
@@ -108,10 +107,10 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={onOpenFolder} data-testid="project-switcher-open-folder">
-          Open folder…
+          Open folder
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onSwitchProject} data-testid="project-switcher-switch-project">
-          {SWITCH_PROJECT_LABEL_WITH_ELLIPSIS}
+          Switch Project
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

@@ -78,7 +78,7 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
       </Tooltip>
       <DropdownMenuContent align="end" className="min-w-[220px]" data-testid="open-in-agent-menu">
         <DropdownMenuLabel className="font-mono font-normal tracking-wide uppercase text-muted-foreground text-xs">
-          Open in…
+          Open in
         </DropdownMenuLabel>
         {installedTargets.map((target) => {
           const installState = states[target.id];

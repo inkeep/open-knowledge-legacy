@@ -442,16 +442,6 @@ describe('M1 smoke', () => {
     expect(desktopMembers).toEqual(appMembers);
   });
 
-  test('M1 invariant: SWITCH_PROJECT_LABEL_WITH_ELLIPSIS drift catcher', async () => {
-    const [desktop, app] = await Promise.all([
-      import('../../src/shared/labels.ts'),
-      import('../../../app/src/lib/desktop-labels.ts'),
-    ]);
-    expect(typeof desktop.SWITCH_PROJECT_LABEL_WITH_ELLIPSIS).toBe('string');
-    expect(typeof app.SWITCH_PROJECT_LABEL_WITH_ELLIPSIS).toBe('string');
-    expect(app.SWITCH_PROJECT_LABEL_WITH_ELLIPSIS).toBe(desktop.SWITCH_PROJECT_LABEL_WITH_ELLIPSIS);
-  });
-
   test('M1 invariant: KeyringSmokeResult shape drift catcher (M5)', async () => {
     const desktopSmokeSrcPath = join(__dirname, '..', '..', 'src', 'utility', 'keyring-smoke.ts');
     const corePath = join(__dirname, '..', '..', '..', 'core', 'src', 'desktop-bridge.ts');

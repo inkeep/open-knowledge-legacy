@@ -95,6 +95,7 @@ function BreadcrumbContent({
                 title={`${entry.hiddenCount} hidden ancestors`}
                 className="opacity-60"
               >
+                {/* biome-ignore lint/plugin/microcopy-ellipsis: truncation indicator — represents collapsed ancestor segments */}
                 …
               </span>
             </span>

@@ -101,7 +101,7 @@ export function DocPanel({
             <Suspense
               fallback={
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                  Loading graph…
+                  Loading graph
                 </div>
               }
             >
@@ -121,7 +121,7 @@ export function DocPanel({
           <Suspense
             fallback={
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                Loading agent activity…
+                Loading agent activity
               </div>
             }
           >

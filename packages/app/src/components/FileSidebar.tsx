@@ -158,7 +158,7 @@ function FileSidebarInner({ onOpenSearch }: FileSidebarProps) {
           />
           <ToolbarButton
             icon={FilePlus}
-            label="New from template…"
+            label="New from template"
             onClick={() => tree?.startCreatingFromTemplate('')}
           />
           <ToolbarButton

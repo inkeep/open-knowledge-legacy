@@ -58,6 +58,7 @@ function createIpcEventStream<E extends { type: string }>(
     }
   };
 
+  // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
   ipcRenderer.on(eventChannel, listener);
   listenerAttached = true;
 
@@ -159,48 +160,56 @@ const bridge: OkDesktopBridge = {
 
   onProjectSwitched(cb: (next: OkDesktopConfig) => void) {
     const listener = (_event: IpcRendererEvent, next: OkDesktopConfig) => cb(next);
+    // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
     ipcRenderer.on('ok:project:switched', listener);
     return () => ipcRenderer.removeListener('ok:project:switched', listener);
   },
 
   onMenuAction(cb: (action: OkMenuAction) => void) {
     const listener = (_event: IpcRendererEvent, action: OkMenuAction) => cb(action);
+    // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
     ipcRenderer.on('ok:menu-action', listener);
     return () => ipcRenderer.removeListener('ok:menu-action', listener);
   },
 
   onUpdateDownloaded(cb: (info: OkUpdateDownloadedInfo) => void) {
     const listener = (_event: IpcRendererEvent, info: OkUpdateDownloadedInfo) => cb(info);
+    // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
     ipcRenderer.on('ok:update:downloaded', listener);
     return () => ipcRenderer.removeListener('ok:update:downloaded', listener);
   },
 
   onWhatsNew(cb: (info: OkWhatsNewInfo) => void) {
     const listener = (_event: IpcRendererEvent, info: OkWhatsNewInfo) => cb(info);
+    // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
     ipcRenderer.on('ok:update:whats-new', listener);
     return () => ipcRenderer.removeListener('ok:update:whats-new', listener);
   },
 
   onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void) {
     const listener = (_event: IpcRendererEvent, info: OkUpdateStuckHintInfo) => cb(info);
+    // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
     ipcRenderer.on('ok:update:stuck-hint', listener);
     return () => ipcRenderer.removeListener('ok:update:stuck-hint', listener);
   },
 
   onUpdateDowngradeWarning(cb: (info: OkUpdateDowngradeWarningInfo) => void) {
     const listener = (_event: IpcRendererEvent, info: OkUpdateDowngradeWarningInfo) => cb(info);
+    // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
     ipcRenderer.on('ok:update:downgrade-warning', listener);
     return () => ipcRenderer.removeListener('ok:update:downgrade-warning', listener);
   },
 
   onChannelChanged(cb: (info: OkChannelChangedInfo) => void) {
     const listener = (_event: IpcRendererEvent, info: OkChannelChangedInfo) => cb(info);
+    // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
     ipcRenderer.on('ok:state:update-channel-changed', listener);
     return () => ipcRenderer.removeListener('ok:state:update-channel-changed', listener);
   },
 
   onDeepLink(cb: (evt: { doc: string }) => void) {
     const listener = (_event: IpcRendererEvent, evt: { doc: string }) => cb(evt);
+    // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
     ipcRenderer.on('ok:deep-link', listener);
     return () => ipcRenderer.removeListener('ok:deep-link', listener);
   },
@@ -285,6 +294,7 @@ const bridge: OkDesktopBridge = {
   mcpWiring: {
     onShow(cb: (payload: OkMcpWiringShowPayload) => void) {
       const listener = (_event: IpcRendererEvent, payload: OkMcpWiringShowPayload) => cb(payload);
+      // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
       ipcRenderer.on('ok:mcp-wiring:show', listener);
       return () => ipcRenderer.removeListener('ok:mcp-wiring:show', listener);
     },
@@ -298,6 +308,7 @@ const bridge: OkDesktopBridge = {
   onboarding: {
     onShow(cb: (payload: OkOnboardingShowPayload) => void) {
       const listener = (_event: IpcRendererEvent, payload: OkOnboardingShowPayload) => cb(payload);
+      // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
       ipcRenderer.on('ok:onboarding:show', listener);
       return () => ipcRenderer.removeListener('ok:onboarding:show', listener);
     },
@@ -328,6 +339,7 @@ const bridge: OkDesktopBridge = {
               readonly contentDir: string;
             },
       ) => cb(payload);
+      // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
       ipcRenderer.on('ok:onboarding:toast', listener);
       return () => ipcRenderer.removeListener('ok:onboarding:toast', listener);
     },

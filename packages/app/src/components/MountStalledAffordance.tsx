@@ -38,7 +38,7 @@ export function MountStalledAffordance({
 
   return (
     <div className="absolute inset-x-0 bottom-8 z-20 flex justify-center text-xs text-muted-foreground">
-      <span>Still loading…</span>
+      <span>Still loading</span>
       <Button variant="link" size="sm" className="h-auto px-2 py-0 text-xs" onClick={handleCancel}>
         Cancel
       </Button>
