@@ -364,7 +364,7 @@ function ScrollPreservingContainer({
     <div
       ref={ref}
       data-testid="editor-scroll-container"
-      className="subtle-scrollbar h-full overflow-y-auto pt-14"
+      className="subtle-scrollbar h-full overflow-y-auto pt-14 scroll-pt-14"
       style={{ overflowAnchor: 'auto' }}
     >
       {children}
