@@ -77,8 +77,6 @@ async function installDelayedDesktopSessionBridge(
         onUpdateDownloaded: () => unsubscribe,
         onWhatsNew: () => unsubscribe,
         onUpdateStuckHint: () => unsubscribe,
-        onUpdateDowngradeWarning: () => unsubscribe,
-        onChannelChanged: () => unsubscribe,
         onDeepLink: () => unsubscribe,
         dialog: {
           openFolder: async () => null,
@@ -119,8 +117,6 @@ async function installDelayedDesktopSessionBridge(
         },
         update: {
           relaunchNow: async () => {},
-          setChannel: async () => {},
-          confirmDowngrade: async () => {},
           checkNow: async () => {},
         },
         state: {

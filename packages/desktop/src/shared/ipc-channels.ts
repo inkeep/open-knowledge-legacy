@@ -247,8 +247,6 @@ export interface RequestChannels {
   };
   'ok:navigator:open': { args: []; result: undefined };
   'ok:update:relaunch-now': { args: []; result: undefined };
-  'ok:update:set-channel': { args: [request: { channel: OkUpdateChannel }]; result: undefined };
-  'ok:update:confirm-downgrade': { args: []; result: undefined };
   'ok:update:check-now': { args: []; result: undefined };
   'ok:state:query': {
     args: [];

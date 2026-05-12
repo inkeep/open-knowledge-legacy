@@ -110,15 +110,6 @@ export type OkUpdateChannel = 'latest' | 'beta';
 
 export type OkThemeSource = 'system' | 'light' | 'dark';
 
-export interface OkUpdateDowngradeWarningInfo {
-  readonly currentVersion: string;
-  readonly targetVersion: string;
-}
-
-export interface OkChannelChangedInfo {
-  readonly channel: OkUpdateChannel;
-}
-
 interface OkStateSnapshot {
   readonly channel: OkUpdateChannel;
   readonly schemaIncompatibility: {
@@ -251,8 +242,6 @@ export interface OkDesktopBridge {
   onUpdateDownloaded(cb: (info: OkUpdateDownloadedInfo) => void): OkUnsubscribe;
   onWhatsNew(cb: (info: OkWhatsNewInfo) => void): OkUnsubscribe;
   onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void): OkUnsubscribe;
-  onUpdateDowngradeWarning(cb: (info: OkUpdateDowngradeWarningInfo) => void): OkUnsubscribe;
-  onChannelChanged(cb: (info: OkChannelChangedInfo) => void): OkUnsubscribe;
   onDeepLink(cb: (evt: { doc: string }) => void): OkUnsubscribe;
 
   setThemeSource(source: OkThemeSource): Promise<{ ok: true }>;
@@ -365,8 +354,6 @@ export interface OkDesktopBridge {
 
   update: {
     relaunchNow(): Promise<void>;
-    setChannel(channel: OkUpdateChannel): Promise<void>;
-    confirmDowngrade(): Promise<void>;
     checkNow(): Promise<void>;
   };
 

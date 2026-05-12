@@ -13,33 +13,20 @@ describe('useUpdateChannel source-level guards', () => {
     expect(SRC).toMatch(/import\s+['"]@\/lib\/desktop-bridge-types['"]/);
   });
 
-  test('subscribes to onChannelChanged on mount', () => {
-    expect(SRC).toContain('onChannelChanged(');
-  });
-
-  test('queries initial state via state.query()', () => {
+  test('queries the channel via state.query()', () => {
     expect(SRC).toMatch(/state[\s\n]*\.query\(\)/);
   });
 
-  test('broadcast wins over a late-arriving query result (race policy)', () => {
-    expect(SRC).toContain('broadcastReceivedRef');
-    expect(SRC).toMatch(/broadcastReceivedRef\.current\s*=\s*true/);
-    expect(SRC).toMatch(/if\s*\(\s*broadcastReceivedRef\.current\s*\)\s*return/);
+  test('is read-only — no setter, no channel-change subscription', () => {
+    expect(SRC).not.toContain('onChannelChanged');
+    expect(SRC).not.toMatch(/setChannel\b/);
   });
 
   test('returns null channel + no subscription when bridge is absent', () => {
     expect(SRC).toMatch(/if\s*\(\s*!bridge\s*\)\s*return/);
   });
 
-  test('useState initializes channel to null until first source resolves', () => {
+  test('useState initializes channel to null until the query resolves', () => {
     expect(SRC).toMatch(/useState<UpdateChannel\s*\|\s*null>\(null\)/);
-  });
-
-  test('setChannel rejects when the bridge is unavailable (caller can surface a toast)', () => {
-    expect(SRC).toMatch(/throw\s+new\s+Error\([^)]*setChannel/);
-  });
-
-  test('returns the unsubscribe handle from useEffect cleanup', () => {
-    expect(SRC).toMatch(/return\s+unsubscribe/);
   });
 });

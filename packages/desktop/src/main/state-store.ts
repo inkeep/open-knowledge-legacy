@@ -30,7 +30,6 @@ export interface AppState {
   stuckHintShown: boolean;
   dismissedRepairForBundle: string | null;
   projectSessions: Record<string, ProjectSessionState>;
-  updateChannel: UpdateChannel;
   schemaVersion: number;
   lastUsedProjectParent: string | null;
 }
@@ -47,7 +46,6 @@ export function emptyState(): AppState {
     stuckHintShown: false,
     dismissedRepairForBundle: null,
     projectSessions: {},
-    updateChannel: 'latest',
     schemaVersion: CURRENT_SCHEMA_VERSION,
     lastUsedProjectParent: null,
   };
@@ -267,7 +265,6 @@ export function parseAppState(raw: unknown): AppState | null {
   const stuckHintShown = obj.stuckHintShown === true;
   const dismissedRepairForBundle =
     typeof obj.dismissedRepairForBundle === 'string' ? obj.dismissedRepairForBundle : null;
-  const updateChannel: UpdateChannel = obj.updateChannel === 'beta' ? 'beta' : 'latest';
   const schemaVersion =
     typeof obj.schemaVersion === 'number' && Number.isInteger(obj.schemaVersion)
       ? obj.schemaVersion
@@ -286,7 +283,6 @@ export function parseAppState(raw: unknown): AppState | null {
     stuckHintShown,
     dismissedRepairForBundle,
     projectSessions,
-    updateChannel,
     schemaVersion,
     lastUsedProjectParent,
   };

@@ -45,7 +45,6 @@ import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { useConfigContext } from '@/lib/config-provider';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
 import { cn } from '@/lib/utils';
-import { ChannelSection } from './ChannelSection';
 import { OkignoreSection } from './OkignoreSection';
 import { ProjectTemplatesSection } from './ProjectTemplatesSection';
 import {
@@ -336,21 +335,16 @@ function SettingsContent({
   okignoreSynced,
 }: SettingsContentProps) {
   if (activeId === 'preferences') {
-    return (
-      <div className="space-y-8">
-        {userBinding ? (
-          <BoundSchemaSection
-            title="Appearance"
-            description="UI preferences. Editor toggles continue to write localStorage as a cache."
-            scope="user"
-            binding={userBinding}
-            fields={FIELDS_APPEARANCE}
-          />
-        ) : (
-          <SectionSkeleton />
-        )}
-        <ChannelSection />
-      </div>
+    return userBinding ? (
+      <BoundSchemaSection
+        title="Appearance"
+        description="UI preferences. Editor toggles continue to write localStorage as a cache."
+        scope="user"
+        binding={userBinding}
+        fields={FIELDS_APPEARANCE}
+      />
+    ) : (
+      <SectionSkeleton />
     );
   }
   if (activeId === 'sync') {
