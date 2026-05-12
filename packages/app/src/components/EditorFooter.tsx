@@ -8,8 +8,12 @@ export function EditorFooter({ stats }: EditorFooterProps) {
   return (
     <section
       aria-label="Document statistics"
-      className="flex h-6 shrink-0 items-center justify-end gap-3 px-3 text-2xs text-muted-foreground"
+      className="relative flex h-6 shrink-0 items-center justify-end gap-3 bg-background px-3 text-2xs text-muted-foreground"
     >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-full h-2 bg-linear-to-t from-background to-transparent"
+      />
       <span>
         <span className="tabular-nums">{stats.words.toLocaleString()}</span>{' '}
         {stats.words === 1 ? 'word' : 'words'}

@@ -450,6 +450,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
         onOpenChange={onOpenChange}
         title="Workspace Command Palette"
         description="Search files, folders, and commands for the current workspace."
+        className="sm:max-w-2xl"
         commandProps={{
           shouldFilter: false,
           className:

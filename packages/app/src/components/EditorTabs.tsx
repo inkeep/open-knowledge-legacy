@@ -269,7 +269,7 @@ export function EditorTabs() {
     <div
       ref={tabListRef}
       className={cn(
-        'ml-2 flex h-12 min-w-0 touch-manipulation flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-fade-mask-x [scrollbar-width:none]',
+        'pl-2 flex h-12 min-w-0 touch-manipulation flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-fade-mask-x [scrollbar-width:none]',
         isElectronHost && '[-webkit-app-region:drag]',
       )}
       onWheel={scrollTabListOnWheel}

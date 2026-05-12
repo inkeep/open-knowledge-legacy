@@ -243,5 +243,5 @@ export function SourceEditor({
     applyRawMdxNavigation(view, pendingNavigation.detail);
   }, [docName, isSourceModeActive]);
 
-  return <div ref={containerRef} className="source-editor h-full py-3" />;
+  return <div ref={containerRef} className="source-editor h-full pb-3" />;
 }
