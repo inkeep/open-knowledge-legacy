@@ -10,6 +10,7 @@ import {
   STUCK_HINT_THRESHOLD_MS,
   startAutoUpdater,
   UPDATE_CHECK_INTERVAL_MS,
+  UPDATE_CHECK_JITTER_MS,
   type UpdaterLike,
 } from '../../src/main/auto-updater.ts';
 import {
@@ -82,8 +83,8 @@ function makeFakeWindow(captured: CapturedSend[]): SendTarget {
 }
 
 interface FakeClock {
-  setInterval: ReturnType<typeof mock>;
-  clearInterval: ReturnType<typeof mock>;
+  setTimeout: ReturnType<typeof mock>;
+  clearTimeout: ReturnType<typeof mock>;
   lastCallback: (() => void) | null;
   lastHandle: unknown;
   lastMs: number | null;
@@ -91,20 +92,20 @@ interface FakeClock {
 
 function makeFakeClock(): FakeClock {
   const clock: FakeClock = {
-    setInterval: mock(() => Symbol('interval-handle')),
-    clearInterval: mock(() => {}),
+    setTimeout: mock(() => Symbol('timer-handle')),
+    clearTimeout: mock(() => {}),
     lastCallback: null,
     lastHandle: null,
     lastMs: null,
   };
-  clock.setInterval = mock((cb: () => void, ms: number) => {
+  clock.setTimeout = mock((cb: () => void, ms: number) => {
     clock.lastCallback = cb;
     clock.lastMs = ms;
-    const handle = Symbol('interval-handle');
+    const handle = Symbol('timer-handle');
     clock.lastHandle = handle;
-    return handle as unknown as ReturnType<typeof setInterval>;
+    return handle as unknown as ReturnType<typeof setTimeout>;
   });
-  clock.clearInterval = mock((h: unknown) => {
+  clock.clearTimeout = mock((h: unknown) => {
     if (h === clock.lastHandle) {
       clock.lastCallback = null;
       clock.lastHandle = null;
@@ -139,6 +140,7 @@ function makeRig(
     extraWindowCount?: number;
     prepareForRelaunch?: () => void;
     showCheckNowResult?: Parameters<typeof startAutoUpdater>[0]['showCheckNowResult'];
+    random?: () => number;
   },
 ): {
   rig: TestRig;
@@ -152,6 +154,7 @@ function makeRig(
     extraWindowCount = 0,
     prepareForRelaunch,
     showCheckNowResult,
+    random = () => 0,
     ...stateOverrides
   } = overrides ?? {};
   const primaryCaptured: CapturedSend[] = [];
@@ -195,6 +198,7 @@ function makeRig(
     showCheckNowResult,
     clock: rig.clock,
     now: () => rig.now,
+    random,
     onDispatch: (kind) => {
       rig.dispatches.push(kind);
     },
@@ -885,41 +889,132 @@ describe('first-launch version notice (Toast B — AC7, D9)', () => {
   });
 });
 
-describe('periodic check singleton (AC10, D10)', () => {
-  test('registers exactly one interval after the first launch check resolves', async () => {
+describe('multi-window delivery: relaunch banner everywhere, "updated to" notice on the primary only', () => {
+  test('ok:update:downloaded (relaunch banner) reaches every open window', () => {
+    const { rig } = makeRig({ extraWindowCount: 2 });
+    expect(rig.windows).toHaveLength(3);
+    rig.updater.emit('update-downloaded', { version: '0.3.2' });
+    for (const win of rig.windows) {
+      const toastA = win.filter((c) => c.channel === 'ok:update:downloaded');
+      expect(toastA).toHaveLength(1);
+      expect(toastA[0]?.payload).toEqual({ version: '0.3.2' });
+    }
+    expect(rig.state.versionPendingInstall).toBe('0.3.2');
+    expect(rig.dispatches.filter((d) => d === 'update-downloaded-toast-a')).toHaveLength(1);
+  });
+
+  test('no getAllWindows wired (default fixture) → relaunch banner falls back to the primary window', () => {
+    const { rig } = makeRig();
+    rig.updater.emit('update-downloaded', { version: '0.3.2' });
+    expect(rig.windows).toHaveLength(1);
+    expect(rig.windows[0]?.filter((c) => c.channel === 'ok:update:downloaded')).toHaveLength(1);
+  });
+
+  test('ok:update:whats-new ("Updated to Version X") goes to the primary window only', () => {
+    const { rig } = makeRig({
+      lastSeenVersion: '0.3.0',
+      appVersion: '0.3.1',
+      extraWindowCount: 2,
+    });
+    expect(rig.windows).toHaveLength(3);
+    const primaryWhatsNew =
+      rig.windows[0]?.filter((c) => c.channel === 'ok:update:whats-new') ?? [];
+    expect(primaryWhatsNew).toHaveLength(1);
+    expect(primaryWhatsNew[0]?.payload).toMatchObject({ version: '0.3.1' });
+    expect(rig.windows[1]?.filter((c) => c.channel === 'ok:update:whats-new')).toHaveLength(0);
+    expect(rig.windows[2]?.filter((c) => c.channel === 'ok:update:whats-new')).toHaveLength(0);
+    expect(rig.dispatches.filter((d) => d === 'whats-new-toast-b')).toHaveLength(1);
+  });
+
+  test('dedup holds across the fan-out — re-fired update-downloaded for the same version is not re-broadcast to any window', () => {
+    const { rig } = makeRig({ extraWindowCount: 1 });
+    rig.updater.emit('update-downloaded', { version: '0.3.2' });
+    rig.updater.emit('update-downloaded', { version: '0.3.2' });
+    for (const win of rig.windows) {
+      expect(win.filter((c) => c.channel === 'ok:update:downloaded')).toHaveLength(1);
+    }
+    expect(rig.dispatches).toContain('update-downloaded-deduped' as DispatchKind);
+  });
+});
+
+describe('periodic check singleton + jitter (AC10, D10)', () => {
+  test('registers exactly one timer after the first launch check resolves', async () => {
     const { rig } = makeRig();
     await rig.updater.checkForUpdates();
     await Promise.resolve();
     await Promise.resolve();
-    expect(rig.clock.setInterval).toHaveBeenCalledTimes(1);
+    expect(rig.clock.setTimeout).toHaveBeenCalledTimes(1);
     expect(rig.clock.lastMs).toBe(UPDATE_CHECK_INTERVAL_MS);
-    expect(rig.clock.lastMs).toBe(60 * 60 * 1000);
   });
 
-  test('interval callback calls checkForUpdates', async () => {
+  test('scheduled delay = UPDATE_CHECK_INTERVAL_MS + floor(random() * UPDATE_CHECK_JITTER_MS)', async () => {
+    const half = makeRig({ random: () => 0.5 });
+    await half.rig.updater.checkForUpdates();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(half.rig.clock.lastMs).toBe(
+      UPDATE_CHECK_INTERVAL_MS + Math.floor(0.5 * UPDATE_CHECK_JITTER_MS),
+    );
+    expect(half.rig.clock.lastMs).toBeGreaterThan(UPDATE_CHECK_INTERVAL_MS);
+
+    const top = makeRig({ random: () => 0.999_999 });
+    await top.rig.updater.checkForUpdates();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(top.rig.clock.lastMs).toBeGreaterThanOrEqual(UPDATE_CHECK_INTERVAL_MS);
+    expect(top.rig.clock.lastMs).toBeLessThan(UPDATE_CHECK_INTERVAL_MS + UPDATE_CHECK_JITTER_MS);
+  });
+
+  test('jitter is re-drawn on every fire (no fleet lockstep)', async () => {
+    const values = [0, 0.25, 0.75, 0.5];
+    let i = 0;
+    const { rig } = makeRig({ random: () => values[i++ % values.length] ?? 0 });
+    await rig.updater.checkForUpdates();
+    await Promise.resolve();
+    await Promise.resolve();
+    const observed: Array<number | null> = [rig.clock.lastMs];
+    for (let tick = 0; tick < 3; tick++) {
+      rig.clock.lastCallback?.();
+      observed.push(rig.clock.lastMs);
+    }
+    expect(observed).toEqual([
+      UPDATE_CHECK_INTERVAL_MS + Math.floor(0 * UPDATE_CHECK_JITTER_MS),
+      UPDATE_CHECK_INTERVAL_MS + Math.floor(0.25 * UPDATE_CHECK_JITTER_MS),
+      UPDATE_CHECK_INTERVAL_MS + Math.floor(0.75 * UPDATE_CHECK_JITTER_MS),
+      UPDATE_CHECK_INTERVAL_MS + Math.floor(0.5 * UPDATE_CHECK_JITTER_MS),
+    ]);
+    expect(rig.clock.setTimeout).toHaveBeenCalledTimes(4);
+  });
+
+  test('timer callback calls checkForUpdates and re-arms', async () => {
     const { rig } = makeRig();
     await rig.updater.checkForUpdates();
     await Promise.resolve();
     await Promise.resolve();
     rig.updater.checkForUpdates.mockClear();
+    rig.clock.setTimeout.mockClear();
     rig.clock.lastCallback?.();
     expect(rig.updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(rig.clock.setTimeout).toHaveBeenCalledTimes(1);
   });
 
-  test('destroy() clears the interval', async () => {
+  test('destroy() clears the pending timer', async () => {
     const { rig, handle } = makeRig();
     await rig.updater.checkForUpdates();
     await Promise.resolve();
     await Promise.resolve();
     handle.destroy();
-    expect(rig.clock.clearInterval).toHaveBeenCalled();
+    expect(rig.clock.clearTimeout).toHaveBeenCalled();
   });
 
-  test('UPDATE_CHECK_INTERVAL_MS is 1 hour', () => {
-    expect(UPDATE_CHECK_INTERVAL_MS).toBe(60 * 60 * 1000);
+  test('UPDATE_CHECK_INTERVAL_MS is the short pre-release cadence; jitter is a small fraction of it', () => {
+    expect(UPDATE_CHECK_INTERVAL_MS).toBe(5 * 60 * 1000);
+    expect(UPDATE_CHECK_JITTER_MS).toBeGreaterThanOrEqual(5 * 1000);
+    expect(UPDATE_CHECK_JITTER_MS).toBeLessThanOrEqual(60 * 1000);
+    expect(UPDATE_CHECK_JITTER_MS).toBeLessThan(UPDATE_CHECK_INTERVAL_MS);
   });
 
-  test('first-launch check rejection still registers the periodic interval', async () => {
+  test('first-launch check rejection still registers the periodic timer', async () => {
     const updater = new FakeUpdater();
     const ipc = makeFakeIpc();
     const clock = makeFakeClock();
@@ -947,13 +1042,14 @@ describe('periodic check singleton (AC10, D10)', () => {
       isPackaged: true,
       clock,
       now: () => new Date(),
+      random: () => 0,
       logger,
     });
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
-    expect(clock.setInterval).toHaveBeenCalledTimes(1);
+    expect(clock.setTimeout).toHaveBeenCalledTimes(1);
     expect(clock.lastMs).toBe(UPDATE_CHECK_INTERVAL_MS);
     expect(logger.debug).toHaveBeenCalled();
   });
@@ -1163,6 +1259,20 @@ describe('check-now → showCheckNowResult feedback dispatch', () => {
     expect(showCheckNowResult).toHaveBeenCalledWith({
       kind: 'error',
       message: 'feed not reachable',
+    });
+  });
+});
+
+describe('handle.checkForUpdatesNow() routes the menu through runMenuDrivenCheck', () => {
+  test('a menu click arms menuCheckPending so the result reaches showCheckNowResult', () => {
+    const showCheckNowResult = mock(() => {});
+    const { rig, handle } = makeRig({ appVersion: '0.4.0-beta.27', showCheckNowResult });
+    void handle.checkForUpdatesNow();
+    rig.updater.emit('update-not-available', { version: '0.4.0-beta.27' });
+    expect(showCheckNowResult).toHaveBeenCalledTimes(1);
+    expect(showCheckNowResult).toHaveBeenCalledWith({
+      kind: 'not-available',
+      currentVersion: '0.4.0-beta.27',
     });
   });
 });
@@ -1556,7 +1666,7 @@ describe('bootAutoUpdater catch-path (Major #5)', () => {
     expect(handle).not.toBeNull();
     expect(typeof handle?.destroy).toBe('function');
     handle?.destroy();
-    expect(clock.clearInterval).toHaveBeenCalled();
+    expect(clock.clearTimeout).toHaveBeenCalled();
   });
 
   test('startAutoUpdater synchronous throw during wire-up is caught', async () => {

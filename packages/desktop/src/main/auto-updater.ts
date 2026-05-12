@@ -30,8 +30,8 @@ export interface UpdaterLike {
 export interface IpcMainLike extends Pick<IpcMain, 'handle' | 'removeHandler'> {}
 
 interface Clock {
-  setInterval(cb: () => void, ms: number): ReturnType<typeof setInterval>;
-  clearInterval(handle: ReturnType<typeof setInterval>): void;
+  setTimeout(cb: () => void, ms: number): ReturnType<typeof setTimeout>;
+  clearTimeout(handle: ReturnType<typeof setTimeout>): void;
 }
 
 export type DispatchKind =
@@ -63,6 +63,7 @@ interface StartAutoUpdaterOpts {
   showCheckNowResult?: (result: CheckNowResult) => void;
   clock?: Clock;
   now?: () => Date;
+  random?: () => number;
   onDispatch?: (kind: DispatchKind) => void;
   logger?: Logger;
 }
@@ -87,9 +88,9 @@ interface Logger {
 }
 
 const DEFAULT_CLOCK: Clock = {
-  setInterval: (cb, ms) => globalThis.setInterval(cb, ms),
-  clearInterval: (h) => {
-    globalThis.clearInterval(h);
+  setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
+  clearTimeout: (h) => {
+    globalThis.clearTimeout(h);
   },
 };
 
@@ -100,7 +101,9 @@ const DEFAULT_LOGGER: Logger = {
   debug: (msg, ctx) => console.debug('[updater]', msg, ctx ?? ''),
 };
 
-export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+export const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+
+export const UPDATE_CHECK_JITTER_MS = 30 * 1000;
 
 export const STUCK_HINT_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -201,6 +204,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     showCheckNowResult,
     clock = DEFAULT_CLOCK,
     now = () => new Date(),
+    random = Math.random,
     onDispatch,
     logger = DEFAULT_LOGGER,
   } = opts;
@@ -227,6 +231,20 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       return;
     }
     sendToRenderer(target.webContents, channel, payload);
+  };
+
+  const broadcastToAllWindows = <K extends keyof EventChannels>(
+    channel: K,
+    payload: EventChannels[K]['payload'],
+  ): void => {
+    const all = getAllWindows?.();
+    if (!all || all.length === 0) {
+      broadcast(channel, payload);
+      return;
+    }
+    for (const win of all) {
+      sendToRenderer(win.webContents, channel, payload);
+    }
   };
 
   const persistSafely = (next: AppState, ctx: string): boolean => {
@@ -287,6 +305,24 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
 
   let pendingDowngrade = false;
   let menuCheckPending = false;
+
+  const runMenuDrivenCheck = (): Promise<unknown> => {
+    menuCheckPending = true;
+    const checkPromise = updater.checkForUpdates();
+    void checkPromise.catch((err: unknown) => {
+      logger.debug('check-now checkForUpdates rejected', {
+        message: err instanceof Error ? err.message : String(err),
+      });
+      if (menuCheckPending) {
+        menuCheckPending = false;
+        showCheckNowResult?.({
+          kind: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+    return checkPromise;
+  };
 
   const onUpdateAvailable = (info: { version?: string }): void => {
     logger.info('update-available', { version: info.version });
@@ -367,8 +403,8 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     }
     if (!persistSafely({ ...state, versionPendingInstall: version }, 'update-downloaded')) return;
     const fireToastA = () => {
-      broadcast('ok:update:downloaded', { version });
-      logger.info('update-downloaded dispatched Toast A', { version });
+      broadcastToAllWindows('ok:update:downloaded', { version });
+      logger.info('update-downloaded dispatched Toast A (all windows)', { version });
       onDispatch?.('update-downloaded-toast-a');
     };
     if (whenRendererReady) whenRendererReady(fireToastA);
@@ -435,19 +471,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   });
 
   register('ok:update:check-now', (_event: IpcMainInvokeEvent): undefined => {
-    menuCheckPending = true;
-    void updater.checkForUpdates().catch((err: unknown) => {
-      logger.debug('check-now checkForUpdates rejected', {
-        message: err instanceof Error ? err.message : String(err),
-      });
-      if (menuCheckPending) {
-        menuCheckPending = false;
-        showCheckNowResult?.({
-          kind: 'error',
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
-    });
+    void runMenuDrivenCheck();
     return undefined;
   });
 
@@ -478,17 +502,28 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     }
   }
 
-  let intervalHandle: ReturnType<typeof setInterval> | null = null;
+  let timerHandle: ReturnType<typeof setTimeout> | null = null;
 
-  const startPeriodicChecks = (): void => {
-    if (intervalHandle) return;
-    intervalHandle = clock.setInterval(() => {
+  const nextCheckDelayMs = (): number =>
+    UPDATE_CHECK_INTERVAL_MS + Math.floor(random() * UPDATE_CHECK_JITTER_MS);
+
+  const scheduleNextCheck = (): void => {
+    const delayMs = nextCheckDelayMs();
+    timerHandle = clock.setTimeout(() => {
+      timerHandle = null;
       void updater.checkForUpdates().catch((err: unknown) => {
         logger.debug('checkForUpdates rejected', {
           message: err instanceof Error ? err.message : String(err),
         });
       });
-    }, UPDATE_CHECK_INTERVAL_MS);
+      scheduleNextCheck();
+    }, delayMs);
+    logger.debug('next update check scheduled', { delayMs });
+  };
+
+  const startPeriodicChecks = (): void => {
+    if (timerHandle) return;
+    scheduleNextCheck();
   };
 
   if (isPackaged || forceDevBypass) {
@@ -543,12 +578,12 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     },
     checkForUpdatesNow(): Promise<unknown> {
       logger.info('check-now invoked from menu');
-      return updater.checkForUpdates();
+      return runMenuDrivenCheck();
     },
     destroy(): void {
-      if (intervalHandle) {
-        clock.clearInterval(intervalHandle);
-        intervalHandle = null;
+      if (timerHandle) {
+        clock.clearTimeout(timerHandle);
+        timerHandle = null;
       }
       const detach = (event: string, handler: (...args: unknown[]) => void): void => {
         try {
