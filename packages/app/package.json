@@ -28,6 +28,8 @@
     "test:perf": "bun test tests/stress/component-blocks.perf.test.ts",
     "test:a11y": "playwright test --config playwright.a11y.config.ts",
     "perf:profile": "bun run tests/perf/profile.ts",
+    "sweep:cache-regime": "bun run tests/perf/profile.ts --scenario=sweep-cache-regime",
+    "probe:tiptap-leak": "bun run tests/perf/probes/tiptap-destroy-leak.ts",
     "size": "turbo run build --filter=@inkeep/open-knowledge-app && size-limit"
   },
   "size-limit": [
@@ -166,6 +168,7 @@
     "fast-check": "^4.6.0",
     "jsdom": "^29.1.1",
     "lib0": "^0.2.117",
+    "memlab": "2.0.2",
     "remark-mdx": "^3.1.1",
     "remark-parse": "^11.0.0",
     "sirv": "^3.0.2",

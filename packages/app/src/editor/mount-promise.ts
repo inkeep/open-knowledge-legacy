@@ -302,7 +302,6 @@ async function runMountBody(params: MountBodyParams): Promise<void> {
     entry.settled = true;
     entry.resolved = true;
     clearStalledTimer(entry);
-    mark('ok/mount/cache-hit', { docName, mountId: entry.mountId });
     resolveFn(v2HitEntry);
     return;
   }
