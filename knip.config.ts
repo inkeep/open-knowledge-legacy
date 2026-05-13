@@ -40,6 +40,7 @@ export default {
         '@tiptap/extension-collaboration-cursor', // transitive dependency for `y-prosemirror@1.3.7` patch
         '@hookform/resolvers', // intentionally installed but uninstantiated (resolver-less); kept for parity with agents-private and future schema-bound dialogs
         'fuzzysort', // installed by PR #361 (workspace omnibar search) ahead of the consumer wire-up; same idiom as @hookform/resolvers
+        'highlight.js', // lowlight's peer dependency — never imported here directly, but lowlight's grammar registrations resolve through it
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],
     },

@@ -3734,6 +3734,11 @@ Homepage: https://github.com/zertosh/loose-envify
 
 Copyright (c) 2015 Andres Suarez <zertosh@gmail.com>
 
+### `lowlight@3.3.0`
+Homepage: https://github.com/wooorm/lowlight
+
+Copyright (c) Titus Wormer <tituswormer@gmail.com>
+
 ### `markdown-it@14.1.1`
 Homepage: https://github.com/markdown-it/markdown-it
 
@@ -5921,6 +5926,11 @@ Copyright (c) 2009-2015, Kevin Decker <kpdecker@gmail.com>
 Homepage: https://github.com/fastify/fast-uri
 
 Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae Copyright (c) 2021-present The Fastify team
+
+### `highlight.js@11.11.1`
+Homepage: https://highlightjs.org/
+
+Copyright (c) 2006, Ivan Sagalaev.
 
 ### `ieee754@1.2.1`
 Homepage: https://github.com/feross/ieee754
