@@ -22,12 +22,6 @@ const FOLDER_TAB_PREFIX = '\u0000folder:';
 const ASSET_TAB_PREFIX = '\u0000asset:';
 const TAB_INSTANCE_SEPARATOR = '\u0000doc-tab:';
 
-interface OpenDocTabOptions {
-  behavior: 'append' | 'replace-active';
-  currentTabId: string | null;
-  limit: number;
-}
-
 interface OpenTabOptions {
   behavior: 'append' | 'replace-active';
   currentTabId: string | null;
@@ -187,45 +181,9 @@ export function replaceOpenTab(
 export function openDocTab(
   tabs: readonly string[],
   docName: string,
-  { behavior, currentTabId, limit }: OpenDocTabOptions,
+  options: OpenTabOptions,
 ): { tabs: string[]; activeTabId: string } {
-  const normalized = normalizeOpenTabs(tabs, limit);
-  const canonicalTabId = docTabId(docName);
-  if (
-    behavior === 'append' &&
-    currentTabId &&
-    normalized.includes(currentTabId) &&
-    docNameForTabId(currentTabId) === docName
-  ) {
-    return {
-      tabs: normalized,
-      activeTabId: currentTabId,
-    };
-  }
-  if (behavior !== 'replace-active') {
-    return {
-      tabs: addOpenTab(normalized, canonicalTabId, limit),
-      activeTabId: canonicalTabId,
-    };
-  }
-
-  if (
-    currentTabId &&
-    normalized.includes(currentTabId) &&
-    docNameForTabId(currentTabId) === docName
-  ) {
-    return {
-      tabs: normalized,
-      activeTabId: currentTabId,
-    };
-  }
-
-  const nextTabId = nextAvailableDocTabId(normalized, docName);
-
-  return {
-    tabs: replaceOpenTab(normalized, currentTabId, nextTabId, limit),
-    activeTabId: nextTabId,
-  };
+  return openTab(tabs, docTabId(docName), options);
 }
 
 export function openTab(
