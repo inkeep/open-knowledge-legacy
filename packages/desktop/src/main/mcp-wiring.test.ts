@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { ALL_EDITOR_IDS, EDITOR_TARGETS } from '@inkeep/open-knowledge';
 import {
+  checkAndRepairMcpWiringOnStartup,
   type ForceComputeTarget,
   formatPartialFailureMessage,
   type IpcMainEventLike,
@@ -1783,5 +1784,258 @@ describe('runMcpWiringOnFirstLaunch — detection try/catch', () => {
           e.error.includes('detectInstalledEditors exploded'),
       ),
     ).toBe(true);
+  });
+});
+
+describe('checkAndRepairMcpWiringOnStartup — prior-consent namespace reclaim', () => {
+  test('skips users who have not previously consented', async () => {
+    const { fs } = createVirtualFs();
+    const { cli, writeCalls } = createCliSurface();
+    const result = await checkAndRepairMcpWiringOnStartup({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain: createIpcMainStub(),
+      cli,
+      fs,
+    });
+    expect(result).toEqual({ status: 'skipped', reason: 'no-marker' });
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  test('repairs missing Claude entry after configured:true consent without rewriting marker', async () => {
+    const { fs, files } = createVirtualFs();
+    const home = '/Users/andrew';
+    writeMcpStatusMarker(
+      home,
+      {
+        configured: true,
+        configuredAt: '2026-05-12T00:00:00.000Z',
+        editors: ['claude'],
+        cliPath: '/old/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh',
+      },
+      fs,
+    );
+    const before = files.get(mcpStatusMarkerPath(home));
+    const { cli, writeCalls } = createCliSurface({ existingEntries: { claude: null } });
+    const { logger, events } = createCapturedLogger();
+
+    const result = await checkAndRepairMcpWiringOnStartup({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home,
+      platform: 'darwin',
+      ipcMain: createIpcMainStub(),
+      cli,
+      fs,
+      logger,
+    });
+
+    expect(result).toEqual({ status: 'repaired', repairedEditors: ['claude'] });
+    expect(writeCalls).toEqual([{ editors: ['claude'], cliPath: INSTALLED_BUNDLE_WRAPPER, home }]);
+    expect(files.get(mcpStatusMarkerPath(home))).toBe(before);
+    expect(events.some((e) => e.event === 'mcp-wiring-repair-missing-after-consent')).toBe(true);
+    expect(events.some((e) => e.event === 'mcp-wiring-repair-repaired')).toBe(true);
+  });
+
+  test('reclaims existing open-knowledge entry regardless of custom wrapper shape after consent', async () => {
+    const { fs } = createVirtualFs();
+    const home = '/Users/andrew';
+    writeMcpStatusMarker(
+      home,
+      {
+        configured: true,
+        configuredAt: '2026-05-12T00:00:00.000Z',
+        editors: ['claude'],
+        cliPath: '/old/path',
+      },
+      fs,
+    );
+    const { cli, writeCalls } = createCliSurface({
+      existingEntries: {
+        claude: { command: '/custom/wrapper', args: ['--ok'], env: { FOO: 'bar' } },
+      },
+    });
+
+    const result = await checkAndRepairMcpWiringOnStartup({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home,
+      platform: 'darwin',
+      ipcMain: createIpcMainStub(),
+      cli,
+      fs,
+    });
+
+    expect(result).toEqual({ status: 'repaired', repairedEditors: ['claude'] });
+    expect(writeCalls).toEqual([{ editors: ['claude'], cliPath: INSTALLED_BUNDLE_WRAPPER, home }]);
+  });
+
+  test('reclaims published-canonical (npx) entry after consent — proves D3 over first-launch policy', async () => {
+    const { fs } = createVirtualFs();
+    const home = '/Users/andrew';
+    writeMcpStatusMarker(
+      home,
+      {
+        configured: true,
+        configuredAt: '2026-05-12T00:00:00.000Z',
+        editors: ['claude'],
+        cliPath: '/old/path',
+      },
+      fs,
+    );
+    const { cli, writeCalls } = createCliSurface({
+      existingEntries: {
+        claude: { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
+      },
+    });
+
+    const result = await checkAndRepairMcpWiringOnStartup({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home,
+      platform: 'darwin',
+      ipcMain: createIpcMainStub(),
+      cli,
+      fs,
+    });
+
+    expect(result).toEqual({ status: 'repaired', repairedEditors: ['claude'] });
+    expect(writeCalls).toHaveLength(1);
+    expect(writeCalls[0]).toEqual({ editors: ['claude'], cliPath: INSTALLED_BUNDLE_WRAPPER, home });
+  });
+
+  test('returns ok when all consented editors already have compatible bundle entries', async () => {
+    const { fs } = createVirtualFs();
+    const home = '/Users/andrew';
+    writeMcpStatusMarker(
+      home,
+      {
+        configured: true,
+        configuredAt: '2026-05-12T00:00:00.000Z',
+        editors: ['claude'],
+        cliPath: INSTALLED_BUNDLE_WRAPPER,
+      },
+      fs,
+    );
+    const { cli, writeCalls } = createCliSurface({
+      existingEntries: {
+        claude: { command: INSTALLED_BUNDLE_WRAPPER, args: ['mcp'] },
+      },
+    });
+
+    const result = await checkAndRepairMcpWiringOnStartup({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home,
+      platform: 'darwin',
+      ipcMain: createIpcMainStub(),
+      cli,
+      fs,
+    });
+
+    expect(result).toEqual({ status: 'ok', checkedEditors: ['claude'] });
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  test('skips users with configured:false marker (consent boundary)', async () => {
+    const { fs } = createVirtualFs();
+    const home = '/Users/andrew';
+    writeMcpStatusMarker(home, { configured: false, skippedAt: '2026-05-12T00:00:00.000Z' }, fs);
+    const { cli, writeCalls } = createCliSurface();
+
+    const result = await checkAndRepairMcpWiringOnStartup({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home,
+      platform: 'darwin',
+      ipcMain: createIpcMainStub(),
+      cli,
+      fs,
+    });
+
+    expect(result).toEqual({ status: 'skipped', reason: 'not-consented' });
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  test('returns failed status when writeUserMcpConfigs returns all-failed results', async () => {
+    const { fs } = createVirtualFs();
+    const home = '/Users/andrew';
+    writeMcpStatusMarker(
+      home,
+      {
+        configured: true,
+        configuredAt: '2026-05-12T00:00:00.000Z',
+        editors: ['claude'],
+        cliPath: '/old/path',
+      },
+      fs,
+    );
+    const { cli, writeCalls } = createCliSurface({
+      existingEntries: { claude: null },
+      writeResult: () => [
+        {
+          editorId: 'claude',
+          label: EDITOR_TARGETS.claude.label,
+          action: 'failed',
+          configPath: '/fake/claude/config.json',
+          serverName: 'open-knowledge',
+          error: 'EACCES: permission denied',
+        },
+      ],
+    });
+
+    const result = await checkAndRepairMcpWiringOnStartup({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home,
+      platform: 'darwin',
+      ipcMain: createIpcMainStub(),
+      cli,
+      fs,
+    });
+
+    expect(result).toEqual({
+      status: 'failed',
+      failedEditors: [{ editor: 'claude', error: 'EACCES: permission denied' }],
+    });
+    expect(writeCalls).toHaveLength(1);
+  });
+
+  test('returns failed status when writeUserMcpConfigs rejects (.catch branch)', async () => {
+    const { fs } = createVirtualFs();
+    const home = '/Users/andrew';
+    writeMcpStatusMarker(
+      home,
+      {
+        configured: true,
+        configuredAt: '2026-05-12T00:00:00.000Z',
+        editors: ['claude'],
+        cliPath: '/old/path',
+      },
+      fs,
+    );
+    const { cli } = createCliSurface({
+      existingEntries: { claude: null },
+      writeResult: () => {
+        throw new Error('disk write failed');
+      },
+    });
+
+    const result = await checkAndRepairMcpWiringOnStartup({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home,
+      platform: 'darwin',
+      ipcMain: createIpcMainStub(),
+      cli,
+      fs,
+    });
+
+    expect(result).toEqual({
+      status: 'failed',
+      failedEditors: [{ editor: 'claude', error: 'disk write failed' }],
+    });
   });
 });

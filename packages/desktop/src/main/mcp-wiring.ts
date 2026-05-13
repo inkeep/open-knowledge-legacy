@@ -241,6 +241,107 @@ export interface RunMcpWiringHandle {
   readonly armed: boolean;
 }
 
+export type McpStartupRepairResult =
+  | { status: 'skipped'; reason: string }
+  | { status: 'ok'; checkedEditors: McpWiringEditorId[] }
+  | { status: 'repaired'; repairedEditors: McpWiringEditorId[] }
+  | { status: 'failed'; failedEditors: Array<{ editor: McpWiringEditorId; error?: string }> };
+
+export function checkAndRepairMcpWiringOnStartup(
+  opts: RunMcpWiringOpts,
+): Promise<McpStartupRepairResult> {
+  const {
+    isPackaged,
+    executablePath,
+    home,
+    platform,
+    cli,
+    forceEnv,
+    fs,
+    logger = DEFAULT_LOGGER,
+  } = opts;
+  if (platform !== 'darwin') return Promise.resolve({ status: 'skipped', reason: 'platform' });
+  if (!isPackaged && forceEnv !== '1')
+    return Promise.resolve({ status: 'skipped', reason: 'dev-mode' });
+  if (!/\.app\/Contents\/MacOS\/[^/]+$/.test(executablePath)) {
+    return Promise.resolve({ status: 'skipped', reason: 'bad-executable-path' });
+  }
+  const marker = readMcpStatusMarker(home, fs);
+  if (marker === null) return Promise.resolve({ status: 'skipped', reason: 'no-marker' });
+  if (marker.configured !== true)
+    return Promise.resolve({ status: 'skipped', reason: 'not-consented' });
+
+  const selectedEditors = marker.editors.filter((id): id is McpWiringEditorId =>
+    cli.allEditorIds.includes(id as McpWiringEditorId),
+  );
+  logger.event({ event: 'mcp-wiring-repair-check-started', editors: selectedEditors });
+  if (selectedEditors.length === 0) return Promise.resolve({ status: 'ok', checkedEditors: [] });
+
+  const cliPath = resolveCliPath(executablePath, fs);
+  const editorsToRepair: McpWiringEditorId[] = [];
+  for (const editor of selectedEditors) {
+    let existing: Record<string, unknown> | null;
+    try {
+      existing = cli.readExistingMcpEntry(editor, home);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.event({ event: 'mcp-wiring-repair-read-failed', editor, error: message });
+      editorsToRepair.push(editor);
+      continue;
+    }
+    if (existing !== null && cli.editorTargets[editor]?.isCompatible(existing, '', { cliPath })) {
+      logger.event({ event: 'mcp-wiring-repair-healthy-current', editor });
+      continue;
+    }
+    logger.event({
+      event:
+        existing === null
+          ? 'mcp-wiring-repair-missing-after-consent'
+          : 'mcp-wiring-repair-reclaim-existing',
+      editor,
+    });
+    editorsToRepair.push(editor);
+  }
+
+  if (editorsToRepair.length === 0)
+    return Promise.resolve({ status: 'ok', checkedEditors: selectedEditors });
+
+  return cli
+    .writeUserMcpConfigs({ editors: editorsToRepair, cliPath, home })
+    .then((results) => {
+      const failed = results
+        .filter((r) => r.action === 'failed')
+        .map((r) => ({ editor: r.editorId, error: r.error }));
+      for (const r of results) {
+        logger.event({
+          event:
+            r.action === 'failed' ? 'mcp-wiring-repair-write-failed' : 'mcp-wiring-repair-repaired',
+          editor: r.editorId,
+          configPath: r.configPath,
+          error: r.error ?? null,
+        });
+      }
+      if (failed.length > 0)
+        return { status: 'failed', failedEditors: failed } satisfies McpStartupRepairResult;
+      return {
+        status: 'repaired',
+        repairedEditors: editorsToRepair,
+      } satisfies McpStartupRepairResult;
+    })
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.event({
+        event: 'mcp-wiring-repair-write-failed',
+        editors: editorsToRepair,
+        error: message,
+      });
+      return {
+        status: 'failed',
+        failedEditors: editorsToRepair.map((editor) => ({ editor, error: message })),
+      } satisfies McpStartupRepairResult;
+    });
+}
+
 export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringHandle {
   const {
     isPackaged,
