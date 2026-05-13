@@ -1,24 +1,82 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 
 const SPAWN_TIMEOUT_MS = 2000;
+const OK_LOCK_DIR_ARG_PREFIX = '--ok-lock-dir-b64=';
 const OK_PROCESS_PGREP_QUERY =
-  'cli\\.mjs|open-knowledge|(^|[ /])ok[ ]+(start|mcp|ui)([ ]|$)|packages/(cli|app)|hocuspocus|vite';
+  'cli\\.mjs|open-knowledge|--ok-lock-dir-b64=|(^|[ /])ok[ ]+(start|mcp|ui)([ ]|$)|packages/(cli|app)|hocuspocus|vite';
 
 const OK_PROCESS_PATTERNS: RegExp[] = [
   /cli\.mjs/,
   /(^|[\s/])(open-knowledge|ok)\s+(start|mcp|ui)(\s|$)/,
   /(^|[\s/])bun([\s/]).*?(run dev|packages\/app|vite|hocuspocus)/,
   /(^|[\s/])node([\s/]).*?(packages\/(cli|app)|vite|hocuspocus)/,
+  /(^|\s)--ok-lock-dir-b64=/,
 ];
 
 function isOkProcess(command: string): boolean {
   return OK_PROCESS_PATTERNS.some((re) => re.test(command));
 }
 
-export async function findOkProcessPids(): Promise<number[]> {
+function extractMarkedLockDir(command: string): string | null {
+  const token = command
+    .trim()
+    .split(/\s+/)
+    .find((part) => part.startsWith(OK_LOCK_DIR_ARG_PREFIX));
+  if (token == null) return null;
+  const encoded = token.slice(OK_LOCK_DIR_ARG_PREFIX.length);
+  if (!encoded) return null;
+  try {
+    const decoded = Buffer.from(encoded, 'base64url').toString('utf8');
+    return isAbsolute(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+interface OkProcessEntry {
+  pid: number;
+  command: string;
+}
+
+function parsePgrepOutput(output: string): OkProcessEntry[] {
+  const entries: OkProcessEntry[] = [];
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const spaceIdx = trimmed.indexOf(' ');
+    if (spaceIdx === -1) continue;
+    const pidStr = trimmed.slice(0, spaceIdx);
+    const command = trimmed.slice(spaceIdx + 1);
+    const pid = Number.parseInt(pidStr, 10);
+    if (!Number.isNaN(pid) && isOkProcess(command)) {
+      entries.push({ pid, command });
+    }
+  }
+  return entries;
+}
+
+function parsePsOutput(output: string): OkProcessEntry[] {
+  const entries: OkProcessEntry[] = [];
+  const lines = output.split('\n');
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i]?.trim();
+    if (!line) continue;
+    const spaceIdx = line.indexOf(' ');
+    if (spaceIdx === -1) continue;
+    const pidStr = line.slice(0, spaceIdx);
+    const command = line.slice(spaceIdx + 1).trim();
+    const pid = Number.parseInt(pidStr, 10);
+    if (!Number.isNaN(pid) && isOkProcess(command)) {
+      entries.push({ pid, command });
+    }
+  }
+  return entries;
+}
+
+async function findOkProcessEntries(): Promise<OkProcessEntry[]> {
   const pgrepResult = spawnSync('pgrep', ['-a', '-f', OK_PROCESS_PGREP_QUERY], {
     encoding: 'utf-8',
     timeout: SPAWN_TIMEOUT_MS,
@@ -29,8 +87,8 @@ export async function findOkProcessPids(): Promise<number[]> {
 
   if (!pgrepUnavailable) {
     const output = pgrepResult.stdout ?? '';
-    const pids = parsePgrepOutput(output);
-    if (pids.length > 0 || output.trim() === '') return pids;
+    const entries = parsePgrepOutput(output);
+    if (entries.length > 0 || output.trim() === '') return entries;
   }
 
   const psResult = spawnSync('ps', ['-axo', 'pid,command'], {
@@ -45,39 +103,8 @@ export async function findOkProcessPids(): Promise<number[]> {
   return parsePsOutput(psResult.stdout);
 }
 
-function parsePgrepOutput(output: string): number[] {
-  const pids: number[] = [];
-  for (const line of output.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const spaceIdx = trimmed.indexOf(' ');
-    if (spaceIdx === -1) continue;
-    const pidStr = trimmed.slice(0, spaceIdx);
-    const command = trimmed.slice(spaceIdx + 1);
-    const pid = Number.parseInt(pidStr, 10);
-    if (!Number.isNaN(pid) && isOkProcess(command)) {
-      pids.push(pid);
-    }
-  }
-  return pids;
-}
-
-function parsePsOutput(output: string): number[] {
-  const pids: number[] = [];
-  const lines = output.split('\n');
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i]?.trim();
-    if (!line) continue;
-    const spaceIdx = line.indexOf(' ');
-    if (spaceIdx === -1) continue;
-    const pidStr = line.slice(0, spaceIdx);
-    const command = line.slice(spaceIdx + 1).trim();
-    const pid = Number.parseInt(pidStr, 10);
-    if (!Number.isNaN(pid) && isOkProcess(command)) {
-      pids.push(pid);
-    }
-  }
-  return pids;
+export async function findOkProcessPids(): Promise<number[]> {
+  return (await findOkProcessEntries()).map((e) => e.pid);
 }
 
 export function extractOkBinaryPath(command: string): string | null {
@@ -181,9 +208,16 @@ export async function discoverLockDirs(): Promise<string[]> {
     }
   };
 
-  const okPids = await findOkProcessPids();
-  const cwdPromises = okPids.map((pid) => pidCwd(pid));
+  const okEntries = await findOkProcessEntries();
+  const cwdPromises = okEntries.map((e) => pidCwd(e.pid));
   const cwds = await Promise.all(cwdPromises);
+
+  for (const entry of okEntries) {
+    const markedLockDir = extractMarkedLockDir(entry.command);
+    if (markedLockDir != null && existsSync(markedLockDir)) {
+      candidateDirs.add(markedLockDir);
+    }
+  }
 
   for (const cwd of cwds) {
     if (cwd == null) continue;
@@ -197,7 +231,7 @@ export async function discoverLockDirs(): Promise<string[]> {
 
   if (lsofResult.error == null && lsofResult.stdout) {
     const listeningPids = parseListeningPids(lsofResult.stdout);
-    const knownPidSet = new Set(okPids);
+    const knownPidSet = new Set(okEntries.map((e) => e.pid));
     const newPids = listeningPids.filter((p) => !knownPidSet.has(p));
     const portCwdPromises = newPids.map((pid) => pidCwd(pid));
     const portCwds = await Promise.all(portCwdPromises);

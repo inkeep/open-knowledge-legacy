@@ -60,6 +60,19 @@ describe('findOkProcessPids', () => {
     expect(pids).toEqual([54321]);
   });
 
+  it('finds Electron utility processes by explicit lock-dir marker', async () => {
+    const encoded = Buffer.from('/Users/mike/notes/.ok/local', 'utf8').toString('base64url');
+    spawnSyncSpy.mockReturnValue(
+      makeSpawnResult({
+        stdout: `24680 /Applications/Open Knowledge.app/Contents/Frameworks/Open Knowledge Helper --type=utility --ok-lock-dir-b64=${encoded}\n`,
+        status: 0,
+      }),
+    );
+
+    const pids = await findOkProcessPids();
+    expect(pids).toEqual([24680]);
+  });
+
   it('falls back to ps when pgrep is unavailable (ENOENT)', async () => {
     const enoent = Object.assign(new Error('pgrep not found'), { code: 'ENOENT' });
 
@@ -220,11 +233,85 @@ describe('discoverLockDirs', () => {
     const dirs = await discoverLockDirs();
     expect(dirs).toHaveLength(1);
     expect(dirs[0]).toContain('.ok/local');
+
+    const calls = spawnSyncSpy.mock.calls as [string, string[]][];
+    expect(calls[0]?.[0]).toBe('pgrep');
+    expect(calls[1]?.[0]).toBe('lsof'); // pidCwd
+    expect(calls[2]?.[0]).toBe('lsof'); // port scan
   });
 
   it('returns empty array when no ok processes and no lock dirs exist', async () => {
     spawnSyncSpy
       .mockReturnValueOnce(makeSpawnResult({ stdout: '', status: 1 }))
+      .mockReturnValueOnce(makeSpawnResult({ stdout: 'COMMAND PID USER\n', status: 0 }));
+
+    existsSyncSpy.mockReturnValue(false);
+
+    const dirs = await discoverLockDirs();
+    expect(dirs).toHaveLength(0);
+  });
+
+  it('discovers Electron utility lock dirs from the explicit argv marker', async () => {
+    const lockDir = '/Users/mike/notes with spaces/.ok/local';
+    const encoded = Buffer.from(lockDir, 'utf8').toString('base64url');
+    spawnSyncSpy
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: `77 /Applications/Open Knowledge.app/Contents/Frameworks/Open Knowledge Helper --type=utility --ok-lock-dir-b64=${encoded}\n`,
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: 'p77\nfcwd\nn/Applications/Open Knowledge.app/Contents/Resources\n',
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(makeSpawnResult({ stdout: 'COMMAND PID USER\n', status: 0 }));
+
+    existsSyncSpy.mockImplementation((p: unknown) => p === lockDir);
+
+    const dirs = await discoverLockDirs();
+    expect(dirs).toEqual([lockDir]);
+
+    const calls = spawnSyncSpy.mock.calls as [string, string[]][];
+    expect(calls[0]?.[0]).toBe('pgrep');
+    expect(calls[1]?.[0]).toBe('lsof'); // pidCwd
+    expect(calls[2]?.[0]).toBe('lsof'); // port scan
+  });
+
+  it('ignores Electron marker with empty payload', async () => {
+    spawnSyncSpy
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout:
+            '42 /Applications/Open Knowledge.app/Contents/Frameworks/Helper --ok-lock-dir-b64=\n',
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ stdout: 'p42\nfcwd\nn/Applications/Helper\n', status: 0 }),
+      )
+      .mockReturnValueOnce(makeSpawnResult({ stdout: 'COMMAND PID USER\n', status: 0 }));
+
+    existsSyncSpy.mockReturnValue(false);
+
+    const dirs = await discoverLockDirs();
+    expect(dirs).toHaveLength(0);
+  });
+
+  it('ignores Electron marker with a relative-path payload', async () => {
+    const encoded = Buffer.from('relative/path/.ok/local', 'utf8').toString('base64url');
+    spawnSyncSpy
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: `42 /Applications/Helper --ok-lock-dir-b64=${encoded}\n`,
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ stdout: 'p42\nfcwd\nn/Applications/Helper\n', status: 0 }),
+      )
       .mockReturnValueOnce(makeSpawnResult({ stdout: 'COMMAND PID USER\n', status: 0 }));
 
     existsSyncSpy.mockReturnValue(false);
@@ -259,6 +346,12 @@ describe('discoverLockDirs', () => {
 
     const dirs = await discoverLockDirs();
     expect(dirs[0]).toContain('.openknowledge');
+
+    const calls = spawnSyncSpy.mock.calls as [string, string[]][];
+    expect(calls[0]?.[0]).toBe('pgrep');
+    expect(calls[1]?.[0]).toBe('ps'); // fallback
+    expect(calls[2]?.[0]).toBe('lsof'); // pidCwd
+    expect(calls[3]?.[0]).toBe('lsof'); // port scan
   });
 
   it('degrades gracefully when lsof is unavailable for pidCwd calls', async () => {

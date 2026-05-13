@@ -332,8 +332,8 @@ function ensureWindowManager() {
       });
       return win as unknown as BrowserWindowLike;
     },
-    forkUtility: (entry, opts) => {
-      const child = utilityProcess.fork(entry, [], {
+    forkUtility: (entry, args, opts) => {
+      const child = utilityProcess.fork(entry, args, {
         ...opts,
         env: buildUtilityForkEnv(process.env),
       } as unknown as Parameters<typeof utilityProcess.fork>[2]);
