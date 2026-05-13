@@ -1,17 +1,10 @@
 import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
-import type { ServerInstance } from './shared.ts';
-import {
-  buildWorkflowFrame,
-  type ConfigOrResolver,
-  ROUTED_CWD_DESCRIPTION,
-  resolveProjectConfigContext,
-  textPlusStructured,
-  textResult,
-} from './shared.ts';
+import type { ServerInstance, WorkflowToolDeps } from './shared.ts';
+import { buildWorkflowHandler, ROUTED_CWD_DESCRIPTION } from './shared.ts';
 
 function buildBody(topic: string, contentDir: string): string {
-  return `${buildWorkflowFrame('consolidate')}Promote existing research on this topic into a canonical article inside the project content directory. **Canonical, not provisional** — the output is the source of truth for future agents.
+  return `Promote existing research on this topic into a canonical article inside the project content directory. **Canonical, not provisional** — the output is the source of truth for future agents.
 
 Topic: ${topic}
 
@@ -175,12 +168,7 @@ export const DESCRIPTION = [
   '- Research has stabilized and a destination article is needed',
 ].join('\n');
 
-interface ConsolidateDeps {
-  config: ConfigOrResolver;
-  resolveCwd: (explicit?: string) => Promise<string>;
-}
-
-export function register(server: ServerInstance, deps: ConsolidateDeps): void {
+export function register(server: ServerInstance, deps: WorkflowToolDeps): void {
   server.tool(
     'consolidate',
     DESCRIPTION,
@@ -188,12 +176,6 @@ export function register(server: ServerInstance, deps: ConsolidateDeps): void {
       topic: z.string().describe('The topic to consolidate into a canonical article'),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { topic: string; cwd?: string }) => {
-      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
-      if (!context.ok) return textResult(`Error: ${context.error}`, true);
-      return textPlusStructured(buildBody(args.topic, context.config.content.dir), {
-        previewUrl: null,
-      });
-    },
+    buildWorkflowHandler('consolidate', deps, 'topic', buildBody),
   );
 }

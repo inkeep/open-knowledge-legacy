@@ -1,17 +1,10 @@
 import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
-import type { ServerInstance } from './shared.ts';
-import {
-  buildWorkflowFrame,
-  type ConfigOrResolver,
-  ROUTED_CWD_DESCRIPTION,
-  resolveProjectConfigContext,
-  textPlusStructured,
-  textResult,
-} from './shared.ts';
+import type { ServerInstance, WorkflowToolDeps } from './shared.ts';
+import { buildWorkflowHandler, ROUTED_CWD_DESCRIPTION } from './shared.ts';
 
 function buildBody(topic: string, contentDir: string): string {
-  return `${buildWorkflowFrame('research')}Conduct **evidence-driven research** on this topic and produce a provisional research article in the Open Knowledge content directory. This workflow mirrors the discipline of the \`eng:research\` skill, scoped to Open Knowledge's wiki-provisional layer.
+  return `Conduct **evidence-driven research** on this topic and produce a provisional research article in the Open Knowledge content directory. This workflow mirrors the discipline of the \`eng:research\` skill, scoped to Open Knowledge's wiki-provisional layer.
 
 Topic: ${topic}
 Content directory: \`${contentDir}\` (from \`${OK_DIR}/config.yml\`)
@@ -380,12 +373,7 @@ export const DESCRIPTION = [
   '- A decision needs structured analysis grounded in external sources',
 ].join('\n');
 
-interface ResearchDeps {
-  config: ConfigOrResolver;
-  resolveCwd: (explicit?: string) => Promise<string>;
-}
-
-export function register(server: ServerInstance, deps: ResearchDeps): void {
+export function register(server: ServerInstance, deps: WorkflowToolDeps): void {
   server.tool(
     'research',
     DESCRIPTION,
@@ -393,12 +381,6 @@ export function register(server: ServerInstance, deps: ResearchDeps): void {
       topic: z.string().describe('The topic, question, or anchor URL to research'),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { topic: string; cwd?: string }) => {
-      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
-      if (!context.ok) return textResult(`Error: ${context.error}`, true);
-      return textPlusStructured(buildBody(args.topic, context.config.content.dir), {
-        previewUrl: null,
-      });
-    },
+    buildWorkflowHandler('research', deps, 'topic', buildBody),
   );
 }

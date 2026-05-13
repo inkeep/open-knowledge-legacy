@@ -9,6 +9,7 @@ import {
   parseRenameCollidingPairs,
   resolveProjectConfigContext,
   resolveProjectServerContext,
+  textPlusStructured,
   textResult,
 } from './shared.ts';
 
@@ -35,6 +36,55 @@ describe('textResult', () => {
     expect(result).not.toHaveProperty('isError');
     const result2 = textResult('ok');
     expect(result2).not.toHaveProperty('isError');
+  });
+});
+
+describe('textPlusStructured', () => {
+  test('wraps body in MCP content array AND mirrors it under structuredContent._text', () => {
+    const result = textPlusStructured('hello', { previewUrl: null });
+    expect(result.content).toEqual([{ type: 'text', text: 'hello' }]);
+    expect(result.structuredContent).toEqual({ _text: 'hello', previewUrl: null });
+  });
+
+  test('preserves caller structured fields alongside the auto-mirror', () => {
+    const result = textPlusStructured('body', {
+      previewUrl: 'http://localhost:5173/p/x',
+      stdout: 'raw',
+      cwd: '/tmp',
+    });
+    expect(result.structuredContent).toEqual({
+      _text: 'body',
+      previewUrl: 'http://localhost:5173/p/x',
+      stdout: 'raw',
+      cwd: '/tmp',
+    });
+  });
+
+  test('caller-provided `_text` field overrides the auto-duplicated body', () => {
+    const result = textPlusStructured('visible', { _text: 'structured-different' });
+    expect(result.content).toEqual([{ type: 'text', text: 'visible' }]);
+    expect(result.structuredContent).toEqual({ _text: 'structured-different' });
+  });
+
+  test('isError flag propagates to top level', () => {
+    const result = textPlusStructured('failed', { error: 'boom' }, true);
+    expect(result).toEqual({
+      content: [{ type: 'text', text: 'failed' }],
+      structuredContent: { _text: 'failed', error: 'boom' },
+      isError: true,
+    });
+  });
+
+  test('omits isError when false or undefined', () => {
+    const a = textPlusStructured('ok', { x: 1 }, false);
+    expect(a).not.toHaveProperty('isError');
+    const b = textPlusStructured('ok', { x: 1 });
+    expect(b).not.toHaveProperty('isError');
+  });
+
+  test('empty structured object: still emits structuredContent._text', () => {
+    const result = textPlusStructured('done', {});
+    expect(result.structuredContent).toEqual({ _text: 'done' });
   });
 });
 

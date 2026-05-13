@@ -115,7 +115,7 @@ describe('delete_document MCP tool', () => {
     expect(tool.description).toContain('/api/delete-path');
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toBe('Deleted notes/draft.');
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       ok: true,
       deletedDocNames: ['notes/draft'],
     });
@@ -136,7 +136,7 @@ describe('delete_document MCP tool', () => {
     const result = await tool.handler({ docName: 'old-page' });
 
     expect(result.isError).toBeUndefined();
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       ok: true,
       deletedDocNames: ['old-page'],
     });
@@ -158,7 +158,7 @@ describe('delete_document MCP tool', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain('file does not exist');
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       ok: false,
       error: 'file does not exist',
     });
@@ -220,7 +220,7 @@ describe('delete_document MCP tool', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe('Error: Server returned HTTP 500');
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       ok: false,
       error: 'Server returned HTTP 500',
     });

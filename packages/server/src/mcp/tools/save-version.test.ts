@@ -66,7 +66,7 @@ describe('save_version — previewUrl emission (project-level: always null)', ()
 
     const result = await getTool().handler({ cwd: '/tmp/project' });
 
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       checkpointRef: 'refs/checkpoints/2026-04-16-abc',
       previewUrl: null,
     });

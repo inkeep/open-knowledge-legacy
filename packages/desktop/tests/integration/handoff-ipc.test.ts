@@ -185,6 +185,7 @@ describe("'ok:shell:spawn-cursor' round-trips spawn outcomes", () => {
       return spawnCursorImpl(
         {
           platform: 'darwin',
+          resolveCursorBinary: async () => null,
           getApplicationInfoForProtocol: async () => ({
             name: 'Cursor',
             path: '/Applications/Cursor.app/Contents/MacOS/Cursor',
@@ -255,6 +256,7 @@ describe("'ok:shell:spawn-cursor' round-trips spawn outcomes", () => {
       return spawnCursorImpl(
         {
           platform: 'darwin',
+          resolveCursorBinary: async () => null,
           getApplicationInfoForProtocol: async () => ({
             name: 'Cursor',
             path: '/Applications/Cursor.app/Contents/MacOS/Cursor',
