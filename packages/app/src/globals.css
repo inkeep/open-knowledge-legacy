@@ -1061,6 +1061,60 @@
   color: var(--destructive, #ef4444);
 }
 
+/* HTML preview pane — primary surface when language=html + meta has `preview`.
+   Iframe is `sandbox="allow-scripts"` only (null origin) so embedded JS can't
+   reach the parent doc / cookies / auth-bearing fetch surface. The code body
+   is hidden by default in preview mode (see [data-code-visible] selectors
+   below) and toggled visible via the code-icon chrome button. The wrapper
+   carries `resize: vertical` (requires `overflow: auto` + a fixed initial
+   height) so the user can drag the bottom edge to enlarge the preview. */
+.ProseMirror .ok-codeblock > .ok-codeblock-preview {
+  position: relative;
+  background: white;
+  height: 26rem;
+  min-height: 8rem;
+  max-height: 80vh;
+  overflow: auto;
+  resize: vertical;
+  @apply scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/30 dark:scrollbar-thumb-muted-foreground/50;
+}
+
+.ok-codeblock-preview--solo {
+  border-radius: 0.5rem;
+}
+
+.ok-codeblock-preview--with-code {
+  border-top-left-radius: 0.5rem;
+  border-top-right-radius: 0.5rem;
+}
+
+/* Leave a small bottom gutter so the wrapper's native `resize: vertical`
+   handle in the bottom-right corner is reachable by pointer — the iframe
+   captures all pointer events that land in its rect (events inside the
+   iframe document don't bubble out), so a full-height iframe would block
+   the drag-resize affordance entirely. */
+.ok-codeblock-preview-frame {
+  display: block;
+  width: 100%;
+  height: calc(100% - 12px);
+  border: 0;
+  background: white;
+}
+
+/* Collapse the code body (PM contentDOM) when preview is active and the
+   user hasn't opted to view source. We keep the <pre> mounted (precedent
+   #30 — never literally `display:none` PM content) and instead clip it
+   to zero height; PM still owns the contentDOM, undo history is stable,
+   caret can re-enter when toggled back on. */
+.ProseMirror .ok-codeblock[data-preview="true"][data-code-visible="false"] > .ok-codeblock-pre {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+  border: 0;
+  pointer-events: none;
+}
+
 /* Inline code */
 .ProseMirror code {
   background: var(--color-gray-100);

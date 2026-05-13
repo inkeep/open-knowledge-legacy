@@ -1,6 +1,6 @@
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
-import { Check, ChevronDown, Copy, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, Code2, Copy, Eye, EyeOff, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   Command,
@@ -14,6 +14,28 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils';
 import { OPT_OUT_ATTR } from '../clipboard/index.ts';
 import { CODE_BLOCK_LANGUAGES, normalizeCodeLanguage } from './code-block-languages';
+import {
+  addMetaToken,
+  metaHasToken,
+  PREVIEWABLE_LANGUAGES,
+  parsePreviewHeight,
+  removeMetaToken,
+  setMetaKeyValue,
+  shouldShowPreview,
+} from './code-block-meta';
+
+export const PREVIEW_IFRAME_HEADER = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' data:; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; child-src 'none'; form-action 'none'; base-uri 'none';">
+<style>
+  html, body { scrollbar-width: thin; scrollbar-color: rgba(115,115,115,0.4) transparent; }
+  html::-webkit-scrollbar, body::-webkit-scrollbar,
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  html::-webkit-scrollbar-track, body::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-track { background: transparent; }
+  html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb,
+  *::-webkit-scrollbar-thumb { background: rgba(115,115,115,0.4); border-radius: 4px; }
+  html::-webkit-scrollbar-thumb:hover, body::-webkit-scrollbar-thumb:hover,
+  *::-webkit-scrollbar-thumb:hover { background: rgba(115,115,115,0.6); }
+</style>`;
 
 const PLAIN_TEXT = 'plaintext';
 
@@ -43,19 +65,67 @@ function useCursorInside(editor: NodeViewProps['editor'], getPos: NodeViewProps[
 export function CodeBlockView({ node, updateAttributes, editor, getPos, selected }: NodeViewProps) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showCode, setShowCode] = useState(false);
   const copyResetRef = useRef<number | null>(null);
+  const previewWrapperRef = useRef<HTMLDivElement | null>(null);
+  const lastSyncedPxRef = useRef<number | null>(null);
+  const isUserResizingRef = useRef(false);
+  const resizeReleaseTimerRef = useRef<number | null>(null);
   const rawLanguage = (node.attrs.language as string | null) ?? null;
+  const rawMeta = (node.attrs.meta as string | null) ?? null;
+  const rawMetaRef = useRef(rawMeta);
+  useEffect(() => {
+    rawMetaRef.current = rawMeta;
+  }, [rawMeta]);
   const normalized = normalizeCodeLanguage(rawLanguage);
   const currentLabel = !rawLanguage
     ? 'Plain'
     : (CODE_BLOCK_LANGUAGES.find((l) => l.value === normalized)?.label ?? rawLanguage);
+  const previewToggled = metaHasToken(rawMeta, 'preview');
+  const previewRenderable = normalized ? PREVIEWABLE_LANGUAGES.has(normalized) : false;
+  const previewActive = shouldShowPreview(normalized, rawMeta);
+  const previewHeight = previewActive ? parsePreviewHeight(rawMeta) : null;
+  const codeVisible = !previewActive || showCode;
 
   useEffect(
     () => () => {
       if (copyResetRef.current !== null) window.clearTimeout(copyResetRef.current);
+      if (resizeReleaseTimerRef.current !== null) {
+        window.clearTimeout(resizeReleaseTimerRef.current);
+      }
     },
     [],
   );
+
+  useEffect(() => {
+    if (!previewActive) return;
+    const el = previewWrapperRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    lastSyncedPxRef.current = null;
+    let pending: number | null = null;
+    const ro = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      const observed = Math.round(entry.contentRect.height);
+      if (lastSyncedPxRef.current === null) {
+        lastSyncedPxRef.current = observed;
+        return;
+      }
+      if (!isUserResizingRef.current) return;
+      if (Math.abs(observed - lastSyncedPxRef.current) <= 2) return;
+      if (pending !== null) window.clearTimeout(pending);
+      pending = window.setTimeout(() => {
+        pending = null;
+        lastSyncedPxRef.current = observed;
+        const nextMeta = setMetaKeyValue(rawMetaRef.current, 'h', `${observed}px`);
+        updateAttributes({ meta: nextMeta });
+      }, 200);
+    });
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      if (pending !== null) window.clearTimeout(pending);
+    };
+  }, [previewActive, updateAttributes]);
 
   const editable = editor.isEditable;
   const cursorInside = useCursorInside(editor, getPos);
@@ -85,17 +155,77 @@ export function CodeBlockView({ node, updateAttributes, editor, getPos, selected
     }
   };
 
+  const handleTogglePreview = () => {
+    const next = previewToggled
+      ? removeMetaToken(rawMeta, 'preview')
+      : addMetaToken(rawMeta, 'preview');
+    updateAttributes({ meta: next });
+  };
+
+  const handlePreviewPointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    isUserResizingRef.current = true;
+    if (resizeReleaseTimerRef.current !== null) {
+      window.clearTimeout(resizeReleaseTimerRef.current);
+      resizeReleaseTimerRef.current = null;
+    }
+  };
+  const handlePreviewPointerUp = () => {
+    if (resizeReleaseTimerRef.current !== null) {
+      window.clearTimeout(resizeReleaseTimerRef.current);
+    }
+    resizeReleaseTimerRef.current = window.setTimeout(() => {
+      isUserResizingRef.current = false;
+      resizeReleaseTimerRef.current = null;
+    }, 300);
+  };
+
   return (
     <NodeViewWrapper
       className="ok-codeblock relative my-3"
       data-language={rawLanguage ?? undefined}
       data-cursor-inside={cursorInside ? 'true' : undefined}
       data-selected={selected ? 'true' : undefined}
+      data-preview={previewActive ? 'true' : undefined}
+      data-code-visible={codeVisible ? 'true' : 'false'}
     >
+      {previewActive ? (
+        // biome-ignore lint/a11y/noStaticElementInteractions: PM intercepts pointer drags inside contentEditable — stop on the wrapper so `resize: vertical` works
+        <div
+          ref={previewWrapperRef}
+          className={cn(
+            'ok-codeblock-preview',
+            codeVisible ? 'ok-codeblock-preview--with-code' : 'ok-codeblock-preview--solo',
+          )}
+          contentEditable={false}
+          style={previewHeight ? { height: previewHeight } : undefined}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={handlePreviewPointerDown}
+          onPointerUp={handlePreviewPointerUp}
+          onPointerCancel={handlePreviewPointerUp}
+          onPointerLeave={handlePreviewPointerUp}
+        >
+          <iframe
+            title="HTML preview"
+            sandbox="allow-scripts"
+            referrerPolicy="no-referrer"
+            srcDoc={PREVIEW_IFRAME_HEADER + node.textContent}
+            className="ok-codeblock-preview-frame"
+          />
+        </div>
+      ) : null}
+
+      {/* `<pre>` is ALWAYS mounted so PM's contentDOM has a stable host — we
+          hide via CSS only (`data-code-visible="false"`) rather than
+          conditional render. Keeps caret stability, undo history, and any
+          decorations from churning when the user collapses the code. */}
       <pre
         className={cn(
-          'ok-codeblock-pre m-0 overflow-x-auto rounded-lg px-5 py-4 font-mono text-sm leading-relaxed',
+          'ok-codeblock-pre m-0 overflow-x-auto px-5 py-4 font-mono text-sm leading-relaxed',
+          previewActive && codeVisible ? 'rounded-b-lg' : null,
+          !previewActive ? 'rounded-lg' : null,
         )}
+        aria-hidden={!codeVisible || undefined}
       >
         <NodeViewContent<'code'>
           as="code"
@@ -162,6 +292,32 @@ export function CodeBlockView({ node, updateAttributes, editor, getPos, selected
             </Command>
           </PopoverContent>
         </Popover>
+
+        {previewActive ? (
+          <button
+            type="button"
+            className="ok-codeblock-chrome-btn"
+            data-active={showCode ? 'true' : undefined}
+            aria-pressed={showCode}
+            aria-label={showCode ? 'Hide code' : 'Show code'}
+            onClick={() => setShowCode((v) => !v)}
+          >
+            <Code2 className="size-3.5" />
+          </button>
+        ) : null}
+
+        {editable && previewRenderable ? (
+          <button
+            type="button"
+            className="ok-codeblock-chrome-btn"
+            data-active={previewToggled ? 'true' : undefined}
+            aria-pressed={previewToggled}
+            aria-label={previewToggled ? 'Hide HTML preview' : 'Show HTML preview'}
+            onClick={handleTogglePreview}
+          >
+            {previewToggled ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+          </button>
+        ) : null}
 
         <button
           type="button"
