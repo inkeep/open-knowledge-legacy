@@ -192,7 +192,8 @@ type OkPackId =
   | 'software-lifecycle'
   | 'plain-notes'
   | 'worldbuilding'
-  | 'writing-pipeline';
+  | 'writing-pipeline'
+  | 'gbrain';
 
 interface OkSeedPlanOptions {
   rootDir?: string;
@@ -210,12 +211,18 @@ interface OkSeedPackFolderInfo {
   summary: string;
 }
 
+interface OkSeedPackEntryCounts {
+  files: number;
+  folders: number;
+}
+
 interface OkSeedPackInfo {
   id: OkPackId;
   name: string;
   description: string;
   defaultSubfolder?: string;
   folders: OkSeedPackFolderInfo[];
+  entryCounts: OkSeedPackEntryCounts;
 }
 
 /** Pure-fs upward-walk result types mirrored from `@inkeep/open-knowledge-server`'s

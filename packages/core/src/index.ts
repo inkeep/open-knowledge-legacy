@@ -522,6 +522,8 @@ export {
   SeedApplySuccessSchema,
   type SeedListPacksSuccess,
   SeedListPacksSuccessSchema,
+  type SeedPackEntryCounts,
+  SeedPackEntryCountsSchema,
   type SeedPackFolderInfo,
   SeedPackFolderInfoSchema,
   type SeedPackInfo,

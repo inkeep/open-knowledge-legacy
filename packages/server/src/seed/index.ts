@@ -24,6 +24,7 @@ export {
   STARTER_TEMPLATES,
   type StarterFolder,
   type StarterPack,
+  type StarterPackEntryCounts,
   type StarterPackFolderInfo,
   type StarterPackInfo,
 } from './starter.ts';

@@ -1,13 +1,19 @@
 import { DocumentListSuccessSchema } from '@inkeep/open-knowledge-core';
-import { Sparkles } from 'lucide-react';
+import { ArrowRightIcon, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { OkBlob } from '@/components/OkBlob';
+import { PackCardGrid } from '@/components/PackCardGrid';
 import { SeedDialog } from '@/components/SeedDialog';
 import { Button } from '@/components/ui/button';
+import { emitCreateTopLevelFile } from '@/lib/create-file-events';
+import type { OkPackId } from '@/lib/desktop-bridge-types';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 
 export function EmptyEditorState() {
   const [seedDialogOpen, setSeedDialogOpen] = useState(false);
+  const [seedDialogInitialPackId, setSeedDialogInitialPackId] = useState<OkPackId | undefined>(
+    undefined,
+  );
   const [documentCount, setDocumentCount] = useState<number | null>(null);
   const [celebrateSignal, setCelebrateSignal] = useState(0);
   const documentCountResolvedRef = useRef(false);
@@ -67,20 +73,37 @@ export function EmptyEditorState() {
   const messageReady = documentCount !== null;
   const isOnboarding = documentCount === 0;
 
+  function handleDialogOpenChange(next: boolean) {
+    setSeedDialogOpen(next);
+    if (!next) setSeedDialogInitialPackId(undefined);
+  }
+
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6">
-      <OkBlob size={80} celebrateSignal={celebrateSignal} />
+    <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 subtle-scrollbar">
       {messageReady ? (
         isOnboarding ? (
-          <OnboardingMessage onCtaClick={() => setSeedDialogOpen(true)} />
+          <OnboardingView
+            celebrateSignal={celebrateSignal}
+            onPackSelect={(packId) => {
+              setSeedDialogInitialPackId(packId);
+              setSeedDialogOpen(true);
+            }}
+          />
         ) : (
-          <NoSelectionMessage onCtaClick={() => setSeedDialogOpen(true)} />
+          <NoSelectionView
+            celebrateSignal={celebrateSignal}
+            onCtaClick={() => {
+              setSeedDialogInitialPackId(undefined);
+              setSeedDialogOpen(true);
+            }}
+          />
         )
       ) : null}
       <SeedDialog
         open={seedDialogOpen}
-        onOpenChange={setSeedDialogOpen}
+        onOpenChange={handleDialogOpenChange}
         onSeedApplied={handleSeedApplied}
+        initialPackId={seedDialogInitialPackId}
       />
     </div>
   );
@@ -90,31 +113,65 @@ function countEntries(entries: ReadonlyArray<{ kind?: unknown }>): number {
   return entries.filter((entry) => entry.kind === 'document' || entry.kind === 'folder').length;
 }
 
-function OnboardingMessage({ onCtaClick }: { onCtaClick: () => void }) {
+function OnboardingView({
+  celebrateSignal,
+  onPackSelect,
+}: {
+  celebrateSignal: number;
+  onPackSelect: (packId: OkPackId) => void;
+}) {
   return (
-    <div className="flex max-w-sm flex-col items-center gap-3 text-center">
-      <h2 className="text-base font-medium">Welcome to Open Knowledge</h2>
-      <p className="text-sm text-muted-foreground">
-        Pick a starter pack to scaffold a folder layout — or skip and start writing in the sidebar.
-        Packs ship with templates and agent-readable descriptions so AI tools work with your vault
-        out of the box.
-      </p>
-      <Button className="mt-1" onClick={onCtaClick}>
-        <Sparkles aria-hidden="true" className="h-4 w-4" />
-        Pick a starter pack
-      </Button>
+    <div className="flex w-full flex-col gap-10 py-12 max-w-5xl my-auto">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+        <OkBlob size={64} celebrateSignal={celebrateSignal} />
+        <div className="flex flex-col gap-2">
+          <h2 className="text-2xl font-light tracking-tighter text-balance">
+            Let's set up your project.
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Pick a starter pack to scaffold folders, templates, and AI-readable rules.
+          </p>
+        </div>
+      </div>
+      {/* Group the grid + escape hatch in their own tight container so the
+          link sits close beneath the cards while the header above keeps the
+          parent's wider `gap-10` breathing room. */}
+      <div className="flex w-full flex-col gap-3">
+        <PackCardGrid onPackSelect={onPackSelect} />
+        {/* Escape hatch for users who don't want a scaffolded layout — fires
+            the same window-level event the sidebar toolbar uses, so the new
+            file lands with the standard inline-rename flow (sidebar handles
+            focus + navigation). */}
+        <Button
+          variant="link"
+          className="text-muted-foreground font-normal justify-end"
+          size="sm"
+          onClick={emitCreateTopLevelFile}
+        >
+          or start from scratch <ArrowRightIcon aria-hidden="true" className="size-3" />
+        </Button>
+      </div>
     </div>
   );
 }
 
-function NoSelectionMessage({ onCtaClick }: { onCtaClick: () => void }) {
+function NoSelectionView({
+  celebrateSignal,
+  onCtaClick,
+}: {
+  celebrateSignal: number;
+  onCtaClick: () => void;
+}) {
   return (
-    <div className="flex flex-col items-center gap-3">
-      <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
-      <Button variant="outline" size="sm" onClick={onCtaClick}>
-        <Sparkles aria-hidden="true" className="h-4 w-4" />
-        Pick a starter pack
-      </Button>
+    <div className="flex flex-1 flex-col items-center justify-center gap-6">
+      <OkBlob size={80} celebrateSignal={celebrateSignal} />
+      <div className="flex flex-col items-center gap-3">
+        <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
+        <Button variant="outline" size="sm" onClick={onCtaClick}>
+          <Sparkles aria-hidden="true" className="h-4 w-4" />
+          Pick a starter pack
+        </Button>
+      </div>
     </div>
   );
 }

@@ -1274,12 +1274,18 @@ export interface StarterPackFolderInfo {
   summary: string;
 }
 
+export interface StarterPackEntryCounts {
+  files: number;
+  folders: number;
+}
+
 export interface StarterPackInfo {
   id: PackId;
   name: string;
   description: string;
   defaultSubfolder?: string;
   folders: StarterPackFolderInfo[];
+  entryCounts: StarterPackEntryCounts;
 }
 
 function deriveFolderSummary(description: string): string {
@@ -1302,8 +1308,19 @@ export function listStarterPacks(): StarterPackInfo[] {
         path: f.path,
         summary: deriveFolderSummary(f.description),
       })),
+      entryCounts: computePackEntryCounts(pack),
     };
   });
+}
+
+function computePackEntryCounts(pack: StarterPack): StarterPackEntryCounts {
+  const folders = pack.folders.length;
+  let files = 0;
+  for (const folder of pack.folders) {
+    files += 1 + (folder.extraTemplates?.length ?? 0);
+  }
+  files += pack.rootFiles ? Object.keys(pack.rootFiles).length : 0;
+  return { files, folders };
 }
 
 export const STARTER_FOLDERS: readonly StarterFolder[] = KNOWLEDGE_BASE_FOLDERS;

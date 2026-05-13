@@ -123,6 +123,14 @@ export const SeedPackFolderInfoSchema = z
   .loose() satisfies StandardSchemaV1;
 export type SeedPackFolderInfo = z.infer<typeof SeedPackFolderInfoSchema>;
 
+export const SeedPackEntryCountsSchema = z
+  .object({
+    files: z.number().int().nonnegative(),
+    folders: z.number().int().nonnegative(),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type SeedPackEntryCounts = z.infer<typeof SeedPackEntryCountsSchema>;
+
 export const SeedPackInfoSchema = z
   .object({
     id: z.string().min(1),
@@ -130,6 +138,7 @@ export const SeedPackInfoSchema = z
     description: z.string().min(1),
     defaultSubfolder: z.string().optional(),
     folders: z.array(SeedPackFolderInfoSchema),
+    entryCounts: SeedPackEntryCountsSchema,
   })
   .loose() satisfies StandardSchemaV1;
 export type SeedPackInfo = z.infer<typeof SeedPackInfoSchema>;

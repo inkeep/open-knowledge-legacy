@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { subscribeToCreateTopLevelFile } from '@/lib/create-file-events';
 import { ProfilerBoundary } from '@/lib/perf';
 import { cn } from '@/lib/utils';
 
@@ -92,6 +93,13 @@ function FileSidebarInner({ onOpenSearch }: FileSidebarProps) {
     setFolderState(tree.getFolderState());
     return tree.subscribe(() => {
       setFolderState(tree.getFolderState());
+    });
+  }, [tree]);
+
+  useEffect(() => {
+    if (tree === null) return;
+    return subscribeToCreateTopLevelFile(() => {
+      tree.startCreating('file', '');
     });
   }, [tree]);
   const hasFolders = folderState.folderCount > 0;
