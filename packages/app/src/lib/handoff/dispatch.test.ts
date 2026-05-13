@@ -1,20 +1,13 @@
 /**
  * Unit tests for the single outbound dispatch entry point.
  *
- * Covered surfaces:
- *   (a) Happy paths — each of the four `HandoffTarget` values is routed to the
- *       right primitive with the right URL shape and deps forwarding.
- *   (b) Exhaustiveness — the `_exhaustive: never` line fires at runtime when a
- *       caller passes an invalid target (simulates the future case where
- *       someone adds a union member and forgets the switch case — TypeScript
- *       would catch this at compile time; the runtime assertion is
- *       belt-and-suspenders).
- *   (c) Cursor host gate — web host (no `okDesktop`, no injected spawnCursor)
- *       returns `web-host-cursor-unsupported` cleanly.
- *   (d) AC9 assertion — grep of `packages/app/src/components/` must not
- *       reference `dispatchHandoff`, `dispatchCursor`, or `openExternal`
- *       outside the `lib/handoff/` module. Deferred to US-011 which introduces
- *       the component surfaces; covered there.
+ * Every target POSTs to `/api/handoff` with `{ target, url, workspacePath? }`.
+ * No renderer-side timing dance — the server owns the recipe. Tests assert:
+ *   (a) each target produces the right body shape
+ *   (b) the URL passed in `body.url` is built by the matching URL builder
+ *   (c) `workspacePath` is threaded only for Cursor (the cli-binary recipe)
+ *   (d) HTTP failures map to `HandoffOutcome` shapes the toast hook expects
+ *   (e) exhaustiveness guard fires for unknown targets at runtime
  */
 
 import { describe, expect, mock, test } from 'bun:test';
@@ -27,102 +20,138 @@ const BASE_PAYLOAD = {
   prompt: 'Open Knowledge doc: specs/foo/SPEC.md.',
 } as const;
 
-function makeOpen(impl: (url: string) => Promise<void>) {
-  const openExternal = mock(impl);
-  return { openExternalDeps: { okDesktop: { shell: { openExternal } } }, openExternal };
+function makeFetch(status: number, bodyJson?: unknown) {
+  const fetchImpl = mock(async (..._args: Parameters<typeof globalThis.fetch>) => {
+    return new Response(JSON.stringify(bodyJson ?? {}), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as unknown as typeof globalThis.fetch;
+  return fetchImpl;
+}
+
+async function readSentBody(fetchImpl: typeof globalThis.fetch): Promise<unknown> {
+  const calls = (fetchImpl as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+  const [_url, init] = (calls[0] ?? []) as [string, RequestInit | undefined];
+  if (!init?.body || typeof init.body !== 'string') {
+    throw new Error('fetch was not called with a JSON body');
+  }
+  return JSON.parse(init.body);
 }
 
 describe('dispatchHandoff — claude-cowork', () => {
-  test('dispatches claude://cowork/new with single-encoded params', async () => {
-    const { openExternalDeps, openExternal } = makeOpen(async () => {});
+  test('POSTs /api/handoff with target=claude-cowork and a claude://cowork/new URL', async () => {
+    const fetchImpl = makeFetch(200);
     const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'claude-cowork' };
-    const result = await dispatchHandoff(payload, { openExternalDeps });
+    const result = await dispatchHandoff(payload, { fetch: fetchImpl });
     expect(result).toEqual({ ok: true });
-    expect(openExternal).toHaveBeenCalledTimes(1);
-    const url = (openExternal.mock.calls[0] as readonly string[])[0];
-    expect(url).toMatch(/^claude:\/\/cowork\/new\?q=/);
-    expect(url).toContain('folder=');
-    expect(url).toContain('file=');
+    const body = (await readSentBody(fetchImpl)) as {
+      target: string;
+      url: string;
+      workspacePath?: string;
+    };
+    expect(body.target).toBe('claude-cowork');
+    expect(body.url).toMatch(/^claude:\/\/cowork\/new\?q=/);
+    expect(body.url).toContain('folder=');
+    expect(body.url).toContain('file=');
+    expect(body.workspacePath).toBeUndefined();
   });
 });
 
 describe('dispatchHandoff — claude-code', () => {
-  test('dispatches claude://code/new with file= retained (E3-b: forward-compat)', async () => {
-    const { openExternalDeps, openExternal } = makeOpen(async () => {});
+  test('POSTs /api/handoff with target=claude-code and a claude://code/new URL', async () => {
+    const fetchImpl = makeFetch(200);
     const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'claude-code' };
-    const result = await dispatchHandoff(payload, { openExternalDeps });
+    const result = await dispatchHandoff(payload, { fetch: fetchImpl });
     expect(result).toEqual({ ok: true });
-    const url = (openExternal.mock.calls[0] as readonly string[])[0];
-    expect(url).toMatch(/^claude:\/\/code\/new\?q=/);
-    expect(url).toContain('file=');
+    const body = (await readSentBody(fetchImpl)) as { target: string; url: string };
+    expect(body.target).toBe('claude-code');
+    expect(body.url).toMatch(/^claude:\/\/code\/new\?q=/);
+    expect(body.url).toContain('folder=');
+    expect(body.url).toContain('file=');
   });
 });
 
 describe('dispatchHandoff — codex', () => {
-  test('every dispatch is two-shot (wake URL → settle → real URL with prompt and path)', async () => {
-    const { openExternalDeps, openExternal } = makeOpen(async () => {});
-    const sleep = mock(async () => {});
+  test('POSTs /api/handoff with target=codex and a codex://new URL (no file=)', async () => {
+    const fetchImpl = makeFetch(200);
     const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'codex' };
-    const result = await dispatchHandoff(payload, { openExternalDeps, codexDeps: { sleep } });
+    const result = await dispatchHandoff(payload, { fetch: fetchImpl });
     expect(result).toEqual({ ok: true });
-    expect(openExternal).toHaveBeenCalledTimes(2);
-    const wakeUrl = (openExternal.mock.calls[0] as readonly string[])[0];
-    expect(wakeUrl).toBe('codex://new');
-    const realUrl = (openExternal.mock.calls[1] as readonly string[])[0];
-    expect(realUrl).toMatch(/^codex:\/\/new\?prompt=/);
-    expect(realUrl).toContain('path=');
-    expect(realUrl).not.toContain('file=');
-    expect(sleep).toHaveBeenCalledTimes(1);
+    const body = (await readSentBody(fetchImpl)) as {
+      target: string;
+      url: string;
+      workspacePath?: string;
+    };
+    expect(body.target).toBe('codex');
+    expect(body.url).toMatch(/^codex:\/\/new\?prompt=/);
+    expect(body.url).toContain('path=');
+    expect(body.url).not.toContain('file=');
+    expect(body.workspacePath).toBeUndefined();
   });
 });
 
 describe('dispatchHandoff — cursor', () => {
-  test('two-step: spawn → settle → fire cursor:// URL on Electron', async () => {
-    const spawnCursor = mock(async () => ({ ok: true as const }));
-    const { openExternalDeps, openExternal } = makeOpen(async () => {});
-    const sleep = mock(async () => {});
+  test('POSTs /api/handoff with target=cursor, cursor:// URL, and workspacePath', async () => {
+    const fetchImpl = makeFetch(200);
     const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'cursor' };
-    const result = await dispatchHandoff(payload, {
-      cursorDeps: { spawnCursor, sleep, openExternalDeps },
-    });
+    const result = await dispatchHandoff(payload, { fetch: fetchImpl });
     expect(result).toEqual({ ok: true });
-    expect(spawnCursor).toHaveBeenCalledWith(BASE_PAYLOAD.projectDir);
-    expect(openExternal).toHaveBeenCalledTimes(1);
-    const url = (openExternal.mock.calls[0] as readonly string[])[0];
-    expect(url).toMatch(/^cursor:\/\/anysphere\.cursor-deeplink\/prompt\?/);
+    const body = (await readSentBody(fetchImpl)) as {
+      target: string;
+      url: string;
+      workspacePath: string;
+    };
+    expect(body.target).toBe('cursor');
+    expect(body.url).toMatch(/^cursor:\/\/anysphere\.cursor-deeplink\/prompt\?/);
+    expect(body.workspacePath).toBe(BASE_PAYLOAD.projectDir);
   });
+});
 
-  test('web host fallback: no spawnCursor dep + no okDesktop → POSTs to /api/spawn-cursor', async () => {
-    const fetchMock = (async () =>
-      new Response('', { status: 404 })) as unknown as typeof globalThis.fetch;
-    const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'cursor' };
-    const result = await dispatchHandoff(payload, {
-      cursorDeps: { fetch: fetchMock, sleep: async () => {} },
-    });
+describe('dispatchHandoff — HTTP failure mapping', () => {
+  test('404 → not-installed (server missing /api/handoff route)', async () => {
+    const fetchImpl = makeFetch(404);
+    const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'codex' };
+    const result = await dispatchHandoff(payload, { fetch: fetchImpl });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe('not-installed');
   });
 
-  test('forwards top-level openExternalDeps to cursor step 2 when cursorDeps lacks its own', async () => {
-    const spawnCursor = mock(async () => ({ ok: true as const }));
-    const { openExternalDeps, openExternal } = makeOpen(async () => {});
-    const sleep = mock(async () => {});
+  test('422 → not-installed (target binary/app missing on this machine)', async () => {
+    const fetchImpl = makeFetch(422);
     const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'cursor' };
-    await dispatchHandoff(payload, {
-      openExternalDeps,
-      cursorDeps: { spawnCursor, sleep },
-    });
-    expect(openExternal).toHaveBeenCalledTimes(1);
+    const result = await dispatchHandoff(payload, { fetch: fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('not-installed');
+  });
+
+  test('5xx → dispatch-error', async () => {
+    const fetchImpl = makeFetch(500);
+    const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'claude-code' };
+    const result = await dispatchHandoff(payload, { fetch: fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('dispatch-error');
+  });
+
+  test('network error (fetch throws) → dispatch-error with detail', async () => {
+    const fetchImpl = mock(async () => {
+      throw new Error('NetworkError when attempting to fetch resource.');
+    }) as unknown as typeof globalThis.fetch;
+    const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'codex' };
+    const result = await dispatchHandoff(payload, { fetch: fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('dispatch-error');
+    expect(result.detail).toContain('NetworkError');
   });
 });
 
 describe('dispatchHandoff — runtime exhaustiveness guard', () => {
   test('unknown target (cast to HandoffTarget) produces invalid-payload at runtime', async () => {
-    const payload = {
-      ...BASE_PAYLOAD,
-      target: 'zed' as HandoffTarget,
-    };
+    const payload = { ...BASE_PAYLOAD, target: 'zed' as HandoffTarget };
     const result = await dispatchHandoff(payload);
     expect(result.ok).toBe(false);
     if (result.ok) return;

@@ -13,8 +13,6 @@ const ALLOWLISTED_SUBPATHS = ['lib/handoff', 'components/handoff'] as const;
 const PROHIBITED_IMPORT_SUBSTRINGS = [
   "from '@/lib/handoff/dispatch'",
   'from "@/lib/handoff/dispatch"',
-  "from '@/lib/handoff/cursor-two-step'",
-  'from "@/lib/handoff/cursor-two-step"',
   "from '@/lib/handoff/open-external'",
   'from "@/lib/handoff/open-external"',
 ];

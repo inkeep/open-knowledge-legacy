@@ -73,6 +73,9 @@ export const URN_HTTP_ONLY: ReadonlySet<ProblemType> = new Set<ProblemType>([
   'urn:ok:error:asset-not-found',
   'urn:ok:error:collab-server-not-running',
   'urn:ok:error:gateway-timeout',
+  'urn:ok:error:handoff-target-not-installed',
+  'urn:ok:error:handoff-spawn-timeout',
+  'urn:ok:error:handoff-spawn-failed',
 ]);
 
 export type UrnIpcLookup<C extends IpcChannelWithUrn> =

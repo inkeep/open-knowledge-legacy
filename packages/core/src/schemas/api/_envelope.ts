@@ -76,6 +76,9 @@ export const ProblemTypeSchema = z.enum([
   'urn:ok:error:cursor-not-installed',
   'urn:ok:error:cursor-spawn-timeout',
   'urn:ok:error:cursor-spawn-failed',
+  'urn:ok:error:handoff-target-not-installed',
+  'urn:ok:error:handoff-spawn-timeout',
+  'urn:ok:error:handoff-spawn-failed',
 ]) satisfies StandardSchemaV1;
 export type ProblemType = z.infer<typeof ProblemTypeSchema>;
 

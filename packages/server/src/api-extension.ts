@@ -183,6 +183,7 @@ import {
   handleInstalledAgents,
   type InstalledAgentScheme,
 } from './handoff-api.ts';
+import { handleHandoffDispatch } from './handoff-dispatch-api.ts';
 import { findHubCandidates } from './hub-candidates.ts';
 import {
   extractPageTitle,
@@ -7455,6 +7456,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     },
   );
 
+  async function handleHandoffDispatchRoute(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, { handler: 'handoff' })) return;
+    try {
+      await handleHandoffDispatch(req, res, {
+        contentDir,
+        platform: process.platform,
+      });
+    } catch (e) {
+      if (!res.headersSent) {
+        log.error({ err: e }, '[handoff] route wrapper failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'handoff',
+          cause: e,
+        });
+      }
+    }
+  }
+
   async function handleSpawnCursorRoute(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'spawn-cursor' })) return;
     try {
@@ -7530,6 +7552,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
     '/api/installed-agents': handleInstalledAgentsRoute,
     '/api/spawn-cursor': handleSpawnCursorRoute,
+    '/api/handoff': handleHandoffDispatchRoute,
     '/api/install-skill': handleInstallSkill,
     '/api/skill/install-state': handleSkillInstallState,
     '/api/seed/plan': handleSeedPlan,

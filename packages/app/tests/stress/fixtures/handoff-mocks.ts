@@ -7,58 +7,9 @@ export interface InstallMap {
   readonly cursor: boolean;
 }
 
-export type SpawnCursorResult =
-  | { readonly ok: true }
-  | {
-      readonly ok: false;
-      readonly reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error';
-    };
-
-function spawnCursorResultToWire(result: SpawnCursorResult): {
-  status: number;
-  contentType: string;
-  body: string;
-} {
-  if (result.ok) {
-    return { status: 200, contentType: 'application/json', body: JSON.stringify({}) };
-  }
-  const map: Record<
-    'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error',
-    { status: number; type: string; title: string }
-  > = {
-    'invalid-path': {
-      status: 403,
-      type: 'urn:ok:error:path-escape',
-      title: 'Path escapes the content directory.',
-    },
-    'not-installed': {
-      status: 422,
-      type: 'urn:ok:error:cursor-not-installed',
-      title: 'Cursor CLI not found on this machine.',
-    },
-    timeout: {
-      status: 504,
-      type: 'urn:ok:error:cursor-spawn-timeout',
-      title: 'Cursor spawn exceeded the deadline.',
-    },
-    'spawn-error': {
-      status: 502,
-      type: 'urn:ok:error:cursor-spawn-failed',
-      title: 'Cursor spawn failed.',
-    },
-  };
-  const entry = map[result.reason];
-  return {
-    status: entry.status,
-    contentType: 'application/problem+json',
-    body: JSON.stringify({ type: entry.type, title: entry.title, status: entry.status }),
-  };
-}
-
 export interface HandoffMockConfig {
   readonly host: 'electron' | 'web';
   readonly install: InstallMap;
-  readonly spawnCursor?: SpawnCursorResult;
   /** Worker's baseURL — passed so the mock bridge's `collabUrl` / `apiOrigin`
    *  point at the real Vite+Hocuspocus instance for this worker. */
   readonly workerBaseURL: string;
@@ -71,26 +22,28 @@ export interface CapturedHandoff {
   readonly anchorClicks: ReadonlyArray<string>;
   readonly openExternalCalls: ReadonlyArray<string>;
   readonly detectProtocolCalls: ReadonlyArray<string>;
-  readonly spawnCursorCalls: ReadonlyArray<string>;
+  readonly handoffApiCalls: ReadonlyArray<{
+    readonly target: string;
+    readonly url: string;
+    readonly workspacePath?: string;
+  }>;
   readonly recordHandoffCalls: ReadonlyArray<Record<string, unknown>>;
 }
 
 export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): Promise<void> {
+  await page.route('**/api/handoff', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({}),
+    });
+  });
   if (cfg.host === 'web') {
     await page.route('**/api/installed-agents', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify(cfg.install),
-      });
-    });
-    await page.route('**/api/spawn-cursor', async (route) => {
-      const result = cfg.spawnCursor ?? { ok: true };
-      const wire = spawnCursorResultToWire(result);
-      await route.fulfill({
-        status: wire.status,
-        contentType: wire.contentType,
-        body: wire.body,
       });
     });
     await page.route('**/api/install-skill', async (route) => {
@@ -125,22 +78,20 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
   });
 
   await page.addInitScript((args) => {
-    const { host, install, spawnCursor, workerBaseURL, workerContentDir } =
-      args as HandoffMockConfig;
+    const { host, install, workerBaseURL, workerContentDir } = args as HandoffMockConfig;
 
+    interface HandoffApiCall {
+      target: string;
+      url: string;
+      workspacePath?: string;
+    }
     interface HandoffMocksState {
       anchorClicks: string[];
       openExternalCalls: string[];
       detectProtocolCalls: string[];
-      spawnCursorCalls: string[];
+      handoffApiCalls: HandoffApiCall[];
       recordHandoffCalls: Record<string, unknown>[];
       install: { claude: boolean; codex: boolean; cursor: boolean };
-      spawnCursorResult:
-        | { ok: true }
-        | {
-            ok: false;
-            reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error';
-          };
       fakeTimeOffset: number;
       /** Web-host only: set once `/api/installed-agents` fetch resolves so
        *  tests can poll for the probe having landed. */
@@ -150,10 +101,9 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
       anchorClicks: [],
       openExternalCalls: [],
       detectProtocolCalls: [],
-      spawnCursorCalls: [],
+      handoffApiCalls: [],
       recordHandoffCalls: [],
       install: { ...install },
-      spawnCursorResult: spawnCursor ?? { ok: true },
       fakeTimeOffset: 0,
       installedAgentsFetchResolved: false,
     };
@@ -172,15 +122,25 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
             : input instanceof URL
               ? input.href
               : (input as Request).url;
-        if (url.includes('/api/spawn-cursor')) {
-          let path = '';
+        if (url.includes('/api/handoff') && !url.includes('/api/handoff-')) {
           if (init?.body && typeof init.body === 'string') {
             try {
-              const parsed = JSON.parse(init.body) as { path?: string };
-              path = parsed.path ?? '';
-            } catch {}
+              const parsed = JSON.parse(init.body) as {
+                target?: string;
+                url?: string;
+                workspacePath?: string;
+              };
+              mocks.handoffApiCalls.push({
+                target: parsed.target ?? '',
+                url: parsed.url ?? '',
+                ...(parsed.workspacePath !== undefined
+                  ? { workspacePath: parsed.workspacePath }
+                  : {}),
+              });
+            } catch {
+              mocks.handoffApiCalls.push({ target: '', url: '' });
+            }
           }
-          mocks.spawnCursorCalls.push(path);
         }
       } catch {}
       const res = await originalFetch(input, init);
@@ -231,18 +191,7 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
             ? { installed: true, displayName: `${scheme.replace(':', '')}-mock` }
             : { installed: false };
         },
-        spawnCursor: async (
-          path: string,
-        ): Promise<
-          | { ok: true }
-          | {
-              ok: false;
-              reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error';
-            }
-        > => {
-          mocks.spawnCursorCalls.push(path);
-          return mocks.spawnCursorResult;
-        },
+        spawnCursor: async (): Promise<{ ok: true }> => ({ ok: true }),
         recordHandoff: async (line: Record<string, unknown>): Promise<void> => {
           mocks.recordHandoffCalls.push(line);
         },
@@ -376,14 +325,14 @@ export async function readCapturedHandoff(page: Page): Promise<CapturedHandoff> 
       anchorClicks: string[];
       openExternalCalls: string[];
       detectProtocolCalls: string[];
-      spawnCursorCalls: string[];
+      handoffApiCalls: { target: string; url: string; workspacePath?: string }[];
       recordHandoffCalls: Record<string, unknown>[];
     };
     return {
       anchorClicks: [...mocks.anchorClicks],
       openExternalCalls: [...mocks.openExternalCalls],
       detectProtocolCalls: [...mocks.detectProtocolCalls],
-      spawnCursorCalls: [...mocks.spawnCursorCalls],
+      handoffApiCalls: mocks.handoffApiCalls.map((c) => ({ ...c })),
       recordHandoffCalls: mocks.recordHandoffCalls.map((l) => ({ ...l })),
     };
   });
@@ -414,15 +363,4 @@ export async function advanceHandoffFakeTime(page: Page, ms: number): Promise<vo
     const mocks = (window as any).__handoffMocks__;
     mocks.fakeTimeOffset += delta;
   }, ms);
-}
-
-export async function updateSpawnCursorResult(
-  page: Page,
-  result: SpawnCursorResult,
-): Promise<void> {
-  await page.evaluate((next) => {
-    // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.
-    const mocks = (window as any).__handoffMocks__;
-    mocks.spawnCursorResult = next;
-  }, result);
 }
