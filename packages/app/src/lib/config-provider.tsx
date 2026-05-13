@@ -39,9 +39,33 @@ interface ScopedBinding {
   cleanup: () => void;
 }
 
+type CloseEventLike = { code: number; reason: string };
+
+function logProviderEvent(
+  role: string,
+  docName: string,
+  event: 'disconnect' | 'close',
+  closeEvent: CloseEventLike | undefined,
+) {
+  console.warn(
+    JSON.stringify({
+      event: `ok-${role}-${event}`,
+      docName,
+      code: closeEvent?.code,
+      reason: closeEvent?.reason ?? undefined,
+    }),
+  );
+}
+
 function makeBinding(collabUrl: string, docName: string, scope: WriteScope): ScopedBinding {
   const ydoc = new Y.Doc();
-  const provider = new HocuspocusProvider({ url: collabUrl, name: docName, document: ydoc });
+  const provider = new HocuspocusProvider({
+    url: collabUrl,
+    name: docName,
+    document: ydoc,
+    onDisconnect: ({ event }) => logProviderEvent('config-provider', docName, 'disconnect', event),
+    onClose: ({ event }) => logProviderEvent('config-provider', docName, 'close', event),
+  });
   const binding = bindConfigDoc(provider, scope);
   const cleanup = () => {
     binding.dispose();
@@ -63,6 +87,10 @@ function makeOkignoreBinding(collabUrl: string): OkignoreScoped {
     url: collabUrl,
     name: CONFIG_DOC_NAME_OKIGNORE,
     document: ydoc,
+    onDisconnect: ({ event }) =>
+      logProviderEvent('okignore-provider', CONFIG_DOC_NAME_OKIGNORE, 'disconnect', event),
+    onClose: ({ event }) =>
+      logProviderEvent('okignore-provider', CONFIG_DOC_NAME_OKIGNORE, 'close', event),
   });
   const binding = bindOkignoreDoc(provider);
   const cleanup = () => {

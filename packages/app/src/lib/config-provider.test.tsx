@@ -84,3 +84,29 @@ describe('ConfigProvider — Electron theme bridge wiring', () => {
     expect(src).toMatch(/themeValue\s*\?\?\s*['"]system['"]/);
   });
 });
+
+describe('ConfigProvider — provider event logging', () => {
+  test('makeBinding passes onDisconnect and onClose to HocuspocusProvider', () => {
+    expect(src).toMatch(/new HocuspocusProvider\(\{[\s\S]*?onDisconnect:[\s\S]*?onClose:/);
+  });
+
+  test('config-provider role uses ok-config-provider-* event names', () => {
+    expect(src).toMatch(/['"]config-provider['"]/);
+  });
+
+  test('okignore-provider role uses ok-okignore-provider-* event names', () => {
+    expect(src).toMatch(/['"]okignore-provider['"]/);
+  });
+
+  test('logProviderEvent helper exists and is the single emission site', () => {
+    expect(src).toMatch(/function logProviderEvent\(/);
+    expect(src).toMatch(/console\.warn\(\s*JSON\.stringify\(/);
+  });
+
+  test('log payload includes event, docName, and CloseEvent code/reason', () => {
+    expect(src).toContain('event:');
+    expect(src).toContain('docName,');
+    expect(src).toContain('code:');
+    expect(src).toContain('reason:');
+  });
+});
