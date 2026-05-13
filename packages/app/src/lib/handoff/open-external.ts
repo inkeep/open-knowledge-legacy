@@ -1,6 +1,6 @@
 import type { HandoffOutcome } from '@inkeep/open-knowledge-core';
 
-export interface OpenExternalDeps {
+interface OpenExternalDeps {
   readonly okDesktop?: { shell: { openExternal(url: string): Promise<void> } };
   readonly doc?: Document;
 }

@@ -88,6 +88,7 @@ const EXEMPT_HANDLERS = new Set([
   'handleInstallSkill',
   'handleSkillInstallState',
   'handleSpawnCursorRoute',
+  'handleHandoffDispatchRoute',
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {

@@ -1,37 +1,96 @@
 import {
   buildClaudeUrl,
+  buildCodexUrl,
+  buildCursorUrl,
   type HandoffOutcome,
   type HandoffPayload,
+  type HandoffTarget,
 } from '@inkeep/open-knowledge-core';
-import { type DispatchCodexDeps, dispatchCodex } from './codex-two-shot.ts';
-import { type DispatchCursorDeps, dispatchCursor } from './cursor-two-step.ts';
-import { type OpenExternalDeps, openExternal } from './open-external.ts';
 
 interface DispatchHandoffDeps {
-  readonly openExternalDeps?: OpenExternalDeps;
-  readonly codexDeps?: DispatchCodexDeps;
-  readonly cursorDeps?: DispatchCursorDeps;
+  readonly fetch?: typeof globalThis.fetch;
+}
+
+interface HandoffRequestBody {
+  readonly target: HandoffTarget;
+  readonly url: string;
+  readonly workspacePath?: string;
+}
+
+async function postHandoff(
+  body: HandoffRequestBody,
+  fetchImpl: typeof globalThis.fetch,
+): Promise<HandoffOutcome> {
+  let res: Response;
+  try {
+    res = await fetchImpl('/api/handoff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: 'dispatch-error', detail };
+  }
+  if (res.status === 200) {
+    return { ok: true };
+  }
+  if (res.status === 404) {
+    return { ok: false, reason: 'not-installed', detail: 'POST /api/handoff returned 404' };
+  }
+  if (res.status === 422) {
+    return {
+      ok: false,
+      reason: 'not-installed',
+      detail: `POST /api/handoff returned ${res.status}`,
+    };
+  }
+  return {
+    ok: false,
+    reason: 'dispatch-error',
+    detail: `POST /api/handoff returned ${res.status}`,
+  };
 }
 
 export async function dispatchHandoff(
   payload: HandoffPayload,
   deps: DispatchHandoffDeps = {},
 ): Promise<HandoffOutcome> {
+  const fetchImpl = deps.fetch ?? globalThis.fetch.bind(globalThis);
   switch (payload.target) {
     case 'claude-cowork':
-      return openExternal(buildClaudeUrl({ mode: 'cowork' }, payload), deps.openExternalDeps);
+      return postHandoff(
+        {
+          target: 'claude-cowork',
+          url: buildClaudeUrl({ mode: 'cowork' }, payload),
+        },
+        fetchImpl,
+      );
     case 'claude-code':
-      return openExternal(buildClaudeUrl({ mode: 'code' }, payload), deps.openExternalDeps);
+      return postHandoff(
+        {
+          target: 'claude-code',
+          url: buildClaudeUrl({ mode: 'code' }, payload),
+        },
+        fetchImpl,
+      );
     case 'codex':
-      return dispatchCodex(payload, {
-        ...deps.codexDeps,
-        openExternalDeps: deps.codexDeps?.openExternalDeps ?? deps.openExternalDeps,
-      });
+      return postHandoff(
+        {
+          target: 'codex',
+          url: buildCodexUrl(payload),
+        },
+        fetchImpl,
+      );
     case 'cursor':
-      return dispatchCursor(payload, {
-        ...deps.cursorDeps,
-        openExternalDeps: deps.cursorDeps?.openExternalDeps ?? deps.openExternalDeps,
-      });
+      return postHandoff(
+        {
+          target: 'cursor',
+          url: buildCursorUrl(payload),
+          workspacePath: payload.projectDir,
+        },
+        fetchImpl,
+      );
     default: {
       const _exhaustive: never = payload.target;
       return {

@@ -1,12 +1,17 @@
-import { execFile, spawn as nodeSpawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { access, constants as fsConstants } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { posix as pathPosix, win32 as pathWin32 } from 'node:path';
 import { SpawnCursorSuccessSchema } from '@inkeep/open-knowledge-core';
 import { errorResponse } from './http/error-response.ts';
-import { PayloadTooLargeError, RequestBodyTimeoutError } from './http/request-validation.ts';
+import {
+  PayloadTooLargeError,
+  RequestBodyTimeoutError,
+  readBoundedJsonBody,
+} from './http/request-validation.ts';
 import { successResponse } from './http/success-response.ts';
+import { spawnDetached as spawnDetachedReal } from './spawn-detached.ts';
 
 const SPAWN_CURSOR_WHICH_TIMEOUT_MS = 500;
 const SPAWN_CURSOR_SPAWN_TIMEOUT_MS = 2000;
@@ -48,7 +53,10 @@ export async function handleSpawnCursor(
 
   let body: Buffer;
   try {
-    body = await readBoundedJsonBody(req);
+    body = await readBoundedJsonBody(req, {
+      maxBytes: SPAWN_CURSOR_MAX_BODY_BYTES,
+      timeoutMs: SPAWN_CURSOR_BODY_READ_TIMEOUT_MS,
+    });
   } catch (err) {
     if (err instanceof PayloadTooLargeError) {
       errorResponse(res, 413, 'urn:ok:error:payload-too-large', 'Payload too large.', {
@@ -198,49 +206,6 @@ export async function resolveCursorBinaryDefault(timeoutMs: number): Promise<str
   });
 }
 
-function spawnDetachedReal(
-  exec: string,
-  args: ReadonlyArray<string>,
-  timeoutMs: number,
-): Promise<SpawnCursorOutcome> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const settle = (outcome: SpawnCursorOutcome): void => {
-      if (settled) return;
-      settled = true;
-      resolve(outcome);
-    };
-    const timer = setTimeout(() => settle({ ok: false, reason: 'timeout' }), timeoutMs);
-    try {
-      const child = nodeSpawn(exec, [...args], {
-        detached: true,
-        stdio: 'ignore',
-        shell: false,
-      });
-      child.once('error', (err) => {
-        clearTimeout(timer);
-        const msg = err instanceof Error ? err.message : String(err);
-        const reason: SpawnCursorOutcome = /ENOENT|EACCES|EPERM/.test(msg)
-          ? { ok: false, reason: 'not-installed' }
-          : { ok: false, reason: 'spawn-error' };
-        settle(reason);
-      });
-      queueMicrotask(() => {
-        if (settled) return;
-        try {
-          child.unref();
-        } catch {}
-        clearTimeout(timer);
-        settle({ ok: true });
-      });
-    } catch (err) {
-      console.warn('[spawn-cursor] synchronous spawn throw:', err);
-      clearTimeout(timer);
-      settle({ ok: false, reason: 'spawn-error' });
-    }
-  });
-}
-
 export function resolveCursorSpawnInvocation(
   resolvedPath: string,
   userPath: string,
@@ -251,26 +216,6 @@ export function resolveCursorSpawnInvocation(
     return { exec: '/usr/bin/open', args: ['-a', bundle, userPath] };
   }
   return { exec: resolvedPath, args: [userPath] };
-}
-
-async function readBoundedJsonBody(req: IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
-  const timeoutSignal = AbortSignal.timeout(SPAWN_CURSOR_BODY_READ_TIMEOUT_MS);
-  const onTimeout = () => req.destroy(new RequestBodyTimeoutError());
-  timeoutSignal.addEventListener('abort', onTimeout, { once: true });
-  try {
-    for await (const chunk of req) {
-      totalBytes += (chunk as Buffer).length;
-      if (totalBytes > SPAWN_CURSOR_MAX_BODY_BYTES) {
-        throw new PayloadTooLargeError();
-      }
-      chunks.push(chunk as Buffer);
-    }
-    return Buffer.concat(chunks);
-  } finally {
-    timeoutSignal.removeEventListener('abort', onTimeout);
-  }
 }
 
 export function isPathWithinDir(

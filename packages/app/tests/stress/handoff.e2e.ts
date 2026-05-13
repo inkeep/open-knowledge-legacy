@@ -7,7 +7,6 @@ import {
   installHandoffMocks,
   readCapturedHandoff,
   updateElectronInstallMap,
-  updateSpawnCursorResult,
 } from './fixtures/handoff-mocks';
 
 const DOC_NAME = 'handoff-test-doc';
@@ -81,15 +80,16 @@ test.describe('handoff — 8-cell matrix', () => {
     await page.getByTestId('open-in-agent-item-claude-cowork').click();
 
     await expect
-      .poll(async () => (await readCapturedHandoff(page)).openExternalCalls.length, {
+      .poll(async () => (await readCapturedHandoff(page)).handoffApiCalls.length, {
         timeout: 5_000,
       })
       .toBe(1);
 
     const captured = await readCapturedHandoff(page);
-    const dispatched = captured.openExternalCalls[0];
-    expect(dispatched).toBeTruthy();
-    const u = new URL(dispatched as string);
+    const call = captured.handoffApiCalls[0];
+    expect(call).toBeTruthy();
+    expect(call?.target).toBe('claude-cowork');
+    const u = new URL(call?.url ?? '');
     expect(u.protocol).toBe('claude:');
     expect(u.hostname).toBe('cowork');
     expect(u.pathname).toBe('/new');
@@ -118,7 +118,6 @@ test.describe('handoff — 8-cell matrix', () => {
     const cfg: HandoffMockConfig = {
       host: 'electron',
       install: { claude: true, codex: true, cursor: true },
-      spawnCursor: { ok: true },
       workerBaseURL: workerServer.baseURL,
       workerContentDir: resolvedContentDir(workerServer.contentDir),
     };
@@ -129,22 +128,15 @@ test.describe('handoff — 8-cell matrix', () => {
     await page.getByTestId('open-in-agent-item-cursor').click();
 
     await expect
-      .poll(async () => (await readCapturedHandoff(page)).spawnCursorCalls.length, {
+      .poll(async () => (await readCapturedHandoff(page)).handoffApiCalls.length, {
         timeout: 5_000,
       })
       .toBe(1);
-    const afterSpawn = await readCapturedHandoff(page);
-    expect(afterSpawn.spawnCursorCalls[0]).toBe(resolvedContentDir(workerServer.contentDir));
-
-    await expect
-      .poll(async () => (await readCapturedHandoff(page)).openExternalCalls.length, {
-        timeout: 5_000,
-      })
-      .toBe(1);
-    const afterDispatch = await readCapturedHandoff(page);
-    const cursorUrl = afterDispatch.openExternalCalls[0];
-    expect(cursorUrl).toBeTruthy();
-    const u = new URL(cursorUrl as string);
+    const captured = await readCapturedHandoff(page);
+    const call = captured.handoffApiCalls[0];
+    expect(call?.target).toBe('cursor');
+    expect(call?.workspacePath).toBe(resolvedContentDir(workerServer.contentDir));
+    const u = new URL(call?.url ?? '');
     expect(u.protocol).toBe('cursor:');
     expect(u.hostname).toBe('anysphere.cursor-deeplink');
     expect(u.pathname).toBe('/prompt');
@@ -154,8 +146,6 @@ test.describe('handoff — 8-cell matrix', () => {
     expect(decodeURIComponent(textOnce as string)).toContain('Open Knowledge doc');
 
     await expect(page.getByText('Opened in Cursor.')).toBeVisible();
-
-    expect(afterDispatch.openExternalCalls.length).toBe(1);
   });
 
   test('cell 3: Electron install-state flip — disabled → enabled via refresh after throttle window', async ({
@@ -205,24 +195,25 @@ test.describe('handoff — 8-cell matrix', () => {
     await page.getByTestId('open-in-agent-item-claude-cowork').click();
 
     await expect
-      .poll(async () => (await readCapturedHandoff(page)).anchorClicks.length, {
+      .poll(async () => (await readCapturedHandoff(page)).handoffApiCalls.length, {
         timeout: 15_000,
       })
       .toBe(1);
 
     const captured = await readCapturedHandoff(page);
-    const dispatched = captured.anchorClicks[0];
-    const u = new URL(dispatched as string);
+    const call = captured.handoffApiCalls[0];
+    expect(call?.target).toBe('claude-cowork');
+    const u = new URL(call?.url ?? '');
     expect(u.protocol).toBe('claude:');
     expect(u.hostname).toBe('cowork');
     expect(u.searchParams.get('folder')).toBe(resolvedContentDir(workerServer.contentDir));
 
     await expect(page.getByText('Opened in Claude Cowork.')).toBeVisible();
 
-    expect(captured.openExternalCalls.length).toBe(0);
+    expect(captured.recordHandoffCalls.length).toBe(0);
   });
 
-  test('cell 5: Web Cursor two-step happy path → POST /api/spawn-cursor + cursor:// dispatch', async ({
+  test('cell 5: Web Cursor happy path → POST /api/handoff (target=cursor, workspacePath) + cursor:// URL', async ({
     page,
     api,
     workerServer,
@@ -230,7 +221,6 @@ test.describe('handoff — 8-cell matrix', () => {
     const cfg: HandoffMockConfig = {
       host: 'web',
       install: { claude: true, codex: true, cursor: true },
-      spawnCursor: { ok: true },
       workerBaseURL: workerServer.baseURL,
       workerContentDir: resolvedContentDir(workerServer.contentDir),
     };
@@ -243,22 +233,15 @@ test.describe('handoff — 8-cell matrix', () => {
     await page.getByTestId('open-in-agent-item-cursor').click();
 
     await expect
-      .poll(async () => (await readCapturedHandoff(page)).spawnCursorCalls.length, {
+      .poll(async () => (await readCapturedHandoff(page)).handoffApiCalls.length, {
         timeout: 5_000,
       })
       .toBe(1);
-    const afterSpawn = await readCapturedHandoff(page);
-    expect(afterSpawn.spawnCursorCalls[0]).toBe(resolvedContentDir(workerServer.contentDir));
-
-    await expect
-      .poll(async () => (await readCapturedHandoff(page)).anchorClicks.length, {
-        timeout: 5_000,
-      })
-      .toBe(1);
-    const afterDispatch = await readCapturedHandoff(page);
-    const cursorUrl = afterDispatch.anchorClicks[0];
-    expect(cursorUrl).toBeTruthy();
-    const u = new URL(cursorUrl as string);
+    const captured = await readCapturedHandoff(page);
+    const call = captured.handoffApiCalls[0];
+    expect(call?.target).toBe('cursor');
+    expect(call?.workspacePath).toBe(resolvedContentDir(workerServer.contentDir));
+    const u = new URL(call?.url ?? '');
     expect(u.protocol).toBe('cursor:');
     expect(u.hostname).toBe('anysphere.cursor-deeplink');
     expect(u.pathname).toBe('/prompt');
@@ -269,7 +252,8 @@ test.describe('handoff — 8-cell matrix', () => {
 
     await expect(page.getByText('Opened in Cursor.')).toBeVisible();
 
-    expect(afterDispatch.openExternalCalls.length).toBe(0);
+    expect(captured.openExternalCalls.length).toBe(0);
+    expect(captured.anchorClicks.length).toBe(0);
   });
 
   test('cell 6: Web Claude not installed — top-level "Open in claude.ai →" row dispatches https://claude.ai/new (v1)', async ({
@@ -347,7 +331,7 @@ test.describe('handoff — 8-cell matrix', () => {
     expect(captured.openExternalCalls).toEqual([]);
   });
 
-  test('cell 8: Electron Cursor spawn failure → failure toast + error telemetry line', async ({
+  test('cell 8: Electron Cursor handoff failure → failure toast + error telemetry line', async ({
     page,
     api,
     workerServer,
@@ -355,20 +339,30 @@ test.describe('handoff — 8-cell matrix', () => {
     const cfg: HandoffMockConfig = {
       host: 'electron',
       install: { claude: true, codex: true, cursor: true },
-      spawnCursor: { ok: true }, // flipped below via updateSpawnCursorResult
       workerBaseURL: workerServer.baseURL,
       workerContentDir: resolvedContentDir(workerServer.contentDir),
     };
     await installHandoffMocks(page, cfg);
+    await page.unroute('**/api/handoff');
+    await page.route('**/api/handoff', async (route) => {
+      await route.fulfill({
+        status: 422,
+        contentType: 'application/problem+json',
+        body: JSON.stringify({
+          type: 'urn:ok:error:handoff-target-not-installed',
+          title: 'Cursor CLI not found on this machine.',
+          status: 422,
+          target: 'cursor',
+        }),
+      });
+    });
     await seedAndNavigate(page, api);
-
-    await updateSpawnCursorResult(page, { ok: false, reason: 'not-installed' });
 
     await openDropdown(page);
     await page.getByTestId('open-in-agent-item-cursor').click();
 
     await expect
-      .poll(async () => (await readCapturedHandoff(page)).spawnCursorCalls.length, {
+      .poll(async () => (await readCapturedHandoff(page)).handoffApiCalls.length, {
         timeout: 5_000,
       })
       .toBe(1);

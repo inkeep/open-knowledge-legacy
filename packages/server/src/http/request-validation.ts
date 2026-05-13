@@ -6,17 +6,27 @@ const MAX_BODY_BYTES = 1_048_576;
 
 const REQUEST_BODY_TIMEOUT_MS = 30_000;
 
-async function readRequestBody(req: IncomingMessage): Promise<Buffer> {
+function readRequestBody(req: IncomingMessage): Promise<Buffer> {
+  return readBoundedJsonBody(req, {
+    maxBytes: MAX_BODY_BYTES,
+    timeoutMs: REQUEST_BODY_TIMEOUT_MS,
+  });
+}
+
+export async function readBoundedJsonBody(
+  req: IncomingMessage,
+  opts: { readonly maxBytes: number; readonly timeoutMs: number },
+): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let totalBytes = 0;
-  const timeoutSignal = AbortSignal.timeout(REQUEST_BODY_TIMEOUT_MS);
-  const onTimeout = () => req.destroy(new RequestBodyTimeoutError());
+  const timeoutSignal = AbortSignal.timeout(opts.timeoutMs);
+  const onTimeout = () => req.destroy(new RequestBodyTimeoutError(opts.timeoutMs));
   timeoutSignal.addEventListener('abort', onTimeout, { once: true });
   try {
     for await (const chunk of req) {
       totalBytes += (chunk as Buffer).length;
-      if (totalBytes > MAX_BODY_BYTES) {
-        throw new PayloadTooLargeError();
+      if (totalBytes > opts.maxBytes) {
+        throw new PayloadTooLargeError(opts.maxBytes);
       }
       chunks.push(chunk as Buffer);
     }
@@ -27,17 +37,42 @@ async function readRequestBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 export class PayloadTooLargeError extends Error {
-  constructor() {
-    super('Request body exceeded 1 MB cap');
+  /** Cap that was exceeded, in bytes — carried so the log line reflects the
+   *  actual per-handler bound (e.g. 4 KB for loopback POSTs) rather than
+   *  hardcoding `withValidation`'s 1 MB default. Optional for back-compat
+   *  with any external constructors. */
+  readonly maxBytes?: number;
+  constructor(maxBytes?: number) {
+    super(
+      maxBytes !== undefined
+        ? `Request body exceeded ${formatBytes(maxBytes)} cap`
+        : 'Request body exceeded cap',
+    );
     this.name = 'PayloadTooLargeError';
+    this.maxBytes = maxBytes;
   }
 }
 
 export class RequestBodyTimeoutError extends Error {
-  constructor() {
-    super(`Request body read exceeded ${REQUEST_BODY_TIMEOUT_MS}ms timeout`);
+  /** Timeout that fired, in ms — carried so the log line reflects the actual
+   *  per-handler bound (e.g. 5 000 ms for loopback POSTs) rather than
+   *  hardcoding `withValidation`'s 30 000 ms default. Optional for back-compat. */
+  readonly timeoutMs?: number;
+  constructor(timeoutMs?: number) {
+    super(
+      timeoutMs !== undefined
+        ? `Request body read exceeded ${timeoutMs}ms timeout`
+        : 'Request body read exceeded timeout',
+    );
     this.name = 'RequestBodyTimeoutError';
+    this.timeoutMs = timeoutMs;
   }
+}
+
+function formatBytes(n: number): string {
+  if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(0)} MB`;
+  if (n >= 1_024) return `${(n / 1_024).toFixed(0)} KB`;
+  return `${n} B`;
 }
 
 export interface WithValidationOptions {
