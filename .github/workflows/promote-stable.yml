@@ -120,9 +120,10 @@ jobs:
             git push origin "$STABLE_TAG"
           fi
 
-      - name: Aggregate beta CHANGELOG entries since previous stable
+      - name: Aggregate beta release bodies since previous stable
         id: changelog
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           STABLE_TAG: ${{ steps.ver.outputs.stable_tag }}
           BETA_SHA: ${{ steps.ver.outputs.beta_sha }}
           STABLE_VERSION: ${{ steps.ver.outputs.stable_version }}
@@ -154,7 +155,11 @@ jobs:
             BETA_TAGS_IN_RANGE=$(git tag --list "v${STABLE_VERSION}-beta.*" --merged "$BETA_SHA" --sort=version:refname || true)
           fi
 
-          # Concatenate per-beta CHANGELOG entries (D12 acceptable form).
+          # Under the zero-commit-bump cadence, beta release bodies are
+          # the source of truth — packages/*/CHANGELOG.md no longer
+          # accumulates per-beta entries (only per-stable, written by
+          # main-reset's `bun changeset version` at promotion time).
+          # Aggregate via `gh release view --json body` for each beta tag.
           {
             printf '## %s\n\n' "$STABLE_VERSION"
             printf 'Stable promotion of beta %s.\n\n' "$BETA_TAG_INPUT"
@@ -163,19 +168,16 @@ jobs:
               for tag in $BETA_TAGS_IN_RANGE; do
                 BETA_VER=${tag#v}
                 printf '### %s\n\n' "$BETA_VER"
-                # Pull this beta's CHANGELOG entry. Prefer desktop's
-                # CHANGELOG; fall back to cli's.
-                for changelog in packages/desktop/CHANGELOG.md packages/cli/CHANGELOG.md; do
-                  if git show "refs/tags/${tag}":"${changelog}" >/dev/null 2>&1; then
-                    git show "refs/tags/${tag}":"${changelog}" \
-                      | awk -v ver="${BETA_VER}" '
-                          $0 ~ "^## " ver "([^[:digit:].]|$)" { capture=1; next }
-                          capture && /^## / { exit }
-                          capture { print }
-                        '
-                    break
-                  fi
-                done
+                # `gh release view` returns the prerelease Release body
+                # created by release.yml's publish-beta handler. If the
+                # Release is missing (Release-deleted-but-tag-kept edge
+                # case), emit a placeholder and continue — better to ship
+                # an incomplete stable body than to fail the promote.
+                if BODY=$(gh release view "$tag" --json body --jq .body 2>/dev/null) && [[ -n "$BODY" ]]; then
+                  printf '%s\n' "$BODY"
+                else
+                  printf '_(release body unavailable for %s)_\n' "$tag"
+                fi
                 printf '\n'
               done
             fi
