@@ -34,13 +34,19 @@ export default {
   },
   workspaces: {
     'packages/app': {
-      entry: ['src/**/*.test.{ts,tsx}', 'tests/**/*.{test,e2e}.ts', 'tests/perf/lib/*.ts'],
+      entry: [
+        'src/**/*.test.{ts,tsx}',
+        'tests/**/*.{test,e2e}.ts',
+        'tests/perf/lib/*.ts',
+        'tests/dom/**/*.ts',
+      ],
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',
         '@tiptap/extension-collaboration-cursor', // transitive dependency for `y-prosemirror@1.3.7` patch
         '@hookform/resolvers', // intentionally installed but uninstantiated (resolver-less); kept for parity with agents-private and future schema-bound dialogs
         'fuzzysort', // installed by PR #361 (workspace omnibar search) ahead of the consumer wire-up; same idiom as @hookform/resolvers
+        '@testing-library/jest-dom', // side-effect import (`import '@testing-library/jest-dom'`) registers matchers
         'highlight.js', // lowlight's peer dependency — never imported here directly, but lowlight's grammar registrations resolve through it
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],

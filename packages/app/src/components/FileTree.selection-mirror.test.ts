@@ -2,35 +2,35 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const FILETREE_SRC = readFileSync(join(__dirname, 'FileTree.tsx'), 'utf8');
+const HOOK_SRC = readFileSync(join(__dirname, 'use-selection-mirror.ts'), 'utf8');
 
 const ACTIVE_TREE_PATH_DEPS_CLOSE =
-  '}, [activeAncestorTreePathsSignature, activeTreePath, model]);';
+  '}, [activeAncestorTreePathsSignature, activeTreePath, model, suppressSelectionRef]);';
 const USE_EFFECT_OPEN = 'useEffect(() => {';
 
 function extractActiveTreePathEffectBody(): string {
-  const closeIdx = FILETREE_SRC.indexOf(ACTIVE_TREE_PATH_DEPS_CLOSE);
+  const closeIdx = HOOK_SRC.indexOf(ACTIVE_TREE_PATH_DEPS_CLOSE);
   if (closeIdx === -1) {
     throw new Error(
-      'Could not locate the activeTreePath useEffect deps-array close in FileTree.tsx. ' +
+      'Could not locate the activeTreePath useEffect deps-array close in use-selection-mirror.ts. ' +
         `Expected substring: \`${ACTIVE_TREE_PATH_DEPS_CLOSE}\`. ` +
         'If the deps changed, update this anchor AND re-evaluate whether the ' +
         'singleton-selection contract still holds at the new effect site.',
     );
   }
-  const openIdx = FILETREE_SRC.lastIndexOf(USE_EFFECT_OPEN, closeIdx);
+  const openIdx = HOOK_SRC.lastIndexOf(USE_EFFECT_OPEN, closeIdx);
   if (openIdx === -1) {
     throw new Error(
       'Could not locate the matching `useEffect(() => {` opener for the ' +
         'activeTreePath effect.',
     );
   }
-  return FILETREE_SRC.slice(openIdx + USE_EFFECT_OPEN.length, closeIdx);
+  return HOOK_SRC.slice(openIdx + USE_EFFECT_OPEN.length, closeIdx);
 }
 
 describe('FileTree — activeTreePath → Pierre selection mirror (singleton invariant)', () => {
   test('the activeTreePath useEffect block exists with its expected deps signature', () => {
-    expect(FILETREE_SRC).toContain(ACTIVE_TREE_PATH_DEPS_CLOSE);
+    expect(HOOK_SRC).toContain(ACTIVE_TREE_PATH_DEPS_CLOSE);
     expect(extractActiveTreePathEffectBody().length).toBeGreaterThan(0);
   });
 
