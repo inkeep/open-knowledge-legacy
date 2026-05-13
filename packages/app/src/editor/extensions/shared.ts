@@ -8,6 +8,7 @@ import { slashCommandItems } from '../slash-command/items';
 import { BlockMover } from './block-mover';
 import { BridgeIdPlugin } from './bridge-id-plugin';
 import { chunkWrapperDecorationPlugin } from './chunk-wrapper-decoration';
+import { CodeBlockFidelity } from './code-block';
 import { BlockDragHandle } from './drag-handle';
 import { FootnoteAnchorScroll } from './footnote-anchor-scroll';
 import { HeadingAnchors } from './heading-anchors';
@@ -32,6 +33,7 @@ export const sharedExtensions = [
     if (ext.name === 'link') return InternalLink;
     if (ext.name === 'mathInline') return MathInline;
     if (ext.name === 'tag') return Tag;
+    if (ext.name === 'codeBlock') return CodeBlockFidelity;
     return ext;
   }),
   SlashCommand.configure({
