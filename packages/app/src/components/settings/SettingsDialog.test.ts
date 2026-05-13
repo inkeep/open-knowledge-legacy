@@ -41,8 +41,22 @@ describe('SettingsDialog source-level guards', () => {
     expect(SRC).toContain('InstallInClaudeDesktopDialog');
   });
 
-  test('Integrations row uses detectClaudeDesktop bridge for hide-on-Linux', () => {
-    expect(SRC).toContain('detectClaudeDesktop');
+  test('Integrations row consumes the shared useClaudeDesktopIntegration hook', () => {
+    expect(SRC).toContain('useClaudeDesktopIntegration');
+    expect(SRC).not.toContain('useClaudeDesktopAvailable');
+    expect(SRC).not.toMatch(/detectClaudeDesktop\s*\?\.\(/);
+  });
+
+  test('Integrations row hides when desktopPresent === false', () => {
+    expect(SRC).toMatch(/desktopPresent\s*\?\s*\[\{[^}]*id:\s*['"]claude-desktop['"]/);
+  });
+
+  test('IntegrationsSection button label branches on skillInstalled', () => {
+    expect(SRC).toMatch(/skillInstalled\s*\?\s*['"]Reinstall['"]\s*:\s*['"]Install['"]/);
+  });
+
+  test('IntegrationsSection refreshes the shared hook on dialog close', () => {
+    expect(SRC).toMatch(/if\s*\(!next\)\s*refresh\(\)/);
   });
 
   test('sidebar exposes the three required group labels', () => {

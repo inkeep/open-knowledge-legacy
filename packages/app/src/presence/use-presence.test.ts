@@ -5,6 +5,8 @@ import {
   type Participant,
   participantsEqual,
 } from './participant-model.ts';
+import SRC from './use-presence?raw';
+import { isSelfAwarenessEntry } from './use-presence.ts';
 
 function makeHuman(
   clientId: number,
@@ -149,5 +151,124 @@ describe('participantsEqual', () => {
     const a = [makeParticipantHuman(1, 1)];
     const b = [makeParticipantHuman(2, 1)];
     expect(participantsEqual(a, b)).toBe(false);
+  });
+});
+
+describe('isSelfAwarenessEntry — presence self-filter discriminator', () => {
+  test('git-config self: principalId match filters across tabs', () => {
+    expect(
+      isSelfAwarenessEntry({
+        entryPrincipalId: 'pid-1',
+        entryClientId: 999,
+        localPrincipalId: 'pid-1',
+        localClientId: 100,
+      }),
+    ).toBe(true);
+  });
+
+  test('different humans on same doc: not filtered', () => {
+    expect(
+      isSelfAwarenessEntry({
+        entryPrincipalId: 'pid-other',
+        entryClientId: 200,
+        localPrincipalId: 'pid-me',
+        localClientId: 100,
+      }),
+    ).toBe(false);
+  });
+
+  test('synthesized identity (no principalId): filtered only when clientID matches', () => {
+    expect(
+      isSelfAwarenessEntry({
+        entryPrincipalId: undefined,
+        entryClientId: 100,
+        localPrincipalId: null,
+        localClientId: 100,
+      }),
+    ).toBe(true);
+    expect(
+      isSelfAwarenessEntry({
+        entryPrincipalId: undefined,
+        entryClientId: 200,
+        localPrincipalId: null,
+        localClientId: 100,
+      }),
+    ).toBe(false);
+  });
+
+  test('synthesized identity multi-tab: second tab visible as remote viewer (accepted edge)', () => {
+    const myClient = 100;
+    const otherTabClient = 200;
+    expect(
+      isSelfAwarenessEntry({
+        entryPrincipalId: undefined,
+        entryClientId: otherTabClient,
+        localPrincipalId: null,
+        localClientId: myClient,
+      }),
+    ).toBe(false);
+  });
+
+  test('local empty-string principalId behaves like null (falls through to clientID)', () => {
+    expect(
+      isSelfAwarenessEntry({
+        entryPrincipalId: '',
+        entryClientId: 100,
+        localPrincipalId: '',
+        localClientId: 100,
+      }),
+    ).toBe(true);
+    expect(
+      isSelfAwarenessEntry({
+        entryPrincipalId: '',
+        entryClientId: 200,
+        localPrincipalId: '',
+        localClientId: 100,
+      }),
+    ).toBe(false);
+  });
+
+  test('initial-connect race (getLocalState undefined → localClientId null): no filter', () => {
+    expect(
+      isSelfAwarenessEntry({
+        entryPrincipalId: undefined,
+        entryClientId: 100,
+        localPrincipalId: null,
+        localClientId: null,
+      }),
+    ).toBe(false);
+  });
+
+  test('agents are unaffected — they iterate a different awareness surface', () => {
+    expect(
+      isSelfAwarenessEntry({
+        entryPrincipalId: 'agent-uid',
+        entryClientId: 100,
+        localPrincipalId: 'agent-uid',
+        localClientId: 100,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('usePresence source-level guards — self-filter wiring', () => {
+  test('self-filter runs INSIDE the human-iteration loop, BEFORE dedupeHumansByPrincipalId', () => {
+    const filterIdx = SRC.indexOf('isSelfAwarenessEntry(');
+    const dedupeIdx = SRC.indexOf('dedupeHumansByPrincipalId(');
+    expect(filterIdx).toBeGreaterThan(0);
+    expect(dedupeIdx).toBeGreaterThan(0);
+    expect(filterIdx).toBeLessThan(dedupeIdx);
+  });
+
+  test('local identity comes from `activeAwareness` — principalId via getLocalState, clientID direct', () => {
+    expect(SRC).toMatch(/activeAwareness\??\.getLocalState\(\)/);
+    expect(SRC).toMatch(/activeAwareness\??\.clientID/);
+  });
+
+  test('agent loop is unaffected — no self-filter call in the agent branch', () => {
+    const pickAgentsIdx = SRC.indexOf('pickAgentsForDoc(');
+    expect(pickAgentsIdx).toBeGreaterThan(0);
+    const filterIdx = SRC.indexOf('isSelfAwarenessEntry(');
+    expect(filterIdx).toBeLessThan(pickAgentsIdx);
   });
 });
