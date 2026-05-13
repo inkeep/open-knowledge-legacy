@@ -146,8 +146,8 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
     };
   }
 
-  const existing = tiptapCache.get(docName);
-  if (existing) {
+  const reuse = tiptapCache.get(docName);
+  if (reuse) {
     mark('ok/cache/reparent-start', {
       docName,
       mountId: getMountId(docName),
@@ -155,13 +155,13 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
       viewCount: sizeStats?.viewCount ?? -1,
       bytes: sizeStats?.bytes ?? -1,
     });
-    reparentTiptapDom(existing, container);
-    existing.activeMountKey = docName;
+    reparentTiptapDom(reuse, container);
+    reuse.activeMountKey = docName;
     touchLru(tiptapLru, docName);
-    container.scrollTop = existing.scrollTop;
-    if (existing.hadFocus) {
+    container.scrollTop = reuse.scrollTop;
+    if (reuse.hadFocus) {
       try {
-        existing.editor.commands.focus();
+        reuse.editor.commands.focus();
       } catch {}
     }
     mark('ok/cache/reparent-end', {
@@ -182,7 +182,7 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
         kind: 'tiptap',
       });
     }
-    return existing;
+    return reuse;
   }
 
   while (tiptapCache.size >= MAX_CACHE) {
@@ -338,8 +338,8 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
     };
   }
 
-  const existing = cmCache.get(docName);
-  if (existing) {
+  const reuse = cmCache.get(docName);
+  if (reuse) {
     mark('ok/cache/reparent-start', {
       docName,
       mountId: getMountId(docName),
@@ -347,13 +347,13 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
       viewCount: sizeStats?.viewCount ?? -1,
       bytes: sizeStats?.bytes ?? -1,
     });
-    reparentCmDom(existing, container);
-    existing.activeMountKey = docName;
+    reparentCmDom(reuse, container);
+    reuse.activeMountKey = docName;
     touchLru(cmLru, docName);
-    container.scrollTop = existing.scrollTop;
-    if (existing.hadFocus) {
+    container.scrollTop = reuse.scrollTop;
+    if (reuse.hadFocus) {
       try {
-        existing.view.focus();
+        reuse.view.focus();
       } catch {}
     }
     mark('ok/cache/reparent-end', {
@@ -374,7 +374,7 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
         kind: 'cm',
       });
     }
-    return existing;
+    return reuse;
   }
 
   while (cmCache.size >= MAX_CACHE) {

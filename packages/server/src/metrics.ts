@@ -134,7 +134,7 @@ export interface ReconciliationMetrics {
    *  (architectural-floor cases like CRLF/leading-newline are normal); growth
    *  highlights which classes are most worth closing via fidelity attrs.
    *
-   *  Keys are bounded to `BridgeToleranceClass` (the 7 enumerated labels in
+   *  Keys are bounded to `BridgeToleranceClass` (the enumerated labels in
    *  `BRIDGE_TOLERANCE_CLASSES`). Lazy keys: a class only appears once the
    *  first event for it has fired. Tightening from `string` enforces typo-
    *  resistance at compile time so no caller can silently pollute the map
