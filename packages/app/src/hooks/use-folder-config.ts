@@ -52,7 +52,7 @@ export type AsyncState<T> =
   | { status: 'ready'; data: T }
   | { status: 'error'; message: string };
 
-interface FolderConfigHandle {
+export interface FolderConfigHandle {
   state: AsyncState<FolderConfigSnapshot>;
   refresh: () => void;
 }

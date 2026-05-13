@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { type ComponentProps, type FC, useEffect, useState } from 'react';
 import { FileTree, type FileTreeHandle } from '@/components/FileTree';
+import { defaultInitialDir } from '@/components/file-tree-utils';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { UpdateNotices } from '@/components/UpdateNotices';
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useDocumentContext } from '@/editor/DocumentContext';
 import { ProfilerBoundary } from '@/lib/perf';
 import { cn } from '@/lib/utils';
 
@@ -69,6 +71,12 @@ const ToolbarButton: FC<ToolbarButtonProps> = ({ icon: Icon, label, ...props }) 
 
 function FileSidebarInner({ onOpenSearch }: FileSidebarProps) {
   const [tree, setTree] = useState<FileTreeHandle | null>(null);
+
+  const { activeDocName, activeTarget } = useDocumentContext();
+  const initialCreateDir =
+    activeTarget?.kind === 'folder' || activeTarget?.kind === 'folder-index'
+      ? activeTarget.folderPath
+      : defaultInitialDir(activeDocName);
 
   const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
 
@@ -154,17 +162,17 @@ function FileSidebarInner({ onOpenSearch }: FileSidebarProps) {
           <ToolbarButton
             icon={SquarePen}
             label="New File"
-            onClick={() => tree?.startCreating('file', '')}
+            onClick={() => tree?.startCreating('file', initialCreateDir)}
           />
           <ToolbarButton
             icon={FilePlus}
             label="New from template"
-            onClick={() => tree?.startCreatingFromTemplate('')}
+            onClick={() => tree?.startCreatingFromTemplate(initialCreateDir)}
           />
           <ToolbarButton
             icon={FolderPlus}
             label="New Folder"
-            onClick={() => tree?.startCreating('folder', '')}
+            onClick={() => tree?.startCreating('folder', initialCreateDir)}
           />
         </div>
       </SidebarHeader>

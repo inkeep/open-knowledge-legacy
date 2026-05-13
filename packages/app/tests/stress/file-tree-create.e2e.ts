@@ -406,6 +406,7 @@ test.describe('FileTree sidebar create', () => {
       }
 
       for (const folderName of folderNames) {
+        await sidebarTreeItem(page, `${fileNames[0]}.md`).click();
         await page.getByRole('button', { name: 'New Folder', exact: true }).click();
         const input = page.getByRole('textbox', { name: new RegExp(`rename ${folderName}`, 'i') });
         await expect(input).toBeVisible({ timeout: 10_000 });
@@ -467,6 +468,9 @@ test.describe('FileTree sidebar create', () => {
       await page.waitForLoadState('domcontentloaded');
 
       for (const folderName of folderNames.slice(0, 2)) {
+        await page.evaluate(() => {
+          window.location.hash = '#/';
+        });
         await page.getByRole('button', { name: 'New Folder', exact: true }).click();
         const input = page.getByRole('textbox', { name: /rename New Folder/i });
         await expect(input).toBeVisible({ timeout: 10_000 });
@@ -478,6 +482,9 @@ test.describe('FileTree sidebar create', () => {
         );
       }
 
+      await page.evaluate(() => {
+        window.location.hash = '#/';
+      });
       await page.getByRole('button', { name: 'New Folder', exact: true }).click();
       await expect(page.getByRole('textbox', { name: /rename New Folder/i })).toBeVisible({
         timeout: 10_000,
@@ -645,6 +652,9 @@ test.describe('FileTree sidebar create', () => {
       });
       await expect(page).toHaveURL(new RegExp(`#/${name}/$`));
 
+      await page.evaluate(() => {
+        window.location.hash = '#/';
+      });
       await page.getByRole('button', { name: 'New File', exact: true }).click();
       const fileInput = page.getByRole('textbox', { name: /rename Untitled\.md/i });
       await expect(fileInput).toBeVisible({ timeout: 10_000 });

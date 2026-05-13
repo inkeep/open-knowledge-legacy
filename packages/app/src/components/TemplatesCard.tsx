@@ -1,7 +1,8 @@
-import { MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react';
+import { FilePlus, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { DeleteConfirmationDialog } from '@/components/DeleteConfirmationDialog';
+import { NewItemDialog } from '@/components/NewItemDialog';
 import { NewTemplateDialog } from '@/components/NewTemplateDialog';
 import { TemplateEditDialog } from '@/components/TemplateEditDialog';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +17,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import type {
   AsyncState,
+  FolderConfigHandle,
   FolderConfigSnapshot,
   TemplateMenuEntry,
 } from '@/hooks/use-folder-config';
@@ -25,11 +27,13 @@ interface Props {
   folderPath: string;
   state: AsyncState<FolderConfigSnapshot>;
   onChange: () => void;
+  folderConfigHandle?: FolderConfigHandle;
 }
 
-export function TemplatesCard({ folderPath, state, onChange }: Props) {
+export function TemplatesCard({ folderPath, state, onChange, folderConfigHandle }: Props) {
   const [editTarget, setEditTarget] = useState<TemplateMenuEntry | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TemplateMenuEntry | null>(null);
+  const [createFromTemplate, setCreateFromTemplate] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
 
@@ -73,7 +77,9 @@ export function TemplatesCard({ folderPath, state, onChange }: Props) {
     );
   }
 
-  const templates = state.data.folder.templates_available ?? [];
+  const templates = (state.data.folder.templates_available ?? []).filter(
+    (tpl) => tpl.scope !== 'user',
+  );
 
   return (
     <>
@@ -108,6 +114,7 @@ export function TemplatesCard({ folderPath, state, onChange }: Props) {
                 <TemplateRow
                   key={tpl.path}
                   template={tpl}
+                  onCreate={() => setCreateFromTemplate(tpl.name)}
                   onEdit={() => setEditTarget(tpl)}
                   onDelete={() => setDeleteTarget(tpl)}
                 />
@@ -153,20 +160,33 @@ export function TemplatesCard({ folderPath, state, onChange }: Props) {
         onOpenChange={setNewOpen}
         onCreated={onChange}
       />
+      <NewItemDialog
+        open={createFromTemplate !== null}
+        onOpenChange={(open) => {
+          if (!open) setCreateFromTemplate(null);
+        }}
+        kind="file"
+        initialDir={folderPath}
+        initialTemplate={createFromTemplate ?? undefined}
+        folderConfig={folderConfigHandle}
+      />
     </>
   );
 }
 
 function TemplateRow({
   template,
+  onCreate,
   onEdit,
   onDelete,
 }: {
   template: TemplateMenuEntry;
+  onCreate: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const showName = template.title && template.title !== template.name;
+  const label = template.title ?? template.name;
   return (
     <li className="group flex items-center gap-2 rounded-md px-2 py-2 hover:bg-muted/50 text-sm">
       <button
@@ -175,7 +195,7 @@ function TemplateRow({
         className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
       >
         <div className="flex items-center gap-2 min-w-0">
-          <span className="font-medium truncate">{template.title ?? template.name}</span>
+          <span className="font-medium truncate">{label}</span>
           {showName ? (
             <code className="font-mono text-xs text-muted-foreground shrink-0">
               {template.name}
@@ -196,13 +216,24 @@ function TemplateRow({
           <p className="text-sm text-muted-foreground truncate mt-0.5">{template.description}</p>
         ) : null}
       </button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="font-mono uppercase shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+        onClick={onCreate}
+        aria-label={`Create note from ${label}`}
+      >
+        <FilePlus className="size-3.5" aria-hidden />
+        Create
+      </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             size="icon"
             className="size-7 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
-            aria-label={`Actions for ${template.title ?? template.name}`}
+            aria-label={`Actions for ${label}`}
           >
             <MoreVertical className="size-4" aria-hidden />
           </Button>
