@@ -12,6 +12,7 @@ import {
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_CHECK_JITTER_MS,
   type UpdaterLike,
+  versionAtLeast,
 } from '../../src/main/auto-updater.ts';
 import {
   type AppState,
@@ -625,6 +626,99 @@ describe('first-launch version notice (Toast B — AC7, D9)', () => {
     expect(releaseUrlFor('1.2.3/..')).toBe(
       'https://github.com/inkeep/open-knowledge/releases/tag/v1.2.3%2F..',
     );
+  });
+});
+
+describe('boot-time stale versionPendingInstall reconciliation', () => {
+  test('running version equals pending → cleared on boot (install-on-quit case)', () => {
+    const { rig } = makeRig({ versionPendingInstall: '0.4.1', appVersion: '0.4.1' });
+    expect(rig.state.versionPendingInstall).toBeNull();
+    expect(rig.dispatches).toContain('stale-pending-cleared' as DispatchKind);
+  });
+
+  test('running version is past pending → cleared on boot (manual upgrade / catch-up case)', () => {
+    const { rig } = makeRig({ versionPendingInstall: '0.4.0', appVersion: '0.4.1' });
+    expect(rig.state.versionPendingInstall).toBeNull();
+    expect(rig.dispatches).toContain('stale-pending-cleared' as DispatchKind);
+  });
+
+  test('running version is behind pending → preserved (genuinely pending update)', () => {
+    const { rig } = makeRig({ versionPendingInstall: '0.4.2', appVersion: '0.4.1' });
+    expect(rig.state.versionPendingInstall).toBe('0.4.2');
+    expect(rig.dispatches).not.toContain('stale-pending-cleared' as DispatchKind);
+  });
+
+  test('versionPendingInstall is null → no-op (nothing to clear)', () => {
+    const { rig } = makeRig({ versionPendingInstall: null, appVersion: '0.4.1' });
+    expect(rig.state.versionPendingInstall).toBeNull();
+    expect(rig.dispatches).not.toContain('stale-pending-cleared' as DispatchKind);
+  });
+
+  test('persist failure → state unchanged, no dispatch (gate not silently broken)', () => {
+    const updater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    const primaryWindow = makeFakeWindow([]);
+    const state: AppState = { ...emptyState(), versionPendingInstall: '0.4.0' };
+    const dispatches: DispatchKind[] = [];
+    startAutoUpdater({
+      updater,
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: () => {
+        throw new Error('EACCES');
+      },
+      getPrimaryWindow: () => primaryWindow,
+      getAppVersion: () => '0.4.1',
+      isPackaged: true,
+      clock,
+      now: () => new Date(),
+      onDispatch: (k) => dispatches.push(k),
+      logger: {
+        info: mock(() => {}),
+        warn: mock(() => {}),
+        error: mock(() => {}),
+        debug: mock(() => {}),
+      },
+    });
+    expect(state.versionPendingInstall).toBe('0.4.0');
+    expect(dispatches).not.toContain('stale-pending-cleared' as DispatchKind);
+  });
+});
+
+describe('versionAtLeast (MMP compare)', () => {
+  test('equal versions → true', () => {
+    expect(versionAtLeast('0.4.1', '0.4.1')).toBe(true);
+    expect(versionAtLeast('1.0.0', '1.0.0')).toBe(true);
+  });
+
+  test('running ahead in major / minor / patch → true', () => {
+    expect(versionAtLeast('1.0.0', '0.9.9')).toBe(true);
+    expect(versionAtLeast('0.5.0', '0.4.99')).toBe(true);
+    expect(versionAtLeast('0.4.2', '0.4.1')).toBe(true);
+  });
+
+  test('running behind in major / minor / patch → false', () => {
+    expect(versionAtLeast('0.9.9', '1.0.0')).toBe(false);
+    expect(versionAtLeast('0.4.99', '0.5.0')).toBe(false);
+    expect(versionAtLeast('0.4.1', '0.4.2')).toBe(false);
+  });
+
+  test('prerelease and build suffixes are dropped (MMP-only comparison)', () => {
+    expect(versionAtLeast('0.4.1', '0.4.1-beta.5')).toBe(true);
+    expect(versionAtLeast('0.4.1-beta.5', '0.4.1')).toBe(true);
+    expect(versionAtLeast('0.4.1+build.42', '0.4.1')).toBe(true);
+    expect(versionAtLeast('0.4.2-beta.1', '0.4.1')).toBe(true);
+  });
+
+  test('malformed input → false (conservative: keep gate armed on garbage)', () => {
+    expect(versionAtLeast('', '0.4.1')).toBe(false);
+    expect(versionAtLeast('0.4.1', '')).toBe(false);
+    expect(versionAtLeast('not-a-version', '0.4.1')).toBe(false);
+    expect(versionAtLeast('0.4.1', 'not-a-version')).toBe(false);
+    expect(versionAtLeast('0.4', '0.4.1')).toBe(false);
+    expect(versionAtLeast(null as unknown as string, '0.4.1')).toBe(false);
+    expect(versionAtLeast('0.4.1', undefined as unknown as string)).toBe(false);
   });
 });
 
