@@ -587,6 +587,42 @@ describe('startWatcher file index', () => {
       await handle.unsubscribe();
     }
   });
+
+  test('initial scan populates folderIndex with empty subdirectories', async () => {
+    mkdirSync(resolve(contentDir, 'empty-folder'));
+    mkdirSync(resolve(contentDir, 'nested', 'empty-child'), { recursive: true });
+
+    const handle = await startWatcher(contentDir, async () => {});
+    try {
+      const folderIndex = handle.getFolderIndex();
+      expect(folderIndex.has('empty-folder')).toBe(true);
+      expect(folderIndex.has('nested')).toBe(true);
+      expect(folderIndex.has('nested/empty-child')).toBe(true);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
+  test('folderIndex detects externally-created empty directory via live watcher', async () => {
+    const events: DiskEvent[] = [];
+    const handle = await startWatcher(contentDir, async (e) => {
+      events.push(e);
+    });
+    try {
+      mkdirSync(resolve(contentDir, 'live-empty'));
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline) {
+        if (handle.getFolderIndex().has('live-empty')) break;
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      expect(handle.getFolderIndex().has('live-empty')).toBe(true);
+      expect(
+        events.some((e) => e.kind === 'folder-create' && e.relativePath === 'live-empty'),
+      ).toBe(true);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
 });
 
 describe('file-watcher ContentFilter refcount hooks', () => {
