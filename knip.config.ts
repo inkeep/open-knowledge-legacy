@@ -30,6 +30,7 @@ export default {
     'packages/server/src/http/error-response.ts': ['exports'],
     'packages/app/src/editor/http-client.ts': ['types'],
     'biome-plugins/__fixtures__/**': ['files'],
+    'scripts/compute-next-beta.mjs': ['files'],
   },
   workspaces: {
     'packages/app': {
