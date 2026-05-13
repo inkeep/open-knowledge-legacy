@@ -78,6 +78,14 @@
   line-height: 1.25rem;
 }
 
+/* react-medium-image-zoom hardcodes rgba(255,255,255,1) for the visible
+   overlay — the lightbox flashes white in dark mode without this override.
+   The unprefixed library rule remains correct for light mode (white ≈ the
+   light-mode --background by construction). */
+.dark [data-rmiz-modal-overlay="visible"] {
+  background-color: var(--background);
+}
+
 /*
  * Explicit source root for Tailwind v4 content scanning.
  *
