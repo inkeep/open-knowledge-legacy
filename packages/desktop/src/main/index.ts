@@ -101,6 +101,8 @@ import {
 } from './ipc-handlers.ts';
 import { logIpcError } from './ipc-log.ts';
 import {
+  checkAndRepairMcpWiringOnStartup,
+  type McpStartupRepairResult,
   type McpWiringCliSurface,
   type RunMcpWiringHandle,
   runMcpWiringOnFirstLaunch,
@@ -738,8 +740,8 @@ function refreshApplicationMenu() {
   });
 }
 
-function armMcpWiring(opts: { forceShow?: boolean } = {}): RunMcpWiringHandle {
-  const mcpWiringCli: McpWiringCliSurface = {
+function createMcpWiringCliSurface(): McpWiringCliSurface {
+  return {
     detectInstalledEditors: (cwd, home) => detectInstalledEditors(cwd, home),
     writeUserMcpConfigs: (writeOpts) => writeUserMcpConfigs(writeOpts),
     readExistingMcpEntry: (editorId, home) =>
@@ -747,16 +749,80 @@ function armMcpWiring(opts: { forceShow?: boolean } = {}): RunMcpWiringHandle {
     allEditorIds: ALL_EDITOR_IDS,
     editorTargets: EDITOR_TARGETS,
   };
-  return runMcpWiringOnFirstLaunch({
+}
+
+function createMcpWiringOpts(opts: { forceShow?: boolean } = {}) {
+  return {
     isPackaged: app.isPackaged,
     executablePath: app.getPath('exe'),
     home: osHomedir(),
     platform: process.platform,
     ipcMain,
-    cli: mcpWiringCli,
+    cli: createMcpWiringCliSurface(),
     forceEnv: process.env.OK_M6B_FORCE ?? null,
     forceShow: opts.forceShow ?? false,
-  });
+  };
+}
+
+function armMcpWiring(opts: { forceShow?: boolean } = {}): RunMcpWiringHandle {
+  return runMcpWiringOnFirstLaunch(createMcpWiringOpts(opts));
+}
+
+function dispatchMcpRepairToastWhenReady(result: McpStartupRepairResult): void {
+  if (result.status === 'failed') {
+    console.warn('[main] MCP startup repair failed for editors', {
+      failedEditors: result.failedEditors,
+    });
+    const payload = {
+      kind: 'mcp-repair-failed' as const,
+      failedEditors: result.failedEditors.map((f) => f.editor),
+    };
+    dispatchToastWhenReady(payload);
+    return;
+  }
+  if (result.status !== 'repaired') return;
+  dispatchToastWhenReady({ kind: 'mcp-repaired' as const, editors: result.repairedEditors });
+}
+
+function dispatchToastWhenReady(
+  payload:
+    | { readonly kind: 'mcp-repaired'; readonly editors: readonly string[] }
+    | { readonly kind: 'mcp-repair-failed'; readonly failedEditors: readonly string[] },
+): void {
+  let dispatched = false;
+  const send = (win: Electron.BrowserWindow): void => {
+    if (dispatched || win.isDestroyed()) return;
+    try {
+      sendToRenderer(win.webContents, 'ok:onboarding:toast', payload);
+      dispatched = true;
+    } catch (err) {
+      console.warn('[main] MCP repair toast send failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+  const tryDispatch = (win: Electron.BrowserWindow): void => {
+    if (dispatched || win.isDestroyed()) return;
+    if (win.webContents.isLoading()) {
+      win.webContents.once('did-finish-load', () => send(win));
+      return;
+    }
+    send(win);
+  };
+  for (const win of BrowserWindow.getAllWindows()) {
+    tryDispatch(win);
+    if (dispatched) return;
+  }
+  const onCreated = (_event: Electron.Event, win: Electron.BrowserWindow) => {
+    win.webContents.once('did-finish-load', () => {
+      send(win);
+      if (dispatched) app.off('browser-window-created', onCreated);
+    });
+  };
+  app.on('browser-window-created', onCreated);
+  setTimeout(() => {
+    app.off('browser-window-created', onCreated);
+  }, 60_000);
 }
 
 function maybeOfferBrokenSymlinkRepair(): Promise<void> {
@@ -1425,6 +1491,13 @@ function bootPrimaryInstance(): void {
       });
 
       mcpWiringHandle = armMcpWiring();
+      void checkAndRepairMcpWiringOnStartup(createMcpWiringOpts())
+        .then(dispatchMcpRepairToastWhenReady)
+        .catch((err) => {
+          console.error('[main] MCP startup repair failed', {
+            err: err instanceof Error ? err.message : String(err),
+          });
+        });
 
       const optionHeld = process.argv.includes('--navigator');
       if (appState.lastOpenedProject && !optionHeld && existsSync(appState.lastOpenedProject)) {

@@ -428,7 +428,9 @@ export interface OkDesktopBridge {
               readonly kind: 'git-root-promote';
               readonly gitRoot: string;
               readonly pickedPath: string;
-            },
+            }
+          | { readonly kind: 'mcp-repaired'; readonly editors: readonly string[] }
+          | { readonly kind: 'mcp-repair-failed'; readonly failedEditors: readonly string[] },
       ) => void,
     ): OkUnsubscribe;
   };
