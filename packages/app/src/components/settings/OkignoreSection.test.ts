@@ -142,6 +142,25 @@ describe('OkignoreSection source-level guards', () => {
     expect(SECTION_SRC).toMatch(/editPatternAt\(doc,\s*patternIndex,\s*trimmed\)/);
   });
 
+  test('handleAdd flashes the existing row and skips commit when the pattern is a duplicate', () => {
+    expect(SECTION_SRC).toMatch(/findPatternIndex\(doc,\s*trimmed\)/);
+    const handleAddIdx = SECTION_SRC.indexOf('const handleAdd');
+    expect(handleAddIdx).toBeGreaterThan(-1);
+    const handleAddEnd = SECTION_SRC.indexOf('\n  };', handleAddIdx);
+    expect(handleAddEnd).toBeGreaterThan(handleAddIdx);
+    const fragment = SECTION_SRC.slice(handleAddIdx, handleAddEnd);
+    const findIdx = fragment.indexOf('findPatternIndex(');
+    const commitIdx = fragment.indexOf('commit(');
+    expect(findIdx).toBeGreaterThan(-1);
+    expect(commitIdx).toBeGreaterThan(findIdx);
+    expect(fragment).toMatch(/existingIndex\s*>=\s*0/);
+    expect(fragment).toMatch(/triggerFlash\(rowFlashKey\(trimmed,\s*existingIndex\)\)/);
+    const flashMatch = fragment.match(/triggerFlash\(rowFlashKey\(trimmed,\s*existingIndex\)\);/);
+    expect(flashMatch).not.toBeNull();
+    const flashEnd = (flashMatch?.index ?? 0) + (flashMatch?.[0].length ?? 0);
+    expect(fragment.slice(flashEnd, fragment.indexOf('commit(', flashEnd))).toMatch(/\breturn;/);
+  });
+
   test('per-row SavedIndicator flashes a green check on commit (matches SettingsDialog pattern)', () => {
     expect(SECTION_SRC).toContain('settings-okignore-saved-indicator');
     expect(SECTION_SRC).toMatch(/text-emerald-600/);

@@ -74,8 +74,21 @@ describe('FileTree — Hide this file/folder menu item (US-013 source-level)', (
   test('onSelect routes through the binding patch path with appendPattern', () => {
     expect(FILETREE_SRC).toMatch(/buildOkignorePatternFromTarget\(target\)/);
     expect(FILETREE_SRC).toMatch(/okignoreBinding\.current\(\)/);
-    expect(FILETREE_SRC).toMatch(/appendPattern\(parseOkignoreDoc\(current\),\s*pattern\)/);
-    expect(FILETREE_SRC).toMatch(/okignoreBinding\.patch\(next\)/);
+    expect(FILETREE_SRC).toMatch(/parseOkignoreDoc\(current\)/);
+    expect(FILETREE_SRC).toMatch(/appendPattern\(doc,\s*pattern\)/);
+    expect(FILETREE_SRC).toMatch(/okignoreBinding\.patch\(serializeOkignoreDoc\(updated\)\)/);
+  });
+
+  test('onSelect short-circuits when appendPattern returns the same doc (dedup no-op)', () => {
+    const hideStart = FILETREE_SRC.indexOf('data-testid="file-tree-menu-hide"');
+    expect(hideStart).toBeGreaterThan(-1);
+    const itemEnd = FILETREE_SRC.indexOf('</DropdownMenuItem>', hideStart);
+    expect(itemEnd).toBeGreaterThan(hideStart);
+    const fragment = FILETREE_SRC.slice(hideStart, itemEnd);
+    const guardIdx = fragment.search(/if\s*\(\s*updated\s*===\s*doc\s*\)\s*return;/);
+    const patchIdx = fragment.indexOf('okignoreBinding.patch(');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(patchIdx).toBeGreaterThan(guardIdx);
   });
 
   test('onSelect closes the context menu before patching (matches Rename/Delete UX)', () => {
