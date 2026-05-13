@@ -90,6 +90,7 @@ const ICON_MAP: Record<string, string> = {
   'cursor-vscode': 'cursor',
   cascade: 'windsurf',
   codex: 'openai',
+  'codex-mcp-client': 'openai',
   copilot: 'github',
   cline: 'cline',
 };

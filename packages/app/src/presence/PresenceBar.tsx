@@ -182,9 +182,12 @@ function AgentAvatar({
     'data-presence-scoped': scoped ? 'true' : undefined,
   };
 
+  const realCurrentDoc =
+    presence.currentDoc && presence.currentDoc !== '(connected)' ? presence.currentDoc : null;
+
   const ariaLabel =
-    crossDoc && presence.currentDoc
-      ? `Open activity panel for ${tooltipName}, editing ${presence.currentDoc}`
+    crossDoc && realCurrentDoc
+      ? `Open activity panel for ${tooltipName}, editing ${realCurrentDoc}`
       : `Open activity panel for ${tooltipName}`;
 
   const avatar = (
@@ -205,8 +208,8 @@ function AgentAvatar({
       <TooltipTrigger asChild>{avatar}</TooltipTrigger>
       <TooltipContent className="flex flex-col gap-0.5">
         <span className="font-medium">{tooltipName}</span>
-        {crossDoc && presence.currentDoc ? (
-          <span className="text-xs text-muted-foreground">editing [[{presence.currentDoc}]]</span>
+        {crossDoc && realCurrentDoc ? (
+          <span className="text-xs text-muted-foreground">editing [[{realCurrentDoc}]]</span>
         ) : null}
       </TooltipContent>
     </Tooltip>
@@ -320,24 +323,18 @@ export function PresenceBar() {
       </div>
 
       {crossDoc.length > 0 ? (
-        <>
-          <div className="mx-2 h-4 w-px bg-border" aria-hidden data-slot="presence-divider" />
-          <div
-            className="flex items-center gap-1.5 opacity-60 grayscale"
-            data-presence-section="crossdoc"
-          >
-            {crossDocPrimary.map((p) => renderParticipant(p, onClickAgent, true, scopedAgentId))}
-            {crossDocRemainder.length > 0 ? (
-              <OverflowChip
-                count={crossDocRemainder.length}
-                remainder={crossDocRemainder}
-                crossDoc={true}
-                scopedAgentId={scopedAgentId}
-                onClickAgent={onClickAgent}
-              />
-            ) : null}
-          </div>
-        </>
+        <div className="ml-1.5 flex items-center gap-1.5" data-presence-section="crossdoc">
+          {crossDocPrimary.map((p) => renderParticipant(p, onClickAgent, true, scopedAgentId))}
+          {crossDocRemainder.length > 0 ? (
+            <OverflowChip
+              count={crossDocRemainder.length}
+              remainder={crossDocRemainder}
+              crossDoc={true}
+              scopedAgentId={scopedAgentId}
+              onClickAgent={onClickAgent}
+            />
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

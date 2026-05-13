@@ -203,7 +203,7 @@ function ActivityModeBody({
             <div className="min-w-0 flex-1">
               <h2 className="truncate text-sm font-medium">{data.agent.displayName}</h2>
               <p className="truncate text-xs text-muted-foreground">
-                {data.sessionAlive ? 'Active' : 'Ended'}
+                {data.sessionAlive ? 'Active' : lastTs !== null ? 'Ended' : 'No edit session yet'}
                 {data.files.length > 0
                   ? ` · ${data.files.length} file${data.files.length === 1 ? '' : 's'}`
                   : ''}
@@ -226,7 +226,15 @@ function ActivityModeBody({
           <EmptyState />
         ) : (
           <>
-            {!data.sessionAlive ? <SessionEndedBanner lastTs={lastTs} /> : null}
+            {/*
+              Only show "Session ended" when a session actually existed
+              (lastTs !== null). Read-only agents — those that connect via
+              the keepalive WS bootstrap and never invoke a write tool —
+              have no session to "end"; the GC-explanation copy is
+              actively misleading for them. The empty state ("No edits yet")
+              is sufficient and accurate.
+            */}
+            {!data.sessionAlive && lastTs !== null ? <SessionEndedBanner lastTs={lastTs} /> : null}
             {data.files.length === 0 ? (
               <EmptyState />
             ) : (

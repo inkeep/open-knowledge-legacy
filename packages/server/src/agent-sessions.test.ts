@@ -85,6 +85,11 @@ describe('iconFromClientName', () => {
     expect(iconFromClientName('cursor-vscode')).toBe('cursor');
   });
 
+  test('returns openai (Codex) icon for codex clients (incl. codex-mcp-client alias)', () => {
+    expect(iconFromClientName('codex')).toBe('openai');
+    expect(iconFromClientName('codex-mcp-client')).toBe('openai');
+  });
+
   test('returns bot for unknown clients', () => {
     expect(iconFromClientName('unknown-harness')).toBe('bot');
   });

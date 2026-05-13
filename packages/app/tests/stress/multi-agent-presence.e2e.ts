@@ -71,14 +71,12 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
       clientName: 'cursor',
     });
 
-    const divider = bar.locator('[data-slot="presence-divider"]');
     const currentSection = bar.locator('[data-presence-section="current"]');
     const crossDocSection = bar.locator('[data-presence-section="crossdoc"]');
 
     await expect
       .poll(
         async () => ({
-          divider: await divider.count(),
           claude: await currentSection
             .locator('[data-presence-badge="agent"][aria-label*="Claude"]')
             .count(),
@@ -88,7 +86,7 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
         }),
         { timeout: 10_000, intervals: [100, 250, 500] },
       )
-      .toEqual({ divider: 1, claude: 1, cursor: 1 });
+      .toEqual({ claude: 1, cursor: 1 });
 
     const crossAvatar = crossDocSection.locator(
       '[data-presence-badge="agent"][aria-label*="Cursor"]',

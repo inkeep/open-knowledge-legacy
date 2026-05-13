@@ -142,8 +142,12 @@ export async function startGlobalMcpServer(
   const ensureKeepaliveForProject = (projectDir: string): void => {
     if (keepalivesByProject.has(projectDir)) return;
     const lockDir = getLocalDir(projectDir);
+    const id = identityRef.current;
     const handle = startKeepalive({
       connectionId,
+      displayName: id.displayName,
+      clientName: id.clientInfo?.name ?? id.displayName,
+      colorSeed: id.colorSeed,
       resolveWsUrl: async () => resolveMcpKeepaliveWsUrl({ lockDir, contentDir: projectDir }, ''),
       log: (msg) => stderr.write(`[mcp] keepalive[${projectDir}]: ${msg}\n`),
     });

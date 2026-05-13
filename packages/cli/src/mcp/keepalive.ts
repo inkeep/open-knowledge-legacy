@@ -12,6 +12,9 @@ export interface MinimalWebSocket {
 interface KeepaliveOptions {
   resolveWsUrl: () => Promise<string | undefined>;
   connectionId?: string;
+  displayName?: string;
+  clientName?: string;
+  colorSeed?: string;
   logger?: import('@inkeep/open-knowledge-server').McpLogger;
   log?: (msg: string) => void;
   scheduler?: KeepaliveScheduler;
@@ -91,7 +94,16 @@ export function startKeepalive(opts: KeepaliveOptions): KeepaliveHandle {
     const cidParam = opts.connectionId
       ? `&connectionId=${encodeURIComponent(opts.connectionId)}`
       : '';
-    const url = `${baseUrl}/collab/keepalive?pid=${process.pid}${cidParam}`;
+    const identityParams =
+      opts.connectionId &&
+      opts.displayName !== undefined &&
+      opts.clientName !== undefined &&
+      opts.colorSeed !== undefined
+        ? `&displayName=${encodeURIComponent(opts.displayName)}` +
+          `&clientName=${encodeURIComponent(opts.clientName)}` +
+          `&colorSeed=${encodeURIComponent(opts.colorSeed)}`
+        : '';
+    const url = `${baseUrl}/collab/keepalive?pid=${process.pid}${cidParam}${identityParams}`;
     try {
       ws = createWebSocket(url);
     } catch (err) {
