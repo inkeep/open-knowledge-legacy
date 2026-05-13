@@ -185,6 +185,46 @@ const htmlImgProps: PropDef[] = [
   },
 ];
 
+const embedProps: PropDef[] = [
+  {
+    name: 'src',
+    type: 'string',
+    required: true,
+    defaultValue: '',
+    description: 'Embedded page URL (must start with http:// or https://)',
+    autoFocus: true,
+  },
+  {
+    name: 'title',
+    type: 'string',
+    required: false,
+    description: 'Iframe title (accessible label for screen readers)',
+  },
+  {
+    name: 'width',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'Embed width as a CSS length (e.g. "100%", "640px")',
+  },
+  {
+    name: 'height',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'Embed height as a CSS length (e.g. "26rem", "480px")',
+  },
+  {
+    name: 'align',
+    type: 'enum',
+    enumValues: ['center', 'left', 'right'],
+    defaultValue: 'center',
+    required: false,
+    omitOnDefault: true,
+    description: 'Alignment within the column',
+  },
+];
+
 const htmlVideoProps: PropDef[] = [
   {
     name: 'src',
@@ -668,6 +708,20 @@ export const builtInComponents: JsxComponentMeta[] = [
     searchTerms: ['file', 'attachment', 'download', 'document', 'zip', 'docx', 'doc'],
     placeholder: { label: 'Add a file' },
     serialize: (node, ctx) => emitMdxJsx('File', node, ctx, fileProps),
+  },
+  {
+    name: 'Embed',
+    surface: 'canonical',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: embedProps,
+    icon: 'AppWindow',
+    category: 'media',
+    displayName: 'Embed',
+    description: 'Inline web embed (iframe) — drop a URL, get a resizable preview pane',
+    searchTerms: ['embed', 'iframe', 'website', 'page', 'inline', 'frame', 'preview'],
+    placeholder: { label: 'Embed a URL' },
+    serialize: (node, ctx) => emitMdxJsx('Embed', node, ctx, embedProps),
   },
 
   {

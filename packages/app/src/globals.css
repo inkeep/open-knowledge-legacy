@@ -1065,17 +1065,18 @@
    Iframe is `sandbox="allow-scripts"` only (null origin) so embedded JS can't
    reach the parent doc / cookies / auth-bearing fetch surface. The code body
    is hidden by default in preview mode (see [data-code-visible] selectors
-   below) and toggled visible via the code-icon chrome button. The wrapper
-   carries `resize: vertical` (requires `overflow: auto` + a fixed initial
-   height) so the user can drag the bottom edge to enlarge the preview. */
+   below) and toggled visible via the code-icon chrome button. Resize is
+   driven by the shared `ok-resize-overlay` handles (8 corners + edges), not
+   native CSS `resize` — replaces the bottom-only grip with full-axis control
+   and unifies the affordance with `.ok-embed`. */
 .ProseMirror .ok-codeblock > .ok-codeblock-preview {
   position: relative;
   background: white;
   height: 26rem;
   min-height: 8rem;
   max-height: 80vh;
-  overflow: auto;
-  resize: vertical;
+  max-width: 100%;
+  overflow: hidden;
   @apply scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/30 dark:scrollbar-thumb-muted-foreground/50;
 }
 
@@ -1088,15 +1089,10 @@
   border-top-right-radius: 0.5rem;
 }
 
-/* Leave a small bottom gutter so the wrapper's native `resize: vertical`
-   handle in the bottom-right corner is reachable by pointer — the iframe
-   captures all pointer events that land in its rect (events inside the
-   iframe document don't bubble out), so a full-height iframe would block
-   the drag-resize affordance entirely. */
 .ok-codeblock-preview-frame {
   display: block;
   width: 100%;
-  height: calc(100% - 12px);
+  height: 100%;
   border: 0;
   background: white;
 }
@@ -2363,6 +2359,189 @@ html.electron-mode [data-slot="sidebar-inner"] {
 .ProseMirror .jsx-component-wrapper[data-component-type="img"][data-align] img,
 .ProseMirror .jsx-component-wrapper[data-component-type="commonmarkimage"][data-align] img {
   display: inline-block;
+}
+
+/* Embed alignment — text-align on the wrapper centers/lefts/rights the
+   inline-block embed pane inside the column. Mirrors the img/CommonMarkImage
+   rules above. */
+.ProseMirror .jsx-component-wrapper[data-component-type="embed"][data-align="left"] {
+  text-align: left;
+}
+.ProseMirror .jsx-component-wrapper[data-component-type="embed"][data-align="center"] {
+  text-align: center;
+}
+.ProseMirror .jsx-component-wrapper[data-component-type="embed"][data-align="right"] {
+  text-align: right;
+}
+
+/* Embed pane — `display: inline-block` so the `text-align` alignment rules
+   above can center / left / right the pane within the column. Resize is
+   driven by the `ok-resize-overlay` handles (see below), not native CSS
+   `resize` — the handles work on all 4 sides + 4 corners and don't
+   require the user to find the bottom-right grip. */
+.ProseMirror .ok-embed {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 12rem;
+  min-height: 8rem;
+  max-height: 80vh;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.ProseMirror .ok-embed-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  /* Match the wrapper background while the cross-origin page loads —
+     hardcoded `white` flashes a light rectangle in dark mode. The
+     embedded page renders its own background on load and covers this. */
+  background: var(--background);
+}
+
+/* Placeholder shown for a fresh `<Embed />` with no src yet. Kept in a
+   single matched-color box so the slash-insert UX is recognisable. */
+.ProseMirror .ok-embed--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 8rem;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+/* -----------------------------------------------------------------------
+ * Resize handles — shared 8-grip overlay for rich blocks (Embed, codeblock
+ * preview, …). Inactive until the host wrapper is hovered / cursor-inside /
+ * NodeSelected; the handles fade in via opacity so resting state stays
+ * uncluttered. Each handle is a small absolutely-positioned hit target.
+ *
+ * Corners render as L-shaped brackets (matching the visual mock); edges
+ * render as thin lines centred on each side. All 8 share the same hover
+ * tint so the affordance reads consistently.
+ * --------------------------------------------------------------------- */
+.ok-resize-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.ok-resize-handle {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--border);
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    color 0.1s;
+  pointer-events: none;
+}
+
+/* Honor the user's reduced-motion preference. Matches the codebase
+   pattern applied to every other transition in this file. */
+@media (prefers-reduced-motion: reduce) {
+  .ok-resize-handle {
+    transition: none;
+  }
+}
+
+/* Edge handles — thin centred lines spanning ~40% of the side. Larger
+   invisible hit-target padding makes them grabbable without precision. */
+.ok-resize-handle--t,
+.ok-resize-handle--b {
+  left: 30%;
+  right: 30%;
+  height: 8px;
+  background: currentColor;
+  border-radius: 4px;
+}
+.ok-resize-handle--t {
+  top: -4px;
+}
+.ok-resize-handle--b {
+  bottom: -4px;
+}
+
+.ok-resize-handle--l,
+.ok-resize-handle--r {
+  top: 30%;
+  bottom: 30%;
+  width: 8px;
+  background: currentColor;
+  border-radius: 4px;
+}
+.ok-resize-handle--l {
+  left: -4px;
+}
+.ok-resize-handle--r {
+  right: -4px;
+}
+
+/* Corner handles — L-shaped brackets. Drawn with a 14×14 box whose two
+   visible borders form the bracket; the inside is transparent. */
+.ok-resize-handle--tl,
+.ok-resize-handle--tr,
+.ok-resize-handle--bl,
+.ok-resize-handle--br {
+  width: 14px;
+  height: 14px;
+  background: transparent;
+  border: 0;
+}
+
+.ok-resize-handle--tl {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  border-top-left-radius: 4px;
+}
+.ok-resize-handle--tr {
+  top: -1px;
+  right: -1px;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  border-top-right-radius: 4px;
+}
+.ok-resize-handle--bl {
+  bottom: -1px;
+  left: -1px;
+  border-bottom: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  border-bottom-left-radius: 4px;
+}
+.ok-resize-handle--br {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  border-bottom-right-radius: 4px;
+}
+
+/* Hover-on-host reveal. Host is the resizable component's wrapper
+   (`.ok-embed`, `.ok-codeblock-preview`, etc.). The handle pointer-events
+   only enable while visible so the wrapper's normal interactions
+   (iframe clicks, text selection) work in resting state. */
+.ProseMirror .ok-embed:hover .ok-resize-handle,
+.ProseMirror .ok-embed:focus-within .ok-resize-handle,
+.ProseMirror .ok-codeblock-preview:hover .ok-resize-handle,
+.ProseMirror .ok-codeblock[data-cursor-inside="true"] .ok-codeblock-preview .ok-resize-handle,
+.ProseMirror .jsx-component-wrapper[data-selected="true"] .ok-resize-handle {
+  opacity: 1;
+  pointer-events: auto;
+  color: var(--ring, oklch(0.55 0.18 250));
+}
+
+.ok-resize-handle:hover {
+  color: var(--ring, oklch(0.55 0.18 250));
 }
 
 .ProseMirror .jsx-component-wrapper[data-component-type="callout"],

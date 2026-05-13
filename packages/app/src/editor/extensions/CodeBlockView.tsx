@@ -13,12 +13,14 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { OPT_OUT_ATTR } from '../clipboard/index.ts';
+import { ResizeHandles } from '../components/ResizeHandles.tsx';
 import { CODE_BLOCK_LANGUAGES, normalizeCodeLanguage } from './code-block-languages';
 import {
   addMetaToken,
   metaHasToken,
   PREVIEWABLE_LANGUAGES,
   parsePreviewHeight,
+  parsePreviewWidth,
   removeMetaToken,
   setMetaKeyValue,
   shouldShowPreview,
@@ -68,9 +70,6 @@ export function CodeBlockView({ node, updateAttributes, editor, getPos, selected
   const [showCode, setShowCode] = useState(false);
   const copyResetRef = useRef<number | null>(null);
   const previewWrapperRef = useRef<HTMLDivElement | null>(null);
-  const lastSyncedPxRef = useRef<number | null>(null);
-  const isUserResizingRef = useRef(false);
-  const resizeReleaseTimerRef = useRef<number | null>(null);
   const rawLanguage = (node.attrs.language as string | null) ?? null;
   const rawMeta = (node.attrs.meta as string | null) ?? null;
   const rawMetaRef = useRef(rawMeta);
@@ -85,47 +84,15 @@ export function CodeBlockView({ node, updateAttributes, editor, getPos, selected
   const previewRenderable = normalized ? PREVIEWABLE_LANGUAGES.has(normalized) : false;
   const previewActive = shouldShowPreview(normalized, rawMeta);
   const previewHeight = previewActive ? parsePreviewHeight(rawMeta) : null;
+  const previewWidth = previewActive ? parsePreviewWidth(rawMeta) : null;
   const codeVisible = !previewActive || showCode;
 
   useEffect(
     () => () => {
       if (copyResetRef.current !== null) window.clearTimeout(copyResetRef.current);
-      if (resizeReleaseTimerRef.current !== null) {
-        window.clearTimeout(resizeReleaseTimerRef.current);
-      }
     },
     [],
   );
-
-  useEffect(() => {
-    if (!previewActive) return;
-    const el = previewWrapperRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    lastSyncedPxRef.current = null;
-    let pending: number | null = null;
-    const ro = new ResizeObserver(([entry]) => {
-      if (!entry) return;
-      const observed = Math.round(entry.contentRect.height);
-      if (lastSyncedPxRef.current === null) {
-        lastSyncedPxRef.current = observed;
-        return;
-      }
-      if (!isUserResizingRef.current) return;
-      if (Math.abs(observed - lastSyncedPxRef.current) <= 2) return;
-      if (pending !== null) window.clearTimeout(pending);
-      pending = window.setTimeout(() => {
-        pending = null;
-        lastSyncedPxRef.current = observed;
-        const nextMeta = setMetaKeyValue(rawMetaRef.current, 'h', `${observed}px`);
-        updateAttributes({ meta: nextMeta });
-      }, 200);
-    });
-    ro.observe(el);
-    return () => {
-      ro.disconnect();
-      if (pending !== null) window.clearTimeout(pending);
-    };
-  }, [previewActive, updateAttributes]);
 
   const editable = editor.isEditable;
   const cursorInside = useCursorInside(editor, getPos);
@@ -162,22 +129,12 @@ export function CodeBlockView({ node, updateAttributes, editor, getPos, selected
     updateAttributes({ meta: next });
   };
 
-  const handlePreviewPointerDown = (e: React.PointerEvent) => {
-    e.stopPropagation();
-    isUserResizingRef.current = true;
-    if (resizeReleaseTimerRef.current !== null) {
-      window.clearTimeout(resizeReleaseTimerRef.current);
-      resizeReleaseTimerRef.current = null;
-    }
-  };
-  const handlePreviewPointerUp = () => {
-    if (resizeReleaseTimerRef.current !== null) {
-      window.clearTimeout(resizeReleaseTimerRef.current);
-    }
-    resizeReleaseTimerRef.current = window.setTimeout(() => {
-      isUserResizingRef.current = false;
-      resizeReleaseTimerRef.current = null;
-    }, 300);
+  const handleResizeEnd = (size: { width: number; height: number }) => {
+    const w = `${Math.round(size.width)}px`;
+    const h = `${Math.round(size.height)}px`;
+    const withHeight = setMetaKeyValue(rawMetaRef.current, 'h', h);
+    const next = setMetaKeyValue(withHeight, 'w', w);
+    updateAttributes({ meta: next });
   };
 
   return (
@@ -190,7 +147,7 @@ export function CodeBlockView({ node, updateAttributes, editor, getPos, selected
       data-code-visible={codeVisible ? 'true' : 'false'}
     >
       {previewActive ? (
-        // biome-ignore lint/a11y/noStaticElementInteractions: PM intercepts pointer drags inside contentEditable — stop on the wrapper so `resize: vertical` works
+        // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required so resize-handle drags don't bubble into PM
         <div
           ref={previewWrapperRef}
           className={cn(
@@ -198,12 +155,11 @@ export function CodeBlockView({ node, updateAttributes, editor, getPos, selected
             codeVisible ? 'ok-codeblock-preview--with-code' : 'ok-codeblock-preview--solo',
           )}
           contentEditable={false}
-          style={previewHeight ? { height: previewHeight } : undefined}
+          style={{
+            ...(previewHeight ? { height: previewHeight } : {}),
+            ...(previewWidth ? { width: previewWidth } : {}),
+          }}
           onMouseDown={(e) => e.stopPropagation()}
-          onPointerDown={handlePreviewPointerDown}
-          onPointerUp={handlePreviewPointerUp}
-          onPointerCancel={handlePreviewPointerUp}
-          onPointerLeave={handlePreviewPointerUp}
         >
           <iframe
             title="HTML preview"
@@ -211,6 +167,22 @@ export function CodeBlockView({ node, updateAttributes, editor, getPos, selected
             referrerPolicy="no-referrer"
             srcDoc={PREVIEW_IFRAME_HEADER + node.textContent}
             className="ok-codeblock-preview-frame"
+          />
+          <ResizeHandles
+            targetRef={previewWrapperRef}
+            bounds={{
+              minWidth: 192,
+              maxWidth: Math.round(window.innerWidth * 0.9),
+              minHeight: 128,
+              maxHeight: Math.round(window.innerHeight * 0.9),
+            }}
+            onResize={(size) => {
+              const el = previewWrapperRef.current;
+              if (!el) return;
+              el.style.width = `${size.width}px`;
+              el.style.height = `${size.height}px`;
+            }}
+            onResizeEnd={handleResizeEnd}
           />
         </div>
       ) : null}

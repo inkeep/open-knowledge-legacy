@@ -74,7 +74,15 @@ export function setMetaKeyValue(
 }
 
 export function parsePreviewHeight(meta: string | null | undefined): string | null {
-  const raw = getMetaKeyValue(meta, 'h');
+  return parseLengthToken(meta, 'h');
+}
+
+export function parsePreviewWidth(meta: string | null | undefined): string | null {
+  return parseLengthToken(meta, 'w');
+}
+
+function parseLengthToken(meta: string | null | undefined, key: 'h' | 'w'): string | null {
+  const raw = getMetaKeyValue(meta, key);
   if (!raw) return null;
   const m = raw.match(HEIGHT_VALUE_RE);
   if (!m) return null;

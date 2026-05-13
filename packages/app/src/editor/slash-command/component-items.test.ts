@@ -10,6 +10,7 @@ describe('getComponentItems (slash menu)', () => {
         'Accordion',
         'Audio',
         'Callout',
+        'Embed',
         'File',
         'Image',
         'Math',

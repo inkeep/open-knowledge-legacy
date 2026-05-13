@@ -53,6 +53,7 @@ import {
   AlignRight,
   ArrowDown,
   ArrowUp,
+  ExternalLink,
   Settings2,
   Trash2,
 } from 'lucide-react';
@@ -67,6 +68,7 @@ import {
 } from '../../components/ui/popover.tsx';
 import { OPT_OUT_ATTR } from '../clipboard/index.ts';
 import { DescriptorPlaceholder } from '../components/DescriptorPlaceholder.tsx';
+import { JsxComponentHostProvider } from '../components/jsx-host-context.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
 import { getWrapperBridgeId } from '../extensions/selection-state-plugin.ts';
 import { useBlockSelection } from '../hooks/use-block-selection.ts';
@@ -518,7 +520,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           if (rawAlign === 'left' || rawAlign === 'right' || rawAlign === 'center') {
             return rawAlign;
           }
-          if (descriptor.name === 'img' || descriptor.name === 'CommonMarkImage') {
+          if (
+            descriptor.name === 'img' ||
+            descriptor.name === 'CommonMarkImage' ||
+            descriptor.name === 'Embed'
+          ) {
             return 'center';
           }
           return undefined;
@@ -569,7 +575,9 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
             `![alt](src)` source upgrades to `<img ... align="…" />` on save
             — a one-way conversion the user can revert by deleting the
             block and re-typing the markdown. */}
-          {(descriptor.name === 'img' || descriptor.name === 'CommonMarkImage') &&
+          {(descriptor.name === 'img' ||
+            descriptor.name === 'CommonMarkImage' ||
+            descriptor.name === 'Embed') &&
             (
               [
                 { value: 'left' as const, label: 'Align left', Icon: AlignLeft },
@@ -597,7 +605,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                     const curNode = editor.state.doc.nodeAt(pos);
                     if (!curNode || curNode.type.name !== 'jsxComponent') return;
                     const curDescriptorName = String(curNode.attrs.componentName ?? '');
-                    if (curDescriptorName !== 'img' && curDescriptorName !== 'CommonMarkImage') {
+                    if (
+                      curDescriptorName !== 'img' &&
+                      curDescriptorName !== 'CommonMarkImage' &&
+                      curDescriptorName !== 'Embed'
+                    ) {
                       return;
                     }
                     if (curNode.attrs.kind !== 'element') return;
@@ -622,6 +634,30 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                 </button>
               );
             })}
+
+          {/* Open in new tab — `Embed` only. Lets the reader hop to the
+            embedded URL when they want the full browser surface.
+            `primitiveProps.src` is the sanitize-url.ts-filtered value
+            (raw `currentProps.src` would bypass the URL_PROP_NAMES
+            scheme allowlist on `<a href>`); we also re-test for
+            http(s):// here so the anchor refuses to render for
+            data:/blob:/file: schemes even if the sanitizer changes its
+            default allowlist in the future. Mirrors the iframe-render
+            gate inside `Embed.tsx`. */}
+          {descriptor.name === 'Embed' &&
+            typeof primitiveProps.src === 'string' &&
+            /^https?:\/\//i.test(primitiveProps.src) && (
+              <a
+                href={primitiveProps.src as string}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="jsx-chrome-btn"
+                aria-label="Open embedded URL in new tab"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <ExternalLink size={12} aria-hidden="true" />
+              </a>
+            )}
 
           {/* Move up/down — only for children inside containers; hidden at boundaries.
             `doc.resolve(pos)` / `doc.slice(...)` can throw `RangeError` when the
@@ -811,16 +847,30 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
             descriptorName={descriptor.name === '*' ? 'wildcard' : descriptor.name}
             rawComponentName={(node.attrs.componentName as string) ?? ''}
           >
-            <Comp {...renderProps}>
-              <NodeViewContent
-                className={`component-children ${
-                  !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
-                }`}
-                {...(!descriptor.hasChildren || descriptor.isSelfClosing
-                  ? { contentEditable: false }
-                  : {})}
-              />
-            </Comp>
+            <JsxComponentHostProvider
+              value={
+                typeof getPos === 'function'
+                  ? {
+                      editor,
+                      getPos: () => {
+                        const p = getPos();
+                        return typeof p === 'number' ? p : undefined;
+                      },
+                    }
+                  : null
+              }
+            >
+              <Comp {...renderProps}>
+                <NodeViewContent
+                  className={`component-children ${
+                    !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
+                  }`}
+                  {...(!descriptor.hasChildren || descriptor.isSelfClosing
+                    ? { contentEditable: false }
+                    : {})}
+                />
+              </Comp>
+            </JsxComponentHostProvider>
           </ComponentErrorBoundary>
         )}
 
