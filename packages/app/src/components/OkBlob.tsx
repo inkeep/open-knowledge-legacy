@@ -145,18 +145,29 @@ export function OkBlob({
     let currentEyeY = 0;
     let raf = 0;
 
+    const LERP_SETTLED_THRESHOLD = 0.01;
+
+    function scheduleFrame() {
+      if (raf === 0) raf = requestAnimationFrame(frame);
+    }
+
     function onMouseMove(e: MouseEvent) {
       mouseX = e.clientX;
       mouseY = e.clientY;
       hasMouseMoved = true;
+      scheduleFrame();
     }
 
     function frame() {
-      raf = requestAnimationFrame(frame);
-      if (!hasMouseMoved) return;
+      raf = 0;
       const svg = svgRef.current;
       const wrapper = wrapperRef.current;
-      if (!svg || !wrapper) return;
+      if (!svg || !wrapper) {
+        scheduleFrame();
+        return;
+      }
+      const moved = hasMouseMoved;
+      hasMouseMoved = false;
 
       const rect = svg.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
@@ -170,9 +181,6 @@ export function OkBlob({
       const normY = Math.max(-1, Math.min(1, dy / HEAD_DIST_SCALE));
       const targetRotY = normX * MAX_HEAD_ROTATION;
       const targetRotX = -normY * MAX_HEAD_ROTATION;
-      currentRotX += (targetRotX - currentRotX) * HEAD_LERP;
-      currentRotY += (targetRotY - currentRotY) * HEAD_LERP;
-      wrapper.style.transform = `perspective(${PERSPECTIVE_PX}px) rotateX(${currentRotX.toFixed(3)}deg) rotateY(${currentRotY.toFixed(3)}deg)`;
 
       let targetEyeX = 0;
       let targetEyeY = 0;
@@ -181,6 +189,19 @@ export function OkBlob({
         targetEyeX = (dx / dist) * scale;
         targetEyeY = (dy / dist) * scale;
       }
+
+      const settled =
+        Math.abs(targetRotX - currentRotX) < LERP_SETTLED_THRESHOLD &&
+        Math.abs(targetRotY - currentRotY) < LERP_SETTLED_THRESHOLD &&
+        Math.abs(targetEyeX - currentEyeX) < LERP_SETTLED_THRESHOLD &&
+        Math.abs(targetEyeY - currentEyeY) < LERP_SETTLED_THRESHOLD;
+      if (!moved && settled) return;
+      scheduleFrame();
+
+      currentRotX += (targetRotX - currentRotX) * HEAD_LERP;
+      currentRotY += (targetRotY - currentRotY) * HEAD_LERP;
+      wrapper.style.transform = `perspective(${PERSPECTIVE_PX}px) rotateX(${currentRotX.toFixed(3)}deg) rotateY(${currentRotY.toFixed(3)}deg)`;
+
       currentEyeX += (targetEyeX - currentEyeX) * EYE_LERP;
       currentEyeY += (targetEyeY - currentEyeY) * EYE_LERP;
       const parallaxX = currentRotY * EYE_PARALLAX_FACTOR;
@@ -196,10 +217,11 @@ export function OkBlob({
     }
 
     document.addEventListener('mousemove', onMouseMove, { passive: true });
-    raf = requestAnimationFrame(frame);
+    scheduleFrame();
     return () => {
       document.removeEventListener('mousemove', onMouseMove);
-      cancelAnimationFrame(raf);
+      if (raf !== 0) cancelAnimationFrame(raf);
+      raf = 0;
       if (wrapperRef.current) wrapperRef.current.style.transform = '';
       eyeOffsetRef.current = { x: 0, y: 0 };
       eyesGroupRef.current?.removeAttribute('transform');
