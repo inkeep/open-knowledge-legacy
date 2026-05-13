@@ -43,7 +43,8 @@ describe('FileSidebar source-level guards — chrome-row retrofit', () => {
   });
 
   test('fades SidebarHeader content out during sidebar collapse in Electron mode', () => {
-    expect(SRC).toMatch(/isElectronHost\s*&&\s*isCollapsed\s*&&\s*['"]opacity-0['"]/);
+    expect(SRC).toMatch(/const\s+shouldFadeChrome\s*=\s*isElectronHost\s*&&\s*isCollapsed\s*;/);
+    expect(SRC).toMatch(/shouldFadeChrome\s*&&\s*['"]opacity-0['"]/);
   });
 
   test('SidebarHeader empty space drags the window in Electron mode (mirrors EditorHeader)', () => {
@@ -95,9 +96,71 @@ describe('FileSidebar source-level guards — chrome-row retrofit', () => {
     expect(SRC).toMatch(/!noneExpanded\s*\?\s*\(\s*<DropdownMenuItem[\s\S]*?Collapse All/);
   });
 
-  test('Search button moved OUT of DropdownMenu — not the dropdown trigger', () => {
+  test('the lucide Search import is gone — pill is the canonical search entry point', () => {
+    expect(SRC).not.toMatch(/import\s*\{[^}]*\bSearch\b[^}]*\}\s*from\s*['"]lucide-react['"]/);
+    expect(SRC).not.toMatch(/<ToolbarButton\s+icon=\{Search\}/);
+  });
+
+  test('the four remaining ToolbarButtons keep their positions and behaviors', () => {
+    expect(SRC).toMatch(/<ToolbarButton\s+icon=\{ListCollapse\}\s+label="Tree View Options"/);
+    expect(SRC).toMatch(/<ToolbarButton[\s\S]*?icon=\{SquarePen\}[\s\S]*?label="New File"/);
+    expect(SRC).toMatch(/<ToolbarButton[\s\S]*?icon=\{FilePlus\}[\s\S]*?label="New from template/);
+    expect(SRC).toMatch(/<ToolbarButton[\s\S]*?icon=\{FolderPlus\}[\s\S]*?label="New Folder"/);
+  });
+
+  test('SidebarSearchBar is imported and mounted with onOpenSearch wired through', () => {
     expect(SRC).toMatch(
-      /<ToolbarButton\s+icon=\{Search\}\s+label="Search"\s+onClick=\{onOpenSearch\}\s*\/>\s*\{\/\*[\s\S]*?\*\/\}\s*\{hasFolders/,
+      /import\s*\{[^}]*\bSidebarSearchBar\b[^}]*\}\s*from\s*['"]@\/components\/SidebarSearchBar['"]/,
+    );
+    expect(SRC).toMatch(/<SidebarSearchBar\s+onClick=\{onOpenSearch\}\s*\/>/);
+  });
+
+  test('ErrorBoundary wraps the pill so a render-throw is contained to the row', () => {
+    expect(SRC).toMatch(/import\s*\{\s*ErrorBoundary\s*\}\s*from\s*['"]react-error-boundary['"]/);
+    expect(SRC).toMatch(
+      /<ErrorBoundary[\s\S]*?fallbackRender=\{\(\)\s*=>\s*null\}[\s\S]*?<SidebarSearchBar[\s\S]*?<\/ErrorBoundary>/,
+    );
+    expect(SRC).not.toMatch(/FallbackComponent=\{/);
+  });
+
+  test('ErrorBoundary mounts the extracted onPillRenderError on its onError prop', () => {
+    expect(SRC).toMatch(
+      /import\s*\{[^}]*\bonPillRenderError\b[^}]*\}\s*from\s*['"]@\/components\/SidebarSearchBar['"]/,
+    );
+    expect(SRC).toMatch(
+      /<ErrorBoundary[\s\S]*?onError=\{onPillRenderError\}[\s\S]*?<SidebarSearchBar/,
+    );
+  });
+
+  test('ErrorBoundary exposes a recovery path via resetKeys keyed off sidebarState', () => {
+    expect(SRC).toMatch(
+      /<ErrorBoundary[\s\S]*?resetKeys=\{\[sidebarState\]\}[\s\S]*?<SidebarSearchBar/,
+    );
+  });
+
+  test('pill row inherits Electron no-drag opt-out (structurally anchored)', () => {
+    expect(SRC).toMatch(/isElectronHost\s*&&\s*['"]\[&>\*\]:\[-webkit-app-region:no-drag\]['"]/);
+
+    expect(SRC).toMatch(
+      /['"]px-2 pb-2['"][\s\S]{0,300}isElectronHost\s*&&\s*['"]\[-webkit-app-region:no-drag\]['"]/,
+    );
+  });
+
+  test('pill row fades synchronously with the toolbar during sidebar collapse (structurally anchored)', () => {
+    const sidebarHeaderBlock = SRC.match(
+      /SidebarHeader\s*\n?\s*className=\{cn\(([\s\S]*?h-12[\s\S]*?)\)\}/,
+    )?.[1];
+    expect(sidebarHeaderBlock).toBeTruthy();
+    expect(sidebarHeaderBlock).toMatch(/shouldFadeChrome\s*&&\s*['"]opacity-0['"]/);
+    expect(sidebarHeaderBlock).toMatch(
+      /motion-safe:transition-opacity\s+motion-safe:duration-100\s+motion-safe:ease-out/,
+    );
+
+    const pillRowBlock = SRC.match(/cn\(\s*\n?\s*\/\/[\s\S]*?['"]px-2 pb-2['"]([\s\S]*?)\)/)?.[1];
+    expect(pillRowBlock).toBeTruthy();
+    expect(pillRowBlock).toMatch(/shouldFadeChrome\s*&&\s*['"]opacity-0['"]/);
+    expect(pillRowBlock).toMatch(
+      /motion-safe:transition-opacity\s+motion-safe:duration-100\s+motion-safe:ease-out/,
     );
   });
 });
