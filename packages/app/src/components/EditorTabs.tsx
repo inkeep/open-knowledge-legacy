@@ -29,6 +29,22 @@ import { usePageList } from './PageListContext';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 const TAB_RENAME_EXTENSIONS = ['.md', '.mdx'] as const;
+const TAB_BASE_CLASS =
+  'group flex h-10 -mb-px min-w-28 max-w-64 shrink-0 cursor-pointer self-end items-center overflow-hidden rounded-lg border relative';
+const TAB_ACTIVE_CLASS =
+  'rounded-b-none border-border border-b-background bg-background text-foreground';
+const TAB_INACTIVE_CLASS = 'border-transparent text-muted-foreground hover:text-foreground';
+const TAB_BUTTON_CLASS =
+  'flex h-full min-w-0 flex-1 cursor-pointer items-center gap-1.5 overflow-hidden px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50';
+const TAB_CLOSE_BUTTON_CLASS =
+  'mr-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:opacity-100';
+
+function tabCloseButtonClass(isActive: boolean): string {
+  return cn(
+    TAB_CLOSE_BUTTON_CLASS,
+    isActive ? 'opacity-70' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-70',
+  );
+}
 
 function tabParts(
   docName: string,
@@ -317,7 +333,7 @@ export function EditorTabs() {
     <div
       ref={tabListRef}
       className={cn(
-        'pl-2 flex h-12 min-w-0 touch-manipulation flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-fade-mask-x [scrollbar-width:none]',
+        'pl-2 flex h-10 min-w-0 touch-manipulation flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-fade-mask-x [scrollbar-width:none]',
         isElectronHost && '[-webkit-app-region:drag]',
       )}
       onWheel={scrollTabListOnWheel}
@@ -336,69 +352,69 @@ export function EditorTabs() {
               closeTab={closeTab}
               closeTabs={closeTabs}
             >
-              <div
-                role="presentation"
-                data-active-tab={isActive ? 'true' : undefined}
-                className={cn(
-                  'group flex min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-lg border border-b-transparent py-1.5 relative',
-                  isActive
-                    ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
-                    : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
-                  isElectronHost && '[-webkit-app-region:no-drag]',
-                )}
-                onAuxClick={(event) => {
-                  if (event.button !== 1) return;
-                  event.preventDefault();
-                  closeTab(tabId);
-                }}
-              >
-                <button
-                  type="button"
-                  aria-label={accessibleLabel}
-                  title={accessibleLabel}
-                  className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                  onClick={() => {
+              {
+                // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button.
+                <div
+                  role="presentation"
+                  data-active-tab={isActive ? 'true' : undefined}
+                  className={cn(
+                    TAB_BASE_CLASS,
+                    isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
+                    isElectronHost && '[-webkit-app-region:no-drag]',
+                  )}
+                  onAuxClick={(event) => {
+                    if (event.button !== 1) return;
+                    event.preventDefault();
+                    closeTab(tabId);
+                  }}
+                  onClick={(event) => {
+                    if (event.target !== event.currentTarget) return;
                     activateTab(tabId);
                   }}
                 >
-                  <FolderOpen aria-hidden="true" className="size-3.5 shrink-0" />
-                  {prefix ? (
-                    <span
-                      className={cn('min-w-0 flex-1 truncate', isActive && 'text-muted-foreground')}
-                    >
-                      {prefix}
-                    </span>
-                  ) : null}
-                  <span
-                    className={cn(
-                      'flex min-w-0 items-center font-medium',
-                      prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
-                    )}
+                  <button
+                    type="button"
+                    aria-label={accessibleLabel}
+                    title={accessibleLabel}
+                    className={TAB_BUTTON_CLASS}
+                    onClick={() => {
+                      activateTab(tabId);
+                    }}
                   >
-                    <span className="min-w-0 truncate">{baseName}</span>
-                    <span className="shrink-0">/</span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Close ${accessibleLabel}`}
-                  className={cn(
-                    'mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
-                    isActive
-                      ? 'opacity-100'
-                      : 'opacity-0 hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100',
-                  )}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    closeTab(tabId);
-                  }}
-                >
-                  <XIcon aria-hidden="true" className="size-3.5" />
-                </button>
-                {isActive ? (
-                  <div className="z-0 h-2 w-[calc(100%+16px)] absolute -left-[8px] -bottom-[2px] bg-background pointer-events-none" />
-                ) : null}
-              </div>
+                    <FolderOpen aria-hidden="true" className="size-3.5 shrink-0" />
+                    {prefix ? (
+                      <span
+                        className={cn(
+                          'min-w-0 flex-1 truncate',
+                          isActive && 'text-muted-foreground',
+                        )}
+                      >
+                        {prefix}
+                      </span>
+                    ) : null}
+                    <span
+                      className={cn(
+                        'flex min-w-0 items-center font-medium',
+                        prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
+                      )}
+                    >
+                      <span className="min-w-0 truncate">{baseName}</span>
+                      <span className="shrink-0">/</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Close ${accessibleLabel}`}
+                    className={tabCloseButtonClass(isActive)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeTab(tabId);
+                    }}
+                  >
+                    <XIcon aria-hidden="true" className="size-3.5" />
+                  </button>
+                </div>
+              }
             </EditorTabContextMenu>
           );
         }
@@ -418,137 +434,137 @@ export function EditorTabs() {
             closeTab={closeTab}
             closeTabs={closeTabs}
           >
-            <div
-              role="presentation"
-              data-active-tab={isActive ? 'true' : undefined}
-              className={cn(
-                'group flex min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-lg border border-b-transparent py-1.5 relative',
-                isActive
-                  ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
-                  : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
-                isRenaming && renameError && 'border-destructive',
-                isElectronHost && '[-webkit-app-region:no-drag]',
-              )}
-              onAuxClick={(event) => {
-                if (event.button !== 1) return;
-                event.preventDefault();
-                closeTab(tabId);
-              }}
-            >
-              {isRenaming ? (
-                <>
-                  <InputGroup className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent">
-                    <InputGroupInput
-                      ref={renameInputRef}
-                      value={renameValue}
-                      disabled={isRenameLoading}
-                      aria-label={`Rename ${label}`}
-                      aria-invalid={renameError ? true : undefined}
-                      aria-describedby={renameError ? renameErrorId : undefined}
-                      aria-busy={isRenameLoading || undefined}
-                      title={renameError ?? docName}
-                      className="h-full min-w-0 px-2 py-0 text-xs"
-                      onChange={(event) => {
-                        setRenameValue(stripRenameExtensionSuffix(event.target.value, docExt));
-                        setRenameError(null);
-                        lastFailedValueRef.current = null;
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          void commitRename();
-                        } else if (event.key === 'Escape') {
-                          event.preventDefault();
-                          cancelRename();
-                        }
-                      }}
-                      onBlur={commitRename}
-                    />
-                    <InputGroupAddon align="inline-end" aria-hidden="true" className="pr-2 text-xs">
-                      <InputGroupText className="text-xs text-muted-foreground/60">
-                        {docExt}
-                      </InputGroupText>
-                    </InputGroupAddon>
-                  </InputGroup>
-                  {renameError ? (
-                    <span id={renameErrorId} role="alert" className="sr-only">
-                      {renameError}
-                    </span>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    aria-label={accessibleLabel}
-                    title={accessibleLabel}
-                    className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                    onClick={() => {
-                      activateTab(tabId);
-                    }}
-                    onDoubleClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      enterRenameMode(docName);
-                    }}
-                  >
-                    {prefix ? (
-                      <span
-                        className={cn(
-                          'min-w-0 flex-1 truncate text-muted-foreground/60',
-                          isActive && 'text-muted-foreground',
-                        )}
+            {
+              // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button.
+              <div
+                role="presentation"
+                data-active-tab={isActive ? 'true' : undefined}
+                className={cn(
+                  TAB_BASE_CLASS,
+                  isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
+                  isRenaming && renameError && 'border-destructive',
+                  isElectronHost && '[-webkit-app-region:no-drag]',
+                )}
+                onAuxClick={(event) => {
+                  if (event.button !== 1) return;
+                  event.preventDefault();
+                  closeTab(tabId);
+                }}
+                onClick={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  activateTab(tabId);
+                }}
+              >
+                {isRenaming ? (
+                  <>
+                    <InputGroup className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent dark:bg-transparent">
+                      <InputGroupInput
+                        ref={renameInputRef}
+                        value={renameValue}
+                        disabled={isRenameLoading}
+                        aria-label={`Rename ${label}`}
+                        aria-invalid={renameError ? true : undefined}
+                        aria-describedby={renameError ? renameErrorId : undefined}
+                        aria-busy={isRenameLoading || undefined}
+                        title={renameError ?? docName}
+                        className="h-full min-w-0 px-2 py-0 font-medium text-foreground text-xs selection:bg-primary selection:text-primary-foreground"
+                        onChange={(event) => {
+                          setRenameValue(stripRenameExtensionSuffix(event.target.value, docExt));
+                          setRenameError(null);
+                          lastFailedValueRef.current = null;
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void commitRename();
+                          } else if (event.key === 'Escape') {
+                            event.preventDefault();
+                            cancelRename();
+                          }
+                        }}
+                        onBlur={commitRename}
+                      />
+                      <InputGroupAddon
+                        align="inline-end"
+                        aria-hidden="true"
+                        className="pr-2 text-xs"
                       >
-                        {prefix}
+                        <InputGroupText className="text-muted-foreground/60 text-xs">
+                          {docExt}
+                        </InputGroupText>
+                      </InputGroupAddon>
+                    </InputGroup>
+                    {renameError ? (
+                      <span id={renameErrorId} role="alert" className="sr-only">
+                        {renameError}
                       </span>
                     ) : null}
-                    <span
-                      className={cn(
-                        'flex min-w-0 items-center font-medium',
-                        prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
-                      )}
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      aria-label={accessibleLabel}
+                      title={accessibleLabel}
+                      className={TAB_BUTTON_CLASS}
+                      onClick={() => {
+                        activateTab(tabId);
+                      }}
+                      onDoubleClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        enterRenameMode(docName);
+                      }}
                     >
-                      <span className="min-w-0 truncate">{baseName}</span>
-                      <span className="shrink-0">{extension}</span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Close ${accessibleLabel}`}
-                    className={cn(
-                      'mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
-                      isActive
-                        ? 'opacity-100'
-                        : 'opacity-0 hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100',
-                    )}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      closeTab(tabId);
-                    }}
-                  >
-                    <XIcon aria-hidden="true" className="size-3.5" />
-                  </button>
-                </>
-              )}
-              {isActive ? (
-                <div className="z-0 h-2 w-[calc(100%+16px)] absolute -left-[8px] -bottom-[2px] bg-background pointer-events-none" />
-              ) : null}
-            </div>
+                      {prefix ? (
+                        <span
+                          className={cn(
+                            'min-w-0 flex-1 truncate text-muted-foreground/60',
+                            isActive && 'text-muted-foreground',
+                          )}
+                        >
+                          {prefix}
+                        </span>
+                      ) : null}
+                      <span
+                        className={cn(
+                          'flex min-w-0 items-center font-medium',
+                          prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
+                        )}
+                      >
+                        <span className="min-w-0 truncate">{baseName}</span>
+                        <span className="shrink-0">{extension}</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Close ${accessibleLabel}`}
+                      className={tabCloseButtonClass(isActive)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        closeTab(tabId);
+                      }}
+                    >
+                      <XIcon aria-hidden="true" className="size-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            }
           </EditorTabContextMenu>
         );
       })}
       {newTabIds.map((tabId) => {
         const isActive = tabId === activeNewTabId;
         return (
+          // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button.
           <div
             key={tabId}
             role="presentation"
             data-active-tab={isActive ? 'true' : undefined}
             className={cn(
-              'group flex min-w-28 max-w-64 shrink-0 items-center overflow-hidden rounded-lg border border-b-transparent py-1.5 relative',
-              isActive
-                ? 'tab-bottom-flares -mb-px self-end pb-3.5 border-border border-b-background bg-background text-foreground rounded-b-none overflow-visible'
-                : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+              TAB_BASE_CLASS,
+              isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
               isElectronHost && '[-webkit-app-region:no-drag]',
             )}
             onAuxClick={(event) => {
@@ -556,12 +572,16 @@ export function EditorTabs() {
               event.preventDefault();
               closeNewTab(tabId);
             }}
+            onClick={(event) => {
+              if (event.target !== event.currentTarget) return;
+              activateNewTab(tabId);
+            }}
           >
             <button
               type="button"
               aria-label="Activate new tab"
               title="New tab"
-              className="flex h-full min-w-0 flex-1 items-center overflow-hidden px-2 text-left font-medium text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              className={TAB_BUTTON_CLASS}
               onClick={() => activateNewTab(tabId)}
             >
               <span className="min-w-0 truncate text-muted-foreground">New tab</span>
@@ -569,12 +589,7 @@ export function EditorTabs() {
             <button
               type="button"
               aria-label="Close new tab"
-              className={cn(
-                'mr-1 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
-                isActive
-                  ? 'opacity-100'
-                  : 'opacity-0 hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100',
-              )}
+              className={tabCloseButtonClass(isActive)}
               onClick={(event) => {
                 event.stopPropagation();
                 closeNewTab(tabId);
@@ -582,9 +597,6 @@ export function EditorTabs() {
             >
               <XIcon aria-hidden="true" className="size-3.5" />
             </button>
-            {isActive ? (
-              <div className="z-0 h-2 w-[calc(100%+16px)] absolute -left-[8px] -bottom-[2px] bg-background pointer-events-none" />
-            ) : null}
           </div>
         );
       })}

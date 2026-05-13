@@ -1653,43 +1653,6 @@ button:active:not(:disabled) {
   @apply scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/30 dark:scrollbar-thumb-muted-foreground/50;
 }
 
-/* Chrome-style outward-curving "flares" at an element's bottom corners.
-   Two pseudo-elements sit just outside the bottom-left/right corners,
-   filled with var(--background), with a quarter-circle cut-out adjacent
-   to the host element. The cut-out lets the surrounding bg show through,
-   producing the visual outward curve. Host needs `position: relative`
-   (and `overflow: visible` to not clip the flares). */
-.tab-bottom-flares::before,
-.tab-bottom-flares::after {
-  content: "";
-  position: absolute;
-  bottom: -1px;
-  width: 0.5rem;
-  height: 0.5rem;
-  pointer-events: none;
-  z-index: 1;
-}
-.tab-bottom-flares::before {
-  left: -0.5rem;
-  background: radial-gradient(
-    circle 0.5rem at top left,
-    var(--background) calc(0.5rem - 1px),
-    var(--border) calc(0.5rem - 1px),
-    var(--border) 0.5rem,
-    transparent 0.5rem
-  );
-}
-.tab-bottom-flares::after {
-  right: -0.5rem;
-  background: radial-gradient(
-    circle 0.5rem at top right,
-    var(--background) calc(0.5rem - 1px),
-    var(--border) calc(0.5rem - 1px),
-    var(--border) 0.5rem,
-    transparent 0.5rem
-  );
-}
-
 /* Subtle top + bottom fade for scrollable regions — masks the first and last
    ~1rem of content so it fades into the surrounding bg as a "more above/below"
    affordance. Used by DialogBody and any other scrollable surface that wants
