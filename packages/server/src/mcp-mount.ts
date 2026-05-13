@@ -163,7 +163,7 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
     }
     errorResponse(res, 404, 'urn:ok:error:not-found', 'Not found.', {
       handler: 'mcp-mount',
-      detail: `The React UI is served by \`ok ui\` (default port 3000). No handler for ${url ?? '/'}`,
+      detail: `The React UI is served by \`ok ui\` (run \`ok ui\` and check \`ui.lock.port\`). No handler for ${url ?? '/'}`,
     });
   };
 

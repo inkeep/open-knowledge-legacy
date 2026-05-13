@@ -19,6 +19,7 @@ import {
 } from '@inkeep/open-knowledge-server';
 import {
   closeHttpServers,
+  DEFAULT_UI_PORT,
   DEFAULT_UI_SAFETY_NET_MS,
   resolveRequestedPort,
   resolveUiLockCollision,
@@ -136,17 +137,29 @@ async function rawRequest(opts: {
 }
 
 describe('resolveRequestedPort', () => {
-  test('default is 0 (kernel-allocated, D-033)', () => {
-    expect(resolveRequestedPort(undefined, undefined)).toBe(0);
+  test('default is DEFAULT_UI_PORT with kernel-allocated fallback', () => {
+    expect(resolveRequestedPort(undefined, undefined)).toEqual({
+      port: DEFAULT_UI_PORT,
+      fallbackToKernel: true,
+    });
   });
-  test('--port wins over PORT env', () => {
-    expect(resolveRequestedPort('4000', '5000')).toBe(4000);
+  test('--port wins over PORT env and is operator-explicit (no fallback)', () => {
+    expect(resolveRequestedPort('4000', '5000')).toEqual({
+      port: 4000,
+      fallbackToKernel: false,
+    });
   });
-  test('PORT env used when --port absent', () => {
-    expect(resolveRequestedPort(undefined, '5555')).toBe(5555);
+  test('PORT env used when --port absent and is operator-explicit (no fallback)', () => {
+    expect(resolveRequestedPort(undefined, '5555')).toEqual({
+      port: 5555,
+      fallbackToKernel: false,
+    });
   });
-  test('empty PORT env falls back to kernel-allocated (0)', () => {
-    expect(resolveRequestedPort(undefined, '')).toBe(0);
+  test('empty PORT env falls back to DEFAULT_UI_PORT with kernel-allocated fallback', () => {
+    expect(resolveRequestedPort(undefined, '')).toEqual({
+      port: DEFAULT_UI_PORT,
+      fallbackToKernel: true,
+    });
   });
   test('invalid --port throws', () => {
     expect(() => resolveRequestedPort('nope', undefined)).toThrow();
@@ -154,8 +167,11 @@ describe('resolveRequestedPort', () => {
   test('invalid PORT env throws', () => {
     expect(() => resolveRequestedPort(undefined, 'nope')).toThrow();
   });
-  test('port=0 (kernel-allocated) is accepted', () => {
-    expect(resolveRequestedPort('0', undefined)).toBe(0);
+  test('port=0 (kernel-allocated) is accepted; explicit caller, no auto-fallback', () => {
+    expect(resolveRequestedPort('0', undefined)).toEqual({
+      port: 0,
+      fallbackToKernel: false,
+    });
   });
 });
 
@@ -169,6 +185,78 @@ describe('startUiServer', () => {
     const lock = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(lock.pid).toBe(process.pid);
     expect(lock.port).toBe(handle.port);
+  });
+
+  test('falls back to kernel-allocation when requested port is busy and fallbackToKernel=true', async () => {
+    const { createServer } = await import('node:http');
+    const blocker = createServer(() => {});
+    await new Promise<void>((done, fail) => {
+      blocker.once('error', fail);
+      blocker.listen(0, '127.0.0.1', () => done());
+    });
+    const blockedPort = (blocker.address() as { port: number }).port;
+    try {
+      handle = await startUiServer({
+        config: config(),
+        cwd: tmpDir,
+        port: blockedPort,
+        fallbackToKernel: true,
+        host: '127.0.0.1',
+      });
+      expect(handle.port).toBeGreaterThan(0);
+      expect(handle.port).not.toBe(blockedPort);
+      const lock = JSON.parse(readFileSync(resolve(lockDir, 'ui.lock'), 'utf-8'));
+      expect(lock.port).toBe(handle.port);
+    } finally {
+      await new Promise<void>((done) => blocker.close(() => done()));
+    }
+  });
+
+  test('propagates EADDRINUSE when requested port is busy and fallbackToKernel is falsy', async () => {
+    const { createServer } = await import('node:http');
+    const blocker = createServer(() => {});
+    await new Promise<void>((done, fail) => {
+      blocker.once('error', fail);
+      blocker.listen(0, '127.0.0.1', () => done());
+    });
+    const blockedPort = (blocker.address() as { port: number }).port;
+    try {
+      await expect(
+        startUiServer({
+          config: config(),
+          cwd: tmpDir,
+          port: blockedPort,
+          host: '127.0.0.1',
+        }),
+      ).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    } finally {
+      await new Promise<void>((done) => blocker.close(() => done()));
+    }
+  });
+
+  test('two-socket loopback default: IPv6 binds then IPv4 EADDRINUSE triggers full retry', async () => {
+    const { createServer } = await import('node:http');
+    const blocker = createServer(() => {});
+    await new Promise<void>((done, fail) => {
+      blocker.once('error', fail);
+      blocker.listen(0, '127.0.0.1', () => done());
+    });
+    const blockedPort = (blocker.address() as { port: number }).port;
+    try {
+      handle = await startUiServer({
+        config: config(),
+        cwd: tmpDir,
+        port: blockedPort,
+        fallbackToKernel: true,
+      });
+      expect(handle.port).toBeGreaterThan(0);
+      expect(handle.port).not.toBe(blockedPort);
+      expect(handle.httpServers).toHaveLength(2);
+      const lock = JSON.parse(readFileSync(resolve(lockDir, 'ui.lock'), 'utf-8'));
+      expect(lock.port).toBe(handle.port);
+    } finally {
+      await new Promise<void>((done) => blocker.close(() => done()));
+    }
   });
 
   test('/api/config returns collabUrl=null when server.lock is absent', async () => {
