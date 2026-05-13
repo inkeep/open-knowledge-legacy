@@ -16,7 +16,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { type TemplateMenuEntry, useFolderConfig } from '@/hooks/use-folder-config';
+import {
+  type FolderConfigHandle,
+  type TemplateMenuEntry,
+  useFolderConfig,
+} from '@/hooks/use-folder-config';
 import { emitDocumentsChanged } from '@/lib/documents-events';
 import { parseServerResponse } from '@/lib/parse-server-response';
 import {
@@ -52,8 +56,10 @@ interface NewItemDialogProps {
   kind: 'file' | 'folder';
   initialDir: string;
   suggestedName?: string;
+  initialTemplate?: string;
   description?: ReactNode;
   onCreated?: (docName: string) => void;
+  folderConfig?: FolderConfigHandle;
 }
 
 export function validatePath(value: string): string | null {
@@ -122,11 +128,14 @@ export function NewItemDialog({
   kind,
   initialDir,
   suggestedName,
+  initialTemplate,
   description,
   onCreated,
+  folderConfig: folderConfigOverride,
 }: NewItemDialogProps) {
   const { addPage } = usePageList();
-  const folderConfig = useFolderConfig(initialDir);
+  const selfFetch = useFolderConfig(folderConfigOverride ? null : initialDir);
+  const folderConfig = folderConfigOverride ?? selfFetch;
   const [fileName, setFileName] = useState('');
   const [folderName, setFolderName] = useState('');
   const [fileExtension, setFileExtension] = useState<DocExtension>('.md');
@@ -147,18 +156,29 @@ export function NewItemDialog({
       setErrorField(null);
       setBusy(false);
       setFolderName('');
-      setSelectedTemplate(BLANK_TEMPLATE_VALUE);
+      setSelectedTemplate(
+        kind === 'file' && initialTemplate ? initialTemplate : BLANK_TEMPLATE_VALUE,
+      );
       const initial = kind === 'file' ? (suggestedName ?? 'untitled') : 'index';
       const sniffed = detectExtension(initial);
       setFileExtension(sniffed ?? '.md');
       setFileName(sniffed ? stripExt(initial) : initial);
     }
-  }, [open, kind, suggestedName]);
+  }, [open, kind, suggestedName, initialTemplate]);
 
   const templates: TemplateMenuEntry[] =
     folderConfig.state.status === 'ready'
       ? sortTemplatesForPicker(folderConfig.state.data.folder.templates_available ?? [])
       : [];
+  useEffect(() => {
+    if (!open) return;
+    if (selectedTemplate === BLANK_TEMPLATE_VALUE) return;
+    if (folderConfig.state.status !== 'ready') return;
+    const available = folderConfig.state.data.folder.templates_available ?? [];
+    if (!available.some((t) => t.name === selectedTemplate)) {
+      setSelectedTemplate(BLANK_TEMPLATE_VALUE);
+    }
+  }, [open, selectedTemplate, folderConfig.state]);
   const showTemplatePicker = kind === 'file';
   const templatesLoading =
     folderConfig.state.status === 'loading' || folderConfig.state.status === 'idle';

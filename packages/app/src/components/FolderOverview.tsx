@@ -1,14 +1,4 @@
-import { CreatePageSuccessSchema, ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
-import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
-  ChevronDown,
-  File,
-  Folder,
-  FolderOpen,
-  Plus,
-} from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, File, Folder, FolderOpen, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { FolderDefaultsCard } from '@/components/FolderDefaultsCard';
 import {
@@ -19,12 +9,6 @@ import { NewItemDialog } from '@/components/NewItemDialog';
 import { usePageList } from '@/components/PageListContext';
 import { TemplatesCard } from '@/components/TemplatesCard';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -36,7 +20,6 @@ import {
 } from '@/components/ui/table';
 import { useFolderConfig } from '@/hooks/use-folder-config';
 import { hashFromDocName } from '@/lib/doc-hash';
-import { emitDocumentsChanged } from '@/lib/documents-events';
 
 type SortKey = 'name' | 'modified';
 type SortDir = 'asc' | 'desc';
@@ -115,11 +98,10 @@ function SortableHeader({
 }
 
 export function FolderOverview({ folderPath }: { folderPath: string }) {
-  const { addPage, folderPaths, loading, pages, pageTitles, pageMeta } = usePageList();
-  const { state: folderConfig, refresh: refreshFolderConfig } = useFolderConfig(folderPath);
+  const { folderPaths, loading, pages, pageTitles, pageMeta } = usePageList();
+  const folderConfigHandle = useFolderConfig(folderPath);
+  const { state: folderConfig, refresh: refreshFolderConfig } = folderConfigHandle;
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [creatingIndex, setCreatingIndex] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
@@ -173,35 +155,6 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
     }
   }
 
-  async function handleCreateIndexNote() {
-    setCreatingIndex(true);
-    setCreateError(null);
-    try {
-      const path = `${folderPath}/index.md`;
-      const res = await fetch('/api/create-page', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-      });
-      const body = (await res.json().catch(() => null)) as unknown;
-      if (!res.ok) {
-        const problem = ProblemDetailsSchema.safeParse(body);
-        setCreateError(problem.success ? problem.data.title : `Server error (HTTP ${res.status})`);
-        setCreatingIndex(false);
-        return;
-      }
-      const success = CreatePageSuccessSchema.safeParse(body);
-      const docName = success.success ? success.data.docName : `${folderPath}/index`;
-      addPage(docName);
-      emitDocumentsChanged(['files', 'backlinks', 'graph']);
-      window.location.hash = hashFromDocName(docName);
-    } catch (error) {
-      console.warn('[FolderOverview] create index note failed:', error);
-      setCreateError('Network error — please try again');
-    }
-    setCreatingIndex(false);
-  }
-
   return (
     <>
       <div className="flex min-h-0 flex-1 items-start overflow-y-auto subtle-scrollbar">
@@ -212,46 +165,11 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
                 <FolderOpen className="size-5 text-muted-foreground" />
                 <h1 className="text-2xl font-semibold tracking-tight">{data.title}</h1>
               </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button>
-                    <Plus className="size-4" />
-                    New
-                    <ChevronDown className="size-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    disabled={creatingIndex}
-                    onSelect={() => void handleCreateIndexNote()}
-                  >
-                    <div>
-                      <div className="font-medium">Index note</div>
-                      <div className="text-xs text-muted-foreground">
-                        Landing page for this folder
-                      </div>
-                    </div>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setCreateDialogOpen(true)}>
-                    <div>
-                      <div className="font-medium">Note</div>
-                      <div className="text-xs text-muted-foreground">
-                        New note inside this folder
-                      </div>
-                    </div>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <Button onClick={() => setCreateDialogOpen(true)}>
+                <Plus className="size-4" />
+                New
+              </Button>
             </div>
-            <p className="text-sm text-muted-foreground">
-              This folder has no landing note yet. Choose an explicit action to add one or open a
-              note inside the folder.
-            </p>
-            {createError ? (
-              <span role="alert" className="text-sm text-destructive">
-                {createError}
-              </span>
-            ) : null}
           </div>
           <FolderDefaultsCard
             folderPath={folderPath}
@@ -262,6 +180,7 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
             folderPath={folderPath}
             state={folderConfig}
             onChange={refreshFolderConfig}
+            folderConfigHandle={folderConfigHandle}
           />
           <div className="rounded-lg border">
             <Table>
@@ -339,6 +258,8 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
         onOpenChange={setCreateDialogOpen}
         kind="file"
         initialDir={folderPath}
+        folderConfig={folderConfigHandle}
+        suggestedName="index"
       />
     </>
   );
