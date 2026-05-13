@@ -14,12 +14,13 @@ describe('canonical/compat split — registry shape', () => {
     }
   });
 
-  test('exactly 11 canonical descriptors (5-pack + Math + MermaidFence + Pdf + File + Tabs + Tab)', () => {
-    expect(canonicalDescriptors.length).toBe(11);
+  test('exactly 12 canonical descriptors (5-pack + Math + MermaidFence + Pdf + File + Tabs + Tab + Embed)', () => {
+    expect(canonicalDescriptors.length).toBe(12);
     expect(canonicalDescriptors.map((m) => m.name).sort()).toEqual(
       [
         'Accordion',
         'Callout',
+        'Embed',
         'File',
         'Math',
         'MermaidFence',

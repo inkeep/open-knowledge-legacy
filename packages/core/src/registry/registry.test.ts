@@ -4,10 +4,10 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the 11 canonical + 9 compat descriptors + wildcard', () => {
+  test('returns the 12 canonical + 9 compat descriptors + wildcard', () => {
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(21);
+    expect(entries.length).toBe(22);
   });
 
   test('get returns registered component by name', () => {
@@ -79,6 +79,7 @@ describe('createRegistry', () => {
     expect(registry.has('File')).toBe(true);
     expect(registry.has('Tabs')).toBe(true);
     expect(registry.has('Tab')).toBe(true);
+    expect(registry.has('Embed')).toBe(true);
     expect(registry.has('*')).toBe(true);
     expect(registry.has('Image')).toBe(false);
     expect(registry.has('Video')).toBe(false);
@@ -89,11 +90,11 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains 11 canonical + 9 compat entries (5-pack + Math + MermaidFence + Pdf + File + Tabs + Tab canonicals; source-form preservation + math syntax + wiki-embed compats; Mermaid is fence-only)', () => {
-    expect(builtInComponents.length).toBe(20);
+  test('contains 12 canonical + 9 compat entries (5-pack + Math + MermaidFence + Pdf + File + Tabs + Tab + Embed canonicals; source-form preservation + math syntax + wiki-embed compats; Mermaid is fence-only)', () => {
+    expect(builtInComponents.length).toBe(21);
     const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
     const compat = builtInComponents.filter((m) => m.surface === 'compat');
-    expect(canonical.length).toBe(11);
+    expect(canonical.length).toBe(12);
     expect(compat.length).toBe(9);
   });
 
@@ -517,7 +518,7 @@ describe('builtInComponents manifest', () => {
 });
 
 describe('placeholder contract — media descriptor src prop invariants', () => {
-  for (const name of ['img', 'video', 'audio', 'Pdf', 'File'] as const) {
+  for (const name of ['img', 'video', 'audio', 'Pdf', 'File', 'Embed'] as const) {
     test(`${name}.src satisfies the placeholder contract`, () => {
       const meta = builtInComponents.find((m) => m.name === name);
       expect(meta).toBeDefined();
@@ -600,6 +601,10 @@ describe('common/advanced split per descriptor', () => {
     File: {
       common: ['src'],
       advanced: [],
+    },
+    Embed: {
+      common: ['src', 'title', 'align'],
+      advanced: ['width', 'height'],
     },
   };
   for (const [name, split] of Object.entries(expected)) {

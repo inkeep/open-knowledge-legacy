@@ -23,7 +23,9 @@ function readActiveImageAlign(editor: Editor): Align | null {
   if (!node) return null;
   if (node.type.name !== 'jsxComponent') return null;
   const componentName = node.attrs.componentName;
-  if (componentName !== 'img' && componentName !== 'CommonMarkImage') return null;
+  if (componentName !== 'img' && componentName !== 'CommonMarkImage' && componentName !== 'Embed') {
+    return null;
+  }
   const props = (node.attrs.props ?? {}) as Record<string, unknown>;
   const raw = props.align;
   if (raw === 'left' || raw === 'right' || raw === 'center') return raw;
@@ -65,7 +67,11 @@ export function ImageAlignButtons({ editor }: ImageAlignButtonsProps) {
                   ).node;
                   if (!liveNode || liveNode.type.name !== 'jsxComponent') return;
                   const componentName = String(liveNode.attrs.componentName ?? '');
-                  if (componentName !== 'img' && componentName !== 'CommonMarkImage') {
+                  if (
+                    componentName !== 'img' &&
+                    componentName !== 'CommonMarkImage' &&
+                    componentName !== 'Embed'
+                  ) {
                     return;
                   }
                   if (liveNode.attrs.kind !== 'element') return;

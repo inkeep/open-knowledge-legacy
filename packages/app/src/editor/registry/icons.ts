@@ -1,4 +1,5 @@
 import {
+  AppWindow,
   Box,
   ChevronRight,
   Image,
@@ -11,6 +12,7 @@ import {
 } from 'lucide-react';
 
 const ICON_COMPONENTS: Record<string, LucideIcon> = {
+  AppWindow,
   ChevronRight,
   Image,
   MessageSquareWarning,

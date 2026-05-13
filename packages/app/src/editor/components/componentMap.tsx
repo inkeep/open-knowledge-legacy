@@ -1,6 +1,7 @@
 import { Accordion } from './Accordion.tsx';
 import { Audio } from './Audio.tsx';
 import { Callout } from './Callout.tsx';
+import { Embed } from './Embed.tsx';
 import { File } from './File.tsx';
 import { Image } from './Image.tsx';
 import { MathView } from './Math.tsx';
@@ -22,6 +23,7 @@ export const componentMap: Record<string, React.ComponentType<any>> = {
   audio: Audio,
   Pdf,
   File,
+  Embed,
   Accordion,
   Tabs,
   Tab,

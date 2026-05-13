@@ -5,6 +5,7 @@ import {
   joinMetaTokens,
   metaHasToken,
   parsePreviewHeight,
+  parsePreviewWidth,
   removeMetaToken,
   setMetaKeyValue,
   shouldShowPreview,
@@ -171,5 +172,34 @@ describe('parsePreviewHeight', () => {
     expect(parsePreviewHeight('h=0px')).toBeNull();
     expect(parsePreviewHeight('h=0.0')).toBeNull();
     expect(parsePreviewHeight('h=0.0vh')).toBeNull();
+  });
+});
+
+describe('parsePreviewWidth', () => {
+  test('unitless number → rem', () => {
+    expect(parsePreviewWidth('preview w=24')).toBe('24rem');
+    expect(parsePreviewWidth('w=12')).toBe('12rem');
+  });
+  test('explicit unit preserved', () => {
+    expect(parsePreviewWidth('preview w=400px')).toBe('400px');
+    expect(parsePreviewWidth('w=80vw')).toBe('80vw');
+    expect(parsePreviewWidth('w=100%')).toBe('100%');
+  });
+  test('decimal numbers', () => {
+    expect(parsePreviewWidth('w=12.5')).toBe('12.5rem');
+  });
+  test('coexists with h= — same meta', () => {
+    expect(parsePreviewWidth('preview h=20 w=40')).toBe('40rem');
+    expect(parsePreviewHeight('preview h=20 w=40')).toBe('20rem');
+  });
+  test('missing or malformed → null', () => {
+    expect(parsePreviewWidth(null)).toBeNull();
+    expect(parsePreviewWidth('preview')).toBeNull();
+    expect(parsePreviewWidth('w=tall')).toBeNull();
+    expect(parsePreviewWidth('w=')).toBeNull();
+  });
+  test('zero / negative → null', () => {
+    expect(parsePreviewWidth('w=0')).toBeNull();
+    expect(parsePreviewWidth('w=0px')).toBeNull();
   });
 });
