@@ -110,6 +110,30 @@ mkdir -p "$SCENARIO_C_PARENT/.git" "$SCENARIO_C/.husky"
 touch "$SCENARIO_C/.husky/pre-commit" "$SCENARIO_C/.husky/pre-push"
 run_scenario "monorepo-subdirectory" "$SCENARIO_C" "no"
 
+# Scenario D: standalone clone WITHOUT husky hooks (public mirror case).
+# `.husky/pre-commit` and `pre-push` aren't in the Copybara include list,
+# so a fresh public clone has `.git` but no hook files. Guard should skip
+# husky setup to avoid creating empty `_/` scaffolding.
+SCENARIO_D="$TEST_TMPDIR/standalone-no-hooks"
+mkdir -p "$SCENARIO_D/.git"
+# Deliberately do NOT create .husky/pre-commit or pre-push.
+run_scenario "standalone-no-hooks" "$SCENARIO_D" "no"
+
+# Scenario E: standalone clone with only pre-commit (no pre-push).
+# Should still invoke husky — at least one hook exists.
+SCENARIO_E="$TEST_TMPDIR/standalone-only-pre-commit"
+mkdir -p "$SCENARIO_E/.git" "$SCENARIO_E/.husky"
+touch "$SCENARIO_E/.husky/pre-commit"
+run_scenario "standalone-only-pre-commit" "$SCENARIO_E" "yes"
+
+# Scenario F: standalone clone with only pre-push (no pre-commit).
+# Symmetric to E — exercises the other branch of the `! -f pre-commit
+# && ! -f pre-push` conjunction in husky-prepare.sh.
+SCENARIO_F="$TEST_TMPDIR/standalone-only-pre-push"
+mkdir -p "$SCENARIO_F/.git" "$SCENARIO_F/.husky"
+touch "$SCENARIO_F/.husky/pre-push"
+run_scenario "standalone-only-pre-push" "$SCENARIO_F" "yes"
+
 echo ""
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
