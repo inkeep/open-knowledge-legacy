@@ -54,11 +54,11 @@ describe('sourceFallbackFormFor — Math jsxComponent', () => {
   });
 });
 
-describe('sourceFallbackFormFor — Mermaid jsxComponent', () => {
+describe('sourceFallbackFormFor — MermaidFence jsxComponent', () => {
   test('emits fenced-code form with `mermaid` info string', () => {
     const node = stubPmNode({
       typeName: 'jsxComponent',
-      componentName: 'Mermaid',
+      componentName: 'MermaidFence',
       props: { chart: 'graph TD\n  A --> B' },
     });
     expect(sourceFallbackFormFor(node)).toEqual({
@@ -70,7 +70,7 @@ describe('sourceFallbackFormFor — Mermaid jsxComponent', () => {
     const chart = 'sequenceDiagram\n  Alice->>Bob: Hello\n  Bob-->>Alice: Hi';
     const node = stubPmNode({
       typeName: 'jsxComponent',
-      componentName: 'Mermaid',
+      componentName: 'MermaidFence',
       props: { chart },
     });
     expect(sourceFallbackFormFor(node)).toEqual({
@@ -81,7 +81,7 @@ describe('sourceFallbackFormFor — Mermaid jsxComponent', () => {
   test('missing chart prop falls back to empty string', () => {
     const node = stubPmNode({
       typeName: 'jsxComponent',
-      componentName: 'Mermaid',
+      componentName: 'MermaidFence',
       props: {},
     });
     expect(sourceFallbackFormFor(node)).toEqual({ source: '```mermaid\n\n```' });
@@ -90,7 +90,7 @@ describe('sourceFallbackFormFor — Mermaid jsxComponent', () => {
   test('non-string chart prop falls back to empty string', () => {
     const node = stubPmNode({
       typeName: 'jsxComponent',
-      componentName: 'Mermaid',
+      componentName: 'MermaidFence',
       props: { chart: { type: 'flowchart' } },
     });
     expect(sourceFallbackFormFor(node)).toEqual({ source: '```mermaid\n\n```' });

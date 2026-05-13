@@ -17,12 +17,13 @@ All three share a single Zod schema and a single validation core, so a write tha
 
 ## Config hierarchy
 
-<Mermaid chart={`graph LR
+```mermaid
+graph LR
   A[Zod defaults] --> B["~/.ok/config.yml"]
   B --> C["./.ok/config.yml"]
   C --> D[Environment variables]
   D --> E[CLI flags]
-`} />
+```
 
 Each layer overrides the previous, from left to right. The merge is a deep merge: leaf values override, but arrays replace (not concatenate). There is no walk-up-tree discovery -- the loader checks exactly two fixed paths:
 

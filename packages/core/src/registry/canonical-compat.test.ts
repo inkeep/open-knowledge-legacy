@@ -14,7 +14,7 @@ describe('canonical/compat split — registry shape', () => {
     }
   });
 
-  test('exactly 11 canonical descriptors (5-pack + Math + Mermaid + Pdf + File + Tabs + Tab)', () => {
+  test('exactly 11 canonical descriptors (5-pack + Math + MermaidFence + Pdf + File + Tabs + Tab)', () => {
     expect(canonicalDescriptors.length).toBe(11);
     expect(canonicalDescriptors.map((m) => m.name).sort()).toEqual(
       [
@@ -22,7 +22,7 @@ describe('canonical/compat split — registry shape', () => {
         'Callout',
         'File',
         'Math',
-        'Mermaid',
+        'MermaidFence',
         'Pdf',
         'Tab',
         'Tabs',
@@ -33,7 +33,7 @@ describe('canonical/compat split — registry shape', () => {
     );
   });
 
-  test('compat descriptor set covers v1 source-form preservation + WikiEmbed convergence + math/mermaid syntax', () => {
+  test('compat descriptor set covers v1 source-form preservation + WikiEmbed convergence + math syntax', () => {
     expect(compatDescriptors.map((m) => m.name).sort()).toEqual(
       [
         'CommonMarkImage',
@@ -41,7 +41,6 @@ describe('canonical/compat split — registry shape', () => {
         'GFMCallout',
         'HtmlDetailsAccordion',
         'MathFence',
-        'MermaidFence',
         'WikiEmbedAudio',
         'WikiEmbedFile',
         'WikiEmbedImage',
@@ -124,16 +123,6 @@ describe('compat descriptors — prop-set is a subset of canonical', () => {
     if (!math || !mf) throw new Error('Missing descriptor');
     const canonicalNames = new Set(math.props.map((p) => p.name));
     for (const p of mf.props) {
-      expect(canonicalNames.has(p.name)).toBe(true);
-    }
-  });
-
-  test('MermaidFence props are a subset of Mermaid props', () => {
-    const mermaid = canonicalDescriptors.find((m) => m.name === 'Mermaid');
-    const fence = compatDescriptors.find((m) => m.name === 'MermaidFence');
-    if (!mermaid || !fence) throw new Error('Missing descriptor');
-    const canonicalNames = new Set(mermaid.props.map((p) => p.name));
-    for (const p of fence.props) {
       expect(canonicalNames.has(p.name)).toBe(true);
     }
   });

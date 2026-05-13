@@ -487,25 +487,7 @@ const mermaidProps: PropDef[] = [
     description:
       'Mermaid chart source (graph / flowchart / sequenceDiagram / class / state / etc.)',
   },
-  {
-    name: 'id',
-    type: 'string',
-    required: false,
-    advanced: true,
-    description: 'HTML id attribute for deep-linking (e.g. `#system-arch-diagram`)',
-  },
-  {
-    name: 'theme',
-    type: 'enum',
-    enumValues: ['default', 'dark', 'forest', 'neutral'],
-    defaultValue: 'default',
-    required: false,
-    advanced: true,
-    description:
-      'Mermaid theme — default ships only `default` styling; alternates land alongside theme-switching infrastructure',
-  },
 ];
-const mermaidFenceProps: PropDef[] = [mermaidProps[0]];
 
 const wikiEmbedFileProps: PropDef[] = [
   {
@@ -742,7 +724,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     serialize: (node, ctx) => emitMdxJsx('Math', node, ctx, mathProps),
   },
   {
-    name: 'Mermaid',
+    name: 'MermaidFence',
     surface: 'canonical',
     hasChildren: false,
     isSelfClosing: true,
@@ -751,7 +733,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     category: 'content',
     displayName: 'Mermaid',
     description:
-      'Diagram rendered from Mermaid source (flowchart, sequence, class, state, ER, gantt, pie)',
+      'Diagram rendered from Mermaid source (flowchart, sequence, class, state, ER, gantt, pie). Authored exclusively as ` ```mermaid ` fenced code.',
     searchTerms: [
       'mermaid',
       'diagram',
@@ -767,7 +749,15 @@ export const builtInComponents: JsxComponentMeta[] = [
       'pie',
       'chart',
     ],
-    serialize: (node, ctx) => emitMdxJsx('Mermaid', node, ctx, mermaidProps),
+    serialize: (node) => {
+      const p = node.attrs.props as { chart?: string } | undefined;
+      return {
+        type: 'code' as const,
+        lang: 'mermaid',
+        meta: null,
+        value: p?.chart ?? '',
+      };
+    },
   },
 
   {
@@ -1027,29 +1017,6 @@ export const builtInComponents: JsxComponentMeta[] = [
         lang: 'math',
         meta: null,
         value: p?.formula ?? '',
-      };
-    },
-  },
-  {
-    name: 'MermaidFence',
-    surface: 'compat',
-    hasChildren: false,
-    isSelfClosing: true,
-    props: mermaidFenceProps,
-    icon: 'Workflow',
-    category: 'content',
-    displayName: 'Mermaid Fence',
-    description:
-      'Mermaid diagram via ` ```mermaid ` fenced code syntax — read-only compat. Preserves the fence form on round-trip; insert a fresh Mermaid block for the full prop surface (id, theme).',
-    rendersAs: 'Mermaid',
-    translateProps: (props) => props,
-    serialize: (node) => {
-      const p = node.attrs.props as { chart?: string } | undefined;
-      return {
-        type: 'code' as const,
-        lang: 'mermaid',
-        meta: null,
-        value: p?.chart ?? '',
       };
     },
   },

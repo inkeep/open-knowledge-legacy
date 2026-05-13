@@ -408,7 +408,19 @@ move the MDX into a fresh location, then Delete the failed block.
 Either way: your MDX bytes are preserved exactly as you authored them.
 The raw source never disappears.
 
-### `<Mermaid />` and other deprecated placeholders
+### `<Mermaid />` JSX and other deprecated authoring forms
+
+Mermaid is now fence-only. Author diagrams as ` ```mermaid ` fenced code
+blocks; the canonical descriptor renders the chart in WYSIWYG and emits
+the fence back on dirty save. Legacy `<Mermaid chart="…" />` JSX
+content does **not** render as a diagram anymore — the descriptor was
+renamed `Mermaid` → `MermaidFence` so the JSX no longer matches at
+parse time. Legacy occurrences fall through to the unknown-component
+editable source block (same chrome as any other unregistered tag);
+convert each one manually to a ` ```mermaid ` fence. The old `id` /
+`theme` props are gone — neither was expressible in fence syntax and
+neither shipped a render-time behavior. Authoritative spec:
+[`specs/2026-05-12-mermaid-fence-only/SPEC.md`](../../../specs/2026-05-12-mermaid-fence-only/SPEC.md).
 
 Earlier versions shipped non-functional placeholders for `<Mermaid />`
 and `<AudioPlaceholder />`. Those stubs were removed; existing content
@@ -438,9 +450,11 @@ primitives get re-added when dev-docs or help-center authoring demand
 surfaces; no public API will change for existing 5-pack consumers.
 
 Other names that don't have live renderers today: Card / CardGroup,
-Banner, Files-tree, TypeTable, InlineTOC, Math / KaTeX, Mermaid. All
-of these round-trip through your files byte-identical and render as
-editable source blocks until (and unless) a live renderer lands.
+Banner, Files-tree, TypeTable, InlineTOC. All of these round-trip
+through your files byte-identical and render as editable source blocks
+until (and unless) a live renderer lands. (Math and Mermaid both ship
+with live renderers — Math via `<Math>` / `$$…$$` / ` ```math `; Mermaid
+via ` ```mermaid ` fenced code, fence-only since 2026-05-12.)
 User-registered custom components and live-rendered inline-component
 editing remain out of scope.
 
