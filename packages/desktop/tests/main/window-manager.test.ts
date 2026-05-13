@@ -83,6 +83,7 @@ interface TestEnv {
   utilities: MockUtility[];
   windows: Array<ReturnType<typeof makeWindow>>;
   createWindowOpts: Array<{ additionalArguments: string[]; title: string }>;
+  forkUtilityArgs: string[][];
   timers: Array<{ cb: () => void; ms: number }>;
   killProbe: ReturnType<typeof mock>;
   showGateRegistrations: ShowGateRegistration[];
@@ -93,6 +94,7 @@ function buildEnv(): TestEnv {
   const utilities: MockUtility[] = [];
   const windows: Array<ReturnType<typeof makeWindow>> = [];
   const createWindowOpts: Array<{ additionalArguments: string[]; title: string }> = [];
+  const forkUtilityArgs: string[][] = [];
   const timers: Array<{ cb: () => void; ms: number }> = [];
   const killProbe = mock(() => {});
   const showGateRegistrations: ShowGateRegistration[] = [];
@@ -115,6 +117,7 @@ function buildEnv(): TestEnv {
     utilities,
     windows,
     createWindowOpts,
+    forkUtilityArgs,
     timers,
     killProbe,
     showGateRegistrations,
@@ -125,7 +128,8 @@ function buildEnv(): TestEnv {
         windows.push(w);
         return w;
       },
-      forkUtility: () => {
+      forkUtility: (_entry, args) => {
+        forkUtilityArgs.push(args);
         const u = makeUtility(++pidCounter);
         utilities.push(u);
         return u;
@@ -162,6 +166,11 @@ describe('WindowManager', () => {
     const promise = wm.createProjectWindow({ projectPath: '/tmp/test-project' });
 
     expect(env.utilities.length).toBe(1);
+    const marker = env.forkUtilityArgs[0]?.find((arg) => arg.startsWith('--ok-lock-dir-b64='));
+    expect(marker).toBeDefined();
+    expect(
+      Buffer.from(marker?.slice('--ok-lock-dir-b64='.length) ?? '', 'base64url').toString('utf8'),
+    ).toBe('/tmp/test-project/.ok/local');
     const utility = env.utilities[0];
     if (!utility) throw new Error('utility not forked');
     expect(utility.postMessage).toHaveBeenCalledWith({

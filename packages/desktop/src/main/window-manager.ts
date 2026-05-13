@@ -119,7 +119,11 @@ interface CreateProjectWindowOpts {
 
 export interface WindowManagerDeps {
   createWindow(opts: { additionalArguments: string[]; title: string }): BrowserWindowLike;
-  forkUtility(entry: string, opts: { windowLifecycleBound?: boolean }): UtilityProcessLike;
+  forkUtility(
+    entry: string,
+    args: string[],
+    opts: { windowLifecycleBound?: boolean },
+  ): UtilityProcessLike;
   utilityEntryPath: string;
   rendererEntryPath: string;
   /** electron-vite dev-server URL (`process.env.ELECTRON_RENDERER_URL`). When present,
@@ -249,9 +253,13 @@ export class WindowManager {
     let port = 0;
     let apiOrigin = '';
     for (let attempt = 1; ; attempt++) {
-      utility = this.deps.forkUtility(this.deps.utilityEntryPath, {
-        windowLifecycleBound: true,
-      });
+      utility = this.deps.forkUtility(
+        this.deps.utilityEntryPath,
+        [`--ok-lock-dir-b64=${Buffer.from(lockDir, 'utf8').toString('base64url')}`],
+        {
+          windowLifecycleBound: true,
+        },
+      );
       const utilityRef = utility;
       const ready = new Promise<{ port: number; apiOrigin: string }>((resolveReady, reject) => {
         let settled = false;
