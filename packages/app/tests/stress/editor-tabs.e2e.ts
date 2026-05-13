@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
-import { type ApiHelpers, expect, test } from './_helpers';
+import { type ApiHelpers, createPngBuffer, expect, test } from './_helpers';
 
 function testId(): string {
   return randomUUID().slice(0, 8);
@@ -49,6 +51,13 @@ function editorTabButtons(page: Page, accessibleLabel: string): Locator {
   return page.getByRole('main').getByRole('button', { name: accessibleLabel, exact: true });
 }
 
+function activeEditorTabButtons(page: Page, accessibleLabel: string): Locator {
+  return page
+    .getByRole('main')
+    .locator('[data-active-tab="true"]')
+    .getByRole('button', { name: accessibleLabel, exact: true });
+}
+
 function activateNewTabButtons(page: Page): Locator {
   return page.getByRole('main').getByRole('button', { name: 'Activate new tab', exact: true });
 }
@@ -92,6 +101,36 @@ async function expectPersistedTabSession(
       }),
     )
     .toEqual(expected);
+}
+
+async function editorTabOrder(page: Page): Promise<string[]> {
+  return page.locator('header div[role="presentation"]').evaluateAll((tabEls) =>
+    tabEls.flatMap((tabEl) => {
+      const newTabButton = tabEl.querySelector('button[aria-label="Activate new tab"]');
+      if (newTabButton) return ['new-tab'];
+      const primaryButton = [...tabEl.querySelectorAll('button[aria-label]')].find((button) => {
+        const label = button.getAttribute('aria-label') ?? '';
+        return label.length > 0 && !label.startsWith('Close ');
+      });
+      const label = primaryButton?.getAttribute('aria-label');
+      return label ? [label] : [];
+    }),
+  );
+}
+
+async function expectDocumentListContainsAsset(baseURL: string, assetPath: string) {
+  await expect
+    .poll(
+      async () => {
+        const response = await fetch(`${baseURL}/api/documents`);
+        const body = (await response.json()) as {
+          documents?: Array<{ kind?: string; path?: string }>;
+        };
+        return body.documents?.some((entry) => entry.kind === 'asset' && entry.path === assetPath);
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
 }
 
 test.describe('Editor tabs', () => {
@@ -177,6 +216,46 @@ test.describe('Editor tabs', () => {
     await expect(sidebarItem).not.toHaveAttribute('aria-selected', 'true');
   });
 
+  test('sidebar click fills the active third new tab in place', async ({ page, api }) => {
+    const id = testId();
+    const firstDoc = `new-tab-fill-first-${id}`;
+    const selectedDoc = `new-tab-fill-selected-${id}`;
+    const firstLabel = `${firstDoc}.md`;
+    const selectedLabel = `${selectedDoc}.md`;
+
+    await seedMarkdownDocs(api, [
+      { name: firstDoc, markdown: `# First ${id}` },
+      { name: selectedDoc, markdown: `# Selected ${id}` },
+    ]);
+
+    await page.goto(`/#/${firstDoc}`);
+    const firstTab = editorTabButtons(page, firstLabel);
+    await expect(firstTab).toHaveCount(1, { timeout: 10_000 });
+    await expectActiveTab(firstTab.first());
+
+    const newTabButton = page
+      .getByRole('main')
+      .getByRole('button', { name: 'New tab', exact: true });
+    await newTabButton.click();
+    await newTabButton.click();
+    await newTabButton.click();
+
+    const newTabs = activateNewTabButtons(page);
+    await expect(newTabs).toHaveCount(3);
+    await newTabs.nth(2).click();
+    await expectActiveTab(newTabs.nth(2));
+
+    await sidebarTreeItem(page, selectedLabel).click();
+
+    const selectedTab = editorTabButtons(page, selectedLabel);
+    await expect(selectedTab).toHaveCount(1, { timeout: 10_000 });
+    await expectActiveTab(selectedTab.first());
+    await expect(activateNewTabButtons(page)).toHaveCount(2);
+    await expect
+      .poll(() => editorTabOrder(page))
+      .toEqual([firstLabel, 'new-tab', 'new-tab', selectedLabel]);
+  });
+
   test('sidebar folder click replaces the active file tab with the folder tab', async ({
     page,
     api,
@@ -205,6 +284,109 @@ test.describe('Editor tabs', () => {
     await expect(fileTabs).toHaveCount(0);
     await expect(folderTabs).toHaveCount(1);
     await expectActiveTab(folderTabs.first());
+  });
+
+  test('sidebar asset click replaces the active file tab with an asset tab', async ({
+    page,
+    api,
+    workerServer,
+  }) => {
+    const id = testId();
+    const docName = `asset-tab-doc-${id}`;
+    const docLabel = `${docName}.md`;
+    const assetPath = `asset-tab-${id}.png`;
+
+    await api.testReset();
+    writeFileSync(join(workerServer.contentDir, assetPath), createPngBuffer(id));
+    await api.createPage(`${docName}.md`);
+    await api.replaceDoc(docName, `![Asset tab](${assetPath})\n`);
+    await expectDocumentListContainsAsset(workerServer.baseURL, assetPath);
+
+    await page.goto(`/#/${docName}`);
+    const docTab = editorTabButtons(page, docLabel);
+    await expect(docTab).toHaveCount(1, { timeout: 10_000 });
+    await expectActiveTab(docTab.first());
+
+    await sidebarTreeItem(page, assetPath).click();
+
+    const assetTab = editorTabButtons(page, assetPath);
+    await expect(docTab).toHaveCount(0);
+    await expect(assetTab).toHaveCount(1);
+    await expectActiveTab(assetTab.first());
+    await expect.poll(() => editorTabOrder(page)).toEqual([assetPath]);
+    await expect(page).toHaveURL(new RegExp(`#/__asset__/${assetPath.replace('.', '\\.')}$`));
+  });
+
+  test('sidebar asset click fills an active new tab even when that asset is already open', async ({
+    page,
+    api,
+    workerServer,
+  }) => {
+    const id = testId();
+    const docName = `asset-new-tab-doc-${id}`;
+    const assetPath = `asset-new-tab-${id}.png`;
+    const assetTabId = `\u0000asset:${assetPath}`;
+    const duplicateAssetTabId = `${assetTabId}\u0000doc-tab:1`;
+
+    await api.testReset();
+    writeFileSync(join(workerServer.contentDir, assetPath), createPngBuffer(id));
+    await api.createPage(`${docName}.md`);
+    await api.replaceDoc(docName, `![Asset tab](${assetPath})\n`);
+    await expectDocumentListContainsAsset(workerServer.baseURL, assetPath);
+
+    await page.goto(`/#/__asset__/${assetPath}`);
+    const assetTabs = editorTabButtons(page, assetPath);
+    await expect(assetTabs).toHaveCount(1, { timeout: 10_000 });
+    await expectActiveTab(assetTabs.first());
+
+    await page.getByRole('main').getByRole('button', { name: 'New tab', exact: true }).click();
+    await expect(activateNewTabButtons(page)).toHaveCount(1);
+    await expectActiveTab(activateNewTabButtons(page).first());
+
+    await sidebarTreeItem(page, assetPath).click();
+
+    await expect(assetTabs).toHaveCount(2);
+    await expect(activateNewTabButtons(page)).toHaveCount(0);
+    await expect(activeEditorTabButtons(page, assetPath)).toHaveCount(1);
+    await expect.poll(() => editorTabOrder(page)).toEqual([assetPath, assetPath]);
+    await expectPersistedTabSession(page, {
+      openTabs: [assetTabId, duplicateAssetTabId],
+      activeTabId: duplicateAssetTabId,
+    });
+  });
+
+  test('sidebar folder click fills an active new tab even when that folder is already open', async ({
+    page,
+    api,
+  }) => {
+    const id = testId();
+    const folder = `folder-new-tab-${id}`;
+    const nestedDoc = `${folder}/nested-${id}`;
+    const folderLabel = `${folder}/`;
+    const folderTabId = `\u0000folder:${folder}`;
+    const duplicateFolderTabId = `${folderTabId}\u0000doc-tab:1`;
+
+    await seedMarkdownDocs(api, [{ name: nestedDoc, markdown: `# Nested ${id}` }]);
+
+    await page.goto(`/#/${folder}/`);
+    const folderTabs = editorTabButtons(page, folderLabel);
+    await expect(folderTabs).toHaveCount(1, { timeout: 10_000 });
+    await expectActiveTab(folderTabs.first());
+
+    await page.getByRole('main').getByRole('button', { name: 'New tab', exact: true }).click();
+    await expect(activateNewTabButtons(page)).toHaveCount(1);
+    await expectActiveTab(activateNewTabButtons(page).first());
+
+    await sidebarTreeItem(page, folder).click();
+
+    await expect(folderTabs).toHaveCount(2);
+    await expect(activateNewTabButtons(page)).toHaveCount(0);
+    await expect(activeEditorTabButtons(page, folderLabel)).toHaveCount(1);
+    await expect.poll(() => editorTabOrder(page)).toEqual([folderLabel, folderLabel]);
+    await expectPersistedTabSession(page, {
+      openTabs: [folderTabId, duplicateFolderTabId],
+      activeTabId: duplicateFolderTabId,
+    });
   });
 
   test('sidebar click replaces active bar.md with a second foo.md tab', async ({ page, api }) => {

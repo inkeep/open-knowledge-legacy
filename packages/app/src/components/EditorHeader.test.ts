@@ -54,6 +54,11 @@ describe('EditorHeader source-level guards — chrome-row retrofit', () => {
     expect(SRC).not.toMatch(/projectName/);
   });
 
+  test('does NOT render a separate asset title outside EditorTabs', () => {
+    expect(SRC).not.toMatch(/isAssetTarget|assetFileName|assetPrefix/);
+    expect(SRC).toContain('<EditorTabs />');
+  });
+
   test('header root retains structural layout primitives (h-12 + flex + items-center)', () => {
     expect(SRC).toMatch(/flex h-12 shrink-0 items-center/);
   });

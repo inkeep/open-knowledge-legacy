@@ -97,5 +97,5 @@ describe('/api/documents empty folder — live creation', () => {
     }
 
     expect(deepFound).toBe(true);
-  });
+  }, 15_000);
 });

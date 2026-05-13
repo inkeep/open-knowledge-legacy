@@ -142,7 +142,9 @@ describe('resolveFileTreeSelectionAction', () => {
       ]),
     ).toEqual({
       kind: 'asset',
+      path: 'docs/photo.png',
       hash: '#/__asset__/docs/photo.png',
+      mediaKind: 'image',
     });
   });
 

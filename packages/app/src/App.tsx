@@ -30,8 +30,11 @@ function isAuxiliaryDialogHash(hash: string): boolean {
 function knownTargetsSignature(
   pages: ReadonlySet<string>,
   folderPaths: ReadonlySet<string>,
+  assetPaths: ReadonlySet<string>,
 ): string {
-  return `${[...pages].sort().join('\u0000')}\u0001${[...folderPaths].sort().join('\u0000')}`;
+  return [pages, folderPaths, assetPaths]
+    .map((values) => [...values].sort().join('\u0000'))
+    .join('\u0001');
 }
 
 /** Hash is the source of truth for navigation; all navigation sets the hash;
@@ -47,9 +50,9 @@ function knownTargetsSignature(
 function NavigationHandler() {
   const { clearTarget, syncOpenTabsWithKnownTargets, tabSessionLoaded } = useDocumentContext();
   const { openTargetTransition } = useDocumentTransition();
-  const { folderPaths, loading, pages } = usePageList();
+  const { assetPaths, folderPaths, loading, pages } = usePageList();
   const lastSyncedTargetsSignatureRef = useRef<string | null>(null);
-  const targetsSignature = knownTargetsSignature(pages, folderPaths);
+  const targetsSignature = knownTargetsSignature(pages, folderPaths, assetPaths);
 
   useEffect(() => {
     if (
@@ -60,8 +63,9 @@ function NavigationHandler() {
       return;
     }
     lastSyncedTargetsSignatureRef.current = targetsSignature;
-    syncOpenTabsWithKnownTargets({ pages, folderPaths });
+    syncOpenTabsWithKnownTargets({ pages, folderPaths, assetPaths });
   }, [
+    assetPaths,
     folderPaths,
     loading,
     pages,

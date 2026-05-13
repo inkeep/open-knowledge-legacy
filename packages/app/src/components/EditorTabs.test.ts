@@ -20,9 +20,15 @@ describe('EditorTabs source-level guards — tab-strip drag region', () => {
     expect(SRC).toMatch(/isElectronHost\s*&&\s*['"]\[-webkit-app-region:no-drag\]['"]/);
   });
 
-  test('BOTH folder-tab and document-tab divs carry the no-drag opt-out', () => {
+  test('all tab-kind divs and the standalone add-tab button carry the no-drag opt-out', () => {
     const matches = SRC.match(/isElectronHost\s*&&\s*['"]\[-webkit-app-region:no-drag\]['"]/g);
-    expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(matches?.length ?? 0).toBeGreaterThanOrEqual(5);
+  });
+
+  test('standalone add-tab button opts out of the Electron drag region', () => {
+    expect(SRC).toMatch(
+      /aria-label=["']New tab["'][\s\S]*?className=\{cn\([\s\S]*?isElectronHost\s*&&\s*['"]\[-webkit-app-region:no-drag\]['"][\s\S]*?\)\}[\s\S]*?onClick=\{openNewTab\}/,
+    );
   });
 
   test('no-drag opt-out lives on the per-tab div (the onAuxClick parent), not on inner buttons', () => {
@@ -52,9 +58,20 @@ describe('EditorTabs source-level guards — tab context menu', () => {
     expect(SRC).toContain('<ContextMenuContent');
   });
 
-  test('BOTH folder-tab and document-tab branches wrap with EditorTabContextMenu', () => {
+  test('folder, asset, document, and new-tab branches wrap with EditorTabContextMenu', () => {
     const matches = SRC.match(/<EditorTabContextMenu[\s\n]/g);
-    expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(matches?.length ?? 0).toBeGreaterThanOrEqual(4);
+    expect(SRC).toMatch(
+      /visibleTabIds\.map[\s\S]*?newTabIdSet\.has\(tabId\)[\s\S]*?<EditorTabContextMenu[\s\S]*?openTabs=\{visibleTabIds\}[\s\S]*?closeTab=\{closeNewTab\}[\s\S]*?closeTabs=\{closeVisibleTabs\}/,
+    );
+  });
+
+  test('asset tabs render inside the tab strip as closeable tabs', () => {
+    expect(SRC).toContain("tab.kind === 'asset'");
+    expect(SRC).toContain('<FileIcon aria-hidden="true"');
+    expect(SRC).toMatch(
+      /tab\.kind === ['"]asset['"][\s\S]*?<EditorTabContextMenu[\s\S]*?closeTab=\{closeTab\}[\s\S]*?activateTab\(tabId\)[\s\S]*?Close \$\{accessibleLabel\}/,
+    );
   });
 
   test('tab context menu exposes close, close-others, and close-all actions', () => {
@@ -68,5 +85,18 @@ describe('EditorTabs source-level guards — tab context menu', () => {
     expect(SRC).toContain('disabled={otherTabIds.length === 0}');
     expect(SRC).toContain('closeTabs(otherTabIds)');
     expect(SRC).toContain('closeTabs(openTabs)');
+  });
+
+  test('bulk context actions operate on document and new-tab ids together', () => {
+    expect(SRC).toContain('visibleTabIds,');
+    expect(SRC).toContain('const newTabIdSet = new Set(newTabIds);');
+    expect(SRC).toContain('function closeVisibleTabs(tabIds: readonly string[])');
+    expect(SRC).toMatch(/newTabIdSet\.has\(tabId\)[\s\S]*?emptyTabIds\.push\(tabId\)/);
+    expect(SRC).toMatch(
+      /if\s*\(documentTabIds\.length > 0\)\s*closeTabs\(documentTabIds\);[\s\S]*?for\s*\(const tabId of emptyTabIds\)\s*closeNewTab\(tabId\)/,
+    );
+    const contextMenuMatches = SRC.match(/<EditorTabContextMenu[\s\n]/g);
+    const closeVisibleMatches = SRC.match(/closeTabs=\{closeVisibleTabs\}/g);
+    expect(closeVisibleMatches?.length ?? 0).toBe(contextMenuMatches?.length ?? 0);
   });
 });

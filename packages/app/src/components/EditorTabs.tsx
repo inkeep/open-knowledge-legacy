@@ -1,5 +1,5 @@
 import { RenamePathSuccessSchema } from '@inkeep/open-knowledge-core';
-import { FolderOpen, PlusIcon, XIcon } from 'lucide-react';
+import { FileIcon, FolderOpen, PlusIcon, XIcon } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState, type WheelEvent } from 'react';
 import {
   buildRenamedNodePath,
@@ -152,6 +152,7 @@ export function EditorTabs() {
     openNewTab,
     openTabs,
     remapTabsForRename,
+    visibleTabIds,
   } = useDocumentContext();
   const { pageMeta } = usePageList();
   const tabListRef = useRef<HTMLDivElement>(null);
@@ -328,6 +329,23 @@ export function EditorTabs() {
   }
 
   const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
+  const newTabIdSet = new Set(newTabIds);
+
+  function closeVisibleTabs(tabIds: readonly string[]) {
+    const documentTabIds: string[] = [];
+    const emptyTabIds: string[] = [];
+
+    for (const tabId of tabIds) {
+      if (newTabIdSet.has(tabId)) {
+        emptyTabIds.push(tabId);
+      } else {
+        documentTabIds.push(tabId);
+      }
+    }
+
+    if (documentTabIds.length > 0) closeTabs(documentTabIds);
+    for (const tabId of emptyTabIds) closeNewTab(tabId);
+  }
 
   return (
     <div
@@ -338,7 +356,63 @@ export function EditorTabs() {
       )}
       onWheel={scrollTabListOnWheel}
     >
-      {openTabs.map((tabId) => {
+      {visibleTabIds.map((tabId) => {
+        if (newTabIdSet.has(tabId)) {
+          const isActive = tabId === activeNewTabId;
+          return (
+            <EditorTabContextMenu
+              key={tabId}
+              tabId={tabId}
+              openTabs={visibleTabIds}
+              closeTab={closeNewTab}
+              closeTabs={closeVisibleTabs}
+            >
+              {
+                // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button.
+                <div
+                  role="presentation"
+                  data-active-tab={isActive ? 'true' : undefined}
+                  className={cn(
+                    TAB_BASE_CLASS,
+                    isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
+                    isElectronHost && '[-webkit-app-region:no-drag]',
+                  )}
+                  onAuxClick={(event) => {
+                    if (event.button !== 1) return;
+                    event.preventDefault();
+                    closeNewTab(tabId);
+                  }}
+                  onClick={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    activateNewTab(tabId);
+                  }}
+                >
+                  <button
+                    type="button"
+                    aria-label="Activate new tab"
+                    title="New tab"
+                    className={TAB_BUTTON_CLASS}
+                    onClick={() => activateNewTab(tabId)}
+                  >
+                    <span className="min-w-0 truncate text-muted-foreground">New tab</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Close new tab"
+                    className={tabCloseButtonClass(isActive)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeNewTab(tabId);
+                    }}
+                  >
+                    <XIcon aria-hidden="true" className="size-3.5" />
+                  </button>
+                </div>
+              }
+            </EditorTabContextMenu>
+          );
+        }
+
         const tab = parseEditorTabId(tabId);
         const isActive = tabId === activeTabId;
         if (tab.kind === 'folder') {
@@ -348,9 +422,9 @@ export function EditorTabs() {
             <EditorTabContextMenu
               key={tabId}
               tabId={tabId}
-              openTabs={openTabs}
+              openTabs={visibleTabIds}
               closeTab={closeTab}
-              closeTabs={closeTabs}
+              closeTabs={closeVisibleTabs}
             >
               {
                 // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button.
@@ -419,6 +493,83 @@ export function EditorTabs() {
           );
         }
 
+        if (tab.kind === 'asset') {
+          const { baseName, label, prefix } = tabParts(tab.assetPath, '');
+          const accessibleLabel = `${prefix}${label}`;
+          return (
+            <EditorTabContextMenu
+              key={tabId}
+              tabId={tabId}
+              openTabs={visibleTabIds}
+              closeTab={closeTab}
+              closeTabs={closeVisibleTabs}
+            >
+              {
+                // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button.
+                <div
+                  role="presentation"
+                  data-active-tab={isActive ? 'true' : undefined}
+                  className={cn(
+                    TAB_BASE_CLASS,
+                    isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
+                    isElectronHost && '[-webkit-app-region:no-drag]',
+                  )}
+                  onAuxClick={(event) => {
+                    if (event.button !== 1) return;
+                    event.preventDefault();
+                    closeTab(tabId);
+                  }}
+                  onClick={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    activateTab(tabId);
+                  }}
+                >
+                  <button
+                    type="button"
+                    aria-label={accessibleLabel}
+                    title={accessibleLabel}
+                    className={TAB_BUTTON_CLASS}
+                    onClick={() => {
+                      activateTab(tabId);
+                    }}
+                  >
+                    <FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                    {prefix ? (
+                      <span
+                        className={cn(
+                          'min-w-0 flex-1 truncate text-muted-foreground/60',
+                          isActive && 'text-muted-foreground',
+                        )}
+                      >
+                        {prefix}
+                      </span>
+                    ) : null}
+                    <span
+                      className={cn(
+                        'min-w-0 truncate font-medium',
+                        prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
+                      )}
+                    >
+                      {baseName}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Close ${accessibleLabel}`}
+                    className={tabCloseButtonClass(isActive)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeTab(tabId);
+                    }}
+                  >
+                    <XIcon aria-hidden="true" className="size-3.5" />
+                  </button>
+                </div>
+              }
+            </EditorTabContextMenu>
+          );
+        }
+
         const docName = tab.docName;
         const docExt = pageMeta.get(docName)?.docExt ?? '.md';
         const { baseName, extension, label, prefix } = tabParts(docName, docExt);
@@ -430,9 +581,9 @@ export function EditorTabs() {
             key={tabId}
             disabled={isRenaming}
             tabId={tabId}
-            openTabs={openTabs}
+            openTabs={visibleTabIds}
             closeTab={closeTab}
-            closeTabs={closeTabs}
+            closeTabs={closeVisibleTabs}
           >
             {
               // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button.
@@ -554,58 +705,15 @@ export function EditorTabs() {
           </EditorTabContextMenu>
         );
       })}
-      {newTabIds.map((tabId) => {
-        const isActive = tabId === activeNewTabId;
-        return (
-          // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button.
-          <div
-            key={tabId}
-            role="presentation"
-            data-active-tab={isActive ? 'true' : undefined}
-            className={cn(
-              TAB_BASE_CLASS,
-              isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
-              isElectronHost && '[-webkit-app-region:no-drag]',
-            )}
-            onAuxClick={(event) => {
-              if (event.button !== 1) return;
-              event.preventDefault();
-              closeNewTab(tabId);
-            }}
-            onClick={(event) => {
-              if (event.target !== event.currentTarget) return;
-              activateNewTab(tabId);
-            }}
-          >
-            <button
-              type="button"
-              aria-label="Activate new tab"
-              title="New tab"
-              className={TAB_BUTTON_CLASS}
-              onClick={() => activateNewTab(tabId)}
-            >
-              <span className="min-w-0 truncate text-muted-foreground">New tab</span>
-            </button>
-            <button
-              type="button"
-              aria-label="Close new tab"
-              className={tabCloseButtonClass(isActive)}
-              onClick={(event) => {
-                event.stopPropagation();
-                closeNewTab(tabId);
-              }}
-            >
-              <XIcon aria-hidden="true" className="size-3.5" />
-            </button>
-          </div>
-        );
-      })}
       <Tooltip>
         <TooltipTrigger asChild>
           <button
             type="button"
             aria-label="New tab"
-            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+            className={cn(
+              'flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
+              isElectronHost && '[-webkit-app-region:no-drag]',
+            )}
             onClick={openNewTab}
           >
             <PlusIcon aria-hidden="true" className="size-3.5" />
