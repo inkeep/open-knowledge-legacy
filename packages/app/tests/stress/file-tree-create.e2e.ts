@@ -41,8 +41,19 @@ function sidebarTreeItem(page: Page, name: string) {
     .getByRole('treeitem', { name, exact: true });
 }
 
-function sidebarTree(page: Page) {
-  return page.locator('[data-slot="sidebar-container"]').getByRole('tree');
+function editorTabButton(page: Page, name: string) {
+  return page.getByRole('main').getByRole('button', { name, exact: true });
+}
+
+function activeEditorTabButton(page: Page, name: string) {
+  return page.locator('[data-active-tab="true"]').getByRole('button', { name, exact: true });
+}
+
+async function selectAllSidebarItems(page: Page, focusItemName: string) {
+  const focusTarget = sidebarTreeItem(page, focusItemName);
+  await focusTarget.focus();
+  await expect(focusTarget).toBeFocused();
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
 }
 
 function defaultName(base: string, index: number) {
@@ -259,8 +270,7 @@ test.describe('FileTree sidebar create', () => {
       }
 
       await sidebarTreeItem(page, `${docNames[0]}.md`).click();
-      await sidebarTree(page).focus();
-      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
+      await selectAllSidebarItems(page, `${docNames[0]}.md`);
       for (const docName of docNames) {
         await expect(sidebarTreeItem(page, `${docName}.md`)).toHaveAttribute(
           'aria-selected',
@@ -417,8 +427,7 @@ test.describe('FileTree sidebar create', () => {
       }
 
       await sidebarTreeItem(page, `${fileNames[0]}.md`).click();
-      await sidebarTree(page).focus();
-      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
+      await selectAllSidebarItems(page, `${fileNames[0]}.md`);
       await sidebarTreeItem(page, `${fileNames[0]}.md`).click({ button: 'right' });
       await page.getByRole('menuitem', { name: /^Delete/ }).click({ timeout: 5_000 });
       await expect(page.getByRole('dialog', { name: /Delete selected items/i })).toBeVisible({
@@ -493,8 +502,7 @@ test.describe('FileTree sidebar create', () => {
         timeout: 10_000,
       });
 
-      await sidebarTree(page).focus();
-      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
+      await selectAllSidebarItems(page, 'New Folder');
       for (const folderName of folderNames) {
         await expect(sidebarTreeItem(page, folderName)).toHaveAttribute('aria-selected', 'true');
       }
@@ -560,8 +568,7 @@ test.describe('FileTree sidebar create', () => {
       });
 
       await sidebarTreeItem(page, `${fileNames[0]}.md`).click();
-      await sidebarTree(page).focus();
-      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
+      await selectAllSidebarItems(page, `${fileNames[0]}.md`);
       await sidebarTreeItem(page, `${fileNames[0]}.md`).click({ button: 'right' });
       await page.getByRole('menuitem', { name: /^Delete/ }).click({ timeout: 5_000 });
       await expect(page.getByRole('dialog', { name: /Delete selected items/i })).toBeVisible({
@@ -647,7 +654,7 @@ test.describe('FileTree sidebar create', () => {
       await folderInput.press('Enter');
 
       await expect(sidebarTreeItem(page, name)).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByRole('button', { name: `${name}/`, exact: true })).toBeVisible({
+      await expect(activeEditorTabButton(page, `${name}/`)).toBeVisible({
         timeout: 10_000,
       });
       await expect(page).toHaveURL(new RegExp(`#/${name}/$`));
@@ -662,20 +669,20 @@ test.describe('FileTree sidebar create', () => {
       await fileInput.press('Enter');
 
       await expect(sidebarTreeItem(page, `${name}.md`)).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByRole('button', { name: `${name}.md`, exact: true })).toBeVisible({
+      await expect(activeEditorTabButton(page, `${name}.md`)).toBeVisible({
         timeout: 10_000,
       });
-      await expect(page.getByRole('button', { name: `${name}/`, exact: true })).toBeVisible();
+      await expect(editorTabButton(page, `${name}/`).first()).toBeVisible();
       await expect(page).toHaveURL(new RegExp(`#/${name}$`));
 
       await sidebarTreeItem(page, name).click();
-      await expect(page.getByRole('button', { name: `${name}/`, exact: true })).toBeVisible({
+      await expect(activeEditorTabButton(page, `${name}/`)).toBeVisible({
         timeout: 10_000,
       });
       await expect(page).toHaveURL(new RegExp(`#/${name}/$`));
 
       await sidebarTreeItem(page, `${name}.md`).click();
-      await expect(page.getByRole('button', { name: `${name}.md`, exact: true })).toBeVisible({
+      await expect(activeEditorTabButton(page, `${name}.md`)).toBeVisible({
         timeout: 10_000,
       });
       await expect(page).toHaveURL(new RegExp(`#/${name}$`));

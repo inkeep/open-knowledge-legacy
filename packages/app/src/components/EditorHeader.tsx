@@ -31,16 +31,10 @@ export function EditorHeader({
   onSetIdentity,
   onOpenConflictResolver,
 }: EditorHeaderProps) {
-  const { activeDocName, activeTarget } = useDocumentContext();
+  const { activeDocName } = useDocumentContext();
   const { state: sidebarState } = useSidebar();
   const workspace = useWorkspace();
   const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
-  const isAssetTarget = activeTarget?.kind === 'asset';
-
-  const assetPath = isAssetTarget ? activeTarget.assetPath : '';
-  const assetSlash = assetPath.lastIndexOf('/');
-  const assetPrefix = assetSlash === -1 ? '' : assetPath.slice(0, assetSlash);
-  const assetFileName = assetSlash === -1 ? assetPath : assetPath.slice(assetSlash + 1);
 
   const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
   const isCollapsed = sidebarState === 'collapsed';
@@ -80,19 +74,6 @@ export function EditorHeader({
           </TooltipContent>
         </Tooltip>
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
-        {isAssetTarget ? (
-          <div className="flex min-w-0 items-center gap-2 overflow-hidden text-sm">
-            <span className="flex min-w-0 items-center overflow-hidden">
-              {assetPrefix && (
-                <>
-                  <span className="truncate text-muted-foreground/60">{assetPrefix}</span>
-                  <span className="shrink-0 px-2 text-muted-foreground/60">/</span>
-                </>
-              )}
-              <span className="shrink-0 font-medium text-foreground">{assetFileName}</span>
-            </span>
-          </div>
-        ) : null}
         <EditorTabs />
       </div>
 

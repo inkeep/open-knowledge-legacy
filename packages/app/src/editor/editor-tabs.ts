@@ -13,12 +13,14 @@ interface RenamedFolderMapping {
 interface KnownTabTargets {
   pages: ReadonlySet<string>;
   folderPaths: ReadonlySet<string>;
+  assetPaths: ReadonlySet<string>;
   keepMissingDocName?: string | null;
 }
 
 const LOCAL_TAB_SESSION_PREFIX = 'ok-editor-tabs-v1:';
 const FOLDER_TAB_PREFIX = '\u0000folder:';
-const DOC_TAB_INSTANCE_SEPARATOR = '\u0000doc-tab:';
+const ASSET_TAB_PREFIX = '\u0000asset:';
+const TAB_INSTANCE_SEPARATOR = '\u0000doc-tab:';
 
 interface OpenDocTabOptions {
   behavior: 'append' | 'replace-active';
@@ -26,9 +28,30 @@ interface OpenDocTabOptions {
   limit: number;
 }
 
+interface OpenTabOptions {
+  behavior: 'append' | 'replace-active';
+  currentTabId: string | null;
+  limit: number;
+}
+
+function splitTabInstance(tabId: string): { baseTabId: string; instanceSuffix: string } {
+  const separatorIndex = tabId.lastIndexOf(TAB_INSTANCE_SEPARATOR);
+  if (separatorIndex < 0) return { baseTabId: tabId, instanceSuffix: '' };
+  return {
+    baseTabId: tabId.slice(0, separatorIndex),
+    instanceSuffix: tabId.slice(separatorIndex),
+  };
+}
+
+function baseTabId(tabId: string): string {
+  return splitTabInstance(tabId).baseTabId;
+}
+
 function isValidTabId(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0) return false;
-  if (value.startsWith(FOLDER_TAB_PREFIX)) return value.length > FOLDER_TAB_PREFIX.length;
+  const base = baseTabId(value);
+  if (base.startsWith(FOLDER_TAB_PREFIX)) return base.length > FOLDER_TAB_PREFIX.length;
+  if (base.startsWith(ASSET_TAB_PREFIX)) return base.length > ASSET_TAB_PREFIX.length;
   return true;
 }
 
@@ -36,12 +59,47 @@ export function docTabId(docName: string): string {
   return docName;
 }
 
-function duplicateDocTabId(docName: string, instance: number): string {
-  return `${docName}${DOC_TAB_INSTANCE_SEPARATOR}${instance}`;
+function duplicateTabId(tabId: string, instance: number): string {
+  return `${baseTabId(tabId)}${TAB_INSTANCE_SEPARATOR}${instance}`;
+}
+
+export function nextAvailableDocTabId(tabs: readonly string[], docName: string): string {
+  return nextAvailableTabId(tabs, docTabId(docName));
+}
+
+export function nextAvailableTabId(tabs: readonly string[], tabId: string): string {
+  const normalized = normalizeOpenTabs(tabs, Number.MAX_SAFE_INTEGER);
+  const canonicalTabId = baseTabId(tabId);
+  if (!normalized.includes(canonicalTabId)) return canonicalTabId;
+
+  let instance = 1;
+  let nextTabId: string;
+  do {
+    nextTabId = duplicateTabId(canonicalTabId, instance);
+    instance++;
+  } while (normalized.includes(nextTabId));
+  return nextTabId;
+}
+
+export function findOpenTabTarget(tabs: readonly string[], tabId: string): string | null {
+  const canonicalTabId = baseTabId(tabId);
+  return (
+    normalizeOpenTabs(tabs, Number.MAX_SAFE_INTEGER).find(
+      (openTabId) => baseTabId(openTabId) === canonicalTabId,
+    ) ?? null
+  );
+}
+
+export function sameTabTarget(firstTabId: string, secondTabId: string): boolean {
+  return baseTabId(firstTabId) === baseTabId(secondTabId);
 }
 
 export function folderTabId(folderPath: string): string {
   return `${FOLDER_TAB_PREFIX}${folderPath}`;
+}
+
+export function assetTabId(assetPath: string): string {
+  return `${ASSET_TAB_PREFIX}${assetPath}`;
 }
 
 export function tabIdForNavigationTarget(
@@ -49,7 +107,7 @@ export function tabIdForNavigationTarget(
     | { kind: 'doc'; docName: string }
     | { kind: 'folder-index'; docName: string }
     | { kind: 'folder'; folderPath: string }
-    | { kind: 'asset' }
+    | { kind: 'asset'; assetPath: string }
     | { kind: 'missing'; target: string },
 ): string | null {
   switch (target.kind) {
@@ -61,21 +119,24 @@ export function tabIdForNavigationTarget(
     case 'missing':
       return docTabId(target.target);
     case 'asset':
-      return null;
+      return assetTabId(target.assetPath);
   }
 }
 
 export function parseEditorTabId(
   tabId: string,
-): { kind: 'doc'; docName: string } | { kind: 'folder'; folderPath: string } {
-  if (tabId.startsWith(FOLDER_TAB_PREFIX)) {
-    return { kind: 'folder', folderPath: tabId.slice(FOLDER_TAB_PREFIX.length) };
+):
+  | { kind: 'doc'; docName: string }
+  | { kind: 'folder'; folderPath: string }
+  | { kind: 'asset'; assetPath: string } {
+  const base = baseTabId(tabId);
+  if (base.startsWith(FOLDER_TAB_PREFIX)) {
+    return { kind: 'folder', folderPath: base.slice(FOLDER_TAB_PREFIX.length) };
   }
-  const duplicateSeparatorIndex = tabId.lastIndexOf(DOC_TAB_INSTANCE_SEPARATOR);
-  if (duplicateSeparatorIndex >= 0) {
-    return { kind: 'doc', docName: tabId.slice(0, duplicateSeparatorIndex) };
+  if (base.startsWith(ASSET_TAB_PREFIX)) {
+    return { kind: 'asset', assetPath: base.slice(ASSET_TAB_PREFIX.length) };
   }
-  return { kind: 'doc', docName: tabId };
+  return { kind: 'doc', docName: base };
 }
 
 export function docNameForTabId(tabId: string): string | null {
@@ -159,14 +220,39 @@ export function openDocTab(
     };
   }
 
-  let nextTabId = canonicalTabId;
-  if (normalized.includes(canonicalTabId)) {
-    let instance = 1;
-    do {
-      nextTabId = duplicateDocTabId(docName, instance);
-      instance++;
-    } while (normalized.includes(nextTabId));
+  const nextTabId = nextAvailableDocTabId(normalized, docName);
+
+  return {
+    tabs: replaceOpenTab(normalized, currentTabId, nextTabId, limit),
+    activeTabId: nextTabId,
+  };
+}
+
+export function openTab(
+  tabs: readonly string[],
+  tabId: string,
+  { behavior, currentTabId, limit }: OpenTabOptions,
+): { tabs: string[]; activeTabId: string } {
+  const normalized = normalizeOpenTabs(tabs, limit);
+  const canonicalTabId = baseTabId(tabId);
+  if (
+    currentTabId &&
+    normalized.includes(currentTabId) &&
+    baseTabId(currentTabId) === canonicalTabId
+  ) {
+    return {
+      tabs: normalized,
+      activeTabId: currentTabId,
+    };
   }
+  if (behavior !== 'replace-active') {
+    return {
+      tabs: addOpenTab(normalized, canonicalTabId, limit),
+      activeTabId: canonicalTabId,
+    };
+  }
+
+  const nextTabId = nextAvailableTabId(normalized, canonicalTabId);
 
   return {
     tabs: replaceOpenTab(normalized, currentTabId, nextTabId, limit),
@@ -178,13 +264,41 @@ export function removeOpenTab(tabs: readonly string[], tabId: string): string[] 
   return tabs.filter((tab) => tab !== tabId);
 }
 
+export function reconcileVisibleTabOrder(
+  currentOrder: readonly string[],
+  openTabs: readonly string[],
+  newTabIds: readonly string[],
+): string[] {
+  const regularTabs = normalizeOpenTabs(openTabs, Number.MAX_SAFE_INTEGER);
+  const regularSet = new Set(regularTabs);
+  const newTabSet = new Set(newTabIds);
+  const seen = new Set<string>();
+  const next: string[] = [];
+
+  for (const tabId of currentOrder) {
+    if (seen.has(tabId)) continue;
+    if (!regularSet.has(tabId) && !newTabSet.has(tabId)) continue;
+    seen.add(tabId);
+    next.push(tabId);
+  }
+
+  for (const tabId of [...regularTabs, ...newTabIds]) {
+    if (seen.has(tabId)) continue;
+    seen.add(tabId);
+    next.push(tabId);
+  }
+
+  return next;
+}
+
 export function filterOpenTabsForKnownTargets(
   tabs: readonly string[],
-  { pages, folderPaths, keepMissingDocName = null }: KnownTabTargets,
+  { pages, folderPaths, assetPaths, keepMissingDocName = null }: KnownTabTargets,
 ): string[] {
   return normalizeOpenTabs(tabs, Number.MAX_SAFE_INTEGER).filter((tabId) => {
     const tab = parseEditorTabId(tabId);
     if (tab.kind === 'folder') return folderPaths.has(tab.folderPath);
+    if (tab.kind === 'asset') return assetPaths.has(tab.assetPath);
     return pages.has(tab.docName) || tab.docName === keepMissingDocName;
   });
 }
@@ -200,11 +314,15 @@ export function remapOpenTabs(
   const next: string[] = [];
   const seen = new Set<string>();
   for (const tab of tabs) {
+    const { instanceSuffix } = splitTabInstance(tab);
     const parsed = parseEditorTabId(tab);
-    const mapped =
+    const mappedBase =
       parsed.kind === 'doc'
-        ? (bySource.get(parsed.docName) ?? tab)
-        : folderTabId(remapPathForFolderRenames(parsed.folderPath, folderMappings));
+        ? (bySource.get(parsed.docName) ?? baseTabId(tab))
+        : parsed.kind === 'folder'
+          ? folderTabId(remapPathForFolderRenames(parsed.folderPath, folderMappings))
+          : assetTabId(remapPathForFolderRenames(parsed.assetPath, folderMappings));
+    const mapped = `${mappedBase}${instanceSuffix}`;
     if (seen.has(mapped)) continue;
     seen.add(mapped);
     next.push(mapped);

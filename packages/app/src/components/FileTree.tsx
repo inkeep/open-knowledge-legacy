@@ -665,7 +665,16 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       return;
     }
     if (action.kind === 'asset') {
-      window.location.hash = action.hash;
+      openTarget(
+        {
+          kind: 'asset',
+          target: action.path,
+          assetPath: action.path,
+          mediaKind: action.mediaKind,
+        },
+        { tabBehavior: 'replace-active' },
+      );
+      replaceHashWithoutNavigation(action.hash);
       notifySidebarFileSelected();
       return;
     }

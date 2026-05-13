@@ -1,3 +1,4 @@
+import type { InlineAssetMediaKind } from '@inkeep/open-knowledge-core';
 import { hashFromAssetPath } from '@/lib/doc-hash';
 import { fileEntryToTreePath, treePathToAppPath } from './file-tree-adapter';
 import type { FileEntry } from './file-tree-utils';
@@ -16,7 +17,7 @@ interface ResolveFileTreeSelectionOptions {
 
 type FileTreeSelectionAction =
   | { kind: 'none' }
-  | { kind: 'asset'; hash: string }
+  | { kind: 'asset'; path: string; hash: string; mediaKind: InlineAssetMediaKind | null }
   | { kind: 'document'; path: string }
   | { kind: 'folder'; path: string };
 
@@ -80,7 +81,12 @@ export function resolveFileTreeSelectionAction(
 
   const entry = entries.find((item) => fileEntryToTreePath(item) === selectedPath);
   if (entry && isAssetEntry(entry)) {
-    return { kind: 'asset', hash: hashFromAssetPath(entry.path) };
+    return {
+      kind: 'asset',
+      path: entry.path,
+      hash: hashFromAssetPath(entry.path),
+      mediaKind: entry.mediaKind,
+    };
   }
 
   const appPath = treePathToAppPath(selectedPath);
