@@ -43,7 +43,8 @@ export type DispatchKind =
   | 'error-classified'
   | 'error-unclassified'
   | 'relaunch-now'
-  | 'skipped-dev-mode';
+  | 'skipped-dev-mode'
+  | 'stale-pending-cleared';
 
 interface StartAutoUpdaterOpts {
   updater: UpdaterLike;
@@ -131,6 +132,22 @@ export function channelFromVersion(version: string): UpdateChannel {
   const match = /^\d+\.\d+\.\d+(?:-([\w.-]+))?$/.exec(stripped);
   if (!match) return 'latest';
   return match[1] ? 'beta' : 'latest';
+}
+
+export function versionAtLeast(running: string, pending: string): boolean {
+  const parse = (v: string): [number, number, number] | null => {
+    if (typeof v !== 'string') return null;
+    const stripped = v.split(/[-+]/, 1)[0] ?? v;
+    const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(stripped);
+    if (!m) return null;
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
+  };
+  const r = parse(running);
+  const p = parse(pending);
+  if (!r || !p) return false;
+  if (r[0] !== p[0]) return r[0] > p[0];
+  if (r[1] !== p[1]) return r[1] > p[1];
+  return r[2] >= p[2];
 }
 
 export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHandle {
@@ -391,7 +408,21 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   });
 
   const currentVersion = getAppVersion();
-  const state = readState();
+  let state = readState();
+
+  if (state.versionPendingInstall && versionAtLeast(currentVersion, state.versionPendingInstall)) {
+    const cleared = state.versionPendingInstall;
+    const next = { ...state, versionPendingInstall: null };
+    if (persistSafely(next, 'stale-pending-cleared')) {
+      state = next;
+      logger.info('cleared stale versionPendingInstall — running has caught up', {
+        cleared,
+        running: currentVersion,
+      });
+      onDispatch?.('stale-pending-cleared');
+    }
+  }
+
   const shouldShowVersionNotice = state.lastSeenVersion !== currentVersion;
   const needsStateAdvance = state.lastSeenVersion !== currentVersion;
 
