@@ -14,9 +14,11 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full contribution flow and [AGE
 
 ## Prerequisites
 
-- Bun 1.3.13 or newer
-- Node.js 24 or newer
+- Bun 1.3.13 or newer (pinned in [`.bun-version`](./.bun-version))
+- Node.js 24 or newer (pinned in [`.node-version`](./.node-version))
 - Git
+
+If you use a Node version manager, pin Node 24 with `fnm install`, `volta install node@24`, or `mise install`. Earlier Node versions fail `engines` checks during `bun install`.
 
 ## Quick Start
 

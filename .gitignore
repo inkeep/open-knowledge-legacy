@@ -27,3 +27,8 @@ blob-report/
 .open-knowledge/
 .mirror-output/
 /test-doc.md
+
+# Env files (keep .env.example committed)
+.env
+.env.local
+.env.*.local
