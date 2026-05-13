@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildStarterFolderFrontmatterYaml,
   LOG_MD_TEMPLATE,
+  listStarterPacks,
   STARTER_FOLDER_FRONTMATTER_FILENAME,
   STARTER_FOLDERS,
   STARTER_PACK_IDS,
@@ -309,5 +310,46 @@ describe('buildStarterFolderFrontmatterYaml()', () => {
       starterTemplate: 'clip',
     });
     expect(yaml).toContain('description: "A description: with a colon"');
+  });
+});
+
+describe('listStarterPacks() — wire-shape + entryCounts', () => {
+  test('returns one entry per registered pack id', () => {
+    const packs = listStarterPacks();
+    expect(packs.map((p) => p.id).sort()).toEqual([...STARTER_PACK_IDS].sort());
+  });
+
+  test('every pack ships a defined entryCounts with non-negative integers', () => {
+    for (const pack of listStarterPacks()) {
+      expect(pack.entryCounts).toBeDefined();
+      expect(Number.isInteger(pack.entryCounts.files)).toBe(true);
+      expect(Number.isInteger(pack.entryCounts.folders)).toBe(true);
+      expect(pack.entryCounts.files).toBeGreaterThanOrEqual(0);
+      expect(pack.entryCounts.folders).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  test('entryCounts.folders matches pack.folders.length', () => {
+    for (const pack of listStarterPacks()) {
+      expect(pack.entryCounts.folders).toBe(STARTER_PACKS[pack.id].folders.length);
+    }
+  });
+
+  test('entryCounts.files sums starter + extra templates and rootFiles', () => {
+    for (const info of listStarterPacks()) {
+      const src = STARTER_PACKS[info.id];
+      let expected = 0;
+      for (const folder of src.folders) {
+        expected += 1 + (folder.extraTemplates?.length ?? 0);
+      }
+      expected += src.rootFiles ? Object.keys(src.rootFiles).length : 0;
+      expect(info.entryCounts.files).toBe(expected);
+    }
+  });
+
+  test('folder-only packs (no extras, no rootFiles) report files === folders.length', () => {
+    const plainNotes = listStarterPacks().find((p) => p.id === 'plain-notes');
+    expect(plainNotes).toBeDefined();
+    expect(plainNotes?.entryCounts).toEqual({ files: 2, folders: 2 });
   });
 });

@@ -1,4 +1,3 @@
-import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { FileText, Folder, Loader2, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -22,17 +21,8 @@ import {
 } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import type {
-  OkPackId,
-  OkScaffoldApplyResult,
-  OkScaffoldPersonalTemplateWriteResult,
-  OkScaffoldPlan,
-  OkSeedApplyResult,
-  OkSeedError,
-  OkSeedListPacksResult,
-  OkSeedPackInfo,
-  OkSeedPlanResult,
-} from '@/lib/desktop-bridge-types';
+import type { OkPackId, OkScaffoldPlan, OkSeedPackInfo } from '@/lib/desktop-bridge-types';
+import { seedClient } from '@/lib/seed-client';
 
 const DEFAULT_PACK_ID: OkPackId = 'knowledge-base';
 
@@ -42,6 +32,7 @@ interface SeedDialogProps {
   /** Fired after a successful apply — used by the empty state to trigger the
       OkBlob celebration burst. The dialog still owns the toast + dismissal. */
   onSeedApplied?: () => void;
+  initialPackId?: OkPackId;
 }
 
 type DialogPhase =
@@ -53,102 +44,10 @@ type DialogPhase =
 
 type RootChoice = 'project-root' | 'subfolder';
 
-async function translateSeedError(res: Response): Promise<OkSeedError> {
-  const body = (await res.json().catch(() => null)) as unknown;
-  const parsed = ProblemDetailsSchema.safeParse(body);
-  if (!parsed.success) {
-    return { kind: 'internal', message: `HTTP ${res.status}` };
-  }
-  const message = parsed.data.detail ?? parsed.data.title;
-  const t = parsed.data.type;
-  if (t === 'urn:ok:error:seed-prerequisite-missing') {
-    return { kind: 'prerequisite-missing', message };
-  }
-  if (t === 'urn:ok:error:seed-invalid-root') {
-    return { kind: 'invalid-root', message };
-  }
-  if (t === 'urn:ok:error:no-project-dir') {
-    return { kind: 'no-project', message };
-  }
-  return { kind: 'internal', message };
-}
-
-function seedClient() {
-  const okDesktop = typeof window !== 'undefined' ? window.okDesktop : undefined;
-  if (okDesktop?.seed) {
-    return {
-      plan: okDesktop.seed.plan,
-      apply: okDesktop.seed.apply,
-      listPacks: okDesktop.seed.listPacks,
-    };
-  }
-  return {
-    plan: async (options?: {
-      rootDir?: string;
-      packId?: OkPackId;
-      includePersonalTemplates?: boolean;
-    }): Promise<OkSeedPlanResult> => {
-      const params = new URLSearchParams();
-      if (options?.rootDir) params.set('rootDir', options.rootDir);
-      if (options?.packId) params.set('packId', options.packId);
-      if (options?.includePersonalTemplates) params.set('includePersonalTemplates', 'true');
-      const qs = params.toString();
-      const res = await fetch(`/api/seed/plan${qs ? `?${qs}` : ''}`);
-      if (!res.ok) {
-        return { ok: false, error: await translateSeedError(res) };
-      }
-      const body = (await res.json().catch(() => null)) as { plan?: OkScaffoldPlan } | null;
-      if (!body?.plan) {
-        return { ok: false, error: { kind: 'internal', message: 'Malformed plan response' } };
-      }
-      return { ok: true, plan: body.plan };
-    },
-    apply: async (
-      plan: OkScaffoldPlan,
-      options?: { packId?: OkPackId; includePersonalTemplates?: boolean },
-    ): Promise<OkSeedApplyResult> => {
-      const res = await fetch('/api/seed/apply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          plan,
-          packId: options?.packId,
-          includePersonalTemplates: options?.includePersonalTemplates,
-        }),
-      });
-      if (!res.ok) {
-        return { ok: false, error: await translateSeedError(res) };
-      }
-      const body = (await res.json().catch(() => null)) as {
-        result?: OkScaffoldApplyResult;
-        personalTemplates?: OkScaffoldPersonalTemplateWriteResult;
-      } | null;
-      if (!body?.result) {
-        return { ok: false, error: { kind: 'internal', message: 'Malformed apply response' } };
-      }
-      return { ok: true, result: body.result, personalTemplates: body.personalTemplates };
-    },
-    listPacks: async (): Promise<OkSeedListPacksResult> => {
-      const res = await fetch('/api/seed/packs');
-      if (!res.ok) {
-        return { ok: false, error: { kind: 'internal', message: `HTTP ${res.status}` } };
-      }
-      const body = (await res.json().catch(() => null)) as { packs?: OkSeedPackInfo[] } | null;
-      if (!body || !Array.isArray(body.packs)) {
-        return {
-          ok: false,
-          error: { kind: 'internal', message: 'Malformed listPacks response' },
-        };
-      }
-      return { ok: true, packs: body.packs };
-    },
-  };
-}
-
-export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProps) {
+export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }: SeedDialogProps) {
   const [phase, setPhase] = useState<DialogPhase>({ kind: 'loading' });
   const [packs, setPacks] = useState<OkSeedPackInfo[] | null>(null);
-  const [selectedPackId, setSelectedPackId] = useState<OkPackId>(DEFAULT_PACK_ID);
+  const [selectedPackId, setSelectedPackId] = useState<OkPackId>(initialPackId ?? DEFAULT_PACK_ID);
   const [includePersonalTemplates, setIncludePersonalTemplates] = useState(true);
   const [rootChoice, setRootChoice] = useState<RootChoice>('project-root');
   const [subfolder, setSubfolder] = useState<string>('');
@@ -185,13 +84,13 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
 
   useEffect(() => {
     if (open) {
-      setSelectedPackId(DEFAULT_PACK_ID);
+      setSelectedPackId(initialPackId ?? DEFAULT_PACK_ID);
       setIncludePersonalTemplates(true);
       setRootChoice('project-root');
       setSubfolder('');
       isFirstLoadRef.current = true;
     }
-  }, [open]);
+  }, [open, initialPackId]);
 
   useEffect(() => {
     if (!selectedPack) return;
@@ -298,22 +197,33 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
     }
   }
 
+  const packLocked = initialPackId !== undefined;
+  const title =
+    packLocked && selectedPack ? `Initialize ${selectedPack.name}` : 'Initialize a starter pack';
+  const description =
+    packLocked && selectedPack
+      ? selectedPack.description
+      : "Pick a layout that matches what you're building. Each pack ships with folders, templates, and agent-readable descriptions. You can mix and match later.";
+
   return (
     <DialogRoot open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl" data-ok-layer-spawned="">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles aria-hidden="true" className="h-4 w-4 text-foreground opacity-70" />
-            Initialize a starter pack
+            {title}
           </DialogTitle>
-          <DialogDescription>
-            Pick a layout that matches what you're building. Each pack ships with folders,
-            templates, and agent-readable descriptions. You can mix and match later.
-          </DialogDescription>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
         <DialogBody className="space-y-6">
-          <PackPicker packs={packs} selectedPackId={selectedPackId} onSelect={setSelectedPackId} />
+          {packLocked ? null : (
+            <PackPicker
+              packs={packs}
+              selectedPackId={selectedPackId}
+              onSelect={setSelectedPackId}
+            />
+          )}
           <PersonalTemplatesToggle
             checked={includePersonalTemplates}
             onCheckedChange={setIncludePersonalTemplates}
@@ -404,7 +314,7 @@ function PersonalTemplatesToggle({
       <Field orientation="horizontal">
         <FieldContent>
           <FieldTitle>Include personal templates</FieldTitle>
-          <FieldDescription>
+          <FieldDescription className="text-1sm">
             Adds daily journal, reading log, recipes, and more to <code>~/.ok/templates/</code>.
             Idempotent — never overwrites your edits.
           </FieldDescription>
@@ -444,7 +354,7 @@ function RootPicker({
           <Field orientation="horizontal">
             <FieldContent>
               <FieldTitle>Project root</FieldTitle>
-              <FieldDescription>
+              <FieldDescription className="text-1sm">
                 Scaffold the pack's folders directly under this project.
               </FieldDescription>
             </FieldContent>
@@ -455,7 +365,7 @@ function RootPicker({
           <Field orientation="horizontal">
             <FieldContent>
               <FieldTitle>In a subfolder</FieldTitle>
-              <FieldDescription className="nth-last-2:mt-0">
+              <FieldDescription className="nth-last-2:mt-0 text-1sm">
                 Created if missing. Reuses the folder if it already exists.
               </FieldDescription>
               <Input
