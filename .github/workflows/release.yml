@@ -1,30 +1,56 @@
 name: Release
 
 # Release workflow on inkeep/open-knowledge-legacy. Single npm publisher
-# for both auto-cadence beta releases AND on-demand stable promotions.
+# for BOTH auto-cadence beta releases AND on-demand stable promotions.
 #
-# Two trigger paths:
+# Both paths are repository_dispatch-driven. No `push` trigger: under the
+# zero-commit-bump cadence, agents-private never commits a version bump,
+# so a push to legacy/main can never carry a -beta.N suffix in
+# packages/**/package.json. The version-bump-on-the-fly happens here via
+# a transient `jq` override that lives only for the workflow run.
 #
-# 1. push to main (auto-cadence beta):
-#    Fires when a version-bump commit (mirrored from agents-private's
-#    auto-merged "Version Packages (open-knowledge)" PR) lands. Detects
-#    the new version on the canonical desktop package; if it carries a
-#    -beta.* suffix, tags vX.Y.Z-beta.N at HEAD, creates a prerelease
-#    GitHub Release, publishes npm with `--tag beta --provenance`,
-#    aliases the `dev` dist-tag to the same version, and finally fires
-#    `repository_dispatch` event_type=`desktop-release` so
-#    desktop-release.yml builds the signed DMG and uploads it +
-#    `beta-mac.yml` to the prerelease.
+# Two dispatch types:
 #
-# 2. repository_dispatch (event_type: publish-stable):
-#    Fired by promote-stable.yml on the same repo (legacy) once it has
-#    tagged vX.Y.Z and created the non-prerelease GitHub Release.
-#    Checks out the stable tag, transiently overrides package.json
-#    versions to the clean stable string (the legacy commit at the beta
-#    SHA still has -beta.N), then publishes npm with `--tag latest
-#    --provenance`. promote-stable.yml separately fires its own
-#    `desktop-release` dispatch so the stable DMG + `latest-mac.yml`
-#    land on the stable Release.
+# 1. event_type=publish-beta (fired by
+#    .github/workflows/public-open-knowledge-beta-cut.yml on agents-private
+#    via cross-repo App token):
+#      client_payload: { baseVersion: "X.Y.Z", maxBumpType: "patch"|"minor",
+#                        releaseNotes: "<rendered markdown>" }
+#    This workflow then:
+#      - Resolves the -beta.N counter from the current state of
+#        vX.Y.Z-beta.* tags on legacy (inside the ok-release-cadence
+#        concurrency slot, so the counter is race-free across concurrent
+#        dispatches).
+#      - Overrides every fixed-group packages/*/package.json#version AND
+#        packages/server/assets/skills/open-knowledge/SKILL.md
+#        metadata.version to X.Y.Z-beta.N (transient jq, never committed).
+#      - Tags vX.Y.Z-beta.N at the workflow checkout SHA + creates a
+#        prerelease GitHub Release with the rendered notes.
+#      - Publishes @inkeep/open-knowledge@X.Y.Z-beta.N to npm with
+#        `--tag beta --provenance`.
+#      - Re-points the `dev` dist-tag to the same version (fresh OIDC
+#        exchange, npm CLI's TP session token is single-use).
+#      - Dispatches desktop-release.yml so the signed DMG +
+#        `beta-mac.yml` land on the prerelease.
+#
+# 2. event_type=publish-stable (fired by promote-stable.yml on this
+#    same repo, once it has tagged vX.Y.Z + created the non-prerelease
+#    GitHub Release):
+#      client_payload: { ref: "vX.Y.Z", version: "X.Y.Z" }
+#    This workflow:
+#      - Checks out the stable tag (= the same SHA as the corresponding
+#        beta tag).
+#      - Overrides every fixed-group package.json#version to the clean
+#        X.Y.Z (the legacy commit at that SHA still carries -beta.N from
+#        a prior beta run's transient override — wait, no, that override
+#        was never committed; the commit has whatever agents-private
+#        mirrored, which is a `0.0.0` placeholder under the new cadence,
+#        or some prior stable, depending on rollout state).
+#      - Publishes @inkeep/open-knowledge@X.Y.Z to npm with
+#        `--tag latest --provenance`.
+#    promote-stable.yml separately fires its own `desktop-release`
+#    dispatch so the stable DMG + `latest-mac.yml` land on the stable
+#    Release.
 #
 # Why explicit `repository_dispatch` instead of relying on
 # `release: published` to cascade: GitHub deliberately suppresses
@@ -37,30 +63,26 @@ name: Release
 # Why ONE workflow handles both: npm Trusted Publishing only allows ONE
 # trusted publisher per package. Centralizing all `bun changeset
 # publish` calls here means there is exactly one trusted-publisher
-# entry on npmjs.com (workflow=release.yml). promote-stable.yml owns
-# the tag + Release creation; this workflow owns npm.
+# entry on npmjs.com (workflow=release.yml). Both beta-cut and
+# promote-stable route their npm publishes through here.
 #
 # Concurrency group is shared with promote-stable.yml so beta cuts and
 # stable promotions never race on the same legacy state.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "packages/**/package.json"
   repository_dispatch:
-    types: [publish-stable]
+    types: [publish-beta, publish-stable]
 
 permissions:
-  # contents: write — for tags + Releases (push path)
+  # contents: write — for beta path's git tag + Release creation.
   # id-token: write — for npm OIDC. Used both for provenance attestation
   #   (the SLSA Build L3 attestation surfaced to consumers) AND for npm
   #   Trusted Publishing — the OIDC token's repo + workflow claims
   #   authenticate the publish without an NPM_TOKEN secret. The trusted-
   #   publisher entry is configured on npmjs.com against
   #   inkeep/open-knowledge-legacy + this workflow filename. Only ONE
-  #   entry per package; promote-stable.yml routes its publish through
-  #   here via repository_dispatch to share this entry.
+  #   entry per package; both beta-cut and promote-stable route through
+  #   here to share this entry.
   # No packages: write — npm publishes go to npmjs.org, not GitHub
   #   Packages (ghcr.io / npm.pkg.github.com).
   contents: write
@@ -72,7 +94,7 @@ concurrency:
 
 jobs:
   release:
-    name: Tag + publish
+    name: Tag + publish (${{ github.event.action }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -80,9 +102,10 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          # Push path: HEAD on main (Copybara-mirrored version-bump commit).
-          # Dispatch path: the stable tag created by promote-stable.yml,
-          # which points at the same SHA as the corresponding beta tag.
+          # publish-stable: the stable tag created by promote-stable.yml
+          #   (= same SHA as the source beta tag).
+          # publish-beta: no ref in payload — default to github.sha which,
+          #   for a repository_dispatch, is the default branch's HEAD.
           ref: ${{ github.event.client_payload.ref || github.sha }}
 
       - name: Setup Bun
@@ -104,66 +127,108 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      # `bun changeset publish` invokes `npm publish` per package, which in
-      # turn fires the cli's `prepublishOnly` (-> `bun run build`). The cli's
-      # own build chain includes `cp -r ../app/dist dist/public` which
-      # silently fails when the app hasn't been built first. Run a top-level
-      # `bun run build` (turbo orchestrates the dep order: app -> cli) so
-      # every package's dist/ exists before the publish step runs.
+      # `bun changeset publish` invokes `npm publish` per package, which
+      # in turn fires the cli's `prepublishOnly` (-> `bun run build`). The
+      # cli's own build chain includes `cp -r ../app/dist dist/public`
+      # which silently fails when the app hasn't been built first. Run a
+      # top-level `bun run build` (turbo orchestrates the dep order:
+      # app -> cli) so every package's dist/ exists before the publish
+      # step runs.
       - name: Build packages
         run: bun run build
 
-      # --- BETA PATH (push trigger) ---
+      # --- BETA DISPATCH PATH ---
 
-      # Detect the channel by reading desktop's package.json#version (the
-      # canonical fixed-group anchor). Compare against the parent commit
-      # to skip dependency-only edits that didn't bump versions.
-      - name: Detect channel (push path)
-        if: github.event_name == 'push'
-        id: detect
-        run: |
-          set -euo pipefail
-          CURRENT_VERSION=$(jq -r '.version' packages/desktop/package.json)
-          PARENT_VERSION=$(git show HEAD~1:packages/desktop/package.json | jq -r '.version' 2>/dev/null || echo "")
-
-          echo "current=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
-
-          if [[ "$CURRENT_VERSION" == "$PARENT_VERSION" ]]; then
-            echo "kind=none" >> "$GITHUB_OUTPUT"
-            echo "Version unchanged from parent ($CURRENT_VERSION) — skipping release."
-            exit 0
-          fi
-
-          if [[ "$CURRENT_VERSION" =~ -beta\.[0-9]+$ ]]; then
-            echo "kind=beta" >> "$GITHUB_OUTPUT"
-            echo "Detected beta release: $CURRENT_VERSION"
-          elif [[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            # Stable releases come through the repository_dispatch path
-            # (fired by promote-stable.yml). A push-triggered run that
-            # observes plain semver is unexpected — likely a hand-edit on
-            # main bypassing the pipeline. Skip with a warning.
-            echo "kind=none" >> "$GITHUB_OUTPUT"
-            echo "::warning::Detected plain semver $CURRENT_VERSION on push path. Stable promotion runs via repository_dispatch from promote-stable.yml; skipping."
-          else
-            echo "kind=none" >> "$GITHUB_OUTPUT"
-            echo "::warning::Unrecognized version pattern: $CURRENT_VERSION — skipping release."
-          fi
-
-      - name: Tag and create prerelease GitHub Release (beta path)
-        if: github.event_name == 'push' && steps.detect.outputs.kind == 'beta'
+      # Resolve the -beta.N counter inside this concurrency slot so
+      # concurrent dispatches (e.g., three rapid changeset merges on
+      # agents-private all firing beta-cut workflows) see different N's
+      # and never collide on tag creation. agents-private's beta-cut
+      # workflow intentionally sends only the base; N is decided here.
+      - name: Resolve -beta.N counter (publish-beta)
+        if: github.event.action == 'publish-beta'
+        id: resolve-beta
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.detect.outputs.current }}
+          BASE_VERSION: ${{ github.event.client_payload.baseVersion }}
         run: |
           set -euo pipefail
-          TAG="v${VERSION}"
+          if [[ -z "${BASE_VERSION:-}" ]]; then
+            echo "::error::publish-beta dispatch missing client_payload.baseVersion"
+            exit 1
+          fi
+          if [[ ! "$BASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::publish-beta client_payload.baseVersion '${BASE_VERSION}' is not bare semver (X.Y.Z)"
+            exit 1
+          fi
 
-          # Idempotency: a re-run after a transient failure should not
-          # explode on `git tag` already exists. Skip the tag-create if
-          # it's already there; still try to create the Release in case
-          # the tag exists but the Release does not.
+          # Query existing v<BASE_VERSION>-beta.N tags on this repo and
+          # find the max N. `git tag --list` only sees local tags; we
+          # fetched them in the checkout step (fetch-depth: 0 pulls all
+          # refs by default for actions/checkout@v6). Cross-check via
+          # `gh api` for tags created by parallel runs that pushed to
+          # origin since our checkout finished — the actual collision
+          # window is between this step and the `git push origin TAG`
+          # step below, which the concurrency group eliminates.
+          MAX_N=-1
+          while IFS= read -r tag; do
+            [[ -z "$tag" ]] && continue
+            if [[ "$tag" =~ ^v${BASE_VERSION//./\\.}-beta\.([0-9]+)$ ]]; then
+              n="${BASH_REMATCH[1]}"
+              if (( n > MAX_N )); then MAX_N="$n"; fi
+            fi
+          done < <(git tag --list "v${BASE_VERSION}-beta.*")
+
+          NEXT_N=$((MAX_N + 1))
+          VERSION="${BASE_VERSION}-beta.${NEXT_N}"
+          TAG="v${VERSION}"
+          echo "Existing max -beta.N for base ${BASE_VERSION}: ${MAX_N} -> emitting ${TAG}"
+
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Override fixed-group versions to X.Y.Z-beta.N (publish-beta)
+        if: github.event.action == 'publish-beta'
+        env:
+          VERSION: ${{ steps.resolve-beta.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Same primitive as the publish-stable path: jq edits the
+          # version field directly, never committed. The change lives
+          # only for this workflow run and is discarded with the runner.
+          # `npm version` would walk workspace deps and reject bun's
+          # `workspace:*` protocol with EUNSUPPORTEDPROTOCOL — jq sidesteps.
+          for pkg in cli core server app desktop; do
+            f="packages/${pkg}/package.json"
+            jq --arg v "$VERSION" '.version=$v' "$f" > "${f}.tmp"
+            mv "${f}.tmp" "$f"
+          done
+          # SKILL.md's metadata.version "tracks @inkeep/open-knowledge-server
+          # package version" — the build-time invariant test at
+          # packages/server/src/build-skill-zip.ts asserts they match,
+          # and packages/desktop/tests/main/install-skill-ipc.test.ts
+          # asserts the built skill version equals current package version.
+          # Mutate it in place (sed: same transient-only model as jq above).
+          sed -i'.bak' -E "s/^([[:space:]]+version:[[:space:]]+\")[^\"]+(\".*)$/\1${VERSION}\2/" \
+            packages/server/assets/skills/open-knowledge/SKILL.md
+          rm -f packages/server/assets/skills/open-knowledge/SKILL.md.bak
+          echo "All fixed-group package.json files + SKILL.md metadata.version now at ${VERSION} (in-memory only)."
+
+      - name: Tag + create prerelease GitHub Release (publish-beta)
+        if: github.event.action == 'publish-beta'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.resolve-beta.outputs.tag }}
+          NOTES: ${{ github.event.client_payload.releaseNotes }}
+        run: |
+          set -euo pipefail
+          # Idempotency: a re-fire of this dispatch (manual recovery from
+          # a flaky npm publish) should not explode on `git tag` already
+          # exists. Within the concurrency slot, a tag-exists state only
+          # arises on retry.
           if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "Tag ${TAG} already exists; skipping git tag step."
+            echo "Tag ${TAG} already exists locally; skipping git tag step."
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -171,25 +236,11 @@ jobs:
             git push origin "$TAG"
           fi
 
-          # Build a release body from CHANGELOG entries for the new version.
-          # Prefer desktop's CHANGELOG (fixed-group anchor); fall back to
-          # cli's, then to a synthesized line if neither has an entry yet.
           BODY_FILE=$(mktemp)
-          for changelog in packages/desktop/CHANGELOG.md packages/cli/CHANGELOG.md; do
-            if [[ -f "$changelog" ]]; then
-              awk -v ver="${VERSION}" '
-                $0 ~ "^## " ver "([^[:digit:].]|$)" { capture=1; next }
-                capture && /^## / { exit }
-                capture { print }
-              ' "$changelog" > "$BODY_FILE"
-              if [[ -s "$BODY_FILE" ]]; then
-                echo "Used CHANGELOG entries from $changelog"
-                break
-              fi
-            fi
-          done
-          if [[ ! -s "$BODY_FILE" ]]; then
-            printf 'Auto-cadence beta release.\n\nSee CHANGELOG.md per package for details.\n' > "$BODY_FILE"
+          if [[ -n "${NOTES:-}" ]]; then
+            printf '%s' "$NOTES" > "$BODY_FILE"
+          else
+            printf 'Auto-cadence beta release.\n' > "$BODY_FILE"
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -209,17 +260,14 @@ jobs:
       # own. The exemption to that rule is `repository_dispatch` (and
       # `workflow_dispatch`), which DO cascade even when fired via
       # GITHUB_TOKEN. Same-repo dispatch needs no PAT or App token —
-      # the default `contents: write` token is enough. promote-stable.yml
-      # already uses this pattern to fire release.yml's dispatch path.
-      - name: Trigger desktop-release.yml to build + upload DMG (beta path)
-        if: github.event_name == 'push' && steps.detect.outputs.kind == 'beta'
+      # the default `contents: write` token is enough.
+      - name: Trigger desktop-release.yml to build + upload DMG (publish-beta)
+        if: github.event.action == 'publish-beta'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.detect.outputs.current }}
+          TAG: ${{ steps.resolve-beta.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG="v${VERSION}"
-
           payload=$(jq -nc \
             --arg tag "$TAG" \
             --arg ref "$TAG" \
@@ -227,10 +275,10 @@ jobs:
           gh api -X POST "repos/${GITHUB_REPOSITORY}/dispatches" --input - <<<"$payload"
           echo "Dispatched desktop-release for ${TAG}; desktop-release.yml will build the signed DMG and upload it + beta-mac.yml to the prerelease."
 
-      # --- STABLE PATH (repository_dispatch trigger) ---
+      # --- STABLE DISPATCH PATH ---
 
-      - name: Validate stable_version + override package.json (dispatch path)
-        if: github.event_name == 'repository_dispatch'
+      - name: Validate stable_version + override package.json (publish-stable)
+        if: github.event.action == 'publish-stable'
         env:
           STABLE_VERSION: ${{ github.event.client_payload.version }}
         run: |
@@ -245,30 +293,34 @@ jobs:
             exit 1
           fi
 
-          # The legacy commit at the beta SHA has package.json#version =
-          # X.Y.Z-beta.N. We need to publish as X.Y.Z without a separate
-          # commit (a real bump on legacy would conflict with the Copybara
-          # mirror direction from agents-private). Mutate package.json
-          # locally via jq — `npm version` walks workspace deps in newer
-          # npm and rejects bun's `workspace:*` protocol with
-          # EUNSUPPORTEDPROTOCOL. jq edits the version field directly
-          # without touching the dep graph; the change lives for the
-          # workflow run and is discarded with the runner.
+          # Same transient-jq primitive as the publish-beta path: edit
+          # version fields in place, never commit. The legacy commit at
+          # the source beta SHA carries whatever package.json version
+          # agents-private mirrored (under the zero-commit-bump cadence,
+          # that's the placeholder version on main); we override to the
+          # clean X.Y.Z just for this publish.
           for pkg in cli core server app desktop; do
             f="packages/${pkg}/package.json"
             jq --arg v "$STABLE_VERSION" '.version=$v' "$f" > "${f}.tmp"
             mv "${f}.tmp" "$f"
           done
-          echo "All fixed-group package.json files now at ${STABLE_VERSION} (in-memory only)."
+          # Match the beta path's SKILL.md sync so the published stable
+          # carries a SKILL.md whose metadata.version reads X.Y.Z, not
+          # whatever -beta.N was last stamped (or, in the steady state,
+          # the placeholder).
+          sed -i'.bak' -E "s/^([[:space:]]+version:[[:space:]]+\")[^\"]+(\".*)$/\1${STABLE_VERSION}\2/" \
+            packages/server/assets/skills/open-knowledge/SKILL.md
+          rm -f packages/server/assets/skills/open-knowledge/SKILL.md.bak
+          echo "All fixed-group package.json files + SKILL.md metadata.version now at ${STABLE_VERSION} (in-memory only)."
 
       # --- SHARED PUBLISH STEP ---
 
       - name: Publish to npm via Trusted Publishing
-        if: (github.event_name == 'push' && steps.detect.outputs.kind == 'beta') || github.event_name == 'repository_dispatch'
         env:
           NPM_CONFIG_PROVENANCE: "true"
-          PUSH_VERSION: ${{ steps.detect.outputs.current }}
-          DISPATCH_VERSION: ${{ github.event.client_payload.version }}
+          ACTION: ${{ github.event.action }}
+          BETA_VERSION: ${{ steps.resolve-beta.outputs.version }}
+          STABLE_VERSION: ${{ github.event.client_payload.version }}
         run: |
           set -euo pipefail
 
@@ -282,22 +334,22 @@ jobs:
           # (NPM_CONFIG_PROVENANCE). See
           # https://docs.npmjs.com/trusted-publishers.
 
-          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+          if [[ "$ACTION" == "publish-stable" ]]; then
             TAG=latest
-            VERSION="$DISPATCH_VERSION"
+            VERSION="$STABLE_VERSION"
             DO_DEV_ALIAS=false
           else
             TAG=beta
-            VERSION="$PUSH_VERSION"
+            VERSION="$BETA_VERSION"
             DO_DEV_ALIAS=true
           fi
 
-          # Changesets reads .changeset/config.json from the repo root and
-          # publishes every package in the fixed group. With pre.json
-          # absent on legacy (Copybara excludes .changeset/), Changesets
-          # treats this as a normal publish. Only @inkeep/open-knowledge
-          # actually reaches the registry; the four private:true packages
-          # are skipped by `changeset publish`.
+          # Changesets reads .changeset/config.json from the repo root
+          # and publishes every package in the fixed group. With
+          # pre.json absent on legacy (Copybara excludes .changeset/),
+          # Changesets treats this as a normal publish. Only
+          # @inkeep/open-knowledge actually reaches the registry; the
+          # four private:true packages are skipped by `changeset publish`.
           echo "Publishing with --tag ${TAG} (VERSION=${VERSION})"
           bun changeset publish --tag "$TAG"
 
@@ -323,7 +375,7 @@ jobs:
       # registry — the four private:true fixed-group packages are
       # skipped, so this only acts on the CLI.
       - name: Alias @dev dist-tag (fresh OIDC exchange)
-        if: (github.event_name == 'push' && steps.detect.outputs.kind == 'beta') && env.DO_DEV_ALIAS == 'true'
+        if: github.event.action == 'publish-beta' && env.DO_DEV_ALIAS == 'true'
         run: |
           set -euo pipefail
 
@@ -347,10 +399,9 @@ jobs:
           # `set -x`, future verbose curl flags, or a verbose error body.
           echo "::add-mask::${OIDC_TOKEN}"
 
-          # Exchange the OIDC JWT with npm's trusted-publishing
-          # endpoint for a session token usable on subsequent npm
-          # commands. The endpoint is what `npm publish` calls
-          # internally for TP.
+          # Exchange the OIDC JWT with npm's trusted-publishing endpoint
+          # for a session token usable on subsequent npm commands. The
+          # endpoint is what `npm publish` calls internally for TP.
           NPM_TOKEN=$(curl -sSLf -X POST \
             -H "Authorization: Bearer ${OIDC_TOKEN}" \
             -H "Content-Type: application/json" \
@@ -374,8 +425,8 @@ jobs:
           echo "Aliasing @inkeep/open-knowledge@${DEV_ALIAS_VERSION} as dev..."
           npm dist-tag add "@inkeep/open-knowledge@${DEV_ALIAS_VERSION}" dev
 
-      - name: Restore working tree (dispatch path; defensive)
-        # The dispatch path mutates package.json transiently. Make sure
-        # nothing leaks into git state — F10 of the spec.
-        if: always() && github.event_name == 'repository_dispatch'
+      - name: Restore working tree (defensive)
+        # Both dispatch paths mutate package.json + SKILL.md transiently.
+        # Make sure nothing leaks into git state — F10 of the spec.
+        if: always()
         run: git restore . || true
