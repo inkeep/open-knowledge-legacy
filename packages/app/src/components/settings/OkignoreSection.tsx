@@ -35,6 +35,7 @@ import { cn } from '@/lib/utils';
 import {
   appendPattern,
   editPatternAt,
+  findPatternIndex,
   listPatterns,
   type PatternLine,
   parseOkignoreDoc,
@@ -185,6 +186,11 @@ function OkignoreSectionBody({ binding }: { binding: OkignoreBinding }) {
   const handleAdd = (newPatternText: string) => {
     const trimmed = newPatternText.trim();
     if (trimmed.length === 0) return;
+    const existingIndex = findPatternIndex(doc, trimmed);
+    if (existingIndex >= 0) {
+      triggerFlash(rowFlashKey(trimmed, existingIndex));
+      return;
+    }
     commit(serializeOkignoreDoc(appendPattern(doc, trimmed)));
     triggerFlash(rowFlashKey(trimmed, patterns.length));
   };

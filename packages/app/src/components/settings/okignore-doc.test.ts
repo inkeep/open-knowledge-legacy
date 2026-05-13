@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   appendPattern,
   editPatternAt,
+  findPatternIndex,
   listPatterns,
   parseOkignoreDoc,
   removePatternAt,
@@ -130,6 +131,86 @@ describe('appendPattern', () => {
     expect(appendPattern(original, '')).toBe(original);
     expect(appendPattern(original, '   ')).toBe(original);
     expect(appendPattern(original, '\t\n')).toBe(original);
+  });
+
+  test('exact-match duplicate returns the same doc reference (no-op)', () => {
+    const original = parseOkignoreDoc('drafts/\nvendor/\n');
+    expect(appendPattern(original, 'drafts/')).toBe(original);
+    expect(appendPattern(original, 'vendor/')).toBe(original);
+  });
+
+  test('duplicate detection compares trimmed input against trimmed pattern text', () => {
+    const original = parseOkignoreDoc('drafts/\n');
+    expect(appendPattern(original, '  drafts/  ')).toBe(original);
+    expect(appendPattern(original, '\tdrafts/\n')).toBe(original);
+  });
+
+  test('duplicate detection ignores comments that happen to match', () => {
+    const original = parseOkignoreDoc('# drafts/\n');
+    const next = appendPattern(original, 'drafts/');
+    expect(next).not.toBe(original);
+    expect(serializeOkignoreDoc(next)).toBe('# drafts/\ndrafts/\n');
+  });
+
+  test('different pattern still appends after a duplicate is rejected', () => {
+    const original = parseOkignoreDoc('drafts/\n');
+    expect(appendPattern(original, 'drafts/')).toBe(original);
+    const next = appendPattern(original, 'vendor/');
+    expect(serializeOkignoreDoc(next)).toBe('drafts/\nvendor/\n');
+  });
+
+  test('dedup matches anywhere in the doc, not only the last pattern', () => {
+    const original = parseOkignoreDoc('drafts/\n# comment\nvendor/\n');
+    expect(appendPattern(original, 'drafts/')).toBe(original);
+    expect(appendPattern(original, 'vendor/')).toBe(original);
+  });
+
+  test('dedup is case-sensitive (gitignore semantics)', () => {
+    const original = parseOkignoreDoc('Drafts/\n');
+    const next = appendPattern(original, 'drafts/');
+    expect(next).not.toBe(original);
+    expect(serializeOkignoreDoc(next)).toBe('Drafts/\ndrafts/\n');
+  });
+
+  test('doc that already contains the duplicate twice still short-circuits — does not strip later duplicates', () => {
+    const original = parseOkignoreDoc('drafts/\ndrafts/\n');
+    expect(appendPattern(original, 'drafts/')).toBe(original);
+    expect(serializeOkignoreDoc(original)).toBe('drafts/\ndrafts/\n');
+  });
+});
+
+describe('findPatternIndex', () => {
+  test('returns pattern-only index for an exact trimmed match', () => {
+    const doc = parseOkignoreDoc('drafts/\n# c\nvendor/\n');
+    expect(findPatternIndex(doc, 'drafts/')).toBe(0);
+    expect(findPatternIndex(doc, 'vendor/')).toBe(1);
+  });
+
+  test('trims the query before comparing', () => {
+    const doc = parseOkignoreDoc('drafts/\n');
+    expect(findPatternIndex(doc, '  drafts/  ')).toBe(0);
+  });
+
+  test('returns -1 for no match', () => {
+    const doc = parseOkignoreDoc('drafts/\n');
+    expect(findPatternIndex(doc, 'vendor/')).toBe(-1);
+  });
+
+  test('returns -1 for whitespace-only query', () => {
+    const doc = parseOkignoreDoc('drafts/\n');
+    expect(findPatternIndex(doc, '   ')).toBe(-1);
+    expect(findPatternIndex(doc, '')).toBe(-1);
+  });
+
+  test('does not match comment lines', () => {
+    const doc = parseOkignoreDoc('# drafts/\n');
+    expect(findPatternIndex(doc, 'drafts/')).toBe(-1);
+  });
+
+  test('returns the pattern-only index when comments precede patterns', () => {
+    const doc = parseOkignoreDoc('# c\ndrafts/\nvendor/\n');
+    expect(findPatternIndex(doc, 'drafts/')).toBe(0);
+    expect(findPatternIndex(doc, 'vendor/')).toBe(1);
   });
 });
 

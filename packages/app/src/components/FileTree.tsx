@@ -569,10 +569,10 @@ function FileTreeMenu({
                 close();
                 const pattern = buildOkignorePatternFromTarget(target);
                 const current = okignoreBinding.current();
-                const next = serializeOkignoreDoc(
-                  appendPattern(parseOkignoreDoc(current), pattern),
-                );
-                okignoreBinding.patch(next);
+                const doc = parseOkignoreDoc(current);
+                const updated = appendPattern(doc, pattern);
+                if (updated === doc) return;
+                okignoreBinding.patch(serializeOkignoreDoc(updated));
               }}
             >
               <EyeOff aria-hidden="true" />

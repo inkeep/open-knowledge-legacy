@@ -39,6 +39,9 @@ export function listPatterns(doc: ParsedDoc): PatternLine[] {
 export function appendPattern(doc: ParsedDoc, newText: string): ParsedDoc {
   const trimmed = newText.trim();
   if (trimmed.length === 0) return doc;
+  for (const line of doc.lines) {
+    if (line.kind === 'pattern' && line.text === trimmed) return doc;
+  }
   const newLine: PatternLine = { kind: 'pattern', raw: trimmed, text: trimmed };
   const lines = doc.lines.slice();
   const last = lines[lines.length - 1];
@@ -48,6 +51,19 @@ export function appendPattern(doc: ParsedDoc, newText: string): ParsedDoc {
     lines.push(newLine, { kind: 'blank', raw: '' });
   }
   return { lines };
+}
+
+export function findPatternIndex(doc: ParsedDoc, patternText: string): number {
+  const trimmed = patternText.trim();
+  if (trimmed.length === 0) return -1;
+  let seen = 0;
+  for (const line of doc.lines) {
+    if (line.kind === 'pattern') {
+      if (line.text === trimmed) return seen;
+      seen++;
+    }
+  }
+  return -1;
 }
 
 export function editPatternAt(doc: ParsedDoc, patternIndex: number, newText: string): ParsedDoc {
