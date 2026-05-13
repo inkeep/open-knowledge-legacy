@@ -17,7 +17,7 @@ function findInJson(json: JSONContent, predicate: (n: JSONContent) => boolean): 
 const isComponent = (name: string) => (n: JSONContent) =>
   n.type === 'jsxComponent' && n.attrs?.componentName === name;
 
-describe('mermaid fence (` ```mermaid `) → MermaidFence compat', () => {
+describe('mermaid fence (` ```mermaid `) → MermaidFence canonical', () => {
   test('` ```mermaid ` fence parses to a MermaidFence jsxComponent', () => {
     const json = mdManager.parse('```mermaid\ngraph TD; A-->B;\n```\n');
     const node = findInJson(json, isComponent('MermaidFence'));
@@ -42,14 +42,37 @@ describe('mermaid fence (` ```mermaid `) → MermaidFence compat', () => {
 
   test('non-mermaid fences (` ```js `) are unchanged — still a code block, NOT MermaidFence', () => {
     const json = mdManager.parse('```js\nconst x = 1;\n```\n');
-    const mermaidFence = findInJson(json, isComponent('MermaidFence'));
-    expect(mermaidFence).toBeNull();
+    const mermaid = findInJson(json, isComponent('MermaidFence'));
+    expect(mermaid).toBeNull();
   });
 
   test('plain ` ``` ` fence (no language) is NOT MermaidFence', () => {
     const json = mdManager.parse('```\nplain text\n```\n');
-    const mermaidFence = findInJson(json, isComponent('MermaidFence'));
-    expect(mermaidFence).toBeNull();
+    const mermaid = findInJson(json, isComponent('MermaidFence'));
+    expect(mermaid).toBeNull();
+  });
+
+  test('legacy `<Mermaid chart="…" />` JSX does NOT match MermaidFence — falls through to wildcard', () => {
+    const json = mdManager.parse('<Mermaid chart="graph TD; A-->B;" />\n');
+    const fence = findInJson(json, isComponent('MermaidFence'));
+    expect(fence).toBeNull();
+    const wildcard = findInJson(json, isComponent('Mermaid'));
+    expect(wildcard).not.toBeNull();
+  });
+
+  test('dirty-path: edited MermaidFence re-emits as ` ```mermaid ` fence, not JSX', () => {
+    const json = mdManager.parse('```mermaid\ngraph TD; A-->B;\n```\n');
+    const node = findInJson(json, isComponent('MermaidFence'));
+    expect(node).not.toBeNull();
+    if (node?.attrs) {
+      delete (node.attrs as Record<string, unknown>).sourceRaw;
+      (node.attrs.props as Record<string, unknown>).chart = 'flowchart LR; X-->Y;';
+    }
+    const out = mdManager.serialize(json);
+    expect(out).toContain('```mermaid');
+    expect(out).toContain('flowchart LR; X-->Y;');
+    expect(out).not.toContain('<MermaidFence');
+    expect(out).not.toContain('<Mermaid ');
   });
 });
 

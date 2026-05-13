@@ -26,6 +26,6 @@ export const componentMap: Record<string, React.ComponentType<any>> = {
   Tabs,
   Tab,
   Math: MathView,
-  Mermaid: MermaidView,
+  MermaidFence: MermaidView,
   '*': UnregisteredBadgeRender,
 };

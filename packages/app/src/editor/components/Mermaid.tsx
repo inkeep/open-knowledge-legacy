@@ -2,8 +2,6 @@ import { useEffect, useId, useState } from 'react';
 
 interface MermaidProps {
   chart?: string;
-  id?: string;
-  theme?: string;
 }
 
 interface RenderState {
@@ -74,7 +72,7 @@ export function MermaidView(props: MermaidProps) {
 
   if (!chart.trim()) {
     return (
-      <div className="mermaid mermaid-placeholder" data-component-type="mermaid" id={props.id}>
+      <div className="mermaid mermaid-placeholder" data-component-type="mermaid">
         <span className="mermaid-empty"> </span>
       </div>
     );
@@ -82,12 +80,7 @@ export function MermaidView(props: MermaidProps) {
 
   if (state.status === 'error') {
     return (
-      <div
-        className="mermaid mermaid-error"
-        data-component-type="mermaid"
-        title={state.error}
-        id={props.id}
-      >
+      <div className="mermaid mermaid-error" data-component-type="mermaid" title={state.error}>
         <pre className="mermaid-error-source">{chart}</pre>
         {/* Visible error text — `title` alone is unreachable on touch / mobile
             and unannounced by most screen readers. The chart source above shows
@@ -101,7 +94,6 @@ export function MermaidView(props: MermaidProps) {
     <div
       className={`mermaid mermaid-${state.status}`}
       data-component-type="mermaid"
-      id={props.id}
       // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid.render with securityLevel:'strict' returns a sanitized SVG string with no script execution; this is the documented integration path.
       dangerouslySetInnerHTML={{ __html: state.svg }}
     />

@@ -12,7 +12,7 @@ export function sourceFallbackFormFor(node: PmNode): SourceFallbackForm | null {
       const formula = typeof props.formula === 'string' ? props.formula : '';
       return { source: `$$\n${formula}\n$$` };
     }
-    case 'Mermaid': {
+    case 'MermaidFence': {
       const chart = typeof props.chart === 'string' ? props.chart : '';
       return { source: `\`\`\`mermaid\n${chart}\n\`\`\`` };
     }

@@ -34,7 +34,7 @@ export const PALETTE_DESCRIPTOR_NAMES = [
   'CommonMarkImage',
   'HtmlDetailsAccordion',
   'Math',
-  'Mermaid',
+  'MermaidFence',
 ] as const;
 
 function calloutPalette(props: Record<string, unknown>): Element {
@@ -164,7 +164,7 @@ export function paletteFor(node: PmNode): Element | null {
     case 'audio':
       return audioPalette(props);
     case 'Math':
-    case 'Mermaid':
+    case 'MermaidFence':
       return nonPortableRenderSourceFallback(node, document);
     default:
       return null;

@@ -433,8 +433,8 @@ describe('PropPanel — CodeMirror branch (string props with `language`)', () =>
     expect(html).toContain('id="prop-formula"');
   });
 
-  test('Mermaid.chart renders the CodeMirror wrapper with `data-prop-language="mermaid"`', () => {
-    const d = findBuiltIn('Mermaid');
+  test('MermaidFence.chart renders the CodeMirror wrapper with `data-prop-language="mermaid"`', () => {
+    const d = findBuiltIn('MermaidFence');
     const html = withFakeStorage(() =>
       renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
     );

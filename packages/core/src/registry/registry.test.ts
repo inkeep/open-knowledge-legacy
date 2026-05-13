@@ -4,10 +4,10 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the 11 canonical + 10 compat descriptors + wildcard', () => {
+  test('returns the 11 canonical + 9 compat descriptors + wildcard', () => {
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(22);
+    expect(entries.length).toBe(21);
   });
 
   test('get returns registered component by name', () => {
@@ -73,7 +73,8 @@ describe('createRegistry', () => {
     expect(registry.has('audio')).toBe(true);
     expect(registry.has('Accordion')).toBe(true);
     expect(registry.has('Math')).toBe(true);
-    expect(registry.has('Mermaid')).toBe(true);
+    expect(registry.has('MermaidFence')).toBe(true);
+    expect(registry.has('Mermaid')).toBe(false);
     expect(registry.has('Pdf')).toBe(true);
     expect(registry.has('File')).toBe(true);
     expect(registry.has('Tabs')).toBe(true);
@@ -88,12 +89,12 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains 11 canonical + 10 compat entries (5-pack + Math + Mermaid + Pdf + File + Tabs + Tab canonicals; source-form preservation + math/mermaid syntax + wiki-embed compats)', () => {
-    expect(builtInComponents.length).toBe(21);
+  test('contains 11 canonical + 9 compat entries (5-pack + Math + MermaidFence + Pdf + File + Tabs + Tab canonicals; source-form preservation + math syntax + wiki-embed compats; Mermaid is fence-only)', () => {
+    expect(builtInComponents.length).toBe(20);
     const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
     const compat = builtInComponents.filter((m) => m.surface === 'compat');
     expect(canonical.length).toBe(11);
-    expect(compat.length).toBe(10);
+    expect(compat.length).toBe(9);
   });
 
   test('all entries have required fields', () => {
@@ -447,16 +448,16 @@ describe('builtInComponents manifest', () => {
     expect(display).toBeUndefined();
   });
 
-  test('Mermaid exposes the 3-prop surface', () => {
-    const mermaid = builtInComponents.find((m) => m.name === 'Mermaid');
+  test('MermaidFence exposes the 1-prop fence surface (chart only)', () => {
+    const mermaid = builtInComponents.find((m) => m.name === 'MermaidFence');
     expect(mermaid).toBeDefined();
     if (!mermaid) return;
     const propNames = mermaid.props.map((p) => p.name).sort();
-    expect(propNames).toEqual(['chart', 'id', 'theme'].sort());
+    expect(propNames).toEqual(['chart']);
   });
 
-  test('Mermaid has `chart` as a required string with autoFocus + Mermaid CodeMirror language', () => {
-    const mermaid = builtInComponents.find((m) => m.name === 'Mermaid');
+  test('MermaidFence has `chart` as a required string with autoFocus + Mermaid CodeMirror language', () => {
+    const mermaid = builtInComponents.find((m) => m.name === 'MermaidFence');
     const chart = mermaid?.props.find((p) => p.name === 'chart');
     expect(chart).toBeDefined();
     expect(chart?.type).toBe('string');
@@ -467,23 +468,32 @@ describe('builtInComponents manifest', () => {
     }
   });
 
-  test('Mermaid has `theme` as a 4-value enum with `default` default (advanced-tagged)', () => {
-    const mermaid = builtInComponents.find((m) => m.name === 'Mermaid');
-    const theme = mermaid?.props.find((p) => p.name === 'theme');
-    expect(theme).toBeDefined();
-    if (theme?.type === 'enum') {
-      expect([...theme.enumValues].sort()).toEqual(['dark', 'default', 'forest', 'neutral'].sort());
-      expect(theme.defaultValue).toBe('default');
-      expect(theme.advanced).toBe(true);
-    } else {
-      throw new Error('Mermaid.theme must be an enum');
-    }
-  });
-
-  test('Mermaid is a self-closing leaf (no children slot)', () => {
-    const mermaid = builtInComponents.find((m) => m.name === 'Mermaid');
+  test('MermaidFence is a self-closing leaf (no children slot)', () => {
+    const mermaid = builtInComponents.find((m) => m.name === 'MermaidFence');
     expect(mermaid?.hasChildren).toBe(false);
     expect(mermaid?.isSelfClosing).toBe(true);
+  });
+
+  test('MermaidFence keeps `displayName: "Mermaid"` (user-facing label unchanged)', () => {
+    const mermaid = builtInComponents.find((m) => m.name === 'MermaidFence');
+    expect(mermaid?.displayName).toBe('Mermaid');
+  });
+
+  test('MermaidFence serializes to a ` ```mermaid ` code fence (not JSX)', () => {
+    const mermaid = builtInComponents.find((m) => m.name === 'MermaidFence');
+    expect(mermaid).toBeDefined();
+    if (!mermaid) return;
+    // biome-ignore lint/suspicious/noExplicitAny: serialize signature is heterogeneous across descriptors
+    const out: any = mermaid.serialize(
+      {
+        type: { name: 'jsxComponent' },
+        attrs: { componentName: 'MermaidFence', props: { chart: 'graph TD; A-->B;' } },
+      } as never,
+      { all: () => [] } as never,
+    );
+    expect(out.type).toBe('code');
+    expect(out.lang).toBe('mermaid');
+    expect(out.value).toBe('graph TD; A-->B;');
   });
 
   test('each name is unique', () => {
@@ -579,9 +589,9 @@ describe('common/advanced split per descriptor', () => {
       common: ['formula'],
       advanced: ['id', 'language'],
     },
-    Mermaid: {
+    MermaidFence: {
       common: ['chart'],
-      advanced: ['id', 'theme'],
+      advanced: [],
     },
     Pdf: {
       common: ['src'],

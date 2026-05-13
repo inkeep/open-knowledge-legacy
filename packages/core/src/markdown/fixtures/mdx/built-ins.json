@@ -196,12 +196,12 @@
   },
   {
     "componentName": "Mermaid-basic",
-    "blockForm": "<Mermaid chart=\"graph TD; A-->B;\" />\n",
-    "notes": "Re-introduces Mermaid (2026-04-21 stub deleted; now ships with mermaid-js renderer)"
+    "blockForm": "```mermaid\ngraph TD; A-->B;\n```\n",
+    "notes": "` ```mermaid ` fence is the only authoring form. The descriptor (`MermaidFence`) exposes a single `chart` prop and emits the fence on dirty save."
   },
   {
-    "componentName": "Mermaid-with-id",
-    "blockForm": "<Mermaid chart=\"graph TD; A-->B;\" id=\"sys-arch\" />\n",
-    "notes": "id attr for deep-link anchor (e.g. #sys-arch) on a Mermaid block"
+    "componentName": "Mermaid-multiline",
+    "blockForm": "```mermaid\nflowchart LR\n  A[Start] --> B{Valid?}\n  B -- Yes --> C[Render]\n  B -- No --> D[Show error]\n```\n",
+    "notes": "Multi-line chart body; the fence keeps the source bytes verbatim — no escaping of newlines or special chars (unlike the removed JSX form)."
   }
 ]
