@@ -24,6 +24,7 @@ test.describe('NG7 Pattern D — rapid-nav coherence', () => {
 
     const aRow = page.getByRole('treeitem', { name: `${docA}.md`, exact: true });
     const bRow = page.getByRole('treeitem', { name: `${docB}.md`, exact: true });
+    const navStartTime = await page.evaluate(() => performance.now());
     await aRow.click({ timeout: 10_000 });
     await bRow.click({ timeout: 10_000 });
 
@@ -43,14 +44,15 @@ test.describe('NG7 Pattern D — rapid-nav coherence', () => {
     expect(totalPmCount).toBeGreaterThanOrEqual(1);
 
     const aSettleMarks = await page.evaluate(
-      ({ targetDoc }) => {
+      ({ targetDoc, since }) => {
         const isMountSettle = (entry: PerformanceEntry) =>
           entry.name === 'ok/mount/resolve' ||
           entry.name === 'ok/mount/reject' ||
-          entry.name === 'ok/mount/cache-hit';
+          entry.name === 'ok/cache/hit';
         return performance
           .getEntriesByType('measure')
           .filter(isMountSettle)
+          .filter((m) => m.startTime >= since)
           .map((m) => {
             const detail = (m as unknown as { detail?: { devtools?: { properties?: unknown } } })
               .detail;
@@ -61,14 +63,14 @@ test.describe('NG7 Pattern D — rapid-nav coherence', () => {
           })
           .filter((m) => m.docName === targetDoc);
       },
-      { targetDoc: docA },
+      { targetDoc: docA, since: navStartTime },
     );
     expect(aSettleMarks.length).toBeGreaterThanOrEqual(1);
     const validReasons = new Set([undefined, 'aborted']);
     for (const m of aSettleMarks) {
       const isValid =
         m.name === 'ok/mount/resolve' ||
-        m.name === 'ok/mount/cache-hit' ||
+        m.name === 'ok/cache/hit' ||
         (m.name === 'ok/mount/reject' && validReasons.has(m.reason));
       expect(isValid, `unexpected mount-promise settle for ${docA}: ${JSON.stringify(m)}`).toBe(
         true,
