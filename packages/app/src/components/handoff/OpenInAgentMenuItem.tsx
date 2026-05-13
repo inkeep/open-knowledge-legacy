@@ -11,6 +11,7 @@ import { toast as sonnerToast } from 'sonner';
 import { ClaudeIcon } from '@/components/icons/claude';
 import { CodexBrandIcon } from '@/components/icons/codex';
 import { CursorIcon } from '@/components/icons/cursor';
+import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -154,6 +155,17 @@ interface OpenInAgentMenuItemProps {
   /** Fired only when the row is enabled and the user selects it. The hook
    *  layer (`useHandoffDispatch`) handles toast + telemetry. */
   readonly onSelect: () => void;
+  /** When defined AND the row's target is `claude-cowork` AND the row is in
+   *  the enabled branch, the row swaps its dispatch click for an INSTALL
+   *  badge that fires this callback instead. Used by `OpenInAgentMenu` and
+   *  `OpenInAgentContextSubmenu` to surface the in-context install nudge
+   *  when Claude Desktop is present but the OK skill isn't installed yet.
+   *
+   *  Only the enabled branch reacts to this prop — the pre-probe and
+   *  not-installed branches are unchanged (the existing "Install Claude
+   *  Desktop →" submenu remains the right affordance when the desktop app
+   *  itself is missing). */
+  readonly onInstallSkillRequest?: () => void;
   readonly openExternal?: typeof defaultOpenExternal;
   /** Test seam — fires after a successful web-fallback click so the caller can
    *  surface a toast. Defaults to a no-op; production callers will wire sonner. */
@@ -164,8 +176,15 @@ interface OpenInAgentMenuItemProps {
   readonly onWebFallbackError?: (target: TargetData, reason: string) => void;
 }
 
+export function shouldShowSkillInstallBadge(args: {
+  readonly target: TargetData;
+  readonly onInstallSkillRequest: (() => void) | undefined;
+}): boolean {
+  return args.onInstallSkillRequest !== undefined && args.target.id === 'claude-cowork';
+}
+
 export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode {
-  const { target, installState, isElectronHost, prompt, onSelect } = props;
+  const { target, installState, isElectronHost, prompt, onSelect, onInstallSkillRequest } = props;
   const openExternal = props.openExternal ?? defaultOpenExternal;
   const onWebFallbackSuccess = props.onWebFallbackSuccess ?? (() => {});
   const onWebFallbackError = props.onWebFallbackError ?? (() => {});
@@ -191,14 +210,35 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
   };
 
   if (rowState.enabled) {
+    const showSkillInstallBadge = shouldShowSkillInstallBadge({ target, onInstallSkillRequest });
     return (
       <DropdownMenuItem
-        onSelect={onSelect}
+        onSelect={showSkillInstallBadge && onInstallSkillRequest ? onInstallSkillRequest : onSelect}
         data-testid={`open-in-agent-item-${target.id}`}
-        aria-label={`Open in ${target.displayName}`}
+        aria-label={
+          showSkillInstallBadge
+            ? `Install Open Knowledge skill in ${target.displayName}`
+            : `Open in ${target.displayName}`
+        }
       >
         <TargetIcon id={target.id} aria-hidden="true" />
-        <span>{target.displayName}</span>
+        {/* Visible row text stays as the target name in install mode; the
+         *  right-aligned INSTALL badge alone carries the action signal.
+         *  flex-1 only when a sibling badge needs to share the row — keeps
+         *  the no-badge row's visual layout byte-identical to today's. */}
+        <span className={showSkillInstallBadge ? 'flex-1 whitespace-nowrap' : undefined}>
+          {target.displayName}
+        </span>
+        {showSkillInstallBadge ? (
+          <Badge
+            variant="outline"
+            aria-hidden="true"
+            className="ml-2 h-[18px] px-1.5 py-0 text-[10px]"
+            data-testid="open-in-agent-skill-install-badge"
+          >
+            Install
+          </Badge>
+        ) : null}
       </DropdownMenuItem>
     );
   }

@@ -44,6 +44,7 @@ import {
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { useConfigContext } from '@/lib/config-provider';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
+import { useClaudeDesktopIntegration } from '@/lib/handoff/use-claude-desktop-integration';
 import { cn } from '@/lib/utils';
 import { OkignoreSection } from './OkignoreSection';
 import { ProjectTemplatesSection } from './ProjectTemplatesSection';
@@ -153,7 +154,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   const hasProject = collabUrl !== null;
 
-  const claudeDesktopAvailable = useClaudeDesktopAvailable();
+  const { desktopPresent } = useClaudeDesktopIntegration();
 
   const groups: SidebarGroup[] = [
     {
@@ -179,7 +180,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       id: 'integrations',
       label: 'Integrations',
       enabled: true,
-      items: claudeDesktopAvailable ? [{ id: 'claude-desktop', label: 'Claude Desktop' }] : [],
+      items: desktopPresent ? [{ id: 'claude-desktop', label: 'Claude Desktop' }] : [],
     },
   ];
 
@@ -205,36 +206,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       </DialogContent>
     </Dialog>
   );
-}
-
-function useClaudeDesktopAvailable(): boolean {
-  const [available, setAvailable] = useState(true);
-
-  useEffect(() => {
-    const desktopBridge =
-      typeof window !== 'undefined'
-        ? (window as { okDesktop?: { skill?: { detectClaudeDesktop?: () => Promise<boolean> } } })
-            .okDesktop
-        : undefined;
-    const detect = desktopBridge?.skill?.detectClaudeDesktop;
-    if (!detect) {
-      setAvailable(true);
-      return;
-    }
-    let cancelled = false;
-    void detect()
-      .then((present) => {
-        if (!cancelled) setAvailable(present);
-      })
-      .catch(() => {
-        if (!cancelled) setAvailable(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return available;
 }
 
 interface SettingsSidebarProps {
@@ -896,6 +867,7 @@ function SavedIndicator({ visible }: { visible: boolean }) {
 
 function IntegrationsSection() {
   const [installOpen, setInstallOpen] = useState(false);
+  const { skillInstalled, refresh } = useClaudeDesktopIntegration();
 
   return (
     <section aria-labelledby="settings-integrations-title" className="space-y-3">
@@ -922,11 +894,18 @@ function IntegrationsSection() {
             data-testid="settings-install-claude-desktop"
             className="uppercase font-mono"
           >
-            Install
+            {skillInstalled ? 'Reinstall' : 'Install'}
           </Button>
         </div>
       </div>
-      <InstallInClaudeDesktopDialog open={installOpen} onOpenChange={setInstallOpen} />
+      <InstallInClaudeDesktopDialog
+        open={installOpen}
+        onOpenChange={(next) => {
+          setInstallOpen(next);
+          if (!next) refresh();
+        }}
+        reinstall={skillInstalled}
+      />
     </section>
   );
 }

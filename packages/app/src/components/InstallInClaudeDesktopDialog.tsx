@@ -20,6 +20,9 @@ const DOCS_URL = 'https://inkeep.github.io/open-knowledge/guides/install-claude-
 interface InstallInClaudeDesktopDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Switches the dialog title / copy to "Reinstall…" framing when the
+   *  caller knows a prior install exists. Defaults to false (Install). */
+  reinstall?: boolean;
 }
 
 type Phase =
@@ -114,9 +117,11 @@ function UploadStepsSection() {
 export function InstallInClaudeDesktopDialog({
   open,
   onOpenChange,
+  reinstall = false,
 }: InstallInClaudeDesktopDialogProps) {
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const [commandCopied, setCommandCopied] = useState(false);
+  const titleVerb = reinstall ? 'Reinstall' : 'Install';
 
   useEffect(() => {
     if (!open) {
@@ -169,7 +174,7 @@ export function InstallInClaudeDesktopDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Download aria-hidden="true" className="h-4 w-4" />
-            Install for Claude Chat & Cowork
+            {titleVerb} for Claude Chat & Cowork
           </DialogTitle>
           <DialogDescription>
             Adds the Open Knowledge skill to the{' '}
@@ -317,7 +322,7 @@ export function InstallInClaudeDesktopDialog({
               </Button>
               <Button onClick={handleInstallElectron}>
                 <Download aria-hidden="true" className="h-4 w-4" />
-                Install
+                {titleVerb}
               </Button>
             </>
           )}
@@ -348,7 +353,7 @@ export function InstallInClaudeDesktopDialog({
           {phase.kind === 'downloading' && (
             <Button disabled>
               <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-              Installing
+              {reinstall ? 'Reinstalling' : 'Installing'}
             </Button>
           )}
           {phase.kind === 'handed-off' && <Button onClick={() => onOpenChange(false)}>Done</Button>}
