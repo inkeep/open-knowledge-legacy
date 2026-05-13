@@ -109,6 +109,7 @@ export async function startProxyServer(opts: StartProxyOptions): Promise<ProxySe
     close: () =>
       new Promise<void>((done) => {
         httpServer.close(() => done());
+        httpServer.closeIdleConnections();
       }),
   };
 }
