@@ -39,6 +39,7 @@ import {
   resolveDevCliDistPath,
   resolveEditorTargets,
 } from './editors.ts';
+import { LAUNCH_JSON_PORT } from './ui.ts';
 
 function readJsonConfig(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
@@ -258,19 +259,22 @@ export function scaffoldLaunchJson(
     runtimeExecutable: string;
     runtimeArgs: string[];
     port: number;
+    autoPort: true;
   } =
     installOptions.mode === 'dev'
       ? {
           name: LAUNCH_CONFIG_NAME,
           runtimeExecutable: 'node',
           runtimeArgs: [resolveDevCliDistPath(), 'ui'],
-          port: 3000,
+          port: LAUNCH_JSON_PORT,
+          autoPort: true,
         }
       : {
           name: LAUNCH_CONFIG_NAME,
           runtimeExecutable: 'npx',
           runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
-          port: 3000,
+          port: LAUNCH_JSON_PORT,
+          autoPort: true,
         };
 
   try {

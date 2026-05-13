@@ -34,6 +34,7 @@ import {
   writeEditorMcpConfig,
   writeUserMcpConfigs,
 } from './init.ts';
+import { LAUNCH_JSON_PORT } from './ui.ts';
 
 describe('runInit', () => {
   let testDir: string;
@@ -62,7 +63,8 @@ describe('runInit', () => {
     name: 'open-knowledge-ui',
     runtimeExecutable: 'node',
     runtimeArgs: [join(devRepoRoot(), 'packages', 'cli', 'dist', 'cli.mjs'), 'ui'],
-    port: 3000,
+    port: LAUNCH_JSON_PORT,
+    autoPort: true,
   });
   const defaultInstallUserSkill = async () => 'installed' as const;
   const runInitForTest = async (options: Parameters<typeof runInit>[0] = {}) =>
@@ -657,8 +659,8 @@ describe('runInit', () => {
       expect(entry.name).toBe('open-knowledge-ui');
       expect(entry.runtimeExecutable).toBe('npx');
       expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
-      expect(entry.port).toBe(3000);
-      expect(entry.autoPort).toBeUndefined();
+      expect(entry.port).toBe(LAUNCH_JSON_PORT);
+      expect(entry.autoPort).toBe(true);
     });
 
     it('overwrites a stale open-knowledge-ui entry by default', async () => {
@@ -714,7 +716,8 @@ describe('runInit', () => {
                 name: 'open-knowledge-ui',
                 runtimeExecutable: 'npx',
                 runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
-                port: 3000,
+                port: LAUNCH_JSON_PORT,
+                autoPort: true,
               },
             ],
           },
@@ -740,7 +743,8 @@ describe('runInit', () => {
                 name: 'open-knowledge-ui',
                 runtimeExecutable: 'npx',
                 runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
-                port: 3000,
+                port: LAUNCH_JSON_PORT,
+                autoPort: true,
               },
             ],
           },
@@ -787,7 +791,8 @@ describe('runInit', () => {
         (c: { name: string }) => c.name === 'open-knowledge-ui',
       );
       expect(ok.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
-      expect(ok.autoPort).toBeUndefined();
+      expect(ok.port).toBe(LAUNCH_JSON_PORT);
+      expect(ok.autoPort).toBe(true);
     });
 
     it('does NOT scaffold launch.json when Claude is not among selected editors', async () => {

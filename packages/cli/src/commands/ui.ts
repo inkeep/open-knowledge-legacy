@@ -18,6 +18,10 @@ import {
 
 export const DEFAULT_UI_SAFETY_NET_MS = 12 * 60 * 60 * 1000;
 
+export const DEFAULT_UI_PORT = 39847;
+
+export const LAUNCH_JSON_PORT = 39848;
+
 export interface UiServerHandle {
   httpServers: HttpServer[];
   port: number;
@@ -43,6 +47,7 @@ interface StartUiServerOptions {
   config: Config;
   cwd: string;
   port: number;
+  fallbackToKernel?: boolean;
   host?: string;
   safetyNetMs?: number;
   scheduler?: Scheduler;
@@ -168,7 +173,26 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   const httpServers: HttpServer[] = [];
   let boundPort = opts.port;
 
-  try {
+  const isEAddrInUse = (err: unknown): boolean =>
+    err instanceof Error && (err as NodeJS.ErrnoException).code === 'EADDRINUSE';
+
+  const tearDownPartialBinds = async (): Promise<void> => {
+    await Promise.all(
+      httpServers.splice(0).map(
+        (s) =>
+          new Promise<void>((done) => {
+            try {
+              s.close(() => done());
+            } catch {
+              done();
+            }
+          }),
+      ),
+    );
+  };
+
+  const runBindLoop = async (initialPort: number): Promise<void> => {
+    boundPort = initialPort;
     for (const host of bindTargets) {
       const server = createHttpServer(requestHandler);
       httpServers.push(server);
@@ -185,19 +209,21 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
         });
       });
     }
+  };
+
+  try {
+    try {
+      await runBindLoop(opts.port);
+    } catch (err) {
+      if (opts.fallbackToKernel === true && isEAddrInUse(err)) {
+        await tearDownPartialBinds();
+        await runBindLoop(0);
+      } else {
+        throw err;
+      }
+    }
   } catch (err) {
-    await Promise.all(
-      httpServers.map(
-        (s) =>
-          new Promise<void>((done) => {
-            try {
-              s.close(() => done());
-            } catch {
-              done();
-            }
-          }),
-      ),
-    );
+    await tearDownPartialBinds();
     try {
       releaseUiLock(lockDir);
     } catch {}
@@ -281,22 +307,30 @@ function notFound(res: ServerResponse, path?: string): void {
   );
 }
 
-function resolveRequestedPort(optsPort: string | undefined, envPort: string | undefined): number {
+interface ResolvedRequestedPort {
+  port: number;
+  fallbackToKernel: boolean;
+}
+
+function resolveRequestedPort(
+  optsPort: string | undefined,
+  envPort: string | undefined,
+): ResolvedRequestedPort {
   if (optsPort !== undefined) {
     const parsed = Number.parseInt(optsPort, 10);
     if (Number.isNaN(parsed) || parsed < 0 || parsed > 65535) {
       throw new Error(`Invalid --port value '${optsPort}'`);
     }
-    return parsed;
+    return { port: parsed, fallbackToKernel: false };
   }
   if (envPort !== undefined && envPort !== '') {
     const parsed = Number.parseInt(envPort, 10);
     if (Number.isNaN(parsed) || parsed < 0 || parsed > 65535) {
       throw new Error(`Invalid PORT env value '${envPort}'`);
     }
-    return parsed;
+    return { port: parsed, fallbackToKernel: false };
   }
-  return 0;
+  return { port: DEFAULT_UI_PORT, fallbackToKernel: true };
 }
 
 type UiCollisionResult =
@@ -370,7 +404,10 @@ export async function resolveUiLockCollision(
 export function uiCommand(getConfig: () => Config): Command {
   return new Command('ui')
     .description('Serve the Open Knowledge React editor UI')
-    .option('-p, --port <port>', 'UI port (default: $PORT env or 0 / kernel-allocated)')
+    .option(
+      '-p, --port <port>',
+      `UI port (default: $PORT env or ${DEFAULT_UI_PORT}, kernel-allocated fallback if busy)`,
+    )
     .option(
       '-H, --host <host>',
       'UI host. Default: two-socket loopback bind (`[::1]` + `127.0.0.1`) so cross-family collisions fail loud (D-033). Pass an explicit host (e.g. `127.0.0.1`, `0.0.0.0`) to bind a single socket on that host.',
@@ -382,20 +419,22 @@ export function uiCommand(getConfig: () => Config): Command {
       const config = getConfig();
       const host = opts.host;
 
-      let requestedPort: number;
+      let resolved: ResolvedRequestedPort;
       try {
-        requestedPort = resolveRequestedPort(opts.port, process.env.PORT);
+        resolved = resolveRequestedPort(opts.port, process.env.PORT);
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;
         return;
       }
+      const requestedPort = resolved.port;
 
       try {
         const handle = await startUiServer({
           config,
           cwd: process.cwd(),
           port: requestedPort,
+          fallbackToKernel: resolved.fallbackToKernel,
           host,
         });
         const displayHost =
