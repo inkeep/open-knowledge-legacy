@@ -31,6 +31,18 @@
       "cache": true,
       "inputs": ["src/**/*.ts", "src/**/*.tsx"]
     },
+    "test:dom": {
+      "dependsOn": ["^build"],
+      "cache": true,
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/dom/**/*.ts",
+        "scripts/run-test-dom.sh",
+        "../core/src/**/*.ts",
+        "../server/src/**/*.ts"
+      ]
+    },
     "test:integration": {
       "dependsOn": ["^build"],
       "cache": true,

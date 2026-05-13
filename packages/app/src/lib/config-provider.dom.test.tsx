@@ -1,0 +1,79 @@
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { cleanup, render, screen } from '@testing-library/react';
+
+mock.module('@/editor/DocumentContext', () => ({
+  useDocumentContext: () => ({ collabUrl: null }),
+  DocumentProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+mock.module('@/hooks/use-theme-bridge', () => ({
+  useThemeBridge: () => {},
+}));
+
+const { ConfigProvider, useConfigContext } = await import('./config-provider');
+
+const EXPECTED_NULL_KEYS = [
+  'userBinding',
+  'projectBinding',
+  'projectLocalBinding',
+  'okignoreBinding',
+  'userConfig',
+  'projectConfig',
+  'projectLocalConfig',
+  'merged',
+] as const;
+
+function Consumer() {
+  const ctx = useConfigContext();
+  return (
+    <div data-testid="consumer">
+      {EXPECTED_NULL_KEYS.map((key) => (
+        <span key={key} data-testid={`field:${key}`}>
+          {String(ctx[key])}
+        </span>
+      ))}
+      <span data-testid="field:projectLocalSynced">{String(ctx.projectLocalSynced)}</span>
+      <span data-testid="field:okignoreSynced">{String(ctx.okignoreSynced)}</span>
+    </div>
+  );
+}
+
+describe('ConfigProvider runtime (Tier-3)', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  test('propagates the all-null value when collabUrl is null (cold-start window)', () => {
+    render(
+      <ConfigProvider>
+        <Consumer />
+      </ConfigProvider>,
+    );
+
+    expect(screen.getByTestId('consumer')).toBeDefined();
+
+    for (const key of EXPECTED_NULL_KEYS) {
+      expect(screen.getByTestId(`field:${key}`).textContent).toBe('null');
+    }
+    expect(screen.getByTestId('field:projectLocalSynced').textContent).toBe('false');
+    expect(screen.getByTestId('field:okignoreSynced').textContent).toBe('false');
+  });
+
+  describe('useConfigContext outside provider', () => {
+    let consoleErrorSpy: ReturnType<typeof spyOn>;
+
+    beforeEach(() => {
+      consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      consoleErrorSpy.mockRestore();
+    });
+
+    test('throws the documented message when used outside <ConfigProvider />', () => {
+      expect(() => {
+        render(<Consumer />);
+      }).toThrow('useConfigContext must be used within <ConfigProvider />');
+    });
+  });
+});
