@@ -1005,12 +1005,17 @@ export class ProviderPool {
   async closeAndClearPersistence(docName: string): Promise<void> {
     const entry = this.entries.get(docName);
     if (entry?.kind === 'active' && entry.persistence !== null) {
+      const persistence = entry.persistence;
       try {
-        await entry.persistence.clearData();
+        this.close(docName);
+      } catch (err) {
+        console.warn(`[ProviderPool] close before clearData threw for ${docName}:`, err);
+      }
+      try {
+        await persistence.clearData();
       } catch (err) {
         console.warn(`[ProviderPool] clearData on rename failed for ${docName}:`, err);
       }
-      this.close(docName);
       return;
     }
     if (entry) {
@@ -1144,8 +1149,16 @@ export class ProviderPool {
 
     invalidateSyncPromise(docName);
     this.fireEvict(docName);
-    observerCleanup?.();
-    observerFireCounterCleanup?.();
+    try {
+      observerCleanup?.();
+    } catch (err) {
+      console.warn(`[ProviderPool] observer cleanup threw for ${docName}:`, err);
+    }
+    try {
+      observerFireCounterCleanup?.();
+    } catch (err) {
+      console.warn(`[ProviderPool] observer-fire-counter cleanup threw for ${docName}:`, err);
+    }
     clearObserverFireCounter(docName);
 
     if (persistence !== null) {

@@ -307,18 +307,202 @@ describe('block-separator-collapse — `\\n[marker]` ≡ `\\n\\n[marker]`', () =
   });
 });
 
+describe('commonmark-escape collapse', () => {
+  test('escaped underscore equivalent to plain underscore', () => {
+    expect(normalizeBridge('init_spike')).toBe(normalizeBridge('init\\_spike'));
+  });
+
+  test('escaped tilde equivalent to plain tilde', () => {
+    expect(normalizeBridge('~3000')).toBe(normalizeBridge('\\~3000'));
+  });
+
+  test('multiple escaped tildes equivalent to multiple plain tildes', () => {
+    expect(normalizeBridge('~~~')).toBe(normalizeBridge('\\~\\~\\~'));
+  });
+
+  test('escaped underscore in identifier-like text', () => {
+    expect(normalizeBridge('STOP_IF')).toBe(normalizeBridge('STOP\\_IF'));
+  });
+
+  test('mdast strip-on-inline-code direction: `\\|---\\|` equivalent to `|---|`', () => {
+    expect(normalizeBridge('`\\|---\\|---\\|`')).toBe(normalizeBridge('`|---|---|`'));
+  });
+
+  test('NEGATIVE: backslash before a NON-escapable char is preserved', () => {
+    expect(normalizeBridge('a\\b')).toBe('a\\b');
+    expect(normalizeBridge('a\\b')).not.toBe(normalizeBridge('ab'));
+  });
+
+  test('NEGATIVE: plain text without backslashes is preserved', () => {
+    expect(normalizeBridge('plain text')).toBe('plain text');
+  });
+
+  test('idempotent: applying collapse to already-collapsed string is a no-op', () => {
+    expect(normalizeBridge(normalizeBridge('init\\_spike'))).toBe(normalizeBridge('init_spike'));
+  });
+});
+
+describe('table-align-row-spacing collapse', () => {
+  test('unpadded equivalent to padded alignment row', () => {
+    expect(normalizeBridge('|---|---|')).toBe(normalizeBridge('| --- | --- |'));
+  });
+
+  test('three-column alignment row, unpadded vs padded', () => {
+    expect(normalizeBridge('|---|---|---|')).toBe(normalizeBridge('| --- | --- | --- |'));
+  });
+
+  test('colon markers preserved: left-align ↔ left-align', () => {
+    expect(normalizeBridge('|:---|:---|')).toBe(normalizeBridge('| :--- | :--- |'));
+  });
+
+  test('colon markers preserved: right-align ↔ right-align', () => {
+    expect(normalizeBridge('|---:|---:|')).toBe(normalizeBridge('| ---: | ---: |'));
+  });
+
+  test('colon markers preserved: center-align ↔ center-align', () => {
+    expect(normalizeBridge('|:---:|:---:|')).toBe(normalizeBridge('| :---: | :---: |'));
+  });
+
+  test('mixed colon markers across columns', () => {
+    expect(normalizeBridge('|:---:|---:|:---|')).toBe(normalizeBridge('| :---: | ---: | :--- |'));
+  });
+
+  test('whole markdown table with header + alignment row + data rows', () => {
+    const unpadded = '|Name|Age|\n|---|---|\n|Alice|30|\n';
+    const padded = '|Name|Age|\n| --- | --- |\n|Alice|30|\n';
+    expect(normalizeBridge(unpadded)).toBe(normalizeBridge(padded));
+  });
+
+  test('NEGATIVE: a paragraph line that is NOT an alignment row keeps its whitespace', () => {
+    expect(normalizeBridge('a - b | c')).toBe('a - b | c');
+  });
+
+  test('NEGATIVE: single-column "table" with no separator is NOT collapsed', () => {
+    expect(normalizeBridge('|---|')).toBe('|---|');
+  });
+});
+
+describe('emphasis-around-code flatten', () => {
+  test('strong wrapper around inline code equivalent to bare inline code', () => {
+    expect(normalizeBridge('**`text-indent`**')).toBe(normalizeBridge('`text-indent`'));
+  });
+
+  test('strong wrapper with surrounding whitespace collapses identically', () => {
+    expect(normalizeBridge('** `code` **')).toBe(normalizeBridge('`code`'));
+  });
+
+  test('NEGATIVE: strong wrapping non-code content is preserved', () => {
+    expect(normalizeBridge('**bold text**')).toBe('**bold text**');
+    expect(normalizeBridge('**bold text**')).not.toBe(normalizeBridge('bold text'));
+  });
+
+  test('NEGATIVE: strong wrapping multiple inline-code spans is preserved', () => {
+    expect(normalizeBridge('**`a` and `b`**')).toBe('**`a` and `b`**');
+  });
+});
+
+describe('list-indent canonical collapse', () => {
+  test('6-space-indented list item equivalent to 3-space-indented', () => {
+    expect(normalizeBridge('      - nested item')).toBe(normalizeBridge('   - nested item'));
+  });
+
+  test('top-level list item unchanged', () => {
+    expect(normalizeBridge('- item')).toBe('- item');
+  });
+
+  test('whole nested list block collapses identically', () => {
+    const sixSpace = '- a\n      - nested\n      - also nested\n- b\n';
+    const threeSpace = '- a\n   - nested\n   - also nested\n- b\n';
+    expect(normalizeBridge(sixSpace)).toBe(normalizeBridge(threeSpace));
+  });
+
+  test('tab-indented list item equivalent to 3-space-indented', () => {
+    expect(normalizeBridge('\t- nested item')).toBe(normalizeBridge('   - nested item'));
+  });
+
+  test('ordered list with deep indent collapses', () => {
+    expect(normalizeBridge('      1. nested item')).toBe(normalizeBridge('   1. nested item'));
+  });
+
+  test('asterisk-marker list with deep indent collapses', () => {
+    expect(normalizeBridge('      * nested item')).toBe(normalizeBridge('   * nested item'));
+  });
+
+  test('plus-marker list with deep indent collapses', () => {
+    expect(normalizeBridge('      + nested item')).toBe(normalizeBridge('   + nested item'));
+  });
+
+  test('Pandoc alphabetic marker with deep indent collapses', () => {
+    expect(normalizeBridge('      a. nested item')).toBe(normalizeBridge('   a. nested item'));
+  });
+
+  test('NEGATIVE: non-list-marker line with leading whitespace is preserved', () => {
+    expect(normalizeBridge('   plain paragraph line')).toBe('   plain paragraph line');
+  });
+});
+
 describe('detectAppliedToleranceClasses (FR-41)', () => {
   test('exposes the class enum for bounded-cardinality emit consumers', () => {
     expect(BRIDGE_TOLERANCE_CLASSES).toEqual([
       'bom',
       'crlf',
+      'commonmark-escape',
+      'emphasis-around-code',
       'leading-newline',
       'doc-start-thematic',
       'block-separator-collapse',
+      'table-align-row-spacing',
+      'list-indent-canonical',
       'trailing-whitespace',
       'blank-line-collapse',
       'trailing-newline',
     ]);
+  });
+
+  test('detects emphasis-around-code when either input contains the tight wrap', () => {
+    expect(detectAppliedToleranceClasses('**`text-indent`**', '`text-indent`')).toContain(
+      'emphasis-around-code',
+    );
+  });
+
+  test('detects list-indent-canonical when either input has an indented list item', () => {
+    expect(detectAppliedToleranceClasses('      - foo', '   - foo')).toContain(
+      'list-indent-canonical',
+    );
+    expect(detectAppliedToleranceClasses('\t- foo', '- foo')).toContain('list-indent-canonical');
+  });
+
+  test('does not detect list-indent-canonical when neither input has indent', () => {
+    expect(detectAppliedToleranceClasses('- foo', '- foo')).not.toContain('list-indent-canonical');
+  });
+
+  test('detects commonmark-escape when present in either input', () => {
+    expect(detectAppliedToleranceClasses('init\\_spike', 'init_spike')).toContain(
+      'commonmark-escape',
+    );
+    expect(detectAppliedToleranceClasses('init_spike', 'init\\_spike')).toContain(
+      'commonmark-escape',
+    );
+    expect(detectAppliedToleranceClasses('\\~5ms', '~5ms')).toContain('commonmark-escape');
+  });
+
+  test('does not detect commonmark-escape for unrelated backslashes', () => {
+    expect(detectAppliedToleranceClasses('a\\b', 'a\\b')).not.toContain('commonmark-escape');
+  });
+
+  test('detects table-align-row-spacing when either input contains an alignment row', () => {
+    expect(detectAppliedToleranceClasses('|---|---|', '| --- | --- |')).toContain(
+      'table-align-row-spacing',
+    );
+    expect(detectAppliedToleranceClasses('|:---|---:|', '| :--- | ---: |')).toContain(
+      'table-align-row-spacing',
+    );
+  });
+
+  test('does not detect table-align-row-spacing for paragraph content', () => {
+    expect(detectAppliedToleranceClasses('a - b | c', 'a - b | c')).not.toContain(
+      'table-align-row-spacing',
+    );
   });
 
   test('detects block-separator-collapse when one side has `\\n\\n[marker]` and the other has `\\n[marker]`', () => {

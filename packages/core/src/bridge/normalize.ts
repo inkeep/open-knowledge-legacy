@@ -1,13 +1,32 @@
+const COMMONMARK_ESCAPE_RE = /\\([!"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~])/g;
+
+const TABLE_ALIGN_ROW_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/;
+
+const LIST_ITEM_INDENT_RE = /^[ \t]+([-+*]|\d+[.)]|[a-zA-Z][.)])\s/;
+
+const EMPHASIS_AROUND_CODE_RE = /\*\*\s*(`[^`]+`)\s*\*\*/g;
+
 export function normalizeBridge(s: string): string {
   return s
     .replace(/^﻿/, '')
     .replace(/\r/g, '')
+    .replace(COMMONMARK_ESCAPE_RE, '$1')
+    .replace(EMPHASIS_AROUND_CODE_RE, '$1')
     .replace(/^\n+/, '')
     .replace(/^[*-]{3,}(?=\n|$)/, '---')
     .replace(/(\n)([#>+-]|\d+[.)]|`{3,}|~{3,})/g, '\n\n$2')
     .replace(/^([#>+-].*|\d+[.)].*|`{3,}.*|~{3,}.*)\n([^\n])/gm, '$1\n\n$2')
     .split('\n')
-    .map((l) => l.trimEnd())
+    .map((l) => {
+      const trimmed = l.trimEnd();
+      if (TABLE_ALIGN_ROW_RE.test(trimmed)) {
+        return trimmed.replace(/\s+/g, '');
+      }
+      if (LIST_ITEM_INDENT_RE.test(trimmed)) {
+        return trimmed.replace(/^[ \t]+/, '');
+      }
+      return trimmed;
+    })
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/\n+$/, '');
@@ -16,9 +35,13 @@ export function normalizeBridge(s: string): string {
 export const BRIDGE_TOLERANCE_CLASSES = [
   'bom',
   'crlf',
+  'commonmark-escape',
+  'emphasis-around-code',
   'leading-newline',
   'doc-start-thematic',
   'block-separator-collapse',
+  'table-align-row-spacing',
+  'list-indent-canonical',
   'trailing-whitespace',
   'blank-line-collapse',
   'trailing-newline',
@@ -34,6 +57,17 @@ export function detectAppliedToleranceClasses(left: string, right: string): Brid
   }
   if (left.includes('\r') || right.includes('\r')) {
     classes.push('crlf');
+  }
+
+  if (
+    /\\[!"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~\\]/.test(left) ||
+    /\\[!"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~\\]/.test(right)
+  ) {
+    classes.push('commonmark-escape');
+  }
+
+  if (/\*\*\s*`[^`]+`\s*\*\*/.test(left) || /\*\*\s*`[^`]+`\s*\*\*/.test(right)) {
+    classes.push('emphasis-around-code');
   }
 
   const leftNoBom = left.replace(/^﻿/, '');
@@ -64,6 +98,16 @@ export function detectAppliedToleranceClasses(left: string, right: string): Brid
 
   const leftLf = leftNoBom.replace(/\r/g, '');
   const rightLf = rightNoBom.replace(/\r/g, '');
+
+  const tableAlignRowMultiline = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/m;
+  if (tableAlignRowMultiline.test(leftLf) || tableAlignRowMultiline.test(rightLf)) {
+    classes.push('table-align-row-spacing');
+  }
+
+  const listIndentMultiline = /^[ \t]+([-+*]|\d+[.)]|[a-zA-Z][.)])\s/m;
+  if (listIndentMultiline.test(leftLf) || listIndentMultiline.test(rightLf)) {
+    classes.push('list-indent-canonical');
+  }
 
   if (/[ \t]\n/.test(leftLf) || /[ \t]\n/.test(rightLf)) {
     classes.push('trailing-whitespace');
