@@ -1,6 +1,7 @@
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Hocuspocus } from '@hocuspocus/server';
+import { AGENT_ICON_COLORS, colorFromSeed, iconFromClientName } from '@inkeep/open-knowledge-core';
 import { WebSocketServer } from 'ws';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
 import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
@@ -191,6 +192,26 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
           }
         }
 
+        if (connectionId && agentPresenceBroadcaster) {
+          const identity = parseKeepaliveIdentity(req.url);
+          if (identity) {
+            try {
+              const icon = iconFromClientName(identity.clientName);
+              const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(identity.colorSeed);
+              agentPresenceBroadcaster.setPresence(toBroadcasterKey(connectionId), {
+                displayName: identity.displayName,
+                icon,
+                color,
+                currentDoc: '(connected)',
+                mode: 'idle',
+                ts: Date.now(),
+              });
+            } catch (err) {
+              log.error({ err, connectionId }, '[keepalive] presence bootstrap failed');
+            }
+          }
+        }
+
         const pingTimer = setInterval(() => {
           try {
             ws.ping();
@@ -326,6 +347,36 @@ export function parseKeepaliveConnectionId(url: string | undefined): string | nu
     const parsed = new URL(url, 'http://localhost');
     const connectionId = parsed.searchParams.get('connectionId');
     return validateAgentId(connectionId);
+  } catch {
+    return null;
+  }
+}
+
+const MAX_KEEPALIVE_IDENTITY_LEN = 256;
+
+function sanitizeIdentityField(raw: string | null): string | null {
+  if (raw === null) return null;
+  if (raw.length === 0 || raw.length > MAX_KEEPALIVE_IDENTITY_LEN) return null;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional sanitisation
+  if (/[ -]/.test(raw)) return null;
+  return raw;
+}
+
+interface KeepaliveIdentity {
+  displayName: string;
+  clientName: string;
+  colorSeed: string;
+}
+
+export function parseKeepaliveIdentity(url: string | undefined): KeepaliveIdentity | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url, 'http://localhost');
+    const displayName = sanitizeIdentityField(parsed.searchParams.get('displayName'));
+    const clientName = sanitizeIdentityField(parsed.searchParams.get('clientName'));
+    const colorSeed = sanitizeIdentityField(parsed.searchParams.get('colorSeed'));
+    if (displayName === null || clientName === null || colorSeed === null) return null;
+    return { displayName, clientName, colorSeed };
   } catch {
     return null;
   }
