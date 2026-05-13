@@ -203,7 +203,7 @@ describe('edit_document MCP tool', () => {
       replace: '[[Project Alpha]]',
     });
 
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       previewUrl: `${uiBase}/#/notes`,
       previewUrlSource: 'lock',
     });

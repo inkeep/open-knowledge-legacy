@@ -108,7 +108,7 @@ describe('rollback_to_version — previewUrl emission', () => {
 
     const result = await getTool().handler({ docName: 'notes', commitSha: sha });
 
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       previewUrl: `${uiBase}/#/notes`,
       previewUrlSource: 'lock',
     });
@@ -121,6 +121,6 @@ describe('rollback_to_version — previewUrl emission', () => {
 
     const result = await getTool().handler({ docName: 'notes', commitSha: sha });
 
-    expect(result.structuredContent).toEqual({ previewUrl: null });
+    expect(result.structuredContent).toMatchObject({ previewUrl: null });
   });
 });

@@ -1,17 +1,10 @@
 import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
-import type { ServerInstance } from './shared.ts';
-import {
-  buildWorkflowFrame,
-  type ConfigOrResolver,
-  ROUTED_CWD_DESCRIPTION,
-  resolveProjectConfigContext,
-  textPlusStructured,
-  textResult,
-} from './shared.ts';
+import type { ServerInstance, WorkflowToolDeps } from './shared.ts';
+import { buildWorkflowHandler, ROUTED_CWD_DESCRIPTION } from './shared.ts';
 
 function buildBody(source: string, contentDir: string): string {
-  return `${buildWorkflowFrame('ingest')}Capture this external source into the project knowledge base as raw reference material. The KB is **closed-loop**: external sources are pulled INTO the knowledge base here so downstream docs cite local paths, never bare web URLs. This applies whether a user shared the source OR you fetched it yourself to ground a knowledge-base claim — agent-initiated fetches are not exempt. **Raw preservation only** — no summary, no analysis, no interpretation. Summarizing is the job of the \`research\` tool later.
+  return `Capture this external source into the project knowledge base as raw reference material. The KB is **closed-loop**: external sources are pulled INTO the knowledge base here so downstream docs cite local paths, never bare web URLs. This applies whether a user shared the source OR you fetched it yourself to ground a knowledge-base claim — agent-initiated fetches are not exempt. **Raw preservation only** — no summary, no analysis, no interpretation. Summarizing is the job of the \`research\` tool later.
 
 Source: ${source}
 
@@ -114,12 +107,7 @@ export const DESCRIPTION = [
   '- Research workflow needs raw sources before analysis',
 ].join('\n');
 
-interface IngestDeps {
-  config: ConfigOrResolver;
-  resolveCwd: (explicit?: string) => Promise<string>;
-}
-
-export function register(server: ServerInstance, deps: IngestDeps): void {
+export function register(server: ServerInstance, deps: WorkflowToolDeps): void {
   server.tool(
     'ingest',
     DESCRIPTION,
@@ -127,12 +115,6 @@ export function register(server: ServerInstance, deps: IngestDeps): void {
       source: z.string().describe('URL, file path, or identifier of the source to ingest'),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { source: string; cwd?: string }) => {
-      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
-      if (!context.ok) return textResult(`Error: ${context.error}`, true);
-      return textPlusStructured(buildBody(args.source, context.config.content.dir), {
-        previewUrl: null,
-      });
-    },
+    buildWorkflowHandler('ingest', deps, 'source', buildBody),
   );
 }

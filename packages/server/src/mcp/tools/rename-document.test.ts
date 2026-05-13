@@ -176,7 +176,7 @@ describe('rename_document MCP tool', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain('Destination already exists');
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       ok: false,
       error: 'Destination already exists',
     });

@@ -39,7 +39,7 @@ describe('ingest — previewUrl emission', () => {
     const { server, call } = captureTool();
     register(server, { config: BASE_CONFIG, resolveCwd: async () => process.cwd() });
     const result = await call('https://example.com/article');
-    expect(result.structuredContent).toEqual({ previewUrl: null });
+    expect(result.structuredContent).toMatchObject({ previewUrl: null });
     expect(result.content[0]?.text).toContain('https://example.com/article');
   });
 });

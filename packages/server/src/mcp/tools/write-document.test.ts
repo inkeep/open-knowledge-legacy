@@ -111,7 +111,7 @@ describe('write_document — previewUrl emission', () => {
       position: 'append',
     });
 
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       previewUrl: `${uiBase}/#/docs/test`,
       previewUrlSource: 'lock',
     });
@@ -225,7 +225,7 @@ describe('write_document — previewUrl emission', () => {
       position: 'append',
     });
 
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       previewUrl: `${uiBase}/#/docs/test`,
       previewUrlSource: 'lock',
     });

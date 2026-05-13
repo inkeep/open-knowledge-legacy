@@ -116,7 +116,7 @@ describe('read_document — previewUrl emission', () => {
 
     const result = await getTool().handler({ path: 'docs/article.md' });
 
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       previewUrl: `${uiBase}/#/docs/article`,
       previewUrlSource: 'lock',
     });
@@ -131,7 +131,7 @@ describe('read_document — previewUrl emission', () => {
 
     const result = await getTool().handler({ path: 'docs/article.md' });
 
-    expect(result.structuredContent).toEqual({ previewUrl: null });
+    expect(result.structuredContent).toMatchObject({ previewUrl: null });
   });
 
   test('strips .mdx extension from path before resolving previewUrl', async () => {
@@ -143,7 +143,7 @@ describe('read_document — previewUrl emission', () => {
 
     const result = await getTool().handler({ path: 'docs/article.mdx' });
 
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       previewUrl: `${uiBase}/#/docs/article`,
       previewUrlSource: 'lock',
     });

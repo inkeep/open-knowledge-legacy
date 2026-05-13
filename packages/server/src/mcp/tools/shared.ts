@@ -25,9 +25,13 @@ export function textResult(text: string, isError?: boolean) {
 }
 
 export function textPlusStructured<T>(text: string, structured: T, isError?: boolean) {
+  const structuredContent: { _text: string } & Record<string, unknown> = {
+    _text: text,
+    ...(structured as unknown as Record<string, unknown>),
+  };
   return {
     content: [{ type: 'text' as const, text }],
-    structuredContent: structured as unknown as Record<string, unknown>,
+    structuredContent,
     ...(isError ? { isError: true as const } : {}),
   };
 }
@@ -59,7 +63,7 @@ const ROLE_AFTER: Record<WorkflowRole, string> = {
     'update 2–3 neighbor docs to link the new canonical article; research articles it supersedes gain a `superseded_by` pointer',
 };
 
-export function buildWorkflowFrame(role: WorkflowRole): string {
+function buildWorkflowFrame(role: WorkflowRole): string {
   return `## Where this fits
 
 Open Knowledge accretes a persistent wiki through three workflow tools, mapped to [Karpathy's three-layer knowledge-base pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f):
@@ -78,6 +82,28 @@ Open Knowledge accretes a persistent wiki through three workflow tools, mapped t
 Karpathy's insight: "The tedious part of maintaining a knowledge base is not the reading or the thinking — it's the bookkeeping." Humans abandon wikis because maintenance costs exceed perceived value. These tools exist so an agent can do the bookkeeping (fetching, summarizing, cross-linking, superseding) without fatigue. Follow the steps below faithfully — skipping the cross-linking, supersedes chains, or raw-source preservation is what turns a useful wiki back into an abandoned one.
 
 `;
+}
+
+export interface WorkflowToolDeps {
+  config: ConfigOrResolver;
+  resolveCwd: (explicit?: string) => Promise<string>;
+}
+
+export function buildWorkflowHandler(
+  role: WorkflowRole,
+  deps: WorkflowToolDeps,
+  argName: string,
+  buildBody: (argValue: string, contentDir: string) => string,
+) {
+  return async (args: Record<string, unknown>) => {
+    const cwd = typeof args.cwd === 'string' ? args.cwd : undefined;
+    const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, cwd);
+    if (!context.ok) return textResult(`Error: ${context.error}`, true);
+    const rawArg = args[argName];
+    const argValue = typeof rawArg === 'string' ? rawArg : '';
+    const body = `${buildWorkflowFrame(role)}${buildBody(argValue, context.config.content.dir)}`;
+    return textPlusStructured(body, { previewUrl: null });
+  };
 }
 
 export type ServerUrlOrResolver =
