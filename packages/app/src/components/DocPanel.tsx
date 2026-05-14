@@ -55,7 +55,7 @@ export function DocPanel({
           own header (avatar + back-arrow), which eliminates the empty-row
           footprint the standalone back-arrow used to have. */}
       {mode === 'doc' ? (
-        <div className="flex flex-row items-center justify-center gap-3 border-b border-border/60 p-2">
+        <div className="flex flex-row items-center justify-center gap-3 p-2">
           <ToggleGroup
             type="single"
             variant="outline"

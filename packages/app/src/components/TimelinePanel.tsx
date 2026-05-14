@@ -761,7 +761,7 @@ export function TimelineContent({ docName, diffLayout, onDiffLayoutChange }: Tim
         </div>
       )}
       {/* Scrollable entry list */}
-      <div className="flex-1 overflow-y-auto subtle-scrollbar">
+      <div className="flex-1 overflow-y-auto subtle-scrollbar scroll-fade-mask">
         {/* Loading skeleton */}
         {loading && (
           <div

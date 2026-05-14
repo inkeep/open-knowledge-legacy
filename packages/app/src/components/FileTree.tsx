@@ -596,6 +596,11 @@ function FileTreeMenu({
                 const updated = appendPattern(doc, pattern);
                 if (updated === doc) return;
                 okignoreBinding.patch(serializeOkignoreDoc(updated));
+                const basename = target.path.split('/').pop() || target.path;
+                toast.success(`Hidden “${basename}”`, {
+                  description: 'Manage hidden files in Settings → Ignore patterns.',
+                  duration: 5000,
+                });
               }}
             >
               <EyeOff aria-hidden="true" />
