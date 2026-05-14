@@ -94,8 +94,8 @@ describe('smoke', () => {
   });
 });
 
-describe('W1: WYSIWYG writes', () => {
-  test.concurrent('W1→Y.Text: local XmlFragment edit propagates to Y.Text via Observer A', async () => {
+describe('wysiwyg-keyboard-typing: WYSIWYG writes', () => {
+  test.concurrent('wysiwyg-keyboard-typing→Y.Text: local XmlFragment edit propagates to Y.Text via Observer A', async () => {
     const client = await createTestClient(server.port);
     try {
       applyMarkdownToFragment(client, '# WYSIWYG Heading\n\nSome paragraph content.');
@@ -108,7 +108,7 @@ describe('W1: WYSIWYG writes', () => {
     }
   });
 
-  test.concurrent('W1→Disk: local XmlFragment edit persists to .md file', async () => {
+  test.concurrent('wysiwyg-keyboard-typing→Disk: local XmlFragment edit persists to .md file', async () => {
     const client = await createTestClient(server.port);
     try {
       applyMarkdownToFragment(client, '# Disk Test\n\nThis should persist.');
@@ -126,8 +126,8 @@ describe('W1: WYSIWYG writes', () => {
   });
 });
 
-describe('W2: source mode writes', () => {
-  test.concurrent('W2→XmlFragment: local Y.Text edit propagates to XmlFragment via Observer B', async () => {
+describe('source-codemirror-typing: source mode writes', () => {
+  test.concurrent('source-codemirror-typing→XmlFragment: local Y.Text edit propagates to XmlFragment via Observer B', async () => {
     const client = await createTestClient(server.port);
     try {
       client.doc.transact(() => {
@@ -143,7 +143,7 @@ describe('W2: source mode writes', () => {
     }
   });
 
-  test.concurrent('W2→Disk: local Y.Text edit persists to .md file', async () => {
+  test.concurrent('source-codemirror-typing→Disk: local Y.Text edit persists to .md file', async () => {
     const client = await createTestClient(server.port);
     try {
       client.doc.transact(() => {
@@ -162,8 +162,8 @@ describe('W2: source mode writes', () => {
   });
 });
 
-describe('W3: agent writes', () => {
-  test.concurrent('W3→Y.Text: agent-write-md propagates to client Y.Text', async () => {
+describe('agent-api-write: agent writes', () => {
+  test.concurrent('agent-api-write→Y.Text: agent-write-md propagates to client Y.Text', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Agent Heading\n\nAgent wrote this.', {
@@ -178,7 +178,7 @@ describe('W3: agent writes', () => {
     }
   });
 
-  test.concurrent('W3→XmlFragment: agent-write-md propagates to client XmlFragment', async () => {
+  test.concurrent('agent-api-write→XmlFragment: agent-write-md propagates to client XmlFragment', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Agent Fragment\n\nVisible in WYSIWYG.', {
@@ -194,7 +194,7 @@ describe('W3: agent writes', () => {
     }
   });
 
-  test.concurrent('W3→Disk: agent-write-md persists to .md file', async () => {
+  test.concurrent('agent-api-write→Disk: agent-write-md persists to .md file', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Agent Disk\n\nPersisted by agent.', {
@@ -213,7 +213,7 @@ describe('W3: agent writes', () => {
     }
   });
 
-  test.concurrent('W3-patch→Y.Text: agent-patch replaces target span in Y.Text', async () => {
+  test.concurrent('agent-api-write-patch→Y.Text: agent-patch replaces target span in Y.Text', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Header\n\nOriginal body text.', {
@@ -237,7 +237,7 @@ describe('W3: agent writes', () => {
     }
   });
 
-  test.concurrent('W3-patch→XmlFragment: agent-patch propagates to XmlFragment', async () => {
+  test.concurrent('agent-api-write-patch→XmlFragment: agent-patch propagates to XmlFragment', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Title\n\nFoo bar baz qux.', { docName: client.docName });
@@ -255,7 +255,7 @@ describe('W3: agent writes', () => {
     }
   });
 
-  test.concurrent('W3-patch: agent-patch with unknown find text returns 404 without mutating', async () => {
+  test.concurrent('agent-api-write-patch: agent-patch with unknown find text returns 404 without mutating', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Seed\n\nUntouched content.', {
@@ -281,8 +281,8 @@ describe('W3: agent writes', () => {
   });
 });
 
-describe('W4: disk writes', () => {
-  test('W4→Y.Text: disk file change propagates to client Y.Text', async () => {
+describe('file-watcher-disk-to-crdt: disk writes', () => {
+  test('file-watcher-disk-to-crdt→Y.Text: disk file change propagates to client Y.Text', async () => {
     await testReset(server.port);
     await wait(300);
     const client = await createTestClient(server.port, 'test-doc');
@@ -301,7 +301,7 @@ describe('W4: disk writes', () => {
     }
   });
 
-  test('W4→XmlFragment: disk file change propagates to client XmlFragment', async () => {
+  test('file-watcher-disk-to-crdt→XmlFragment: disk file change propagates to client XmlFragment', async () => {
     await testReset(server.port);
     await wait(300);
     const client = await createTestClient(server.port, 'test-doc');

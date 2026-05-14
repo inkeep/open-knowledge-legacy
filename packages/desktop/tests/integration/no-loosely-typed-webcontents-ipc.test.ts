@@ -5,7 +5,7 @@ import { join } from 'node:path';
 const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
 const FIXTURE_REL = 'biome-plugins/__fixtures__/no-loosely-typed-webcontents-ipc.fixture.tsx';
 
-describe('D19 — no-loosely-typed-webcontents-ipc GritQL plugin', () => {
+describe('no-loosely-typed-webcontents-ipc GritQL plugin', () => {
   test('fires on exactly 6 banned primitives (and on no negative case)', () => {
     const result = spawnSync('bunx', ['biome', 'check', FIXTURE_REL], {
       cwd: REPO_ROOT,
@@ -13,8 +13,11 @@ describe('D19 — no-loosely-typed-webcontents-ipc GritQL plugin', () => {
     });
     expect(result.status).not.toBe(0);
     const output = `${result.stdout}\n${result.stderr}`;
-    const fires = (output.match(/D19: direct electron IPC primitive/g) ?? []).length;
+    const fires = (output.match(/Direct electron IPC primitive/g) ?? []).length;
     expect(fires).toBe(6);
+    expect(output).toContain('route through createInvoker');
+    expect(output).toMatch(/https?:\/\/[^\s]+/);
+    expect(output).toContain('biome-plugins/README.md#no-loosely-typed-webcontents-ipcgrit');
   });
 
   test('plugin is registered in biome.jsonc', () => {

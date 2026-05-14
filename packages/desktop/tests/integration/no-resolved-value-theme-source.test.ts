@@ -15,6 +15,9 @@ describe('1-way theme contract — no-resolved-value-theme-source GritQL plugin'
     const output = `${result.stdout}\n${result.stderr}`;
     const fires = (output.match(/1-way theme contract:/g) ?? []).length;
     expect(fires).toBe(3);
+    expect(output).toContain('pass the unresolved CRDT value');
+    expect(output).toMatch(/https?:\/\/[^\s]+/);
+    expect(output).toContain('biome-plugins/README.md#no-resolved-value-theme-sourcegrit');
   });
 
   test('plugin is registered in biome.jsonc', () => {

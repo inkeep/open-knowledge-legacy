@@ -30,10 +30,10 @@ export interface RollbackToVersionDeps {
   serverUrl: ServerUrlOrResolver;
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
-  /** Same identity passthrough pattern as write-document (D15). Without this,
-   *  MCP-driven rollback posts no agentId → the server-side D22 guard skips
-   *  attribution. UI-driven rollback (EditorPane.tsx:155) intentionally stays
-   *  anonymous; MCP-driven rollback participates via this passthrough. */
+  /** Same identity passthrough pattern as write-document. Without this,
+   *  MCP-driven rollback posts no agentId → the server-side guard skips
+   *  attribution. UI-driven rollback intentionally stays anonymous;
+   *  MCP-driven rollback participates via this passthrough. */
   identityRef?: { current: AgentIdentity };
 }
 

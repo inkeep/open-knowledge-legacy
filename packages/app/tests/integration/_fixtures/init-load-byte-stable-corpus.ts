@@ -35,7 +35,7 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'ng1-multiblank.md',
-    ng: ['NG-01'],
+    ng: ['blank-line-count-normalization'],
     description: 'Three blank lines between paragraphs (remark collapses to 2).',
     body:
       'First paragraph.' +
@@ -53,7 +53,7 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'ng2-table-widths.md',
-    ng: ['NG-02'],
+    ng: ['gfm-table-padding-preservation'],
     description: 'GFM table with un-padded columns (canonical pads to widest cell per column).',
     body:
       '# Table test' +
@@ -74,8 +74,9 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'ng3-math-footnotes.md',
-    ng: ['NG-03'],
-    description: 'Math block + inline footnote ref (NG-03 render-fidelity bucket).',
+    ng: ['math-footnote-alert-render-fidelity'],
+    description:
+      'Math block + inline footnote ref (math-footnote-alert-render-fidelity render-fidelity bucket).',
     body:
       '# Math + footnotes' +
       NL +
@@ -99,9 +100,9 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'ng4-gfm-alerts.md',
-    ng: ['NG-03'],
+    ng: ['math-footnote-alert-render-fidelity'],
     description:
-      'GFM alerts (NOTE / WARNING / IMPORTANT). Canonical NG-03 covers ' +
+      'GFM alerts (NOTE / WARNING / IMPORTANT). Canonical math-footnote-alert-render-fidelity covers ' +
       'alerts as part of the math/footnote/alert render-fidelity bucket.',
     body:
       '# Alerts' +
@@ -127,10 +128,10 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'ng5-mdx-yaml-in-jsx.mdx',
-    ng: ['NG-07'],
+    ng: ['mdx-jsx-thematic-break'],
     description:
       'MDX with frontmatter delimiter "---" appearing inside JSX content. ' +
-      'Canonical NG-07: MDX `---` inside JSX parses as thematicBreak.',
+      'Canonical mdx-jsx-thematic-break: MDX `---` inside JSX parses as thematicBreak.',
     body:
       '---' +
       NL +
@@ -156,9 +157,9 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'ng6-block-inside-jsx.mdx',
-    ng: ['NG-08'],
+    ng: ['mdx-inline-gfm-block-flatten'],
     description:
-      'GFM table + alert nested inside <Note> JSX block. Canonical NG-08: ' +
+      'GFM table + alert nested inside <Note> JSX block. Canonical mdx-inline-gfm-block-flatten: ' +
       'block-GFM-inside-inline-JSX flattens to inline content on parse.',
     body:
       '# Mixed' +
@@ -185,20 +186,20 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'ng7-doc-start-thematic.md',
-    ng: ['NG-10'],
+    ng: ['doc-start-thematic-break-to-asterisks'],
     description:
       'Doc starts with --- (parsed as thematic break, NOT frontmatter). ' +
-      'Canonical NG-10: doc-start `---` round-trips as `***` to defeat ' +
+      'Canonical doc-start-thematic-break-to-asterisks: doc-start `---` round-trips as `***` to defeat ' +
       'remark-frontmatter empty-YAML ambiguity.',
     body: `---${NL}${NL}# After thematic break${NL}${NL}Paragraph.${NL}`,
   },
 
   {
     filename: 'ng8-frontmatter-only.md',
-    ng: ['NG-11'],
+    ng: ['empty-doc-paragraph-synthesis'],
     description:
       'Frontmatter-only document (no body); pipeline appends synthesized ' +
-      'empty paragraph. Canonical NG-11: ignore-typed-only docs cannot produce ' +
+      'empty paragraph. Canonical empty-doc-paragraph-synthesis: ignore-typed-only docs cannot produce ' +
       'a valid PM doc; ensureNonEmptyDoc synthesizes a paragraph.',
     body:
       '---' +
@@ -217,7 +218,7 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'ng9-pua-sentinels.md',
-    ng: ['NG-09'],
+    ng: ['pua-sentinel-ranges-reserved'],
     description: 'PUA characters in U+E000-U+E004 (storage must preserve verbatim).',
     body:
       '# PUA test' +
@@ -240,10 +241,10 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'ng10-backslash-escapes.md',
-    ng: ['NG-04'],
+    ng: ['backslash-escape-r23-pua-preservation'],
     description:
       'Backslash-escapes (ambiguous and non-ambiguous) preserved verbatim. ' +
-      'Canonical NG-04: backslash-escape preservation for R23-PUA chars.',
+      'Canonical backslash-escape-r23-pua-preservation: backslash-escape preservation for R23-PUA chars.',
     body:
       '# Backslash escapes' +
       NL +
@@ -260,10 +261,10 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'ng11-html-entities.md',
-    ng: ['NG-06'],
+    ng: ['entity-ref-preservation'],
     description:
       'HTML entity refs (&amp;, &lt;, &gt;, &copy;) preserved verbatim. ' +
-      'Canonical NG-06: HTML entity ref preservation via entity-ref-guard ' +
+      'Canonical entity-ref-preservation: HTML entity ref preservation via entity-ref-guard ' +
       '(PUA U+E100/U+E101 length-preserving delimiters).',
     body:
       '# HTML entities' +
@@ -281,7 +282,13 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'combo-ng124710.md',
-    ng: ['NG-01', 'NG-02', 'NG-03', 'NG-04', 'NG-10'],
+    ng: [
+      'blank-line-count-normalization',
+      'gfm-table-padding-preservation',
+      'math-footnote-alert-render-fidelity',
+      'backslash-escape-r23-pua-preservation',
+      'doc-start-thematic-break-to-asterisks',
+    ],
     description:
       'Combinatorial: starts with thematic break, has multi-blank, table, alert, escape.',
     body:
@@ -309,9 +316,17 @@ export const CORPUS: CorpusEntry[] = [
 
   {
     filename: 'mega-combo-8ng.md',
-    ng: ['NG-01', 'NG-02', 'NG-03', 'NG-04', 'NG-06', 'NG-09', 'NG-10'],
+    ng: [
+      'blank-line-count-normalization',
+      'gfm-table-padding-preservation',
+      'math-footnote-alert-render-fidelity',
+      'backslash-escape-r23-pua-preservation',
+      'entity-ref-preservation',
+      'pua-sentinel-ranges-reserved',
+      'doc-start-thematic-break-to-asterisks',
+    ],
     description:
-      'Mega-combo: 8 byte-unsafe constructs in one .md doc — doc-start thematic, multi-blank, GFM table, math+footnote, alert, PUA, backslash, HTML entity (canonical: NG-01,02,03,04,06,09,10). e2e tier target.',
+      'Mega-combo: 8 byte-unsafe constructs in one .md doc — doc-start thematic, multi-blank, GFM table, math+footnote, alert, PUA, backslash, HTML entity. e2e tier target.',
     body:
       '---' +
       NL +

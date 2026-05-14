@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import * as ts from 'typescript';
+import { Project, SyntaxKind } from 'ts-morph';
 import { RENDERER_DEDUPE } from '../../vite.dedupe';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../../..');
@@ -19,40 +18,52 @@ interface DedupeInfo {
 }
 
 function extractDedupeArrays(filePath: string): DedupeInfo[] {
-  const content = readFileSync(filePath, 'utf8');
-  const source = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
+  const project = new Project({
+    skipFileDependencyResolution: true,
+    skipLoadingLibFiles: true,
+    skipAddingFilesFromTsConfig: true,
+    compilerOptions: {
+      noLib: true,
+      allowJs: false,
+    },
+  });
+  const sf = project.addSourceFileAtPath(filePath);
   const out: DedupeInfo[] = [];
-  function visit(node: ts.Node): void {
-    if (
-      ts.isPropertyAssignment(node) &&
-      ((ts.isIdentifier(node.name) && node.name.text === 'dedupe') ||
-        (ts.isStringLiteral(node.name) && node.name.text === 'dedupe')) &&
-      ts.isArrayLiteralExpression(node.initializer)
-    ) {
-      const inlineEntries: string[] = [];
-      const spreadIdentifiers: string[] = [];
-      let elementCount = 0;
-      for (const el of node.initializer.elements) {
-        elementCount += 1;
-        if (ts.isStringLiteral(el) || ts.isNoSubstitutionTemplateLiteral(el)) {
-          inlineEntries.push(el.text);
-        } else if (ts.isSpreadElement(el) && ts.isIdentifier(el.expression)) {
-          spreadIdentifiers.push(el.expression.text);
+  for (const prop of sf.getDescendantsOfKind(SyntaxKind.PropertyAssignment)) {
+    const nameNode = prop.getNameNode();
+    const nameText = nameNode.isKind(SyntaxKind.Identifier)
+      ? nameNode.getText()
+      : nameNode.isKind(SyntaxKind.StringLiteral)
+        ? nameNode.getLiteralText()
+        : null;
+    if (nameText !== 'dedupe') continue;
+    const initializer = prop.getInitializer();
+    if (!initializer?.isKind(SyntaxKind.ArrayLiteralExpression)) continue;
+    const inlineEntries: string[] = [];
+    const spreadIdentifiers: string[] = [];
+    let elementCount = 0;
+    for (const el of initializer.getElements()) {
+      elementCount += 1;
+      if (
+        el.isKind(SyntaxKind.StringLiteral) ||
+        el.isKind(SyntaxKind.NoSubstitutionTemplateLiteral)
+      ) {
+        inlineEntries.push(el.getLiteralText());
+      } else if (el.isKind(SyntaxKind.SpreadElement)) {
+        const inner = el.getExpression();
+        if (inner.isKind(SyntaxKind.Identifier)) {
+          spreadIdentifiers.push(inner.getText());
         }
       }
-      const start = node.getStart(source);
-      const { line } = source.getLineAndCharacterOfPosition(start);
-      out.push({
-        file: filePath,
-        inlineEntries,
-        spreadIdentifiers,
-        elementCount,
-        line: line + 1,
-      });
     }
-    ts.forEachChild(node, visit);
+    out.push({
+      file: filePath,
+      inlineEntries,
+      spreadIdentifiers,
+      elementCount,
+      line: prop.getStartLineNumber(),
+    });
   }
-  visit(source);
   return out;
 }
 
@@ -67,8 +78,8 @@ describe('vite + electron-vite dedupe parity', () => {
   test('both configs spread the same shared dedupe constant', () => {
     const [appInfo] = extractDedupeArrays(APP_VITE_CONFIG);
     const [desktopInfo] = extractDedupeArrays(DESKTOP_VITE_CONFIG);
-    expect(appInfo.spreadIdentifiers).toContain(SHARED_DEDUPE_IDENTIFIER);
-    expect(desktopInfo.spreadIdentifiers).toContain(SHARED_DEDUPE_IDENTIFIER);
+    expect(appInfo?.spreadIdentifiers).toContain(SHARED_DEDUPE_IDENTIFIER);
+    expect(desktopInfo?.spreadIdentifiers).toContain(SHARED_DEDUPE_IDENTIFIER);
   });
 
   test('shared RENDERER_DEDUPE has at least one entry (anti-vacuousness floor)', () => {
@@ -78,6 +89,11 @@ describe('vite + electron-vite dedupe parity', () => {
   test('both configs contain the same dedupe entries (inline literals + spreads agree)', () => {
     const [appInfo] = extractDedupeArrays(APP_VITE_CONFIG);
     const [desktopInfo] = extractDedupeArrays(DESKTOP_VITE_CONFIG);
+    if (!appInfo || !desktopInfo) {
+      throw new Error(
+        'expected both configs to expose a dedupe array (prior test should have failed)',
+      );
+    }
     const appInline = new Set(appInfo.inlineEntries);
     const desktopInline = new Set(desktopInfo.inlineEntries);
     const appSpreads = new Set(appInfo.spreadIdentifiers);

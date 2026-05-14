@@ -1,9 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { ProblemTypeSchema } from '@inkeep/open-knowledge-core';
 import { Glob } from 'bun';
-import * as ts from 'typescript';
+import {
+  type Expression,
+  type Node,
+  Project,
+  type SourceFile,
+  type Statement,
+  type SwitchStatement,
+  SyntaxKind,
+} from 'ts-morph';
 
 const PROBLEM_TYPE_LABELS: ReadonlySet<string> = new Set(ProblemTypeSchema.options);
 
@@ -70,55 +77,62 @@ function* enumerateSourceFiles(): Generator<string> {
   }
 }
 
+function makeProject(): Project {
+  return new Project({
+    skipFileDependencyResolution: true,
+    skipLoadingLibFiles: true,
+    skipAddingFilesFromTsConfig: true,
+    compilerOptions: {
+      noLib: true,
+      allowJs: false,
+    },
+  });
+}
+
 interface SwitchInfo {
-  readonly node: ts.SwitchStatement;
+  readonly node: SwitchStatement;
   readonly line: number;
   readonly caseLabels: readonly string[];
   readonly hasDefault: boolean;
-  readonly defaultStatements: readonly ts.Statement[];
+  readonly defaultStatements: readonly Statement[];
 }
 
-function getStringCaseLabel(expr: ts.Expression): string | null {
-  if (ts.isStringLiteral(expr)) return expr.text;
-  if (ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
+function getStringCaseLabel(expr: Expression): string | null {
+  if (expr.isKind(SyntaxKind.StringLiteral)) return expr.getLiteralText();
+  if (expr.isKind(SyntaxKind.NoSubstitutionTemplateLiteral)) return expr.getLiteralText();
   return null;
 }
 
-function collectSwitches(source: ts.SourceFile): SwitchInfo[] {
+function collectSwitches(sf: SourceFile): SwitchInfo[] {
   const out: SwitchInfo[] = [];
-  function visit(node: ts.Node): void {
-    if (ts.isSwitchStatement(node)) {
-      const caseLabels: string[] = [];
-      let hasDefault = false;
-      let defaultStatements: readonly ts.Statement[] = [];
-      let nonLiteralCase = false;
-      for (const clause of node.caseBlock.clauses) {
-        if (ts.isDefaultClause(clause)) {
-          hasDefault = true;
-          defaultStatements = clause.statements;
+  for (const sw of sf.getDescendantsOfKind(SyntaxKind.SwitchStatement)) {
+    const caseLabels: string[] = [];
+    let hasDefault = false;
+    let defaultStatements: readonly Statement[] = [];
+    let nonLiteralCase = false;
+    for (const clause of sw.getCaseBlock().getClauses()) {
+      if (clause.isKind(SyntaxKind.DefaultClause)) {
+        hasDefault = true;
+        defaultStatements = clause.getStatements();
+      } else {
+        const label = getStringCaseLabel(clause.getExpression());
+        if (label === null) {
+          nonLiteralCase = true;
         } else {
-          const label = getStringCaseLabel(clause.expression);
-          if (label === null) {
-            nonLiteralCase = true;
-          } else {
-            caseLabels.push(label);
-          }
+          caseLabels.push(label);
         }
       }
-      if (!nonLiteralCase && caseLabels.length > 0) {
-        const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
-        out.push({
-          node,
-          line: line + 1,
-          caseLabels,
-          hasDefault,
-          defaultStatements,
-        });
-      }
     }
-    ts.forEachChild(node, visit);
+    if (!nonLiteralCase && caseLabels.length > 0) {
+      out.push({
+        node: sw,
+        line: sw.getStartLineNumber(),
+        caseLabels,
+        hasDefault,
+        defaultStatements,
+      });
+    }
   }
-  visit(source);
   return out;
 }
 
@@ -133,10 +147,7 @@ function matchesDu(caseLabels: readonly string[], du: DuRegistration): boolean {
   return false;
 }
 
-function defaultEndsWithHelper(
-  defaultStatements: readonly ts.Statement[],
-  helper: string,
-): boolean {
+function defaultEndsWithHelper(defaultStatements: readonly Statement[], helper: string): boolean {
   if (defaultStatements.length === 0) return false;
   for (const stmt of defaultStatements) {
     if (statementCallsHelper(stmt, helper)) return true;
@@ -144,27 +155,29 @@ function defaultEndsWithHelper(
   return false;
 }
 
-function statementCallsHelper(stmt: ts.Statement, helper: string): boolean {
-  if (ts.isExpressionStatement(stmt)) {
-    return expressionCallsHelper(stmt.expression, helper);
+function statementCallsHelper(stmt: Statement | Node, helper: string): boolean {
+  if (stmt.isKind(SyntaxKind.ExpressionStatement)) {
+    return expressionCallsHelper(stmt.getExpression(), helper);
   }
-  if (ts.isReturnStatement(stmt) && stmt.expression !== undefined) {
-    return expressionCallsHelper(stmt.expression, helper);
+  if (stmt.isKind(SyntaxKind.ReturnStatement)) {
+    const expr = stmt.getExpression();
+    return expr !== undefined && expressionCallsHelper(expr, helper);
   }
-  if (ts.isThrowStatement(stmt)) {
-    return expressionCallsHelper(stmt.expression, helper);
+  if (stmt.isKind(SyntaxKind.ThrowStatement)) {
+    return expressionCallsHelper(stmt.getExpression(), helper);
   }
-  if (ts.isBlock(stmt)) {
-    for (const inner of stmt.statements) {
+  if (stmt.isKind(SyntaxKind.Block)) {
+    for (const inner of stmt.getStatements()) {
       if (statementCallsHelper(inner, helper)) return true;
     }
   }
   return false;
 }
 
-function expressionCallsHelper(expr: ts.Expression, helper: string): boolean {
-  if (!ts.isCallExpression(expr)) return false;
-  return ts.isIdentifier(expr.expression) && expr.expression.text === helper;
+function expressionCallsHelper(expr: Expression, helper: string): boolean {
+  if (!expr.isKind(SyntaxKind.CallExpression)) return false;
+  const callee = expr.getExpression();
+  return callee.isKind(SyntaxKind.Identifier) && callee.getText() === helper;
 }
 
 interface Failure {
@@ -176,11 +189,10 @@ interface Failure {
 
 function scanRepo(): Failure[] {
   const failures: Failure[] = [];
+  const project = makeProject();
   for (const absPath of enumerateSourceFiles()) {
-    const text = readFileSync(absPath, 'utf8');
-    const kind = absPath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-    const source = ts.createSourceFile(absPath, text, ts.ScriptTarget.Latest, true, kind);
-    const switches = collectSwitches(source);
+    const sf = project.addSourceFileAtPath(absPath);
+    const switches = collectSwitches(sf);
     for (const sw of switches) {
       for (const du of REGISTRY) {
         if (!matchesDu(sw.caseLabels, du)) continue;
@@ -203,11 +215,12 @@ function scanRepo(): Failure[] {
         }
       }
     }
+    project.removeSourceFile(sf);
   }
   return failures;
 }
 
-describe('exhaustiveness coverage (US-003, FR11 b, D33)', () => {
+describe('exhaustiveness coverage', () => {
   test('every switch over a registered DU ends with default: assertNeverXyz(target)', () => {
     const failures = scanRepo();
     if (failures.length > 0) {
@@ -222,12 +235,11 @@ describe('exhaustiveness coverage (US-003, FR11 b, D33)', () => {
   }, 30_000);
 
   test('the AST scanner finds the canonical ClassifiedLinkTarget consumer', () => {
+    const project = makeProject();
     let foundClassifiedLinkTargetConsumer = false;
     for (const absPath of enumerateSourceFiles()) {
-      const text = readFileSync(absPath, 'utf8');
-      const kind = absPath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-      const source = ts.createSourceFile(absPath, text, ts.ScriptTarget.Latest, true, kind);
-      for (const sw of collectSwitches(source)) {
+      const sf = project.addSourceFileAtPath(absPath);
+      for (const sw of collectSwitches(sf)) {
         const linkTargetDu = REGISTRY.find((d) => d.name === 'ClassifiedLinkTarget');
         if (!linkTargetDu) continue;
         if (matchesDu(sw.caseLabels, linkTargetDu)) {
@@ -235,6 +247,7 @@ describe('exhaustiveness coverage (US-003, FR11 b, D33)', () => {
           break;
         }
       }
+      project.removeSourceFile(sf);
       if (foundClassifiedLinkTargetConsumer) break;
     }
     expect(foundClassifiedLinkTargetConsumer).toBe(true);

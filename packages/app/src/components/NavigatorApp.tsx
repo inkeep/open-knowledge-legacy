@@ -205,9 +205,9 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
         ) : null}
       </div>
 
-      {/* M6b first-launch consent dialog — self-gates on the shared
+      {/* First-launch consent dialog — self-gates on the shared
           `mcpConsentStore` snapshot, renders nothing until main fires
-          `ok:mcp-wiring:show`. Mounted identically in App.tsx (D-M6-R10). */}
+          `ok:mcp-wiring:show`. Mounted identically in App.tsx. */}
       <McpConsentDialog />
 
       {/* Per-project consent dialog — self-gates on the shared `consentStore`

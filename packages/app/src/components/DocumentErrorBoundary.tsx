@@ -17,7 +17,7 @@
  *   - Primary "Try again": recycles the pool entry (fresh provider) so the
  *     next render re-enters Suspense with a fresh `syncPromise`.
  *   - Secondary "Back to previous document": invalidates this doc's cached
- *     `syncPromise` and calls `onNavigateBack` with the previously-active
+ *     `syncPromise` and calls `onNavigateBack` with the prior active
  *     docName. Only rendered when `previousDocName` is present.
  *
  * `resetKeys={[activeDocName]}`: `activeDocName` is the Activity's OWN doc

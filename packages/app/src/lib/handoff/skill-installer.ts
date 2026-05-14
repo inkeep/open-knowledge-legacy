@@ -6,7 +6,7 @@ export type SkillInstallResult =
   | { ok: false; reason: string; message?: string };
 
 /** Per-call options. `force: true` bypasses the install-state gate and
- * always rebuilds — the FR12 "Reinstall skill" affordance. */
+ * always rebuilds — the "Reinstall skill" affordance. */
 interface SkillInstallOptions {
   force?: boolean;
 }

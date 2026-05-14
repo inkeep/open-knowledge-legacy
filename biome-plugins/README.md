@@ -8,6 +8,8 @@ Plugins surface as lint errors during `biome check` (i.e. `bun run lint` and `bu
 
 **All custom Biome lint enforcement uses GritQL plugins** — [PRECEDENTS.md #42](../PRECEDENTS.md#custom-lint-enforcement-precedent-42). Use a `.grit` file under this directory + a fixture-file test. The fixture-file test is non-negotiable: it preserves the mutation-self-test property by asserting an exact diagnostic count on a fixture pairing positive cases with negative cases.
 
+**Diagnostic messages name the fix and link the docs.** Every `register_diagnostic` message has two load-bearing pieces: (a) a noun-phrase or action verb-phrase that names what to do to fix the violation (the fix-noun — readers see this and know the next move without leaving the editor); (b) a trailing `See <docs-URL>` pointing at the rule's section in this README so the message stays self-documenting. Process metadata (decision markers like `D19:`, spec-section refs) does NOT belong in the diagnostic — it rots the same way it rots in source comments. The fixture test asserts both pieces are present (substring match for the fix-noun + URL regex) so the convention survives drift.
+
 ## Rules
 
 ### `microcopy-ellipsis.grit`
@@ -30,7 +32,7 @@ Test: [`packages/app/tests/integration/microcopy-ellipsis.test.ts`](../packages/
 
 ### `no-loosely-typed-webcontents-ipc.grit`
 
-D19 enforcement. Forbids direct electron IPC primitives (`webContents.send`, `ipcMain.handle/on`, `ipcRenderer.invoke/on/once`) outside the typed-wrapper files. Consumers must route through `createInvoker` / `createHandler` / `sendToRenderer` from `packages/desktop/src/shared/`. See [PRECEDENTS.md #14](../PRECEDENTS.md) for the IPC discipline rationale.
+IPC discipline enforcement. Forbids direct electron IPC primitives (`webContents.send`, `ipcMain.handle/on`, `ipcRenderer.invoke/on/once`) outside the typed-wrapper files. Consumers must route through `createInvoker` / `createHandler` / `sendToRenderer` from `packages/desktop/src/shared/ipc-*.ts`. See [PRECEDENTS.md #14](../PRECEDENTS.md) for the IPC discipline rationale.
 
 Test: [`packages/desktop/tests/integration/no-loosely-typed-webcontents-ipc.test.ts`](../packages/desktop/tests/integration/no-loosely-typed-webcontents-ipc.test.ts).
 
@@ -44,6 +46,23 @@ Detection patterns (call expressions only — type-declarations are naturally ex
 - Matches both bare-call and member-call shapes (`obj.setThemeSource(...)`)
 
 Test: [`packages/desktop/tests/integration/no-resolved-value-theme-source.test.ts`](../packages/desktop/tests/integration/no-resolved-value-theme-source.test.ts).
+
+### `no-unportaled-editor-content.grit`
+
+H6 cross-doc DOM bleed contract. `@tiptap/react`'s `PureEditorContent.componentDidMount` runs `element.append(...editor.view.dom.parentNode.childNodes)` — a sibling-vacuum primitive. When `view.dom` shares a parent with another editor's `view.dom` (e.g., V2 cache parked nodes, cross-Activity reconciliation transitions), the vacuum drags foreign content into the active wrapper. The structural fix is to render every `<EditorContent>` via `React.createPortal` into a per-Activity exclusively-owned DOM target, so `view.dom`'s parent only ever contains THIS editor's nodes.
+
+The rule flags every JSX usage of `<EditorContent>` — both self-closing and child-bearing forms — and asks the author to suppress at the canonical portaled site (where the createPortal call lives) with `// biome-ignore lint/plugin/no-unportaled-editor-content: <reason>`. Adding a non-portaled `<EditorContent>` anywhere else in the codebase becomes a lint error, gated at editor-save / `bun run lint` time.
+
+Canonical sanctioned shape (TiptapEditor.tsx):
+
+```tsx
+createPortal(
+  <EditorContent editor={editor} className="..." />,
+  portalTarget,
+);
+```
+
+Plugin: [`biome-plugins/no-unportaled-editor-content.grit`](no-unportaled-editor-content.grit). Fixture: [`biome-plugins/__fixtures__/no-unportaled-editor-content.fixture.tsx`](__fixtures__/no-unportaled-editor-content.fixture.tsx). Test: [`packages/app/tests/integration/no-unportaled-editor-content.test.ts`](../packages/app/tests/integration/no-unportaled-editor-content.test.ts). See [PRECEDENTS.md #44](../PRECEDENTS.md) for the H6 cross-doc DOM bleed contract and [PRECEDENTS.md #42](../PRECEDENTS.md#custom-lint-enforcement-precedent-42) for the GritQL-plugin convention.
 
 ### `playwright-topass-budget.grit`
 
@@ -100,10 +119,12 @@ language js
 `some-pattern($args)` as $node where {
     register_diagnostic(
         span = $node,
-        message = "<actionable error message — name the rule + how to fix>"
+        message = "<problem>. <fix-noun naming the action>. See https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#<rule-name>grit"
     )
 }
 ```
+
+**Message shape (load-bearing).** The diagnostic message has three parts in order: (1) the problem statement, (2) the fix-noun (the noun-phrase or action verb-phrase the reader applies to make the message go away), (3) `See <docs-URL>` pointing at this README's rule section. Anchor naming follows GitHub's auto-slug for code-fence-stripped headers — `### \`microcopy-ellipsis.grit\`` becomes `#microcopy-ellipsisgrit` (the dot is dropped, the backticks are stripped). Process metadata (decision tokens like `D19:`, spec citations) does NOT belong here — it rots like any other comment-discipline violation.
 
 **Regex matching note:** GritQL regex matches the ENTIRE node text. For substring matches, use `r"(?s).*<term>.*"` — the `.*` wildcards bracket the term, and `(?s)` enables single-line mode so `.` matches newlines (needed for multi-line argument expressions).
 
@@ -147,6 +168,13 @@ describe('<rule-name> GritQL plugin', () => {
     const output = `${result.stdout}\n${result.stderr}`;
     const fires = (output.match(/<unique diagnostic-message marker>/g) ?? []).length;
     expect(fires).toBe(N); // exact equality — see "Why toBe(N)?" below
+    // Diagnostic message names the fix (action verb-phrase substring).
+    expect(output).toContain('<fix-noun>');
+    // Diagnostic message appends a docs URL — generic URL regex + anchor
+    // substring. The anchor check keeps the regex from being vacuously
+    // satisfied by an unrelated URL biome might surface elsewhere.
+    expect(output).toMatch(/https?:\/\/[^\s]+/);
+    expect(output).toContain('biome-plugins/README.md#<rule-name>grit');
   });
 
   test('plugin is registered in biome.jsonc', () => {

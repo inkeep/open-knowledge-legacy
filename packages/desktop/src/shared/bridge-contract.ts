@@ -224,9 +224,22 @@ export interface OkLocalOpStream<E> {
 
 /** One-shot result for `localOp.auth.status()`. Also imported by
  *  `./ipc-channels.ts` as the IPC channel result type so the wire shape
- *  and the bridge method signature can't drift. */
+ *  and the bridge method signature can't drift.
+ *
+ *  `tier` reflects which credential source the CLI used:
+ *    A — `gh` CLI delegation (no keychain entry needed)
+ *    B — HTTPS token from the OK TokenStore
+ *    C — SSH-paired token from the OK TokenStore
+ *  Optional for forward-compat with CLIs that don't emit it. */
 export type OkLocalOpAuthStatusResponse =
-  | { authenticated: true; host: string; login: string; name?: string; email?: string }
+  | {
+      authenticated: true;
+      host: string;
+      login: string;
+      tier?: 'A' | 'B' | 'C';
+      name?: string;
+      email?: string;
+    }
   | { authenticated: false; host: string; error?: string };
 
 interface OkLocalOpRepoEntry {

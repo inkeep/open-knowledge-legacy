@@ -30,6 +30,6 @@ or {
 } where {
     register_diagnostic(
         span = $jsx,
-        message = "Portal-only: <EditorContent> MUST be rendered via React.createPortal(<EditorContent .../>, portalTarget). H6 cross-doc DOM bleed contract — see PRECEDENTS.md #44."
+        message = "Portal-only: render <EditorContent /> via React.createPortal(<EditorContent .../>, portalTarget). H6 cross-doc DOM bleed contract — TipTap's PureEditorContent.componentDidMount vacuums sibling DOM nodes into its refDiv; portalling isolates view.dom in a per-Activity DOM target. See https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#no-unportaled-editor-contentgrit"
     )
 }

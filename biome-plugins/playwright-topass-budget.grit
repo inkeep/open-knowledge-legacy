@@ -43,6 +43,6 @@ language js
     $n <: r"^(?:[0-9]|1[0-4])_?[0-9]{3}$",
     register_diagnostic(
         span = $call,
-        message = "Invariant B: `toPass({ timeout })` budget below 15_000ms — macOS Apple-Event / IPC roundtrip needs ≥15s headroom under CI runner-class load. See packages/desktop/tests/smoke/calibration.test.ts."
+        message = "Invariant B: raise the `toPass({ timeout })` budget to at least 15_000ms — macOS Apple-Event / IPC roundtrip needs ≥15s headroom under CI runner-class load. See https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#playwright-topass-budgetgrit"
     )
 }

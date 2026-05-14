@@ -5,9 +5,10 @@ export interface GhDetectResult {
   token?: string;
 }
 
-export function detectGh(): GhDetectResult {
+export function detectGh(host?: string): GhDetectResult {
   try {
-    const token = execFileSync('gh', ['auth', 'token'], {
+    const args = ['auth', 'token', ...(host ? ['--hostname', host] : [])];
+    const token = execFileSync('gh', args, {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 5000,

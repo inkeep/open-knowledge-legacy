@@ -277,7 +277,14 @@ interface OkLocalOpStream<E> {
 }
 
 type OkLocalOpAuthStatusResponse =
-  | { authenticated: true; host: string; login: string; name?: string; email?: string }
+  | {
+      authenticated: true;
+      host: string;
+      login: string;
+      tier?: 'A' | 'B' | 'C';
+      name?: string;
+      email?: string;
+    }
   | { authenticated: false; host: string; error?: string };
 
 interface OkLocalOpRepoEntry {

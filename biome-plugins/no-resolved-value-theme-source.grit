@@ -23,7 +23,7 @@ or {
         $arg <: r"(?s).*matchMedia.*",
         register_diagnostic(
             span = $call,
-            message = "1-way theme contract: matchMedia inside setThemeSource argument — pass the unresolved CRDT value ('system' | 'light' | 'dark') directly. Resolving 'system' to a concrete 'light'/'dark' loses OS auto-tracking."
+            message = "1-way theme contract: matchMedia inside setThemeSource argument — pass the unresolved CRDT value ('system' | 'light' | 'dark') directly. Resolving 'system' to a concrete 'light'/'dark' loses OS auto-tracking. See https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#no-resolved-value-theme-sourcegrit"
         )
     },
     `setThemeSource($arg)` as $call where {
@@ -33,7 +33,7 @@ or {
         },
         register_diagnostic(
             span = $call,
-            message = "1-way theme contract: setThemeSource argument resolves to 'light'/'dark' literals (likely a ternary) — pass the unresolved CRDT value directly."
+            message = "1-way theme contract: setThemeSource argument resolves to 'light'/'dark' literals (likely a ternary) — pass the unresolved CRDT value directly. See https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#no-resolved-value-theme-sourcegrit"
         )
     },
     // Member-call form — `bridge.setThemeSource(...)`, `okDesktop.setThemeSource(...)`,
@@ -42,7 +42,7 @@ or {
         $arg <: r"(?s).*matchMedia.*",
         register_diagnostic(
             span = $call,
-            message = "1-way theme contract: matchMedia inside setThemeSource argument — pass the unresolved CRDT value ('system' | 'light' | 'dark') directly. Resolving 'system' to a concrete 'light'/'dark' loses OS auto-tracking."
+            message = "1-way theme contract: matchMedia inside setThemeSource argument — pass the unresolved CRDT value ('system' | 'light' | 'dark') directly. Resolving 'system' to a concrete 'light'/'dark' loses OS auto-tracking. See https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#no-resolved-value-theme-sourcegrit"
         )
     },
     `$_.setThemeSource($arg)` as $call where {
@@ -52,7 +52,7 @@ or {
         },
         register_diagnostic(
             span = $call,
-            message = "1-way theme contract: setThemeSource argument resolves to 'light'/'dark' literals (likely a ternary) — pass the unresolved CRDT value directly."
+            message = "1-way theme contract: setThemeSource argument resolves to 'light'/'dark' literals (likely a ternary) — pass the unresolved CRDT value directly. See https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#no-resolved-value-theme-sourcegrit"
         )
     }
 }

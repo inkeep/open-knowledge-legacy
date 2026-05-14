@@ -114,7 +114,7 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
               available.length === 0
                 ? '(none)'
                 : available.map((t) => `${t.name} [${t.scope}]`).join(', ')
-            }. Templates are resolved by walk-up (D7); check list_documents({ dir, depth: 1 }) at the parent folder to see the menu.`,
+            }. Templates are resolved by walk-up; check list_documents({ dir, depth: 1 }) at the parent folder to see the menu.`,
             true,
           );
         }

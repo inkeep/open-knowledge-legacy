@@ -236,8 +236,8 @@ function EditorAreaInner({
             real Suspense suspension. The delta window is the interval
             between shell-snap and the editor subtree's deferred commit
             completing — 1-3s on mark-heavy docs that refuse V2 cache
-            admission, sub-frame on warm reopens (NG7 Pattern D + Q21
-            with both mount-promise and sync-promise resolved).
+            admission, sub-frame on warm reopens (both mount-promise
+            and sync-promise resolved).
             Without this overlay the user sees the PREVIOUS doc's editor
             linger through a slow mount window, which looks like a
             "flash of the old editor" and contradicts the sidebar's
@@ -256,9 +256,11 @@ function EditorAreaInner({
             (only invalidate clears it, and invalidate runs from
             park-uncached / evict effects that have already committed
             before this render reads the flag).
-            Regression tests: docs-open.e2e.ts F0b (skeleton on V2-
-            refuse warm nav), ng7-warm-tab-switch.e2e.ts (no skeleton
-            on V2-admit warm reopen with NG7 flags ON). */}
+            Regression tests: docs-open.e2e.ts F0b (warm V2-admit
+            reopen, no skeleton). V2-refuse path is unit-tier only
+            (mount-promise.test.ts `mountPromiseHasResolved (warm-
+            reopen overlay gate)` + editor-cache.test.ts mount-
+            promise-cancellation describes). */}
           {shouldPaintOverlay({
             activeDocName,
             deferredActiveDocName,
@@ -267,12 +269,11 @@ function EditorAreaInner({
           }) ? (
             <div className="absolute inset-0 z-10 bg-background">
               <EditorSkeleton />
-              {/* FW13 affordance — surfaces a "Cancel" link when the
-                  mount-promise substrate emits `ok/mount/stalled` past
-                  MOUNT_STALLED_THRESHOLD_MS (10s default). Only shown
-                  when the skeleton is already overlay-active, so a fast
-                  mount never sees the affordance. NG9 retracted in the
-                  substrate consolidation. */}
+              {/* Mount-stalled affordance — surfaces a "Cancel" link
+                  when the mount-promise substrate emits `ok/mount/stalled`
+                  past MOUNT_STALLED_THRESHOLD_MS (10s default). Only
+                  shown when the skeleton is already overlay-active, so a
+                  fast mount never sees the affordance. */}
               {activeDocName !== null ? <MountStalledAffordance docName={activeDocName} /> : null}
             </div>
           ) : null}

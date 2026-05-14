@@ -399,7 +399,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
                 ) : undefined;
                 return (
                   <FrontmatterRow
-                    // biome-ignore lint/suspicious/noArrayIndexKey: position-aware key for dup-name rows (FR6).
+                    // biome-ignore lint/suspicious/noArrayIndexKey: position-aware key for dup-name rows.
                     key={`${key}-${idx}`}
                     sortableId={rowId(key, idx)}
                     keyName={key}

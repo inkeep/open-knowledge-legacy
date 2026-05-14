@@ -96,7 +96,7 @@ export const CC1DiskAckPayloadSchema = z
   .loose();
 export type CC1DiskAckPayload = z.infer<typeof CC1DiskAckPayloadSchema>;
 
-/** `config-validation-rejected` broadcast shape (FR-14b / D45 L3 / D56).
+/** `config-validation-rejected` broadcast shape.
  *
  * Fired when the persistence-hook config-doc branch rejects a Y.Text
  * mutation that produces a syntactically broken or schema-failing

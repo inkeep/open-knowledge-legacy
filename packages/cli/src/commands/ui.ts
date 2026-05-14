@@ -410,7 +410,7 @@ export function uiCommand(getConfig: () => Config): Command {
     )
     .option(
       '-H, --host <host>',
-      'UI host. Default: two-socket loopback bind (`[::1]` + `127.0.0.1`) so cross-family collisions fail loud (D-033). Pass an explicit host (e.g. `127.0.0.1`, `0.0.0.0`) to bind a single socket on that host.',
+      'UI host. Default: two-socket loopback bind (`[::1]` + `127.0.0.1`) so cross-family collisions fail loud. Pass an explicit host (e.g. `127.0.0.1`, `0.0.0.0`) to bind a single socket on that host.',
     )
     .action(async (opts: { port?: string; host?: string }) => {
       const { dim } = await import('../ui/colors.ts');

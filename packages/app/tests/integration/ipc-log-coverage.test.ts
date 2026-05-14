@@ -2,7 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { Glob } from 'bun';
-import * as ts from 'typescript';
+import {
+  type Expression,
+  type Node,
+  Project,
+  type ReturnStatement,
+  type SourceFile,
+  SyntaxKind,
+} from 'ts-morph';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../../..');
 const MAIN_ROOT = join(REPO_ROOT, 'packages/desktop/src/main');
@@ -27,185 +34,200 @@ function* enumerateMainSourceFiles(): Generator<string> {
   }
 }
 
+function makeProject(): Project {
+  return new Project({
+    skipFileDependencyResolution: true,
+    skipLoadingLibFiles: true,
+    skipAddingFilesFromTsConfig: true,
+    compilerOptions: {
+      noLib: true,
+      allowJs: false,
+    },
+  });
+}
+
 interface FailReturn {
   readonly file: string;
   readonly line: number;
   readonly reasonExpr: string;
 }
 
-function unwrapValueExpression(expr: ts.Expression): ts.Expression {
-  let cur: ts.Expression = expr;
+function unwrapValueExpression(expr: Expression): Expression {
+  let cur: Expression = expr;
   while (
-    ts.isAsExpression(cur) ||
-    ts.isTypeAssertionExpression(cur) ||
-    ts.isSatisfiesExpression(cur) ||
-    ts.isParenthesizedExpression(cur)
+    cur.isKind(SyntaxKind.AsExpression) ||
+    cur.isKind(SyntaxKind.TypeAssertionExpression) ||
+    cur.isKind(SyntaxKind.SatisfiesExpression) ||
+    cur.isKind(SyntaxKind.ParenthesizedExpression)
   ) {
-    cur = cur.expression;
+    cur = cur.getExpression();
   }
   return cur;
 }
 
-function isOkFalseObjectLiteral(expr: ts.Expression): boolean {
+function isOkFalseObjectLiteral(expr: Expression): boolean {
   const unwrapped = unwrapValueExpression(expr);
-  if (!ts.isObjectLiteralExpression(unwrapped)) return false;
-  for (const prop of unwrapped.properties) {
-    if (
-      ts.isPropertyAssignment(prop) &&
-      ts.isIdentifier(prop.name) &&
-      prop.name.text === 'ok' &&
-      prop.initializer.kind === ts.SyntaxKind.FalseKeyword
-    ) {
-      return true;
-    }
+  if (!unwrapped.isKind(SyntaxKind.ObjectLiteralExpression)) return false;
+  for (const prop of unwrapped.getProperties()) {
+    if (!prop.isKind(SyntaxKind.PropertyAssignment)) continue;
+    const nameNode = prop.getNameNode();
+    if (!nameNode.isKind(SyntaxKind.Identifier)) continue;
+    if (nameNode.getText() !== 'ok') continue;
+    const initializer = prop.getInitializer();
+    if (initializer?.isKind(SyntaxKind.FalseKeyword)) return true;
   }
   return false;
 }
 
-function extractReasonExpr(expr: ts.Expression, source: ts.SourceFile): string {
+function extractReasonExpr(expr: Expression): string {
   const unwrapped = unwrapValueExpression(expr);
-  if (!ts.isObjectLiteralExpression(unwrapped)) return '<unknown>';
-  for (const prop of unwrapped.properties) {
-    if (
-      ts.isPropertyAssignment(prop) &&
-      ts.isIdentifier(prop.name) &&
-      (prop.name.text === 'reason' || prop.name.text === 'error')
-    ) {
-      return prop.initializer.getText(source);
-    }
+  if (!unwrapped.isKind(SyntaxKind.ObjectLiteralExpression)) return '<unknown>';
+  for (const prop of unwrapped.getProperties()) {
+    if (!prop.isKind(SyntaxKind.PropertyAssignment)) continue;
+    const nameNode = prop.getNameNode();
+    if (!nameNode.isKind(SyntaxKind.Identifier)) continue;
+    const name = nameNode.getText();
+    if (name !== 'reason' && name !== 'error') continue;
+    const initializer = prop.getInitializer();
+    if (initializer) return initializer.getText();
   }
   return '<no-reason>';
 }
 
-function findPrecedingLogCall(
-  returnStmt: ts.ReturnStatement,
-  block: ts.Block | ts.SourceFile,
-): boolean {
-  const statements = block.statements;
-  const returnIndex = statements.indexOf(returnStmt as unknown as ts.Statement);
+function findPrecedingLogCall(returnStmt: ReturnStatement, block: Node): boolean {
+  const statements = blockStatements(block);
+  if (statements === null) return false;
+  const returnIndex = statements.indexOf(returnStmt as unknown as Node);
   if (returnIndex < 0) return false;
   const start = Math.max(0, returnIndex - IPC_LOG_ADJACENCY_MAX_STATEMENTS);
   for (let i = returnIndex - 1; i >= start; i--) {
     const stmt = statements[i];
-    if (statementContainsLogIpcError(stmt)) return true;
+    if (stmt && statementContainsLogIpcError(stmt)) return true;
   }
   return false;
 }
 
-function statementContainsLogIpcError(stmt: ts.Node): boolean {
+function blockStatements(node: Node): readonly Node[] | null {
+  if (node.isKind(SyntaxKind.Block)) return node.getStatements();
+  if (node.isKind(SyntaxKind.SourceFile)) return node.getStatements();
+  return null;
+}
+
+function statementContainsLogIpcError(stmt: Node): boolean {
   let found = false;
-  function visit(node: ts.Node): void {
-    if (found) return;
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === 'logIpcError'
-    ) {
-      found = true;
+  stmt.forEachDescendant((node, traversal) => {
+    if (found) {
+      traversal.stop();
       return;
     }
-    ts.forEachChild(node, visit);
-  }
-  visit(stmt);
+    if (!node.isKind(SyntaxKind.CallExpression)) return;
+    const callee = node.getExpression();
+    if (callee.isKind(SyntaxKind.Identifier) && callee.getText() === 'logIpcError') {
+      found = true;
+      traversal.stop();
+    }
+  });
   return found;
 }
 
-function findEnclosingBlock(node: ts.Node): ts.Block | ts.SourceFile | null {
-  let cur: ts.Node | undefined = node.parent;
+function findEnclosingBlock(node: Node): Node | null {
+  let cur: Node | undefined = node.getParent();
   while (cur !== undefined) {
-    if (ts.isBlock(cur) || ts.isSourceFile(cur)) return cur;
-    cur = cur.parent;
+    if (cur.isKind(SyntaxKind.Block) || cur.isKind(SyntaxKind.SourceFile)) return cur;
+    cur = cur.getParent();
   }
   return null;
 }
 
-function isChannelRegistrationCall(node: ts.CallExpression): boolean {
-  if (!ts.isIdentifier(node.expression)) return false;
-  if (node.expression.text !== 'handle' && node.expression.text !== 'register') return false;
-  if (node.arguments.length < 2) return false;
-  const firstArg = node.arguments[0];
-  if (!ts.isStringLiteral(firstArg) && !ts.isNoSubstitutionTemplateLiteral(firstArg)) return false;
-  return firstArg.text.startsWith('ok:');
+function isChannelRegistrationCall(node: Node): boolean {
+  if (!node.isKind(SyntaxKind.CallExpression)) return false;
+  const callee = node.getExpression();
+  if (!callee.isKind(SyntaxKind.Identifier)) return false;
+  const calleeName = callee.getText();
+  if (calleeName !== 'handle' && calleeName !== 'register') return false;
+  const args = node.getArguments();
+  if (args.length < 2) return false;
+  const firstArg = args[0];
+  if (!firstArg) return false;
+  if (
+    !firstArg.isKind(SyntaxKind.StringLiteral) &&
+    !firstArg.isKind(SyntaxKind.NoSubstitutionTemplateLiteral)
+  ) {
+    return false;
+  }
+  return firstArg.getLiteralText().startsWith('ok:');
 }
 
-function collectHandlerBodies(source: ts.SourceFile): ts.Node[] {
-  const bodies: ts.Node[] = [];
-  function visit(node: ts.Node): void {
-    if (ts.isCallExpression(node) && isChannelRegistrationCall(node)) {
-      const handler = node.arguments[1];
-      if (
-        ts.isArrowFunction(handler) ||
-        ts.isFunctionExpression(handler) ||
-        ts.isFunctionDeclaration(handler)
-      ) {
-        if (handler.body !== undefined) bodies.push(handler.body);
-      } else if (ts.isIdentifier(handler)) {
-        const declBody = findHandlerDeclarationBody(source, handler.text);
-        if (declBody !== null) bodies.push(declBody);
-      }
+function collectHandlerBodies(sf: SourceFile): Node[] {
+  const bodies: Node[] = [];
+  for (const call of sf.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    if (!isChannelRegistrationCall(call)) continue;
+    const args = call.getArguments();
+    const handler = args[1];
+    if (!handler) continue;
+    if (
+      handler.isKind(SyntaxKind.ArrowFunction) ||
+      handler.isKind(SyntaxKind.FunctionExpression) ||
+      handler.isKind(SyntaxKind.FunctionDeclaration)
+    ) {
+      const body = handler.getBody();
+      if (body !== undefined) bodies.push(body);
+    } else if (handler.isKind(SyntaxKind.Identifier)) {
+      const declBody = findHandlerDeclarationBody(sf, handler.getText());
+      if (declBody !== null) bodies.push(declBody);
     }
-    ts.forEachChild(node, visit);
   }
-  visit(source);
   return bodies;
 }
 
-function findHandlerDeclarationBody(source: ts.SourceFile, name: string): ts.Node | null {
-  let body: ts.Node | null = null;
-  function visit(node: ts.Node): void {
-    if (body !== null) return;
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
-      const init = node.initializer;
-      if (
-        init !== undefined &&
-        (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) &&
-        init.body !== undefined
-      ) {
-        body = init.body;
-        return;
-      }
-    }
+function findHandlerDeclarationBody(sf: SourceFile, name: string): Node | null {
+  for (const decl of sf.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+    const declName = decl.getNameNode();
+    if (!declName.isKind(SyntaxKind.Identifier)) continue;
+    if (declName.getText() !== name) continue;
+    const init = decl.getInitializer();
     if (
-      ts.isFunctionDeclaration(node) &&
-      node.name !== undefined &&
-      node.name.text === name &&
-      node.body !== undefined
+      init &&
+      (init.isKind(SyntaxKind.ArrowFunction) || init.isKind(SyntaxKind.FunctionExpression))
     ) {
-      body = node.body;
-      return;
+      const body = init.getBody();
+      if (body !== undefined) return body;
     }
-    ts.forEachChild(node, visit);
   }
-  visit(source);
-  return body;
+  for (const fn of sf.getDescendantsOfKind(SyntaxKind.FunctionDeclaration)) {
+    if (fn.getName() !== name) continue;
+    const body = fn.getBody();
+    if (body !== undefined) return body;
+  }
+  return null;
 }
 
-function collectUnpairedFailReturns(absPath: string, content: string): FailReturn[] {
-  const source = ts.createSourceFile(absPath, content, ts.ScriptTarget.Latest, true);
+function collectUnpairedFailReturns(absPath: string, project: Project): FailReturn[] {
+  const sf = project.addSourceFileAtPath(absPath);
   const out: FailReturn[] = [];
-  const handlerBodies = collectHandlerBodies(source);
-  if (handlerBodies.length === 0) return out;
+  const handlerBodies = collectHandlerBodies(sf);
+  if (handlerBodies.length === 0) {
+    project.removeSourceFile(sf);
+    return out;
+  }
 
-  function visit(node: ts.Node): void {
-    if (
-      ts.isReturnStatement(node) &&
-      node.expression !== undefined &&
-      isOkFalseObjectLiteral(node.expression)
-    ) {
-      const block = findEnclosingBlock(node);
-      const hasLog = block !== null && findPrecedingLogCall(node, block);
+  for (const body of handlerBodies) {
+    for (const ret of body.getDescendantsOfKind(SyntaxKind.ReturnStatement)) {
+      const retExpr = ret.getExpression();
+      if (retExpr === undefined) continue;
+      if (!isOkFalseObjectLiteral(retExpr)) continue;
+      const block = findEnclosingBlock(ret);
+      const hasLog = block !== null && findPrecedingLogCall(ret, block);
       if (!hasLog) {
-        const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
         out.push({
           file: relative(REPO_ROOT, absPath),
-          line: line + 1,
-          reasonExpr: extractReasonExpr(node.expression, source),
+          line: ret.getStartLineNumber(),
+          reasonExpr: extractReasonExpr(retExpr),
         });
       }
     }
-    ts.forEachChild(node, visit);
   }
-  for (const body of handlerBodies) visit(body);
+  project.removeSourceFile(sf);
   return out;
 }
 
@@ -229,11 +251,12 @@ describe('IPC log coverage', () => {
 
   test('every `return { ok: false, ... }` in main-process channel-registration files is paired with a logIpcError call', () => {
     const violations: FailReturn[] = [];
+    const project = makeProject();
     for (const file of enumerateMainSourceFiles()) {
       const content = readFileSync(file, 'utf8');
       if (!/ok:\s*false/.test(content)) continue;
       if (!isChannelRegistrationFile(content)) continue;
-      violations.push(...collectUnpairedFailReturns(file, content));
+      violations.push(...collectUnpairedFailReturns(file, project));
     }
     if (violations.length > 0) {
       const report = violations
@@ -244,8 +267,8 @@ describe('IPC log coverage', () => {
           `Every \`return { ok: false, ... }\` in packages/desktop/src/main/**/*.ts must be preceded by\n` +
           `a \`logIpcError({ event: 'ipc.error', channel, reason, handler, cause? })\` call within\n` +
           `IPC_LOG_ADJACENCY_MAX_STATEMENTS (= ${IPC_LOG_ADJACENCY_MAX_STATEMENTS}) statements above,\n` +
-          `in the same surrounding block. This pins the IPC observability asymmetry that PR #366\n` +
-          `closed for HTTP errors.\n` +
+          `in the same surrounding block. This pins the IPC observability asymmetry that the HTTP-side\n` +
+          `errorResponse() discipline closed.\n` +
           `Violations:\n${report}`,
       );
     }

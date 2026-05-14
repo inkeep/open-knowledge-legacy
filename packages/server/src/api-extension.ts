@@ -4949,7 +4949,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     DeletePathRequestSchema,
     async (_req, res, body) => {
       try {
-        extractAgentIdentity(body as unknown as Record<string, unknown>); // attribution threading (FR-5, D42)
+        extractAgentIdentity(body as unknown as Record<string, unknown>); // attribution threading
         const { kind, path } = body;
         if (!isValidRelativeContentPath(path)) {
           errorResponse(
