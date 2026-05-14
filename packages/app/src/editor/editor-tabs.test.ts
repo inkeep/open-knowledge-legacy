@@ -1,10 +1,12 @@
 import { describe, expect, mock, test } from 'bun:test';
 import {
   addOpenTab,
+  addPinnedTab,
   assetTabId,
   createEditorTabSessionState,
   docNameForTabId,
   docTabId,
+  filterClosableTabIds,
   filterOpenTabsForKnownTargets,
   findOpenTabTarget,
   folderTabId,
@@ -14,6 +16,7 @@ import {
   nextAvailableDocTabId,
   nextAvailableTabId,
   normalizeOpenTabs,
+  normalizePinnedTabIds,
   openDocTab,
   openTab,
   parseEditorTabId,
@@ -22,6 +25,7 @@ import {
   reconcileVisibleTabOrder,
   remapOpenTabs,
   removeOpenTab,
+  removePinnedTab,
   replaceOpenTab,
   sameTabTarget,
   tabIdForNavigationTarget,
@@ -62,6 +66,20 @@ describe('editor tab state', () => {
   test('normalizes asset tabs alongside document tabs', () => {
     const asset = assetTabId('docs/photo.png');
     expect(normalizeOpenTabs(['a', asset, asset, 42, 'b'], 10)).toEqual(['a', asset, 'b']);
+  });
+
+  test('normalizes pinned tabs against the open tab set', () => {
+    expect(normalizePinnedTabIds(['b', 'missing', 'b', '', 42], ['a', 'b', 'c'])).toEqual(['b']);
+  });
+
+  test('adds and removes pinned tabs only when the tab is open', () => {
+    expect(addPinnedTab(['a'], 'b', ['a', 'b'])).toEqual(['a', 'b']);
+    expect(addPinnedTab(['a'], 'missing', ['a', 'b'])).toEqual(['a']);
+    expect(removePinnedTab(['a', 'b'], 'a')).toEqual(['b']);
+  });
+
+  test('filters close batches so pinned tabs survive close-all and close-others actions', () => {
+    expect(filterClosableTabIds(['a', 'b', 'c', 'b'], ['b'])).toEqual(['a', 'c']);
   });
 
   test('derives tab ids for document, folder, and asset navigation targets', () => {
@@ -114,6 +132,10 @@ describe('editor tab state', () => {
     expect(addOpenTab(['a', 'b'], 'c', 2)).toEqual(['b', 'c']);
   });
 
+  test('addOpenTab preserves pinned tabs while capping unpinned tabs', () => {
+    expect(addOpenTab(['pinned', 'a', 'b'], 'c', 2, ['pinned'])).toEqual(['pinned', 'b', 'c']);
+  });
+
   test('addOpenTab keeps existing tabs in place', () => {
     expect(addOpenTab(['a', 'b'], 'a', 10)).toEqual(['a', 'b']);
   });
@@ -144,6 +166,10 @@ describe('editor tab state', () => {
     expect(
       replaceOpenTab(['foo.md', folderTabId('docs')], 'foo.md', folderTabId('guides'), 10),
     ).toEqual([folderTabId('guides'), folderTabId('docs')]);
+  });
+
+  test('replaceOpenTab preserves pinned tabs while capping unpinned tabs', () => {
+    expect(replaceOpenTab(['pinned', 'a', 'b'], 'b', 'c', 1, ['pinned'])).toEqual(['pinned', 'c']);
   });
 
   test('openDocTab appends a new document tab', () => {
@@ -392,6 +418,18 @@ describe('editor tab state', () => {
     ]);
   });
 
+  test('remapOpenTabs preserves pinned tabs while capping unpinned tabs', () => {
+    expect(
+      remapOpenTabs(
+        ['pinned', 'a', 'b'],
+        [{ fromDocName: 'pinned', toDocName: 'renamed' }],
+        1,
+        [],
+        ['pinned'],
+      ),
+    ).toEqual(['renamed', 'b']);
+  });
+
   test('nextActiveTabAfterClose prefers the tab to the right, then left', () => {
     expect(nextActiveTabAfterClose(['a', 'b', 'c'], 'b', 'b')).toBe('c');
     expect(nextActiveTabAfterClose(['a', 'b'], 'b', 'b')).toBe('a');
@@ -420,8 +458,29 @@ describe('editor tab state', () => {
       ),
     ).toEqual({
       openTabs: ['a', 'b'],
+      pinnedTabIds: [],
       activeDocName: null,
       activeTabId: null,
+      updatedAt: '2026-05-06T00:00:00Z',
+    });
+  });
+
+  test('parseEditorTabSessionState preserves pinned tabs beyond the unpinned tab cap', () => {
+    expect(
+      parseEditorTabSessionState(
+        {
+          openTabs: ['pinned', 'a', 'b', 'c'],
+          pinnedTabIds: ['pinned'],
+          activeTabId: 'c',
+          updatedAt: '2026-05-06T00:00:00Z',
+        },
+        2,
+      ),
+    ).toEqual({
+      openTabs: ['pinned', 'b', 'c'],
+      pinnedTabIds: ['pinned'],
+      activeDocName: 'c',
+      activeTabId: 'c',
       updatedAt: '2026-05-06T00:00:00Z',
     });
   });
@@ -435,6 +494,7 @@ describe('editor tab state', () => {
       ),
     ).toEqual({
       openTabs: ['a', folder],
+      pinnedTabIds: [],
       activeDocName: null,
       activeTabId: folder,
       updatedAt: '2026-05-06T00:00:00Z',
@@ -450,6 +510,7 @@ describe('editor tab state', () => {
       ),
     ).toEqual({
       openTabs: ['a', asset],
+      pinnedTabIds: [],
       activeDocName: null,
       activeTabId: asset,
       updatedAt: '2026-05-06T00:00:00Z',
@@ -464,6 +525,7 @@ describe('editor tab state', () => {
       ),
     ).toEqual({
       openTabs: ['a', 'b'],
+      pinnedTabIds: [],
       activeDocName: 'b',
       activeTabId: 'b',
       updatedAt: '2026-05-06T00:00:00Z',
@@ -474,10 +536,12 @@ describe('editor tab state', () => {
     const state = createEditorTabSessionState(
       ['a', 'b'],
       'b',
+      ['a'],
       () => new Date('2026-05-06T00:00:00Z'),
     );
     expect(state).toEqual({
       openTabs: ['a', 'b'],
+      pinnedTabIds: ['a'],
       activeDocName: 'b',
       activeTabId: 'b',
       updatedAt: '2026-05-06T00:00:00.000Z',
@@ -489,10 +553,12 @@ describe('editor tab state', () => {
     const state = createEditorTabSessionState(
       ['a', folder],
       folder,
+      [],
       () => new Date('2026-05-06T00:00:00Z'),
     );
     expect(state).toEqual({
       openTabs: ['a', folder],
+      pinnedTabIds: [],
       activeDocName: null,
       activeTabId: folder,
       updatedAt: '2026-05-06T00:00:00.000Z',
@@ -504,10 +570,12 @@ describe('editor tab state', () => {
     const state = createEditorTabSessionState(
       ['a', asset],
       asset,
+      [],
       () => new Date('2026-05-06T00:00:00Z'),
     );
     expect(state).toEqual({
       openTabs: ['a', asset],
+      pinnedTabIds: [],
       activeDocName: null,
       activeTabId: asset,
       updatedAt: '2026-05-06T00:00:00.000Z',
@@ -519,6 +587,7 @@ describe('editor tab state', () => {
     const key = localTabSessionStorageKey('http://localhost:5173');
     const state = {
       openTabs: ['docs/a', 'docs/b'],
+      pinnedTabIds: ['docs/a'],
       activeDocName: 'docs/b',
       activeTabId: 'docs/b',
       updatedAt: '2026-05-06T00:00:00.000Z',
@@ -537,6 +606,7 @@ describe('editor tab state', () => {
 
       expect(readLocalTabSessionState(storage, 'key', 10)).toEqual({
         openTabs: [],
+        pinnedTabIds: [],
         activeDocName: null,
         activeTabId: null,
         updatedAt: null,
@@ -557,6 +627,7 @@ describe('editor tab state', () => {
       expect(() =>
         writeLocalTabSessionState(storage, 'key', {
           openTabs: ['docs/a'],
+          pinnedTabIds: [],
           activeDocName: 'docs/a',
           activeTabId: 'docs/a',
           updatedAt: '2026-05-06T00:00:00.000Z',

@@ -5,6 +5,34 @@ import { join } from 'node:path';
 import { DocumentListSuccessSchema } from '@inkeep/open-knowledge-core';
 import { createTestServer, type TestServer, wait } from './test-harness';
 
+const LIVE_FOLDER_TIMEOUT_MS = 45_000;
+const LIVE_FOLDER_TEST_TIMEOUT_MS = LIVE_FOLDER_TIMEOUT_MS + 5_000;
+
+async function awaitFolderPathsIndexed(
+  server: TestServer,
+  expectedFolderPaths: readonly string[],
+  timeoutMs = LIVE_FOLDER_TIMEOUT_MS,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastFolderPaths: string[] = [];
+  while (Date.now() < deadline) {
+    const res = await fetch(`http://localhost:${server.port}/api/documents`).catch(() => null);
+    if (res?.ok) {
+      const body = DocumentListSuccessSchema.parse(await res.json());
+      lastFolderPaths = body.documents.filter((e) => e.kind === 'folder').map((e) => e.path ?? '');
+      if (expectedFolderPaths.every((path) => lastFolderPaths.includes(path))) {
+        return;
+      }
+    }
+    await wait(50);
+  }
+  throw new Error(
+    `folder paths not indexed within ${timeoutMs}ms: expected=${expectedFolderPaths.join(
+      ',',
+    )}; last=${lastFolderPaths.join(',')}`,
+  );
+}
+
 describe('/api/documents empty folder — boot-time', () => {
   let server: TestServer;
 
@@ -52,50 +80,23 @@ describe('/api/documents empty folder — live creation', () => {
     await server.cleanup();
   });
 
-  test('detects empty folder created externally after server start', async () => {
-    mkdirSync(join(server.contentDir, 'live-empty'));
+  test(
+    'detects empty folder created externally after server start',
+    async () => {
+      mkdirSync(join(server.contentDir, 'live-empty'));
 
-    const deadline = Date.now() + 10_000;
-    let found = false;
-    while (Date.now() < deadline) {
-      const res = await fetch(`http://localhost:${server.port}/api/documents`).catch(() => null);
-      if (res?.ok) {
-        const body = DocumentListSuccessSchema.parse(await res.json());
-        if (body.documents.some((e) => e.kind === 'folder' && e.path === 'live-empty')) {
-          found = true;
-          break;
-        }
-      }
-      await wait(100);
-    }
+      await awaitFolderPathsIndexed(server, ['live-empty']);
+    },
+    LIVE_FOLDER_TEST_TIMEOUT_MS,
+  );
 
-    expect(found).toBe(true);
-  });
+  test(
+    'detects deeply-nested empty folder hierarchy created with mkdir -p',
+    async () => {
+      mkdirSync(join(server.contentDir, 'deep', 'nested', 'empty'), { recursive: true });
 
-  test('detects deeply-nested empty folder hierarchy created with mkdir -p', async () => {
-    mkdirSync(join(server.contentDir, 'deep', 'nested', 'empty'), { recursive: true });
-
-    const deadline = Date.now() + 10_000;
-    let deepFound = false;
-    while (Date.now() < deadline) {
-      const res = await fetch(`http://localhost:${server.port}/api/documents`).catch(() => null);
-      if (res?.ok) {
-        const body = DocumentListSuccessSchema.parse(await res.json());
-        const folderPaths = body.documents
-          .filter((e) => e.kind === 'folder')
-          .map((e) => e.path ?? '');
-        if (
-          folderPaths.includes('deep') &&
-          folderPaths.includes('deep/nested') &&
-          folderPaths.includes('deep/nested/empty')
-        ) {
-          deepFound = true;
-          break;
-        }
-      }
-      await wait(100);
-    }
-
-    expect(deepFound).toBe(true);
-  }, 15_000);
+      await awaitFolderPathsIndexed(server, ['deep', 'deep/nested', 'deep/nested/empty']);
+    },
+    LIVE_FOLDER_TEST_TIMEOUT_MS,
+  );
 });

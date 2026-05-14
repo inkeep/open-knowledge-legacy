@@ -1,5 +1,6 @@
 interface EditorTabSessionState {
   openTabs: string[];
+  pinnedTabIds: string[];
   activeDocName: string | null;
   activeTabId: string | null;
   updatedAt: string | null;
@@ -26,6 +27,7 @@ interface OpenTabOptions {
   behavior: 'append' | 'replace-active';
   currentTabId: string | null;
   limit: number;
+  pinnedTabIds?: readonly string[];
 }
 
 function splitTabInstance(tabId: string): { baseTabId: string; instanceSuffix: string } {
@@ -152,11 +154,71 @@ export function normalizeOpenTabs(value: unknown, limit: number): string[] {
   return tabs;
 }
 
-export function addOpenTab(tabs: readonly string[], tabId: string, limit: number): string[] {
-  const normalized = normalizeOpenTabs(tabs, limit);
+export function normalizePinnedTabIds(value: unknown, openTabs: readonly string[]): string[] {
+  const openTabSet = new Set(normalizeOpenTabs(openTabs, Number.MAX_SAFE_INTEGER));
+  return normalizeOpenTabs(value, Number.MAX_SAFE_INTEGER).filter((tabId) => openTabSet.has(tabId));
+}
+
+function capOpenTabsPreservingPinned(
+  tabs: readonly string[],
+  limit: number,
+  pinnedTabIds: readonly string[],
+): string[] {
+  if (limit <= 0) return [];
+  const pinned = new Set(normalizeOpenTabs(pinnedTabIds, Number.MAX_SAFE_INTEGER));
+  const normalized = normalizeOpenTabs(tabs, Number.MAX_SAFE_INTEGER);
+  if (pinned.size === 0 && normalized.length <= limit) return normalized;
+
+  const nextReversed: string[] = [];
+  let unpinnedCount = 0;
+  for (let index = normalized.length - 1; index >= 0; index--) {
+    const tabId = normalized[index];
+    if (pinned.has(tabId)) {
+      nextReversed.push(tabId);
+      continue;
+    }
+    if (unpinnedCount >= limit) continue;
+    unpinnedCount++;
+    nextReversed.push(tabId);
+  }
+  return nextReversed.reverse();
+}
+
+export function addPinnedTab(
+  pinnedTabIds: readonly string[],
+  tabId: string,
+  openTabs: readonly string[],
+): string[] {
+  const normalized = normalizePinnedTabIds(pinnedTabIds, openTabs);
+  if (!normalizeOpenTabs(openTabs, Number.MAX_SAFE_INTEGER).includes(tabId)) return normalized;
+  if (normalized.includes(tabId)) return normalized;
+  return [...normalized, tabId];
+}
+
+export function removePinnedTab(pinnedTabIds: readonly string[], tabId: string): string[] {
+  return normalizeOpenTabs(pinnedTabIds, Number.MAX_SAFE_INTEGER).filter(
+    (pinnedTabId) => pinnedTabId !== tabId,
+  );
+}
+
+export function filterClosableTabIds(
+  tabIds: readonly string[],
+  pinnedTabIds: readonly string[],
+): string[] {
+  const pinned = new Set(normalizeOpenTabs(pinnedTabIds, Number.MAX_SAFE_INTEGER));
+  return normalizeOpenTabs(tabIds, Number.MAX_SAFE_INTEGER).filter((tabId) => !pinned.has(tabId));
+}
+
+export function addOpenTab(
+  tabs: readonly string[],
+  tabId: string,
+  limit: number,
+  pinnedTabIds: readonly string[] = [],
+): string[] {
+  const normalized = capOpenTabsPreservingPinned(tabs, limit, pinnedTabIds);
   if (!isValidTabId(tabId) || normalized.includes(tabId)) return normalized;
   const next = [...normalized, tabId];
-  return next.length > limit ? next.slice(next.length - limit) : next;
+  return capOpenTabsPreservingPinned(next, limit, pinnedTabIds);
 }
 
 export function replaceOpenTab(
@@ -164,18 +226,21 @@ export function replaceOpenTab(
   currentTabId: string | null,
   nextTabId: string,
   limit: number,
+  pinnedTabIds: readonly string[] = [],
 ): string[] {
-  const normalized = normalizeOpenTabs(tabs, limit);
+  const normalized = capOpenTabsPreservingPinned(tabs, limit, pinnedTabIds);
   if (!isValidTabId(nextTabId)) return normalized;
-  if (!currentTabId || currentTabId === nextTabId) return addOpenTab(normalized, nextTabId, limit);
+  if (!currentTabId || currentTabId === nextTabId) {
+    return addOpenTab(normalized, nextTabId, limit, pinnedTabIds);
+  }
 
   const tabsWithoutNext = normalized.filter((tab) => tab !== nextTabId);
   const currentIndex = tabsWithoutNext.indexOf(currentTabId);
-  if (currentIndex < 0) return addOpenTab(tabsWithoutNext, nextTabId, limit);
+  if (currentIndex < 0) return addOpenTab(tabsWithoutNext, nextTabId, limit, pinnedTabIds);
 
   const next = [...tabsWithoutNext];
   next[currentIndex] = nextTabId;
-  return normalizeOpenTabs(next, limit);
+  return capOpenTabsPreservingPinned(next, limit, pinnedTabIds);
 }
 
 export function openDocTab(
@@ -189,9 +254,9 @@ export function openDocTab(
 export function openTab(
   tabs: readonly string[],
   tabId: string,
-  { behavior, currentTabId, limit }: OpenTabOptions,
+  { behavior, currentTabId, limit, pinnedTabIds = [] }: OpenTabOptions,
 ): { tabs: string[]; activeTabId: string } {
-  const normalized = normalizeOpenTabs(tabs, limit);
+  const normalized = capOpenTabsPreservingPinned(tabs, limit, pinnedTabIds);
   const canonicalTabId = baseTabId(tabId);
   if (
     currentTabId &&
@@ -205,7 +270,7 @@ export function openTab(
   }
   if (behavior !== 'replace-active') {
     return {
-      tabs: addOpenTab(normalized, canonicalTabId, limit),
+      tabs: addOpenTab(normalized, canonicalTabId, limit, pinnedTabIds),
       activeTabId: canonicalTabId,
     };
   }
@@ -213,7 +278,7 @@ export function openTab(
   const nextTabId = nextAvailableTabId(normalized, canonicalTabId);
 
   return {
-    tabs: replaceOpenTab(normalized, currentTabId, nextTabId, limit),
+    tabs: replaceOpenTab(normalized, currentTabId, nextTabId, limit, pinnedTabIds),
     activeTabId: nextTabId,
   };
 }
@@ -266,6 +331,7 @@ export function remapOpenTabs(
   mappings: readonly { fromDocName: string; toDocName: string }[],
   limit: number,
   folderMappings: readonly RenamedFolderMapping[] = [],
+  pinnedTabIds: readonly string[] = [],
 ): string[] {
   if (mappings.length === 0 && folderMappings.length === 0) return normalizeOpenTabs(tabs, limit);
   const bySource = new Map(mappings.map((entry) => [entry.fromDocName, entry.toDocName]));
@@ -284,9 +350,18 @@ export function remapOpenTabs(
     if (seen.has(mapped)) continue;
     seen.add(mapped);
     next.push(mapped);
-    if (next.length >= limit) break;
+    if (pinnedTabIds.length === 0 && next.length >= limit) break;
   }
-  return next;
+  if (pinnedTabIds.length === 0) return next;
+  const remappedPinnedTabIds = pinnedTabIds.map((tabId) => {
+    const parsed = parseEditorTabId(tabId);
+    return parsed.kind === 'doc'
+      ? (bySource.get(parsed.docName) ?? tabId)
+      : parsed.kind === 'folder'
+        ? folderTabId(remapPathForFolderRenames(parsed.folderPath, folderMappings))
+        : assetTabId(remapPathForFolderRenames(parsed.assetPath, folderMappings));
+  });
+  return capOpenTabsPreservingPinned(next, limit, remappedPinnedTabIds);
 }
 
 export function remapPathForFolderRenames(
@@ -333,10 +408,22 @@ export function nextActiveTabAfterCloseMany(
 
 export function parseEditorTabSessionState(value: unknown, limit: number): EditorTabSessionState {
   if (typeof value !== 'object' || value === null) {
-    return { openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null };
+    return {
+      openTabs: [],
+      pinnedTabIds: [],
+      activeDocName: null,
+      activeTabId: null,
+      updatedAt: null,
+    };
   }
   const record = value as Record<string, unknown>;
-  const openTabs = normalizeOpenTabs(record.openTabs, limit);
+  const rawOpenTabs = normalizeOpenTabs(record.openTabs, Number.MAX_SAFE_INTEGER);
+  const rawPinnedTabIds = normalizePinnedTabIds(record.pinnedTabIds, rawOpenTabs);
+  const openTabs =
+    rawPinnedTabIds.length === 0
+      ? normalizeOpenTabs(record.openTabs, limit)
+      : capOpenTabsPreservingPinned(rawOpenTabs, limit, rawPinnedTabIds);
+  const pinnedTabIds = normalizePinnedTabIds(record.pinnedTabIds, openTabs);
   const activeTabId =
     typeof record.activeTabId === 'string' && openTabs.includes(record.activeTabId)
       ? record.activeTabId
@@ -346,6 +433,7 @@ export function parseEditorTabSessionState(value: unknown, limit: number): Edito
   const activeTab = activeTabId ? parseEditorTabId(activeTabId) : null;
   return {
     openTabs,
+    pinnedTabIds,
     activeDocName: activeTab?.kind === 'doc' ? activeTab.docName : null,
     activeTabId,
     updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : null,
@@ -355,6 +443,7 @@ export function parseEditorTabSessionState(value: unknown, limit: number): Edito
 export function createEditorTabSessionState(
   openTabs: readonly string[],
   activeTabId: string | null,
+  pinnedTabIds: readonly string[] = [],
   now: () => Date = () => new Date(),
 ): EditorTabSessionState {
   const normalized = normalizeOpenTabs(openTabs, Number.MAX_SAFE_INTEGER);
@@ -363,6 +452,7 @@ export function createEditorTabSessionState(
   const activeTab = normalizedActiveTabId ? parseEditorTabId(normalizedActiveTabId) : null;
   return {
     openTabs: normalized,
+    pinnedTabIds: normalizePinnedTabIds(pinnedTabIds, normalized),
     activeDocName: activeTab?.kind === 'doc' ? activeTab.docName : null,
     activeTabId: normalizedActiveTabId,
     updatedAt: now().toISOString(),
@@ -378,14 +468,36 @@ export function readLocalTabSessionState(
   key: string,
   limit: number,
 ): EditorTabSessionState {
-  if (!storage) return { openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null };
+  if (!storage) {
+    return {
+      openTabs: [],
+      pinnedTabIds: [],
+      activeDocName: null,
+      activeTabId: null,
+      updatedAt: null,
+    };
+  }
   try {
     const raw = storage.getItem(key);
-    if (!raw) return { openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null };
+    if (!raw) {
+      return {
+        openTabs: [],
+        pinnedTabIds: [],
+        activeDocName: null,
+        activeTabId: null,
+        updatedAt: null,
+      };
+    }
     return parseEditorTabSessionState(JSON.parse(raw), limit);
   } catch (err) {
     console.warn('[editor-tabs] failed to read local tab session:', err);
-    return { openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null };
+    return {
+      openTabs: [],
+      pinnedTabIds: [],
+      activeDocName: null,
+      activeTabId: null,
+      updatedAt: null,
+    };
   }
 }
 

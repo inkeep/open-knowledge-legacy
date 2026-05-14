@@ -1,7 +1,41 @@
+import { readdirSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { expect, test } from './_helpers';
 
-test.beforeEach(async ({ api }) => {
+async function deletePathIfExists(baseURL: string, kind: 'file' | 'folder', path: string) {
+  const response = await fetch(`${baseURL}/api/delete-path`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, path }),
+  });
+  if (response.ok || response.status === 404) return;
+  throw new Error(`delete-path failed for ${kind}:${path}: ${response.status}`);
+}
+
+async function clearVisibleContentEntries(baseURL: string, contentDir: string): Promise<void> {
+  for (const entry of readdirSync(contentDir, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
+    if (entry.isDirectory()) {
+      await deletePathIfExists(baseURL, 'folder', entry.name);
+      continue;
+    }
+    const docPath = entry.name.replace(/\.(md|mdx)$/i, '');
+    if (docPath !== entry.name) {
+      await deletePathIfExists(baseURL, 'file', docPath);
+    }
+  }
+}
+
+test.beforeEach(async ({ api, workerServer }) => {
+  await clearVisibleContentEntries(workerServer.baseURL, workerServer.contentDir);
+  const folderResponse = await fetch(`${workerServer.baseURL}/api/create-folder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'sidebar-folder' }),
+  });
+  if (!folderResponse.ok && folderResponse.status !== 409) {
+    throw new Error(`create-folder failed for sidebar-folder: ${folderResponse.status}`);
+  }
   await api.createPage('test-doc.md');
   await api.createPage('sidebar-folder/nested-doc.md');
 });

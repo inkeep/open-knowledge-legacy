@@ -212,8 +212,20 @@ test('concurrent agent write: user + agent content coexist', async ({ page, api,
 });
 
 test('sidebar folder: row click navigates to folder overview; treeitem toggles expand/collapse', async ({
+  api,
   page,
+  workerServer,
 }) => {
+  const folderResponse = await fetch(`${workerServer.baseURL}/api/create-folder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'sidebar-folder' }),
+  });
+  if (!folderResponse.ok && folderResponse.status !== 409) {
+    throw new Error(`create-folder failed for sidebar-folder: ${folderResponse.status}`);
+  }
+  await api.createPage('sidebar-folder/nested-doc.md');
+
   await page.goto('/');
   const folderRow = page.getByRole('treeitem', { name: 'sidebar-folder', exact: true });
   const nestedFile = page.getByRole('treeitem', { name: 'nested-doc.md', exact: true });

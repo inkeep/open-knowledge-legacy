@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
-import { type ApiHelpers, createPngBuffer, expect, test } from './_helpers';
+import { type ApiHelpers, createPngBuffer, expect, test, type WorkerServer } from './_helpers';
 
 function testId(): string {
   return randomUUID().slice(0, 8);
@@ -35,14 +35,53 @@ async function seedMdxDocs(api: ApiHelpers, docs: Array<{ name: string; markdown
   );
 }
 
+async function deletePathIfExists(
+  baseURL: string,
+  kind: 'file' | 'folder',
+  path: string,
+): Promise<void> {
+  const response = await fetch(`${baseURL}/api/delete-path`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, path }),
+  });
+  if (response.ok || response.status === 404) return;
+  throw new Error(`delete-path failed for ${kind}:${path}: ${response.status}`);
+}
+
+async function clearVisibleContentEntries(workerServer: WorkerServer): Promise<void> {
+  for (const entry of readdirSync(workerServer.contentDir, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
+    if (entry.isDirectory()) {
+      await deletePathIfExists(workerServer.baseURL, 'folder', entry.name);
+      continue;
+    }
+    const docPath = entry.name.replace(/\.(md|mdx)$/i, '');
+    if (docPath !== entry.name) {
+      await deletePathIfExists(workerServer.baseURL, 'file', docPath);
+      continue;
+    }
+    rmSync(join(workerServer.contentDir, entry.name), { recursive: true, force: true });
+  }
+}
+
 async function installLocalTabSession(
   page: Page,
-  state: { openTabs: string[]; activeDocName: string | null; activeTabId: string | null },
+  state: {
+    openTabs: string[];
+    pinnedTabIds?: string[];
+    activeDocName: string | null;
+    activeTabId: string | null;
+  },
 ) {
   await page.addInitScript((sessionState) => {
     window.localStorage.setItem(
       `ok-editor-tabs-v1:${window.location.origin}`,
-      JSON.stringify({ ...sessionState, updatedAt: '2026-05-12T00:00:00.000Z' }),
+      JSON.stringify({
+        pinnedTabIds: [],
+        ...sessionState,
+        updatedAt: '2026-05-12T00:00:00.000Z',
+      }),
     );
   }, state);
 }
@@ -84,6 +123,13 @@ async function expectInactiveTab(tabButton: Locator) {
   await expect(editorTabChrome(tabButton)).not.toHaveAttribute('data-active-tab', 'true');
 }
 
+async function clickNewTabCloseButton(page: Page, index: number) {
+  const tabButton = activateNewTabButtons(page).nth(index);
+  const closeButton = closeNewTabButtons(page).nth(index);
+  await editorTabChrome(tabButton).hover();
+  await closeButton.click();
+}
+
 async function expectPersistedTabSession(
   page: Page,
   expected: { openTabs: string[]; activeTabId: string | null },
@@ -98,6 +144,19 @@ async function expectPersistedTabSession(
           openTabs: Array.isArray(parsed.openTabs) ? parsed.openTabs : null,
           activeTabId: typeof parsed.activeTabId === 'string' ? parsed.activeTabId : null,
         };
+      }),
+    )
+    .toEqual(expected);
+}
+
+async function expectPersistedPinnedTabs(page: Page, expected: string[]) {
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const raw = window.localStorage.getItem(`ok-editor-tabs-v1:${window.location.origin}`);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as { pinnedTabIds?: unknown };
+        return Array.isArray(parsed.pinnedTabIds) ? parsed.pinnedTabIds : null;
       }),
     )
     .toEqual(expected);
@@ -131,6 +190,24 @@ async function expectDocumentListContainsAsset(baseURL: string, assetPath: strin
       { timeout: 10_000 },
     )
     .toBe(true);
+}
+
+async function seedReferencedAssetDoc(
+  api: ApiHelpers,
+  workerServer: WorkerServer,
+  docName: string,
+  assetPath: string,
+) {
+  const markdown = `![Asset tab](${assetPath})\n`;
+
+  await api.testReset();
+  writeFileSync(join(workerServer.contentDir, assetPath), createPngBuffer(assetPath));
+  await api.createPage(`${docName}.md`);
+  await api.replaceDoc(docName, markdown);
+
+  writeFileSync(join(workerServer.contentDir, `${docName}.md`), markdown);
+  await api.createPage(`${docName}-asset-index-bump.md`);
+  await expectDocumentListContainsAsset(workerServer.baseURL, assetPath);
 }
 
 test.describe('Editor tabs', () => {
@@ -176,7 +253,6 @@ test.describe('Editor tabs', () => {
     await newTabButton.click();
 
     const newTabs = activateNewTabButtons(page);
-    const closeNewTabs = closeNewTabButtons(page);
     await expect(newTabs).toHaveCount(3);
     await expectActiveTab(newTabs.nth(2));
     await expectInactiveTab(docTab.first());
@@ -184,16 +260,16 @@ test.describe('Editor tabs', () => {
     await newTabs.nth(1).click();
     await expectActiveTab(newTabs.nth(1));
 
-    await closeNewTabs.nth(0).click();
+    await clickNewTabCloseButton(page, 0);
     await expect(newTabs).toHaveCount(2);
     await expectActiveTab(newTabs.nth(0));
     await expectInactiveTab(newTabs.nth(1));
 
-    await closeNewTabs.nth(0).click();
+    await clickNewTabCloseButton(page, 0);
     await expect(newTabs).toHaveCount(1);
     await expectActiveTab(newTabs.first());
 
-    await closeNewTabs.first().click();
+    await clickNewTabCloseButton(page, 0);
     await expect(newTabs).toHaveCount(0);
     await expectActiveTab(docTab.first());
   });
@@ -296,11 +372,7 @@ test.describe('Editor tabs', () => {
     const docLabel = `${docName}.md`;
     const assetPath = `asset-tab-${id}.png`;
 
-    await api.testReset();
-    writeFileSync(join(workerServer.contentDir, assetPath), createPngBuffer(id));
-    await api.createPage(`${docName}.md`);
-    await api.replaceDoc(docName, `![Asset tab](${assetPath})\n`);
-    await expectDocumentListContainsAsset(workerServer.baseURL, assetPath);
+    await seedReferencedAssetDoc(api, workerServer, docName, assetPath);
 
     await page.goto(`/#/${docName}`);
     const docTab = editorTabButtons(page, docLabel);
@@ -328,11 +400,7 @@ test.describe('Editor tabs', () => {
     const assetTabId = `\u0000asset:${assetPath}`;
     const duplicateAssetTabId = `${assetTabId}\u0000doc-tab:1`;
 
-    await api.testReset();
-    writeFileSync(join(workerServer.contentDir, assetPath), createPngBuffer(id));
-    await api.createPage(`${docName}.md`);
-    await api.replaceDoc(docName, `![Asset tab](${assetPath})\n`);
-    await expectDocumentListContainsAsset(workerServer.baseURL, assetPath);
+    await seedReferencedAssetDoc(api, workerServer, docName, assetPath);
 
     await page.goto(`/#/__asset__/${assetPath}`);
     const assetTabs = editorTabButtons(page, assetPath);
@@ -509,6 +577,35 @@ test.describe('Editor tabs', () => {
     });
   });
 
+  test('renaming one duplicate file tab does not restyle the sibling duplicate tab', async ({
+    page,
+    api,
+  }) => {
+    const id = testId();
+    const fooDoc = `foo-duplicate-rename-${id}`;
+    const duplicateFooTabId = `${fooDoc}\u0000doc-tab:1`;
+    const fooLabel = `${fooDoc}.md`;
+
+    await seedMarkdownDocs(api, [{ name: fooDoc, markdown: `# Foo Duplicate Rename ${id}` }]);
+
+    await installLocalTabSession(page, {
+      openTabs: [fooDoc, duplicateFooTabId],
+      activeDocName: fooDoc,
+      activeTabId: fooDoc,
+    });
+
+    await page.goto(`/#/${fooDoc}`);
+    const fooTabs = editorTabButtons(page, fooLabel);
+    await expect(fooTabs).toHaveCount(2, { timeout: 10_000 });
+
+    await fooTabs.nth(0).dblclick();
+
+    await expect(
+      page.getByRole('main').getByRole('textbox', { name: `Rename ${fooLabel}` }),
+    ).toHaveCount(1);
+    await expect(fooTabs).toHaveCount(1);
+  });
+
   test('tab click selects the already-open foo.md tab without rewriting the bar.md tab', async ({
     page,
     api,
@@ -547,6 +644,7 @@ test.describe('Editor tabs', () => {
   test('sidebar click replaces the active .mdx tab with a duplicate of an already-open .mdx tab', async ({
     page,
     api,
+    workerServer,
   }) => {
     const id = testId();
     const folder = `tab-${id}`;
@@ -556,16 +654,23 @@ test.describe('Editor tabs', () => {
     const barLabel = `${folder}/bar-${id}.mdx`;
     const helloLabel = `hello-${id}.mdx`;
 
+    await clearVisibleContentEntries(workerServer);
     await seedMdxDocs(api, [
       { name: barDoc, markdown: `# Bar ${id}` },
       { name: bazDoc, markdown: `# Baz ${id}` },
       { name: helloDoc, markdown: `# Hello ${id}` },
     ]);
+    await installLocalTabSession(page, {
+      openTabs: [barDoc],
+      activeDocName: barDoc,
+      activeTabId: barDoc,
+    });
 
     await page.goto(`/#/${barDoc}`);
     await expect(editorTabButtons(page, barLabel)).toHaveCount(1, { timeout: 10_000 });
 
     await page.getByRole('main').getByRole('button', { name: 'New tab', exact: true }).click();
+    await expect(closeNewTabButtons(page)).toHaveCount(1, { timeout: 10_000 });
     await sidebarTreeItem(page, `hello-${id}.mdx`).click();
     await expect(editorTabButtons(page, helloLabel)).toHaveCount(1, { timeout: 10_000 });
     await expectActiveTab(editorTabButtons(page, helloLabel).first());
@@ -609,5 +714,108 @@ test.describe('Editor tabs', () => {
     await duplicateTabs.nth(0).click();
     await expectActiveTab(duplicateTabs.nth(0));
     await expectInactiveTab(duplicateTabs.nth(1));
+  });
+
+  test('pinning a tab replaces close with pin and bulk close keeps it open', async ({
+    page,
+    api,
+  }) => {
+    const id = testId();
+    const pinnedDoc = `pinned-${id}`;
+    const otherDoc = `other-${id}`;
+    const pinnedLabel = `${pinnedDoc}.md`;
+    const otherLabel = `${otherDoc}.md`;
+
+    await seedMarkdownDocs(api, [
+      { name: pinnedDoc, markdown: `# Pinned ${id}` },
+      { name: otherDoc, markdown: `# Other ${id}` },
+    ]);
+
+    await installLocalTabSession(page, {
+      openTabs: [pinnedDoc, otherDoc],
+      activeDocName: otherDoc,
+      activeTabId: otherDoc,
+    });
+
+    await page.goto(`/#/${otherDoc}`);
+    const pinnedTab = editorTabButtons(page, pinnedLabel);
+    const otherTab = editorTabButtons(page, otherLabel);
+    await expect(pinnedTab).toHaveCount(1, { timeout: 10_000 });
+    await expect(otherTab).toHaveCount(1);
+
+    await pinnedTab.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Pin tab', exact: true }).click();
+
+    await expect(
+      editorTabChrome(pinnedTab.first()).getByRole('button', { name: `Unpin ${pinnedLabel}` }),
+    ).toHaveCount(1);
+    await expect(
+      editorTabChrome(pinnedTab.first()).getByRole('button', { name: `Close ${pinnedLabel}` }),
+    ).toHaveCount(0);
+    await expectPersistedPinnedTabs(page, [pinnedDoc]);
+
+    await otherTab.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Close all unpinned', exact: true }).click();
+
+    await expect(pinnedTab).toHaveCount(1);
+    await expect(otherTab).toHaveCount(0);
+    await expectActiveTab(pinnedTab.first());
+    await expectPersistedTabSession(page, {
+      openTabs: [pinnedDoc],
+      activeTabId: pinnedDoc,
+    });
+    await expectPersistedPinnedTabs(page, [pinnedDoc]);
+
+    await editorTabChrome(pinnedTab.first())
+      .getByRole('button', { name: `Unpin ${pinnedLabel}` })
+      .click();
+    await expectPersistedPinnedTabs(page, []);
+    await expect(
+      editorTabChrome(pinnedTab.first()).getByRole('button', { name: `Close ${pinnedLabel}` }),
+    ).toHaveCount(1);
+  });
+
+  test('sidebar click from an active pinned tab opens a new tab instead of replacing it', async ({
+    page,
+    api,
+  }) => {
+    const id = testId();
+    const pinnedDoc = `active-pinned-${id}`;
+    const otherDoc = `sidebar-open-${id}`;
+    const pinnedLabel = `${pinnedDoc}.md`;
+    const otherLabel = `${otherDoc}.md`;
+
+    await seedMarkdownDocs(api, [
+      { name: pinnedDoc, markdown: `# Active Pinned ${id}` },
+      { name: otherDoc, markdown: `# Sidebar Open ${id}` },
+    ]);
+
+    await installLocalTabSession(page, {
+      openTabs: [pinnedDoc],
+      activeDocName: pinnedDoc,
+      activeTabId: pinnedDoc,
+    });
+
+    await page.goto(`/#/${pinnedDoc}`);
+    const pinnedTab = editorTabButtons(page, pinnedLabel);
+    const otherTab = editorTabButtons(page, otherLabel);
+    await expect(pinnedTab).toHaveCount(1, { timeout: 10_000 });
+    await expectActiveTab(pinnedTab.first());
+
+    await pinnedTab.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Pin tab', exact: true }).click();
+    await expectPersistedPinnedTabs(page, [pinnedDoc]);
+
+    await sidebarTreeItem(page, otherLabel).click();
+
+    await expect(pinnedTab).toHaveCount(1);
+    await expect(otherTab).toHaveCount(1);
+    await expectInactiveTab(pinnedTab.first());
+    await expectActiveTab(otherTab.first());
+    await expectPersistedTabSession(page, {
+      openTabs: [pinnedDoc, otherDoc],
+      activeTabId: otherDoc,
+    });
+    await expectPersistedPinnedTabs(page, [pinnedDoc]);
   });
 });

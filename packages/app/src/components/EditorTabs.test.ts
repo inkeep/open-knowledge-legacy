@@ -68,23 +68,68 @@ describe('EditorTabs source-level guards — tab context menu', () => {
 
   test('asset tabs render inside the tab strip as closeable tabs', () => {
     expect(SRC).toContain("tab.kind === 'asset'");
-    expect(SRC).toContain('<FileIcon aria-hidden="true"');
     expect(SRC).toMatch(
-      /tab\.kind === ['"]asset['"][\s\S]*?<EditorTabContextMenu[\s\S]*?closeTab=\{closeTab\}[\s\S]*?activateTab\(tabId\)[\s\S]*?Close \$\{accessibleLabel\}/,
+      /tab\.kind === ['"]asset['"][\s\S]*?<EditorTabContextMenu[\s\S]*?closeTab=\{closeTab\}[\s\S]*?activateTab\(tabId\)[\s\S]*?<TabPinOrCloseButton[\s\S]*?accessibleLabel=\{accessibleLabel\}/,
     );
   });
 
+  test('tabs avoid file/folder/asset type icons and keep the close control on the right', () => {
+    expect(SRC).not.toContain('FileIcon');
+    expect(SRC).not.toContain('FolderOpen');
+    expect(SRC).toMatch(/<Button[\s\S]*?aria-label=\{`Close \$\{accessibleLabel\}`\}/);
+    expect(SRC).toMatch(
+      /aria-label=\{`Close \$\{accessibleLabel\}`\}[\s\S]*?className=["']mr-2["']/,
+    );
+    expect(SRC).toMatch(
+      /<button[\s\S]*?aria-label=\{accessibleLabel\}[\s\S]*?<\/button>\s*<TabPinOrCloseButton/,
+    );
+  });
+
+  test('active tabs use Obsidian-style contrast without bottom overlay strips', () => {
+    expect(SRC).toContain('group relative -mb-px flex h-10');
+    expect(SRC).toContain('rounded-t-lg rounded-b-none');
+    expect(SRC).toContain('border-border border-b-0 bg-background text-foreground');
+    expect(SRC).toContain('bg-transparent hover:bg-muted focus-visible:bg-muted');
+    expect(SRC).toContain('border-transparent hover:border-border focus-visible:border-border');
+    expect(SRC).not.toContain('tab-bottom-flares');
+    expect(SRC).not.toContain('h-2 w-[calc(100%+16px)]');
+    expect(SRC).not.toContain("isActive ? 'font-semibold' : 'font-medium'");
+  });
+
+  test('placeholder close button reveals on hover without stealing clicks while hidden', () => {
+    expect(SRC).toContain('pointer-events-none opacity-0');
+    expect(SRC).toContain('group-hover:pointer-events-auto group-hover:opacity-100');
+  });
+
   test('tab context menu exposes close, close-others, and close-all actions', () => {
-    expect(SRC).toContain('>Close</ContextMenuItem>');
+    expect(SRC).toMatch(/>\s*Close\s*<\/ContextMenuItem>/);
     expect(SRC).toMatch(/>\s*Close others\s*<\/ContextMenuItem>/);
-    expect(SRC).toMatch(/>\s*Close all\s*<\/ContextMenuItem>/);
+    expect(SRC).toContain('Close all');
+    expect(SRC).toContain("pinnedTabIds.length ? 'Close all unpinned' : 'Close all'");
+    expect(SRC).toContain('{closeAllLabel}');
+  });
+
+  test('tab context menu exposes pin and unpin actions', () => {
+    expect(SRC).toContain('Pin tab');
+    expect(SRC).toContain('Unpin tab');
+    expect(SRC).toContain('PinIcon');
+    expect(SRC).toContain('ContextMenuSeparator');
   });
 
   test('bulk tab context actions route through closeTabs, not repeated single closes', () => {
-    expect(SRC).toContain('const otherTabIds = openTabs.filter');
+    expect(SRC).toContain('filterClosableTabIds');
+    expect(SRC).toContain('const otherTabIds = filterClosableTabIds');
     expect(SRC).toContain('disabled={otherTabIds.length === 0}');
     expect(SRC).toContain('closeTabs(otherTabIds)');
-    expect(SRC).toContain('closeTabs(openTabs)');
+    expect(SRC).toContain('const closableTabIds = filterClosableTabIds(openTabs, pinnedTabIds)');
+    expect(SRC).toContain('closeTabs(closableTabIds)');
+  });
+
+  test('pinned tabs replace close controls with an unpin button', () => {
+    expect(SRC).toMatch(/aria-label=\{`Unpin \$\{accessibleLabel\}`\}/);
+    expect(SRC).not.toMatch(/title=\{`Unpin \$\{accessibleLabel\}`\}/);
+    expect(SRC).not.toMatch(/title=\{`Close \$\{accessibleLabel\}`\}/);
+    expect(SRC).toContain('text-primary');
   });
 
   test('bulk context actions operate on document and new-tab ids together', () => {

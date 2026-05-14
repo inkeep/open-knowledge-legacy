@@ -36,7 +36,13 @@ function makeBridge(overrides: Partial<MockBridge> = {}): MockBridge {
     project: {
       listRecent: mock(() => Promise.resolve([])),
       getSessionState: mock(() =>
-        Promise.resolve({ openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null }),
+        Promise.resolve({
+          openTabs: [],
+          pinnedTabIds: [],
+          activeDocName: null,
+          activeTabId: null,
+          updatedAt: null,
+        }),
       ),
       setSessionState: mock(() => Promise.resolve()),
       open: mock(() => Promise.resolve()),
@@ -71,6 +77,7 @@ describe('NavigatorApp bridge contract', () => {
         getSessionState: mock(() =>
           Promise.resolve({
             openTabs: [],
+            pinnedTabIds: [],
             activeDocName: null,
             activeTabId: null,
             updatedAt: null,

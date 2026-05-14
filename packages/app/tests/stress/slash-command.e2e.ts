@@ -12,9 +12,7 @@ import {
   waitForSlashMenuOpen,
 } from './_helpers';
 
-async function resetEditor(api: ApiHelpers, page: Page, docName: string) {
-  await api.testReset(docName);
-  await page.reload({ waitUntil: 'domcontentloaded' });
+async function resetEditor(_api: ApiHelpers, page: Page, docName: string) {
   await page.goto(`/#/${docName}`);
   await page.waitForSelector('.ProseMirror');
   await waitForActiveProviderSynced(page);

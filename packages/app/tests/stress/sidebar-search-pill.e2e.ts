@@ -13,6 +13,69 @@ function isMacUA(userAgent: string): boolean {
   return userAgent.includes('Mac');
 }
 
+async function deletePathIfExists(baseURL: string, kind: 'file' | 'folder', path: string) {
+  const response = await fetch(`${baseURL}/api/delete-path`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, path }),
+  });
+  if (response.ok || response.status === 404) return;
+  throw new Error(`delete-path failed for ${kind}:${path}: ${response.status}`);
+}
+
+async function clearVisibleContentEntries(baseURL: string, contentDir: string) {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  for (const entry of fs.readdirSync(contentDir, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
+    if (entry.isDirectory()) {
+      await deletePathIfExists(baseURL, 'folder', entry.name);
+      continue;
+    }
+    const docPath = entry.name.replace(/\.(md|mdx)$/i, '');
+    if (docPath !== entry.name) {
+      await deletePathIfExists(baseURL, 'file', docPath);
+      continue;
+    }
+    fs.rmSync(path.join(contentDir, entry.name), { recursive: true, force: true });
+  }
+}
+
+async function restoreRequiredFixtureEntries({
+  api,
+  baseURL,
+}: {
+  api: { createPage(path: string): Promise<void> };
+  baseURL: string;
+}) {
+  const folderResponse = await fetch(`${baseURL}/api/create-folder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'sidebar-folder' }),
+  });
+  if (!folderResponse.ok && folderResponse.status !== 409) {
+    throw new Error(
+      `create-folder failed while restoring sidebar-folder: ${folderResponse.status}`,
+    );
+  }
+
+  await api.createPage('test-doc.md');
+  await api.createPage('sidebar-folder/nested-doc.md');
+  await expect
+    .poll(async () => {
+      const response = await fetch(`${baseURL}/api/documents`);
+      const body = (await response.json()) as {
+        documents?: Array<{ docName?: string; kind?: string; path?: string }>;
+      };
+      const documents = body.documents ?? [];
+      return (
+        documents.some((entry) => entry.kind === 'folder' && entry.path === 'sidebar-folder') &&
+        documents.some((entry) => entry.kind === 'document' && entry.docName === 'test-doc')
+      );
+    })
+    .toBe(true);
+}
+
 test.describe('sidebar-search-pill — discovery, click, keyboard, semantics', () => {
   test('pill renders above FileTree on initial sidebar load with the locked telemetry attribute', async ({
     page,
@@ -514,35 +577,34 @@ test.describe('sidebar-search-pill — Electron host & sidebar-state', () => {
     api,
     workerServer,
   }) => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const folderPath = path.join(workerServer.contentDir, 'sidebar-folder');
-    if (fs.existsSync(folderPath)) {
-      fs.rmSync(folderPath, { recursive: true, force: true });
+    try {
+      await clearVisibleContentEntries(workerServer.baseURL, workerServer.contentDir);
+      await api.testReset();
+      await page.setViewportSize(DESKTOP_VIEWPORT);
+      await page.goto('/');
+
+      await expect(sidebarHeader(page).getByRole('button', { name: 'New File' })).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(
+        sidebarHeader(page).getByRole('button', { name: 'New from template' }),
+      ).toBeVisible();
+      await expect(sidebarHeader(page).getByRole('button', { name: 'New Folder' })).toBeVisible();
+
+      await expect
+        .poll(
+          async () =>
+            await sidebarHeader(page).getByRole('button', { name: 'Tree View Options' }).count(),
+          { timeout: 10_000 },
+        )
+        .toBe(0);
+
+      await expect(pill(page)).toBeVisible();
+      await expect(pill(page).locator('svg')).toBeVisible();
+      await expect(pill(page).locator('kbd')).toBeVisible();
+    } finally {
+      await restoreRequiredFixtureEntries({ api, baseURL: workerServer.baseURL });
     }
-    await api.testReset();
-    await page.setViewportSize(DESKTOP_VIEWPORT);
-    await page.goto('/');
-
-    await expect(sidebarHeader(page).getByRole('button', { name: 'New File' })).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(
-      sidebarHeader(page).getByRole('button', { name: 'New from template' }),
-    ).toBeVisible();
-    await expect(sidebarHeader(page).getByRole('button', { name: 'New Folder' })).toBeVisible();
-
-    await expect
-      .poll(
-        async () =>
-          await sidebarHeader(page).getByRole('button', { name: 'Tree View Options' }).count(),
-        { timeout: 10_000 },
-      )
-      .toBe(0);
-
-    await expect(pill(page)).toBeVisible();
-    await expect(pill(page).locator('svg')).toBeVisible();
-    await expect(pill(page).locator('kbd')).toBeVisible();
   });
 
   test('CommandPalette functionality unchanged — typing a query still yields results from the multi-scope backend', async ({

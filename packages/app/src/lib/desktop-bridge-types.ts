@@ -153,6 +153,7 @@ export type OkProjectEntryPoint =
 
 interface ProjectSessionState {
   openTabs: string[];
+  pinnedTabIds: string[];
   activeDocName: string | null;
   activeTabId: string | null;
   updatedAt: string | null;

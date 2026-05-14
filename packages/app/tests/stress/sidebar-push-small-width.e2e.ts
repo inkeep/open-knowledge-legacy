@@ -293,9 +293,14 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.setViewportSize(SMALL_VIEWPORT);
     await page.goto('/#/m1');
+    await expect(page.getByRole('heading', { name: 'Doc M1' })).toBeVisible({ timeout: 10_000 });
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toContain('m1');
 
     await trigger(page).click();
     await mobileExpanded(page).waitFor({ state: 'attached', timeout: 5_000 });
+    await expect(page.getByRole('treeitem', { name: 'm2.md', exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
 
     await page.getByRole('treeitem', { name: 'm2.md', exact: true }).click();
 
