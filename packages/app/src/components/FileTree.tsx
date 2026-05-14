@@ -309,6 +309,7 @@ interface FileTreeMenuProps {
   onDelete: (targets: FileTreeTarget[]) => void;
   onExpandSubtree: (treePath: string) => void;
   onCollapseSubtree: (treePath: string) => void;
+  folderTreePaths: readonly string[];
   isAsset: boolean;
   isAssetTreePath: (treePath: string) => boolean;
 }
@@ -408,6 +409,7 @@ function FileTreeMenu({
   onDelete,
   onExpandSubtree,
   onCollapseSubtree,
+  folderTreePaths,
   isAsset,
   isAssetTreePath,
 }: FileTreeMenuProps) {
@@ -430,6 +432,23 @@ function FileTreeMenu({
 
   const closeForInlineSurface = () => context.close({ restoreFocus: false });
   const close = () => context.close();
+
+  let subtreeFolderCount = 0;
+  let subtreeExpandedCount = 0;
+  if (isFolder) {
+    const root = folderPathToTreeDirectoryPath(item.path);
+    for (const folderPath of folderTreePaths) {
+      if (folderPath === root || folderPath.startsWith(root)) {
+        subtreeFolderCount++;
+        if (asDirectoryHandle(model.getItem(folderPath))?.isExpanded()) {
+          subtreeExpandedCount++;
+        }
+      }
+    }
+  }
+  const showSubtreeExpandAll = isFolder && subtreeExpandedCount < subtreeFolderCount;
+  const showSubtreeCollapseAll = isFolder && subtreeExpandedCount > 0;
+
   return (
     <DropdownMenu
       open
@@ -484,25 +503,29 @@ function FileTreeMenu({
               New Folder
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onSelect={() => {
-                close();
-                onExpandSubtree(item.path);
-              }}
-            >
-              <UnfoldVertical aria-hidden="true" />
-              Expand All
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => {
-                close();
-                onCollapseSubtree(item.path);
-              }}
-            >
-              <FoldVertical aria-hidden="true" />
-              Collapse All
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
+            {showSubtreeExpandAll ? (
+              <DropdownMenuItem
+                onSelect={() => {
+                  close();
+                  onExpandSubtree(item.path);
+                }}
+              >
+                <UnfoldVertical aria-hidden="true" />
+                Expand All
+              </DropdownMenuItem>
+            ) : null}
+            {showSubtreeCollapseAll ? (
+              <DropdownMenuItem
+                onSelect={() => {
+                  close();
+                  onCollapseSubtree(item.path);
+                }}
+              >
+                <FoldVertical aria-hidden="true" />
+                Collapse All
+              </DropdownMenuItem>
+            ) : null}
+            {showSubtreeExpandAll || showSubtreeCollapseAll ? <DropdownMenuSeparator /> : null}
           </>
         ) : null}
         {!isAsset ? (
@@ -1828,6 +1851,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
               onDelete={(targets) => setDeleteRequest({ targets })}
               onExpandSubtree={expandSubtree}
               onCollapseSubtree={collapseSubtree}
+              folderTreePaths={folderTreePaths}
               isAsset={assetTreePaths.has(item.path)}
               isAssetTreePath={isAssetTreePath}
             />
