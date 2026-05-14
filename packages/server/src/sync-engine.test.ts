@@ -387,6 +387,86 @@ describe('SyncEngine no-remote detection', () => {
   });
 });
 
+describe('SyncEngine refreshRemote()', () => {
+  test('is a no-op when hasRemote is already true', async () => {
+    const git = simpleGit(projectDir);
+    await git.init();
+    await git.addRemote('origin', 'https://example.invalid/repo.git');
+
+    const states: SyncState[] = [];
+    const engine = makeEngine({ syncEnabled: false, onStateChange: (s) => states.push(s) });
+    await engine.start();
+    expect(engine.getStatus().hasRemote).toBe(true);
+    expect(engine.getStatus().state).toBe('disabled');
+
+    const callsBefore = states.length;
+    await engine.refreshRemote();
+    expect(states.length).toBe(callsBefore);
+    expect(engine.getStatus().hasRemote).toBe(true);
+  });
+
+  test('detects a newly-added remote and transitions dormant → disabled (syncEnabled=false)', async () => {
+    const git = simpleGit(projectDir);
+    await git.init();
+
+    const states: SyncState[] = [];
+    const engine = makeEngine({ syncEnabled: false, onStateChange: (s) => states.push(s) });
+    await engine.start();
+    expect(engine.getStatus().hasRemote).toBe(false);
+    expect(engine.getStatus().state).toBe('dormant');
+
+    await git.addRemote('origin', 'https://example.invalid/repo.git');
+
+    await engine.refreshRemote();
+
+    expect(engine.getStatus().hasRemote).toBe(true);
+    expect(engine.getStatus().state).toBe('disabled');
+    expect(states).toContain('disabled');
+  });
+
+  test('detects a newly-added remote and transitions dormant → idle (syncEnabled=true)', async () => {
+    const git = simpleGit(projectDir);
+    await git.init();
+
+    const states: SyncState[] = [];
+    const engine = makeEngine({ syncEnabled: true, onStateChange: (s) => states.push(s) });
+    await engine.start();
+    expect(engine.getStatus().hasRemote).toBe(false);
+    expect(engine.getStatus().state).toBe('dormant');
+
+    await git.addRemote('origin', 'https://example.invalid/repo.git');
+
+    await engine.refreshRemote();
+
+    expect(engine.getStatus().hasRemote).toBe(true);
+    expect(engine.getStatus().state).toBe('idle');
+    expect(states).toContain('idle');
+
+    engine.stop();
+  });
+
+  test('stays dormant when no remote was added since boot', async () => {
+    const git = simpleGit(projectDir);
+    await git.init();
+
+    const engine = makeEngine({ syncEnabled: false });
+    await engine.start();
+    expect(engine.getStatus().hasRemote).toBe(false);
+
+    await engine.refreshRemote();
+
+    expect(engine.getStatus().hasRemote).toBe(false);
+    expect(engine.getStatus().state).toBe('dormant');
+  });
+
+  test('tolerates missing .git/ without throwing', async () => {
+    const engine = makeEngine({ syncEnabled: false });
+    await engine.start();
+    await expect(engine.refreshRemote()).resolves.toBeUndefined();
+    expect(engine.getStatus().hasRemote).toBe(false);
+  });
+});
+
 describe('SyncEngine updateCurrentBranch()', () => {
   test('transitions to disabled when branch is null (detached HEAD)', () => {
     const states: SyncState[] = [];

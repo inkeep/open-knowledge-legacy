@@ -429,6 +429,40 @@ export class SyncEngine {
     }
   }
 
+  async refreshRemote(): Promise<void> {
+    if (this.hasRemote) return;
+
+    if (!existsSync(join(this.projectDir, '.git'))) return;
+
+    let detected = false;
+    try {
+      const handle = createGitInstance(this.projectDir, {
+        credentialArgs: this.credentialArgs,
+      });
+      const remoteOutput = await handle.git.raw('remote', '-v');
+      detected = remoteOutput.trim().length > 0;
+    } catch (e) {
+      log.warn({ err: e }, '[sync] remote re-detection failed');
+      return;
+    }
+
+    if (!detected) return;
+
+    this.hasRemote = true;
+    log.info(
+      { syncEnabled: this.syncEnabled },
+      '[sync] remote detected post-boot — re-evaluating state',
+    );
+
+    if (this.syncEnabled === true) {
+      this.transitionTo('idle');
+      this.schedulePull(0);
+      this.schedulePush();
+    } else {
+      this.transitionTo('disabled');
+    }
+  }
+
   getConflicts(): import('./conflict-storage.ts').ConflictEntry[] {
     return this.conflictStore.list();
   }
