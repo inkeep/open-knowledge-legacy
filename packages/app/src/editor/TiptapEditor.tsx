@@ -590,8 +590,12 @@ const TiptapEditorChrome: FC<TiptapEditorChromeProps> = ({
       data-agent-flash-position="append"
       data-agent-flash-agent-id=""
     >
-      <BubbleMenuBar editor={editor} />
-      <TableControlsMenu editor={editor} />
+      {/* Both menus portal to document.body, so they escape the
+          `ok-mode-hidden` wrapper. Unmounting them on source-mode also
+          tears down any open slash/wiki/tag suggestion popups, since
+          `unregisterPlugin` triggers PM's `destroyPluginViews()` cascade. */}
+      {!isSourceMode && <BubbleMenuBar editor={editor} />}
+      {!isSourceMode && <TableControlsMenu editor={editor} />}
       {/* Drag handle + "+" chrome is registered as the imperative
           `BlockDragHandle` TipTap extension in `sharedExtensions` —
           bare DOM container, no React involvement. A React-wrapper
