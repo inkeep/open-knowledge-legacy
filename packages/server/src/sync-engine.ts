@@ -340,15 +340,7 @@ export class SyncEngine {
       return;
     }
 
-    try {
-      const handle = createGitInstance(this.projectDir, {
-        credentialArgs: this.credentialArgs,
-      });
-      const remoteOutput = await handle.git.raw('remote', '-v');
-      this.hasRemote = remoteOutput.trim().length > 0;
-    } catch (e) {
-      log.warn({ err: e }, '[sync] remote detection failed during enable');
-    }
+    this.hasRemote = await this.probeRemote();
 
     this.pausedReason = undefined;
     this.error = undefined;
@@ -432,20 +424,7 @@ export class SyncEngine {
   async refreshRemote(): Promise<void> {
     if (this.hasRemote) return;
 
-    if (!existsSync(join(this.projectDir, '.git'))) return;
-
-    let detected = false;
-    try {
-      const handle = createGitInstance(this.projectDir, {
-        credentialArgs: this.credentialArgs,
-      });
-      const remoteOutput = await handle.git.raw('remote', '-v');
-      detected = remoteOutput.trim().length > 0;
-    } catch (e) {
-      log.warn({ err: e }, '[sync] remote re-detection failed');
-      return;
-    }
-
+    const detected = await this.probeRemote();
     if (!detected) return;
 
     this.hasRemote = true;
@@ -460,6 +439,20 @@ export class SyncEngine {
       this.schedulePush();
     } else {
       this.transitionTo('disabled');
+    }
+  }
+
+  private async probeRemote(): Promise<boolean> {
+    if (!existsSync(join(this.projectDir, '.git'))) return false;
+    try {
+      const handle = createGitInstance(this.projectDir, {
+        credentialArgs: this.credentialArgs,
+      });
+      const remoteOutput = await handle.git.raw('remote', '-v');
+      return remoteOutput.trim().length > 0;
+    } catch (e) {
+      log.warn({ err: e }, '[sync] remote detection failed');
+      return false;
     }
   }
 
