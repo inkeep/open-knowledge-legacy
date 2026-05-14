@@ -47,6 +47,7 @@ import { requestDocPanelTab } from '@/components/doc-panel-events';
 import { defaultInitialDir } from '@/components/file-tree-utils';
 import { NewItemDialog } from '@/components/NewItemDialog';
 import { usePageList } from '@/components/PageListContext';
+import { SeedDialog } from '@/components/SeedDialog';
 import {
   CommandDialog,
   CommandEmpty,
@@ -178,6 +179,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
   const [projectRecents, setProjectRecents] = useState<RecentProjectEntry[]>([]);
   const [recentNavigation, setRecentNavigation] = useState<OmnibarRecentEntry[]>([]);
   const [createDialogKind, setCreateDialogKind] = useState<'file' | 'folder' | null>(null);
+  const [seedDialogOpen, setSeedDialogOpen] = useState(false);
   const [tagsList, setTagsList] = useState<TagSummaryEntry[]>([]);
   const [tagsListStatus, setTagsListStatus] = useState<'idle' | 'loading' | 'success' | 'error'>(
     'idle',
@@ -381,6 +383,14 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
     !isTagMode &&
     activeDocName !== null &&
     matchesCommandQuery('Open graph', deferredQuery, ['graph panel network']);
+  const showInitializeStarterPack =
+    !isTagMode &&
+    matchesCommandQuery('Initialize starter pack', deferredQuery, [
+      'scaffold',
+      'seed',
+      'pack',
+      'starter',
+    ]);
   const showProjectOpenFolder =
     !isTagMode &&
     bridge !== null &&
@@ -429,6 +439,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
     showCreateFile ||
     showCreateFolder ||
     showGraphCommand ||
+    showInitializeStarterPack ||
     showProjectOpenFolder ||
     showProjectSwitch ||
     showSettings ||
@@ -580,7 +591,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
             </CommandGroup>
           ) : null}
 
-          {showCreateFile || showCreateFolder || showGraphCommand ? (
+          {showCreateFile || showCreateFolder || showGraphCommand || showInitializeStarterPack ? (
             <CommandGroup heading="Commands">
               {showCreateFile ? (
                 <CommandItem
@@ -620,6 +631,19 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                 >
                   <Network />
                   <span>Open graph</span>
+                </CommandItem>
+              ) : null}
+              {showInitializeStarterPack ? (
+                <CommandItem
+                  value="initialize starter pack scaffold seed"
+                  onSelect={() => {
+                    onOpenChange(false);
+                    setSeedDialogOpen(true);
+                  }}
+                  data-testid="command-palette-initialize-starter-pack"
+                >
+                  <Sparkles />
+                  <span>Initialize starter pack</span>
                 </CommandItem>
               ) : null}
             </CommandGroup>
@@ -810,6 +834,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
         kind="folder"
         initialDir={initialCreateDir}
       />
+      <SeedDialog open={seedDialogOpen} onOpenChange={setSeedDialogOpen} />
     </>
   );
 }

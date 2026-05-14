@@ -45,6 +45,10 @@ describe('PackCardGrid source-level guards', () => {
   test('renders an empty-state instead of a blank gap when packs[] is []', () => {
     expect(SRC).toContain('No starter packs available.');
   });
+
+  test('skips its internal fetch when the caller supplies packs', () => {
+    expect(SRC).toContain('externalPacks === undefined');
+  });
 });
 
 describe('formatEntryCounts() — card subtitle formatting', () => {

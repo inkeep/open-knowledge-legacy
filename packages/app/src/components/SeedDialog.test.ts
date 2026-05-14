@@ -22,16 +22,30 @@ describe('SeedDialog source-level guards', () => {
     expect(SRC).toMatch(/packLocked\s*=\s*initialPackId/);
   });
 
-  test('hides the in-dialog PackPicker when locked', () => {
-    expect(SRC).toMatch(/packLocked[\s\S]{0,300}<PackPicker|<PackPicker[\s\S]{0,300}packLocked/);
+  test('step 1 renders PackCardGrid (same surface as the empty-state canvas)', () => {
+    expect(SRC).toContain("from '@/components/PackCardGrid'");
+    expect(SRC).toContain('<PackCardGrid');
   });
 
-  test('threads the selected pack name into the dialog title when locked', () => {
+  test('renders the configure step only when step === "configure"', () => {
+    expect(SRC).toMatch(/step\s*===\s*'configure'/);
+  });
+
+  test('threads the selected pack name into the dialog title on the configure step', () => {
     expect(SRC).toContain('selectedPack.name');
     expect(SRC).toContain('Initialize a starter pack');
   });
 
   test('routes plan/apply/listPacks through the shared seedClient transport', () => {
     expect(SRC).toContain("from '@/lib/seed-client'");
+  });
+
+  test('Back button shows only on the configure step AND only when not pack-locked', () => {
+    expect(SRC).toMatch(/step\s*===\s*'configure'\s*&&\s*!packLocked/);
+  });
+
+  test('Back handler resets phase so a previous plan does not flash under the new pack title', () => {
+    expect(SRC).toContain('handleBack');
+    expect(SRC).toMatch(/handleBack[\s\S]{0,400}setPhase\(\{\s*kind:\s*'loading'/);
   });
 });

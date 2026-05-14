@@ -20,20 +20,23 @@ function iconForPack(id: string): React.ComponentType<{ className?: string }> {
 interface PackCardGridProps {
   onPackSelect: (packId: OkPackId) => void;
   className?: string;
+  packs?: OkSeedPackInfo[] | null;
 }
 
-export function PackCardGrid({ onPackSelect, className }: PackCardGridProps) {
-  const [packs, setPacks] = useState<OkSeedPackInfo[] | null>(null);
+export function PackCardGrid({ onPackSelect, className, packs: externalPacks }: PackCardGridProps) {
+  const [internalPacks, setInternalPacks] = useState<OkSeedPackInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const useInternalFetch = externalPacks === undefined;
 
   useEffect(() => {
+    if (!useInternalFetch) return;
     let cancelled = false;
     void (async () => {
       try {
         const result = await seedClient().listPacks();
         if (cancelled) return;
         if (result.ok) {
-          setPacks(result.packs);
+          setInternalPacks(result.packs);
         } else {
           setError(result.error.message);
         }
@@ -45,7 +48,9 @@ export function PackCardGrid({ onPackSelect, className }: PackCardGridProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [useInternalFetch]);
+
+  const packs = useInternalFetch ? internalPacks : externalPacks;
 
   if (error !== null) {
     return (
