@@ -13,7 +13,7 @@ export const ALL_EDITOR_IDS: readonly EditorId[] = CORE_ALL_EDITOR_IDS;
 export const EDITOR_LABELS: Record<EditorId, string> = CORE_EDITOR_LABELS;
 
 const PUBLISHED_MCP_SERVER_COMMAND = 'npx';
-const PUBLISHED_MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
+const PUBLISHED_MCP_SERVER_ARGS = ['-y', '@inkeep/open-knowledge@latest', 'mcp'];
 const DEV_MCP_SERVER_COMMAND = 'node';
 const DEV_MCP_ENV = {
   MCP_DEBUG: '1',

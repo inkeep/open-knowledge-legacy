@@ -124,7 +124,7 @@ describe('runInit', () => {
     expect(config.mcpServers).toBeDefined();
     expect(config.mcpServers[result.editors[0].serverName]).toEqual({
       command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
+      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
     });
 
     expect(result.editors).toHaveLength(1);
@@ -194,7 +194,7 @@ describe('runInit', () => {
     const config = JSON.parse(readFileSync(claudeConfigPath(), 'utf-8'));
     expect(config.mcpServers['open-knowledge']).toEqual({
       command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
+      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
     });
   });
 
@@ -206,7 +206,7 @@ describe('runInit', () => {
           mcpServers: {
             'open-knowledge': {
               command: 'npx',
-              args: ['@inkeep/open-knowledge', 'mcp'],
+              args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
               cwd: testDir,
               env: { OK_MODE: 'local' },
             },
@@ -224,7 +224,7 @@ describe('runInit', () => {
     const config = JSON.parse(readFileSync(claudeConfigPath(), 'utf-8'));
     expect(config.mcpServers['open-knowledge']).toEqual({
       command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
+      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
     });
   });
 
@@ -236,7 +236,7 @@ describe('runInit', () => {
           mcpServers: {
             'open-knowledge': {
               command: 'npx',
-              args: ['@inkeep/open-knowledge', 'mcp'],
+              args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
             },
           },
         },
@@ -304,7 +304,7 @@ describe('runInit', () => {
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(config.mcpServers[result.editors[0].serverName]).toEqual({
         command: 'npx',
-        args: ['@inkeep/open-knowledge', 'mcp'],
+        args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
       });
     });
 
@@ -340,7 +340,7 @@ describe('runInit', () => {
       expect(config.mcp_servers).toBeDefined();
       expect(config.mcp_servers[result.editors[0].serverName]).toEqual({
         command: 'npx',
-        args: ['@inkeep/open-knowledge', 'mcp'],
+        args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
       });
     });
 
@@ -373,7 +373,7 @@ describe('runInit', () => {
       expect(config.mcp_servers.other).toEqual({ command: 'node', args: ['x'] });
       expect(config.mcp_servers[result.editors[0].serverName]).toEqual({
         command: 'npx',
-        args: ['@inkeep/open-knowledge', 'mcp'],
+        args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
       });
     });
   });
@@ -399,7 +399,7 @@ describe('runInit', () => {
 
       expect(entry).toEqual({
         command: 'npx',
-        args: ['@inkeep/open-knowledge', 'mcp'],
+        args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
       });
     });
 
@@ -434,7 +434,7 @@ describe('runInit', () => {
       const entry = updatedConfig.mcpServers[result.editors[0].serverName];
       expect(entry).toEqual({
         command: 'npx',
-        args: ['@inkeep/open-knowledge', 'mcp'],
+        args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
       });
     });
 
@@ -1572,7 +1572,7 @@ describe('writeUserMcpConfigs', () => {
     );
     expect(claudeConfig.mcpServers['open-knowledge']).toEqual({
       command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
+      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
     });
   });
 
@@ -1854,7 +1854,7 @@ describe('readExistingMcpEntry (Pass 0 Major #13)', () => {
   it('returns the parsed entry when JSON config is well-formed', () => {
     const path = resolveCursorConfigPath({ home: fakeHome });
     mkdirSync(dirname(path), { recursive: true });
-    const entry = { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] };
+    const entry = { command: 'npx', args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'] };
     writeFileSync(path, JSON.stringify({ mcpServers: { 'open-knowledge': entry } }), 'utf-8');
     expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toEqual(entry);
   });
@@ -1864,13 +1864,13 @@ describe('readExistingMcpEntry (Pass 0 Major #13)', () => {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(
       path,
-      '[mcp_servers."open-knowledge"]\ncommand = "npx"\nargs = ["@inkeep/open-knowledge", "mcp"]\n',
+      '[mcp_servers."open-knowledge"]\ncommand = "npx"\nargs = ["-y", "@inkeep/open-knowledge@latest", "mcp"]\n',
       'utf-8',
     );
     const result = readExistingMcpEntry(EDITOR_TARGETS.codex, '', fakeHome);
     expect(result).toEqual({
       command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
+      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
     });
   });
 

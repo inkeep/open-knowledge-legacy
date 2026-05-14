@@ -313,7 +313,7 @@ describe('isPublishedCanonical — exact canonical-shape predicate', () => {
   test('Fixture A — canonical published npx shape → true (Claude)', () => {
     const existing: Record<string, unknown> = {
       command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
+      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
     };
     expect(isPublishedCanonical(existing, claude)).toBe(true);
   });
@@ -321,16 +321,16 @@ describe('isPublishedCanonical — exact canonical-shape predicate', () => {
   test('Fixture C — canonical + user-augmented env → true', () => {
     const existing: Record<string, unknown> = {
       command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
+      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
       env: { OK_LOG_LEVEL: 'debug' },
     };
     expect(isPublishedCanonical(existing, claude)).toBe(true);
   });
 
-  test('historical -y variant → false (foreign-customized; left alone)', () => {
+  test('legacy bare-name variant → false (foreign-customized; left alone)', () => {
     const existing: Record<string, unknown> = {
       command: 'npx',
-      args: ['-y', '@inkeep/open-knowledge', 'mcp'],
+      args: ['@inkeep/open-knowledge', 'mcp'],
     };
     expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
@@ -744,7 +744,7 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
     const { cli } = createCliSurface({
       detected: ['claude', 'cursor'],
       existingEntries: {
-        claude: { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
+        claude: { command: 'npx', args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'] },
         cursor: { command: 'custom-wrapper', args: ['mcp'] },
       },
     });
@@ -971,7 +971,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
     const ipcMain = createIpcMainStub();
     const { cli, writeCalls } = createCliSurface({
       existingEntries: {
-        claude: { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
+        claude: { command: 'npx', args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'] },
       },
     });
     const { logger } = createCapturedLogger();
@@ -1887,7 +1887,7 @@ describe('checkAndRepairMcpWiringOnStartup — prior-consent namespace reclaim',
     );
     const { cli, writeCalls } = createCliSurface({
       existingEntries: {
-        claude: { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
+        claude: { command: 'npx', args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'] },
       },
     });
 

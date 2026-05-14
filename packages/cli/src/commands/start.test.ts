@@ -358,6 +358,7 @@ function fetchText(
 describe('bootStartServer (integration)', () => {
   let tmpDir: string;
   let booted: BootedStartServer | null = null;
+  let originalHome: string | undefined;
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-boot-'));
@@ -365,6 +366,8 @@ describe('bootStartServer (integration)', () => {
     mkdirSync(okDir, { recursive: true });
     writeFileSync(resolve(okDir, 'config.yml'), '', 'utf-8');
     writeFileSync(resolve(okDir, '.gitignore'), '', 'utf-8');
+    originalHome = process.env.HOME;
+    process.env.HOME = tmpDir;
     booted = null;
   });
 
@@ -374,6 +377,11 @@ describe('bootStartServer (integration)', () => {
         await booted.destroy();
       } catch {}
       booted = null;
+    }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
     }
     await rm(tmpDir, { recursive: true, force: true });
   });
@@ -608,11 +616,42 @@ describe('bootStartServer (integration)', () => {
       ws.close();
     }
   });
+
+  test('invokes repairMcpConfigsFn with the project cwd before bootServer', async () => {
+    const captured: { projectDir: string }[] = [];
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      host: TEST_HOST,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+      repairMcpConfigsFn: (opts) => {
+        captured.push(opts as { projectDir: string });
+      },
+    });
+    expect(captured).toHaveLength(1);
+    expect(captured[0].projectDir).toBe(tmpDir);
+  });
+
+  test('continues booting even when repairMcpConfigsFn throws', async () => {
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      host: TEST_HOST,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+      repairMcpConfigsFn: () => {
+        throw new Error('synthetic repair failure');
+      },
+    });
+    expect(booted.port).toBeGreaterThan(0);
+  });
 });
 
 describe('bootStartServer — no auto git-init from ok start (US-004)', () => {
   let tmpDir: string;
   let booted: BootedStartServer | null = null;
+  let originalHome: string | undefined;
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-git-'));
@@ -620,6 +659,8 @@ describe('bootStartServer — no auto git-init from ok start (US-004)', () => {
     mkdirSync(okDir, { recursive: true });
     writeFileSync(resolve(okDir, 'config.yml'), '', 'utf-8');
     writeFileSync(resolve(okDir, '.gitignore'), '', 'utf-8');
+    originalHome = process.env.HOME;
+    process.env.HOME = tmpDir;
     booted = null;
   });
 
@@ -629,6 +670,11 @@ describe('bootStartServer — no auto git-init from ok start (US-004)', () => {
         await booted.destroy();
       } catch {}
       booted = null;
+    }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
     }
     await rm(tmpDir, { recursive: true, force: true });
   });
@@ -665,12 +711,20 @@ describe('bootStartServer — no auto git-init from ok start (US-004)', () => {
 
 describe('bootStartServer — rejects with init-required when .ok/config.yml is absent', () => {
   let tmpDir: string;
+  let originalHome: string | undefined;
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-no-scaffold-'));
+    originalHome = process.env.HOME;
+    process.env.HOME = tmpDir;
   });
 
   afterEach(async () => {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
     await rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -819,6 +873,7 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
   let tmpDir: string;
   let booted: BootedStartServer | null = null;
   let uiHandle: UiServerHandle | null = null;
+  let originalHome: string | undefined;
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-banner-'));
@@ -826,6 +881,8 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
     mkdirSync(okDir, { recursive: true });
     writeFileSync(resolve(okDir, 'config.yml'), '', 'utf-8');
     writeFileSync(resolve(okDir, '.gitignore'), '', 'utf-8');
+    originalHome = process.env.HOME;
+    process.env.HOME = tmpDir;
     booted = null;
     uiHandle = null;
   });
@@ -841,6 +898,11 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
       uiHandle.release();
       await closeHttpServers(uiHandle.httpServers);
       uiHandle = null;
+    }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
     }
     await rm(tmpDir, { recursive: true, force: true });
   });

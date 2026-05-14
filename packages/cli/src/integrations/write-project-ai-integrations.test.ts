@@ -82,7 +82,7 @@ describe('writeProjectAiIntegrations — happy paths', () => {
     const written = JSON.parse(readFileSync(cursorMcp, 'utf-8'));
     expect(written.mcpServers['open-knowledge']).toEqual({
       command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
+      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
     });
   });
 
