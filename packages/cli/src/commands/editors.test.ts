@@ -151,14 +151,14 @@ describe('buildManagedServerEntry', () => {
   it('produces the canonical npx shape by default (no cliPath, published mode)', () => {
     expect(buildManagedServerEntry()).toEqual({
       command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
+      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
     });
   });
 
   it('produces the canonical npx shape when mode is explicitly published', () => {
     expect(buildManagedServerEntry({ mode: 'published' })).toEqual({
       command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
+      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
     });
   });
 

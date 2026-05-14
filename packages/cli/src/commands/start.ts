@@ -192,6 +192,7 @@ interface BootStartServerOptions {
   idleThresholdMs?: number;
   uiBindTimeoutMs?: number;
   log?: PinoLogger;
+  repairMcpConfigsFn?: (opts: { projectDir: string }) => unknown;
 }
 
 export interface BootedStartServer {
@@ -221,6 +222,14 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   if (!skipAutoInit && !isProjectRoot(cwd)) {
     throw new OkDirMissingError(cwd);
+  }
+
+  try {
+    const repair =
+      opts.repairMcpConfigsFn ?? (await import('./repair-mcp-configs.ts')).repairMcpConfigs;
+    repair({ projectDir: cwd });
+  } catch (err) {
+    log.warn({ err }, '[start] mcp-config repair sweep failed; continuing');
   }
 
   const contentDir = resolveContentDir(config, cwd);

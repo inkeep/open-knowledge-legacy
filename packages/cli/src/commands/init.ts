@@ -515,10 +515,11 @@ export function readExistingMcpEntry(
   target: EditorMcpTarget,
   cwd: string,
   home?: string,
+  configPathOverride?: string,
 ): Record<string, unknown> | null {
   let configPath: string;
   try {
-    configPath = target.configPath(cwd, home);
+    configPath = configPathOverride ?? target.configPath(cwd, home);
   } catch {
     return null;
   }
