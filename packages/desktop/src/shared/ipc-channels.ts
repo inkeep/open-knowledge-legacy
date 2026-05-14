@@ -212,6 +212,7 @@ export interface RequestChannels {
   'ok:clipboard:write-text': { args: [text: string]; result: undefined };
   'ok:project:get-info': { args: []; result: OkDesktopConfig };
   'ok:project:list-recent': { args: []; result: RecentProject[] };
+  'ok:project:remove-recent': { args: [projectPath: string]; result: undefined };
   'ok:project:get-session-state': { args: []; result: ProjectSessionState };
   'ok:project:set-session-state': { args: [state: ProjectSessionState]; result: undefined };
   'ok:project:open': { args: [request: ProjectOpenRequest]; result: undefined };

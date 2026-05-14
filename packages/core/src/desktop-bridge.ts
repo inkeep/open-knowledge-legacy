@@ -358,6 +358,7 @@ export interface OkDesktopBridge {
 
   project: {
     listRecent(): Promise<RecentProjectEntry[]>;
+    removeRecent(path: string): Promise<void>;
     getSessionState(): Promise<ProjectSessionState>;
     setSessionState(state: ProjectSessionState): Promise<void>;
     open(request: OkProjectOpenRequest): Promise<void>;

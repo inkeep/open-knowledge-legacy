@@ -1,4 +1,4 @@
-import { FolderOpenIcon, Loader2Icon, PlusIcon } from 'lucide-react';
+import { FolderOpenIcon, Loader2Icon, PlusIcon, XIcon } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { type ComponentType, useEffect, useState } from 'react';
 import { useThemeBridge } from '@/hooks/use-theme-bridge';
@@ -15,6 +15,7 @@ import {
 import { ipcAuthQueryTransport } from '@/lib/transports/auth-query-transport';
 import { ipcAuthTransport } from '@/lib/transports/auth-transport';
 import { ipcCloneTransport } from '@/lib/transports/clone-transport';
+import { cn } from '@/lib/utils';
 import { AuthModal } from './AuthModal';
 import { BetaBadge } from './BetaBadge';
 import { CloneDialog } from './CloneDialog';
@@ -24,6 +25,7 @@ import { GithubIcon } from './icons/github';
 import { OkIcon } from './icons/ok';
 import { McpConsentDialog } from './McpConsentDialog';
 import { Badge } from './ui/badge';
+import { Button } from './ui/button';
 
 export { resolveErrorMessage };
 export const runWithErrorStatePure = (
@@ -33,6 +35,13 @@ export const runWithErrorStatePure = (
 ) => runWithErrorStatePureBase(fn, fallback, setError, 'NavigatorApp');
 
 type RecentProject = RecentProjectEntry;
+
+export function removeRecentFromList(
+  recents: readonly RecentProjectEntry[],
+  path: string,
+): RecentProjectEntry[] {
+  return recents.filter((recent) => recent.path !== path);
+}
 
 export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [recents, setRecents] = useState<RecentProject[]>([]);
@@ -88,6 +97,12 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
     runWithErrorState(async () => {
       await openProject(bridge, path, 'recents');
     }, 'Failed to open project.');
+
+  const onRemoveRecent = (path: string) =>
+    runWithErrorState(async () => {
+      await bridge.project.removeRecent(path);
+      setRecents((current) => removeRecentFromList(current, path));
+    }, 'Failed to remove project.');
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-primary-foreground dark:bg-background text-foreground">
@@ -178,7 +193,12 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
               data-testid="nav-recent-list"
             >
               {recents.map((r) => (
-                <RecentRow key={r.path} project={r} onOpen={() => onOpenRecent(r.path)} />
+                <RecentRow
+                  key={r.path}
+                  project={r}
+                  onOpen={() => onOpenRecent(r.path)}
+                  onRemove={() => onRemoveRecent(r.path)}
+                />
               ))}
             </ul>
           </section>
@@ -266,14 +286,25 @@ function NavigatorCard({ title, description, onClick, dataTestId, Icon }: Naviga
   );
 }
 
-function RecentRow({ project, onOpen }: { project: RecentProject; onOpen: () => void }) {
+function RecentRow({
+  project,
+  onOpen,
+  onRemove,
+}: {
+  project: RecentProject;
+  onOpen: () => void;
+  onRemove: () => void;
+}) {
   return (
-    <li className={`flex items-center justify-between ${project.missing ? 'opacity-50' : ''}`}>
+    <li className="group flex items-center justify-between rounded-lg hover:bg-accent">
       <button
         type="button"
         onClick={onOpen}
         disabled={project.missing}
-        className="flex min-w-0 flex-1 items-center text-left disabled:cursor-not-allowed py-3.5 px-4 hover:bg-accent rounded-lg gap-2 justify-between"
+        className={cn(
+          'flex min-w-0 flex-1 items-center justify-between gap-2 rounded-md py-3.5 pl-4 pr-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed',
+          project.missing && 'opacity-50',
+        )}
       >
         <div className="flex flex-col gap-1 truncate">
           <span className="font-medium text-sm text-gray-700 dark:text-foreground">
@@ -287,6 +318,18 @@ function RecentRow({ project, onOpen }: { project: RecentProject; onOpen: () => 
           </Badge>
         ) : null}
       </button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        onClick={onRemove}
+        aria-label={`Remove ${project.name} from recent projects`}
+        title="Remove from recent projects"
+        className="pointer-events-none mr-2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
+        data-testid={`nav-recent-remove-${project.path}`}
+      >
+        <XIcon aria-hidden="true" />
+      </Button>
     </li>
   );
 }

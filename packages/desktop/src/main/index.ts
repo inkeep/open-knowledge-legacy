@@ -131,6 +131,7 @@ import {
   getProjectSessionState,
   MAX_SUPPORTED_SCHEMA_VERSION,
   parseAppState,
+  removeRecentProject,
   type SchemaIncompatibilityDiagnostic,
   saveAppStateToDir,
   setLastUsedProjectParent,
@@ -1104,6 +1105,16 @@ function registerIpcHandlers() {
 
   handle('ok:project:list-recent', async () => {
     return annotateMissing(appState) as RecentProject[];
+  });
+
+  handle('ok:project:remove-recent', async (_event, projectPath) => {
+    if (typeof projectPath !== 'string' || projectPath.length === 0) {
+      throw new Error('ok:project:remove-recent rejected: invalid projectPath');
+    }
+    appState = removeRecentProject(appState, projectPath);
+    saveAppState(appState);
+    refreshApplicationMenu();
+    return undefined;
   });
 
   handle('ok:project:get-session-state', async (event) => {

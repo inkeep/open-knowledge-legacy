@@ -192,6 +192,7 @@ async function installDelayedDesktopSessionBridge(
         clipboard: { writeText: async () => {} },
         project: {
           listRecent: async () => [],
+          removeRecent: async () => {},
           getSessionState: () =>
             new Promise((resolve) => {
               window.setTimeout(() => resolve(readSession()), 250);
