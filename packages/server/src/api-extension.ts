@@ -6211,6 +6211,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         );
         return;
       }
+      await engine.refreshRemote();
       successResponse(res, 200, SyncStatusSchema, engine.getStatus(), {
         handler: 'sync-status',
       });

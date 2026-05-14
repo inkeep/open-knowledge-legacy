@@ -488,7 +488,8 @@ function SyncSection() {
           <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
             git remote add origin &lt;url&gt;
           </code>{' '}
-          in this project's directory, then restart Open Knowledge.
+          in this project's directory. This page will update automatically once a remote is
+          detected.
         </div>
       </section>
     );
