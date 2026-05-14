@@ -614,7 +614,6 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     activeDocName,
     activeTarget,
     closeTabs,
-    closeTab,
     closeDocument,
     closeAndClearForRename,
     isNewTabActive,
@@ -928,7 +927,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       if (pending.kind === 'file') {
         closeDocument(pending.createdPath);
       } else {
-        closeTab(folderTabId(pending.createdPath));
+        closeTabs([folderTabId(pending.createdPath)], { force: true });
       }
     }
     if (updateUi) {
@@ -1644,10 +1643,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
             ...partialTabsToClose.folderPaths,
             ...deletedFolderPaths,
           ]);
-          closeTabs([
-            ...[...partialDeleted].map((docName) => docTabId(docName)),
-            ...[...partialDeletedFolders].map((folderPath) => folderTabId(folderPath)),
-          ]);
+          closeTabs(
+            [
+              ...[...partialDeleted].map((docName) => docTabId(docName)),
+              ...[...partialDeletedFolders].map((folderPath) => folderTabId(folderPath)),
+            ],
+            { force: true },
+          );
           await Promise.all([...partialDeleted].map((docName) => closeAndClearForRename(docName)));
           toast.error(parsed.title);
           setBusyPath(null);
@@ -1681,10 +1683,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
       const deleted = new Set([...tabsToClose.docNames, ...deletedDocNames]);
       const deletedFolders = new Set([...tabsToClose.folderPaths, ...deletedFolderPaths]);
-      closeTabs([
-        ...[...deleted].map((docName) => docTabId(docName)),
-        ...[...deletedFolders].map((folderPath) => folderTabId(folderPath)),
-      ]);
+      closeTabs(
+        [
+          ...[...deleted].map((docName) => docTabId(docName)),
+          ...[...deletedFolders].map((folderPath) => folderTabId(folderPath)),
+        ],
+        { force: true },
+      );
       await Promise.all([...deleted].map((docName) => closeAndClearForRename(docName)));
 
       for (const target of targets) {

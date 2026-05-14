@@ -62,18 +62,21 @@ describe('state-store (recent projects + LRU)', () => {
   test('project session state persists by project path', () => {
     const state = setProjectSessionState(emptyState(), '/tmp/a', {
       openTabs: ['README', 'docs/guide'],
+      pinnedTabIds: ['README'],
       activeDocName: 'docs/guide',
       activeTabId: 'docs/guide',
       updatedAt: '2026-05-06T00:00:00Z',
     });
     expect(getProjectSessionState(state, '/tmp/a')).toEqual({
       openTabs: ['README', 'docs/guide'],
+      pinnedTabIds: ['README'],
       activeDocName: 'docs/guide',
       activeTabId: 'docs/guide',
       updatedAt: '2026-05-06T00:00:00Z',
     });
     expect(getProjectSessionState(state, '/tmp/b')).toEqual({
       openTabs: [],
+      pinnedTabIds: [],
       activeDocName: null,
       activeTabId: null,
       updatedAt: null,
@@ -84,12 +87,14 @@ describe('state-store (recent projects + LRU)', () => {
     const folderTabId = '\u0000folder:docs';
     const state = setProjectSessionState(emptyState(), '/tmp/a', {
       openTabs: ['README', folderTabId],
+      pinnedTabIds: [folderTabId],
       activeDocName: null,
       activeTabId: folderTabId,
       updatedAt: '2026-05-06T00:00:00Z',
     });
     expect(getProjectSessionState(state, '/tmp/a')).toEqual({
       openTabs: ['README', folderTabId],
+      pinnedTabIds: [folderTabId],
       activeDocName: null,
       activeTabId: folderTabId,
       updatedAt: '2026-05-06T00:00:00Z',
@@ -99,6 +104,7 @@ describe('state-store (recent projects + LRU)', () => {
   test('removeRecentProject drops matching session state', () => {
     const withSession = setProjectSessionState(emptyState(), '/tmp/a', {
       openTabs: ['README'],
+      pinnedTabIds: ['README'],
       activeDocName: 'README',
       activeTabId: 'README',
       updatedAt: '2026-05-06T00:00:00Z',
@@ -106,6 +112,7 @@ describe('state-store (recent projects + LRU)', () => {
     const next = removeRecentProject(withSession, '/tmp/a');
     expect(getProjectSessionState(next, '/tmp/a')).toEqual({
       openTabs: [],
+      pinnedTabIds: [],
       activeDocName: null,
       activeTabId: null,
       updatedAt: null,
@@ -127,6 +134,7 @@ describe('state-store (recent projects + LRU)', () => {
       projectSessions: {
         '/tmp/a': {
           openTabs: ['README', 'README', '', 'docs/guide'],
+          pinnedTabIds: ['README', 'missing', 'README'],
           activeDocName: 'docs/guide',
           activeTabId: 'docs/guide',
           updatedAt: '2026-05-06T00:00:00Z',
@@ -139,6 +147,7 @@ describe('state-store (recent projects + LRU)', () => {
     expect(parsed?.lastOpenedProject).toBe('/tmp/a');
     expect(parsed?.projectSessions['/tmp/a']).toEqual({
       openTabs: ['README', 'docs/guide'],
+      pinnedTabIds: ['README'],
       activeDocName: 'docs/guide',
       activeTabId: 'docs/guide',
       updatedAt: '2026-05-06T00:00:00Z',

@@ -10,6 +10,7 @@ interface RecentProject {
 
 interface ProjectSessionState {
   openTabs: string[];
+  pinnedTabIds: string[];
   activeDocName: string | null;
   activeTabId: string | null;
   updatedAt: string | null;
@@ -58,6 +59,7 @@ export function setLastUsedProjectParent(state: AppState, parent: string): AppSt
 function emptyProjectSessionState(): ProjectSessionState {
   return {
     openTabs: [],
+    pinnedTabIds: [],
     activeDocName: null,
     activeTabId: null,
     updatedAt: null,
@@ -82,6 +84,8 @@ function parseProjectSessionState(raw: unknown): ProjectSessionState {
   if (typeof raw !== 'object' || raw === null) return emptyProjectSessionState();
   const obj = raw as Record<string, unknown>;
   const openTabs = sanitizeOpenTabs(obj.openTabs);
+  const openTabSet = new Set(openTabs);
+  const pinnedTabIds = sanitizeOpenTabs(obj.pinnedTabIds).filter((tabId) => openTabSet.has(tabId));
   const activeDocName =
     typeof obj.activeDocName === 'string' && openTabs.includes(obj.activeDocName)
       ? obj.activeDocName
@@ -92,6 +96,7 @@ function parseProjectSessionState(raw: unknown): ProjectSessionState {
       : activeDocName;
   return {
     openTabs,
+    pinnedTabIds,
     activeDocName,
     activeTabId,
     updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : null,

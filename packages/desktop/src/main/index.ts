@@ -1109,9 +1109,22 @@ function registerIpcHandlers() {
   handle('ok:project:get-session-state', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || !wm)
-      return { openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null };
+      return {
+        openTabs: [],
+        pinnedTabIds: [],
+        activeDocName: null,
+        activeTabId: null,
+        updatedAt: null,
+      };
     const ctx = wm.getContextForBrowserWindow(win as unknown as BrowserWindowLike);
-    if (!ctx) return { openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null };
+    if (!ctx)
+      return {
+        openTabs: [],
+        pinnedTabIds: [],
+        activeDocName: null,
+        activeTabId: null,
+        updatedAt: null,
+      };
     return getProjectSessionState(appState, ctx.projectPath);
   });
 

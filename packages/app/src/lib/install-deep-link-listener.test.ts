@@ -34,7 +34,13 @@ function makeBridge(
     project: {
       listRecent: mock(() => Promise.resolve([])),
       getSessionState: mock(() =>
-        Promise.resolve({ openTabs: [], activeDocName: null, activeTabId: null, updatedAt: null }),
+        Promise.resolve({
+          openTabs: [],
+          pinnedTabIds: [],
+          activeDocName: null,
+          activeTabId: null,
+          updatedAt: null,
+        }),
       ),
       setSessionState: mock(() => Promise.resolve()),
       open: mock(() => Promise.resolve()),

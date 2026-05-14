@@ -42,7 +42,7 @@ export function EditorHeader({
   return (
     <header
       className={cn(
-        'flex h-12 shrink-0 items-center bg-muted/20 shadow-[inset_0_-1px_0_var(--border)]',
+        'flex h-12 shrink-0 items-center bg-muted/35 shadow-[inset_0_-1px_0_var(--border)]',
         isElectronHost && '[-webkit-app-region:drag]',
         isElectronHost && isCollapsed && 'pl-[78px]',
         isElectronHost &&

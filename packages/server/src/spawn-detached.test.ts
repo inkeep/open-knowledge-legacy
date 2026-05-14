@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawnDetached } from './spawn-detached.ts';
 
 const NEVER_HIT = 5_000;
@@ -27,7 +30,14 @@ describe('spawnDetached — error classification', () => {
 
   test('EACCES (no exec permission on POSIX) → { ok: false, reason: "not-installed" }', async () => {
     if (process.platform === 'win32') return;
-    const outcome = await spawnDetached('/etc/hosts', [], NEVER_HIT);
-    expect(outcome).toEqual({ ok: false, reason: 'not-installed' });
+    const dir = await mkdtemp(join(tmpdir(), 'ok-spawn-noexec-'));
+    try {
+      const script = join(dir, 'noexec.sh');
+      await writeFile(script, '#!/bin/sh\nexit 0\n', { mode: 0o644 });
+      const outcome = await spawnDetached(script, [], NEVER_HIT);
+      expect(outcome).toEqual({ ok: false, reason: 'not-installed' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
