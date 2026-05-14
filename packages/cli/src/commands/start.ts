@@ -8,7 +8,12 @@ import type { Server as HttpServer } from 'node:http';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { DEFAULT_SERVER_HOST } from '@inkeep/open-knowledge-core';
-import type { BootedServer, Config, PinoLogger } from '@inkeep/open-knowledge-server';
+import {
+  type BootedServer,
+  type Config,
+  isProjectRoot,
+  type PinoLogger,
+} from '@inkeep/open-knowledge-server';
 import { Command, InvalidArgumentError } from 'commander';
 import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 import {
@@ -208,15 +213,13 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
   const idleThresholdMs = opts.idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
 
   const { existsSync, mkdirSync } = await import('node:fs');
-  const { resolve } = await import('node:path');
   const { bootServer, getLogger, isProcessAlive, readUiLock, resolveContentDir } = await import(
     '@inkeep/open-knowledge-server'
   );
 
   const log = opts.log ?? getLogger('start');
 
-  const okDir = resolve(cwd, OK_DIR);
-  if (!skipAutoInit && !existsSync(okDir)) {
+  if (!skipAutoInit && !isProjectRoot(cwd)) {
     throw new OkDirMissingError(cwd);
   }
 

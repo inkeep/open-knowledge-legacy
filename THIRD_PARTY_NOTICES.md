@@ -6102,6 +6102,7 @@ The following MIT-licensed packages are patched in this repository via Bun's `pa
 | Package | Patch file |
 | --- | --- |
 | `@handlewithcare/remark-prosemirror@0.1.5` | `patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch` |
+| `@tiptap/extension-drag-handle@3.22.3` | `patches/@tiptap%2Fextension-drag-handle@3.22.3.patch` |
 | `@tiptap/y-tiptap@3.0.3` | `patches/@tiptap%2Fy-tiptap@3.0.3.patch` |
 | `react-medium-image-zoom@5.4.3` | `patches/react-medium-image-zoom@5.4.3.patch` |
 | `y-indexeddb@9.0.12` | `patches/y-indexeddb@9.0.12.patch` |

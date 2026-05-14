@@ -67,3 +67,9 @@ test('buildCursorUrl mode= is the literal enum value (not encoded)', () => {
   const url = buildCursorUrl(payload());
   expect(url.endsWith('&mode=agent')).toBe(true);
 });
+
+test('buildCursorUrl project-scoped (prompt="") drops text= and keeps workspace + mode', () => {
+  const url = buildCursorUrl(payload({ prompt: '', docPath: '' }));
+  expect(url).toBe('cursor://anysphere.cursor-deeplink/prompt?workspace=proj&mode=agent');
+  expect(url).not.toContain('text=');
+});

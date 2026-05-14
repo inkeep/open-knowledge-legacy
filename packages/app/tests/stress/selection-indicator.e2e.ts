@@ -40,7 +40,7 @@ async function selectFirstJsxComponent(page: Page, componentName: string) {
   }, componentName);
 }
 
-test('S1: ArrowDown selects next block with data-selection-origin=keyboard', async ({
+test('S1: ArrowDown auto-NodeSelects self-closing Callout below the cursor', async ({
   page,
   api,
 }) => {
@@ -51,19 +51,204 @@ test('S1: ArrowDown selects next block with data-selection-origin=keyboard', asy
   );
   await page.waitForSelector('.jsx-component-wrapper');
 
-  await page.locator('.ProseMirror').focus();
+  await page.locator('.ProseMirror h1').first().click();
+  await page.keyboard.press('End');
+
+  await page.keyboard.press('ArrowDown');
+
+  const firstCallout = page
+    .locator('.jsx-component-wrapper[data-component-type="callout"]')
+    .first();
+  await expect(firstCallout).toHaveAttribute('data-selected', 'true', { timeout: 5_000 });
+  await expect(firstCallout).toHaveAttribute('data-selection-origin', 'keyboard');
+});
+
+test('S1b: ArrowUp auto-NodeSelects self-closing Callout above the cursor', async ({
+  page,
+  api,
+}) => {
+  await setupDoc(page, api, '<Callout type="note" title="Above" />\n\n# Footer\n');
+  await page.waitForSelector('.jsx-component-wrapper');
+
+  await page.locator('.ProseMirror h1').first().click();
   await page.keyboard.press('Home');
 
-  let iterations = 0;
-  while (iterations++ < 15) {
-    await page.keyboard.press('ArrowDown');
-    const count = await page.locator('.jsx-component-wrapper[data-selected="true"]').count();
-    if (count > 0) break;
-  }
+  await page.keyboard.press('ArrowUp');
 
-  const selectedWrapper = page.locator('.jsx-component-wrapper[data-selected="true"]').first();
-  await expect(selectedWrapper).toBeAttached({ timeout: 5_000 });
-  await expect(selectedWrapper).toHaveAttribute('data-selection-origin', 'keyboard');
+  const callout = page.locator('.jsx-component-wrapper[data-component-type="callout"]').first();
+  await expect(callout).toHaveAttribute('data-selected', 'true', { timeout: 5_000 });
+  await expect(callout).toHaveAttribute('data-selection-origin', 'keyboard');
+});
+
+test('S1c: ArrowDown into compound Callout descends into body (no NodeSelect)', async ({
+  page,
+  api,
+}) => {
+  await setupDoc(page, api, '# Title\n\n<Callout type="note">\n\nbody content\n\n</Callout>\n');
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="callout"]');
+
+  await page.locator('.ProseMirror h1').first().click();
+  await page.keyboard.press('End');
+
+  await page.keyboard.press('ArrowDown');
+
+  await expect(page.locator('.jsx-component-wrapper[data-selected="true"]')).toHaveCount(0);
+
+  const insideBody = await page.evaluate(() => {
+    const editor = window.__activeEditor;
+    if (!editor) return false;
+    const sel = editor.state.selection;
+    if (!('$head' in sel)) return false;
+    const $head = sel.$head as { depth: number; node: (d: number) => { type: { name: string } } };
+    for (let d = $head.depth; d >= 0; d--) {
+      if ($head.node(d).type.name === 'jsxComponent') return true;
+    }
+    return false;
+  });
+  expect(insideBody).toBe(true);
+});
+
+test('S1d: ArrowUp from inside compound Callout exits to TextSelection above', async ({
+  page,
+  api,
+}) => {
+  await setupDoc(page, api, '# Title\n\n<Callout type="note">\n\nbody content\n\n</Callout>\n');
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="callout"]');
+
+  await page.evaluate(() => {
+    const editor = window.__activeEditor;
+    if (!editor) return;
+    let targetPos = -1;
+    editor.state.doc.descendants((node, pos, parent) => {
+      if (targetPos !== -1) return false;
+      if (
+        node.type.name === 'paragraph' &&
+        parent?.type.name === 'jsxComponent' &&
+        (parent.attrs.componentName as string) === 'Callout'
+      ) {
+        targetPos = pos + 1;
+        return false;
+      }
+      return true;
+    });
+    if (targetPos >= 0) {
+      editor.chain().focus().setTextSelection(targetPos).run();
+    }
+  });
+
+  await page.keyboard.press('ArrowUp');
+
+  await expect(page.locator('.jsx-component-wrapper[data-selected="true"]')).toHaveCount(0);
+
+  const outsideCallout = await page.evaluate(() => {
+    const editor = window.__activeEditor;
+    if (!editor) return false;
+    const sel = editor.state.selection;
+    if (!('$head' in sel)) return false;
+    const $head = sel.$head as { depth: number; node: (d: number) => { type: { name: string } } };
+    for (let d = $head.depth; d >= 0; d--) {
+      if ($head.node(d).type.name === 'jsxComponent') return false;
+    }
+    return true;
+  });
+  expect(outsideCallout).toBe(true);
+});
+
+test('S1e: Esc inside compound Callout enters NodeSelection mode via L1', async ({ page, api }) => {
+  await setupDoc(page, api, '<Callout type="note">\n\nbody content\n\n</Callout>\n');
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="callout"]');
+
+  await page.evaluate(() => {
+    const editor = window.__activeEditor;
+    if (!editor) return;
+    let targetPos = -1;
+    editor.state.doc.descendants((node, pos, parent) => {
+      if (targetPos !== -1) return false;
+      if (
+        node.type.name === 'paragraph' &&
+        parent?.type.name === 'jsxComponent' &&
+        (parent.attrs.componentName as string) === 'Callout'
+      ) {
+        targetPos = pos + 1;
+        return false;
+      }
+      return true;
+    });
+    if (targetPos >= 0) {
+      editor.chain().focus().setTextSelection(targetPos).run();
+    }
+  });
+
+  const preSelectionType = await page.evaluate(
+    () => window.__activeEditor?.state.selection.constructor.name ?? '',
+  );
+  expect(preSelectionType).toBe('TextSelection');
+
+  await page.keyboard.press('Escape');
+
+  await expect
+    .poll(() => page.evaluate(() => window.__activeEditor?.state.selection.constructor.name), {
+      timeout: 5_000,
+    })
+    .toBe('NodeSelection');
+});
+
+test('S1f: ArrowRight auto-NodeSelects self-closing Callout to the right of the cursor', async ({
+  page,
+  api,
+}) => {
+  await setupDoc(page, api, '# Heading\n\n<Callout type="note" title="X" />\n\n# Footer\n');
+  await page.waitForSelector('.jsx-component-wrapper');
+
+  await page.evaluate(() => {
+    const editor = window.__activeEditor;
+    if (!editor) return;
+    let pos = -1;
+    editor.state.doc.descendants((node, p) => {
+      if (node.type.name === 'heading' && node.textContent === 'Heading') {
+        pos = p + 1 + node.textContent.length; // end-of-textblock for "Heading"
+      }
+      return true;
+    });
+    if (pos >= 0) {
+      editor.chain().focus().setTextSelection(pos).run();
+    }
+  });
+
+  await page.keyboard.press('ArrowRight');
+
+  const callout = page.locator('.jsx-component-wrapper[data-component-type="callout"]').first();
+  await expect(callout).toHaveAttribute('data-selected', 'true', { timeout: 5_000 });
+  await expect(callout).toHaveAttribute('data-selection-origin', 'keyboard');
+});
+
+test('S1g: ArrowLeft auto-NodeSelects self-closing Callout to the left of the cursor', async ({
+  page,
+  api,
+}) => {
+  await setupDoc(page, api, '# Heading\n\n<Callout type="note" title="X" />\n\n# Footer\n');
+  await page.waitForSelector('.jsx-component-wrapper');
+
+  await page.evaluate(() => {
+    const editor = window.__activeEditor;
+    if (!editor) return;
+    let pos = -1;
+    editor.state.doc.descendants((node, p) => {
+      if (node.type.name === 'heading' && node.textContent === 'Footer') {
+        pos = p + 1; // start-of-textblock for "Footer"
+      }
+      return true;
+    });
+    if (pos >= 0) {
+      editor.chain().focus().setTextSelection(pos).run();
+    }
+  });
+
+  await page.keyboard.press('ArrowLeft');
+
+  const callout = page.locator('.jsx-component-wrapper[data-component-type="callout"]').first();
+  await expect(callout).toHaveAttribute('data-selected', 'true', { timeout: 5_000 });
+  await expect(callout).toHaveAttribute('data-selection-origin', 'keyboard');
 });
 
 test('S2: NodeSelection on a Callout emits data-selected=true on its wrapper', async ({
@@ -216,7 +401,7 @@ test('S9: three-axis composition — dragging dominates over selected + needs-co
   page,
   api,
 }) => {
-  await setupDoc(page, api, '<img src="/p.png" alt="" />\n');
+  await setupDoc(page, api, '<img src="/p.png" />\n');
   await page.waitForSelector('.jsx-component-wrapper[data-component-type="img"]');
 
   const card = page.locator('.jsx-component-wrapper[data-component-type="img"]').first();
@@ -248,27 +433,48 @@ test('S9: three-axis composition — dragging dominates over selected + needs-co
   await card.dispatchEvent('dragend');
 });
 
-type InsetCase = { fixture: string; componentType: string; expectedInset: string };
+test('S9b: alt="" decorative opt-in does NOT fire data-needs-config', async ({ page, api }) => {
+  await setupDoc(page, api, '<img src="/p.png" alt="" />\n');
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="img"]');
+
+  const wrapper = page.locator('.jsx-component-wrapper[data-component-type="img"]').first();
+  await expect(wrapper).not.toHaveAttribute('data-needs-config', 'true', { timeout: 5_000 });
+});
+
+test('S9c: descriptive alt does NOT fire data-needs-config', async ({ page, api }) => {
+  await setupDoc(page, api, '<img src="/p.png" alt="A picnic table at dusk" />\n');
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="img"]');
+
+  const wrapper = page.locator('.jsx-component-wrapper[data-component-type="img"]').first();
+  await expect(wrapper).not.toHaveAttribute('data-needs-config', 'true', { timeout: 5_000 });
+});
+
+type InsetCase = { fixture: string; componentType: string };
 const INSET_CASES: InsetCase[] = [
   {
-    fixture: '<Callout type="note">\n<Accordion title="a">\n\nbody\n\n</Accordion>\n</Callout>\n',
-    componentType: 'cards',
-    expectedInset: '-6px',
+    fixture: '<Callout type="note" title="X" />\n',
+    componentType: 'callout',
   },
   {
-    fixture: '<Callout type="tip">\n<Accordion title="step">\n\nbody\n\n</Accordion>\n</Callout>\n',
-    componentType: 'steps',
-    expectedInset: '-6px',
+    fixture: '<Accordion title="X" />\n',
+    componentType: 'accordion',
   },
   {
     fixture: '<img src="/p.png" alt="Plain" />\n',
-    componentType: 'card',
-    expectedInset: '-4px',
+    componentType: 'img',
+  },
+  {
+    fixture: '<video src="/sample.mp4" />\n',
+    componentType: 'video',
+  },
+  {
+    fixture: '<audio src="/sample.mp3" />\n',
+    componentType: 'audio',
   },
 ];
 
-for (const { fixture, componentType, expectedInset } of INSET_CASES) {
-  test(`S11: [${componentType}] --selection-halo-inset resolves to ${expectedInset}`, async ({
+for (const { fixture, componentType } of INSET_CASES) {
+  test(`S11: [${componentType}] --selection-halo-inset resolves to -4px (uniform)`, async ({
     page,
     api,
   }) => {
@@ -281,7 +487,7 @@ for (const { fixture, componentType, expectedInset } of INSET_CASES) {
     const inset = await wrapper.evaluate((el) =>
       window.getComputedStyle(el).getPropertyValue('--selection-halo-inset').trim(),
     );
-    expect(inset).toBe(expectedInset);
+    expect(inset).toBe('-4px');
   });
 }
 
@@ -406,7 +612,8 @@ test('S16: axe-core — zero critical violations on selection-layer surfaces', a
     '<Callout type="note">\n<Accordion title="A11y">\n\nbody\n\n</Accordion>\n</Callout>\n',
   );
   await page.waitForSelector('.jsx-component-wrapper');
-  await selectFirstJsxComponent(page, 'img');
+  const selected = await selectFirstJsxComponent(page, 'Callout');
+  expect(selected).toBe(true);
 
   const results = await new AxeBuilder({ page })
     .include('.ProseMirror')

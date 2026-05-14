@@ -331,8 +331,11 @@ describe('sweep-cache-regime scenario — end-to-end smoke (synthetic runCell)',
             resume: false,
             prodValidation: false,
           },
-          async (input: SweepCellInput): Promise<SweepCellResult> => {
-            throw new Error(`synthetic throw for ${input.cellIndex}`);
+          async (input: SweepCellInput, signal: AbortSignal): Promise<SweepCellResult> => {
+            if (!input.isBaseline && input.stage === 1) {
+              throw new Error(`synthetic throw for stage1 cellIndex=${input.cellIndex}`);
+            }
+            return syntheticRunCell()(input, signal);
           },
         );
       } catch (err) {
@@ -340,6 +343,40 @@ describe('sweep-cache-regime scenario — end-to-end smoke (synthetic runCell)',
       }
       expect(caught).not.toBeNull();
       expect(caught?.message).toMatch(/no error-free cells in stage1/);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it('baseline-cell failure aborts the campaign before any stage runs (loud, not silent)', async () => {
+    const outDir = mkdtempSync(resolve(tmpdir(), 'sweep-cache-regime-baseline-fail-'));
+    try {
+      const { ctx } = buildSmokeCtx(outDir);
+      let nonBaselineCellCount = 0;
+      let caught: Error | null = null;
+      try {
+        await runSweepCampaign(
+          ctx,
+          {
+            fixtures: ['tight'],
+            stages: [1, 2, 3, 4],
+            resume: false,
+            prodValidation: false,
+          },
+          async (input: SweepCellInput, signal: AbortSignal): Promise<SweepCellResult> => {
+            if (input.isBaseline) {
+              throw new Error('synthetic baseline failure (Playwright disconnect)');
+            }
+            nonBaselineCellCount += 1;
+            return syntheticRunCell()(input, signal);
+          },
+        );
+      } catch (err) {
+        caught = err instanceof Error ? err : new Error(String(err));
+      }
+      expect(caught).not.toBeNull();
+      expect(caught?.message).toMatch(/baseline cell for fixture 'tight' failed/);
+      expect(nonBaselineCellCount).toBe(0);
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }

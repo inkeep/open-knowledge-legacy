@@ -20,7 +20,7 @@ export function imagePromoterPlugin() {
 
 function buildImageElement(image: Image, paragraph: Paragraph): MdxJsxFlowElement {
   const attrs: MdxJsxAttribute[] = [{ type: 'mdxJsxAttribute', name: 'src', value: image.url }];
-  if (image.alt) {
+  if (typeof image.alt === 'string') {
     attrs.push({ type: 'mdxJsxAttribute', name: 'alt', value: image.alt });
   }
   if (image.title) {

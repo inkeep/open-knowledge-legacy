@@ -204,6 +204,27 @@ describe('runHandoffDispatch — success path', () => {
       ts: '2026-04-22T03:00:00.000Z',
     });
   });
+
+  test('project-scoped (docContext: null) emits empty prompt + empty docPath to dispatchHandoff', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps();
+    const input: HandoffDispatchInput = {
+      docContext: null,
+      projectDir: '/Users/sarah/proj',
+      docPath: '',
+    };
+
+    await runHandoffDispatch('codex', input, deps);
+
+    expect(deps.dispatchHandoff).toHaveBeenCalledTimes(1);
+    const [payload] = (deps.dispatchHandoff as ReturnType<typeof mock>).mock.calls[0] as [
+      HandoffPayload,
+    ];
+    expect(payload.target).toBe('codex');
+    expect(payload.projectDir).toBe('/Users/sarah/proj');
+    expect(payload.docPath).toBe('');
+    expect(payload.prompt).toBe('');
+  });
 });
 
 describe('runHandoffDispatch — failure path', () => {
@@ -514,5 +535,34 @@ describe('buildHandoffInput — shared surface helper (US-011)', () => {
         workspace: { contentDir: '/repo', pathSeparator: '/' },
       }),
     ).toBeNull();
+  });
+});
+
+describe('buildProjectScopedHandoffInput — empty-state cards helper', () => {
+  test('null workspace returns null (cards render disabled while resolving)', async () => {
+    const { buildProjectScopedHandoffInput } = await import('./useHandoffDispatch');
+    expect(buildProjectScopedHandoffInput({ workspace: null })).toBeNull();
+  });
+
+  test('returns docContext: null + empty docPath + projectDir from workspace', async () => {
+    const { buildProjectScopedHandoffInput } = await import('./useHandoffDispatch');
+    const input = buildProjectScopedHandoffInput({
+      workspace: { contentDir: '/Users/sarah/proj', pathSeparator: '/' },
+    });
+    expect(input).toEqual({
+      docContext: null,
+      projectDir: '/Users/sarah/proj',
+      docPath: '',
+    });
+  });
+
+  test('Windows: projectDir carries native backslash path verbatim', async () => {
+    const { buildProjectScopedHandoffInput } = await import('./useHandoffDispatch');
+    const input = buildProjectScopedHandoffInput({
+      workspace: { contentDir: 'C:\\Users\\sarah\\proj', pathSeparator: '\\' },
+    });
+    expect(input?.projectDir).toBe('C:\\Users\\sarah\\proj');
+    expect(input?.docPath).toBe('');
+    expect(input?.docContext).toBeNull();
   });
 });

@@ -57,8 +57,8 @@ describe('createChildNode — default props on slash insert', () => {
     expect(props.loading).toBe('lazy');
     expect(props.decoding).toBe('auto');
     expect(props.fetchpriority).toBe('auto');
-    expect(props.alt).toBe('');
     expect(props.src).toBe('');
+    expect(props).not.toHaveProperty('alt');
     expect(props.width).toBeUndefined();
     expect(props.height).toBeUndefined();
     expect(props.srcset).toBeUndefined();

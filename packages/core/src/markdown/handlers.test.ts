@@ -801,4 +801,35 @@ describe('handlers.image / imagePromoter — server-absolute URL contract (doc-r
       warn.mockRestore();
     }
   });
+
+  test('alt-preservation: ![](src) emits jsxComponent with props.alt === "" (decorative opt-in)', () => {
+    const json = mdManager.parse('![](https://example.com/img.png)\n');
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown>;
+    expect(Object.hasOwn(props, 'alt')).toBe(true);
+    expect(props.alt).toBe('');
+  });
+
+  test('alt-preservation: ![text](src) emits jsxComponent with props.alt === "text"', () => {
+    const json = mdManager.parse('![hello](https://example.com/img.png)\n');
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown>;
+    expect(props.alt).toBe('hello');
+  });
+
+  test('alt-preservation: ![](src) round-trips byte-identically', () => {
+    const md = '![](https://example.com/img.png)\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+
+  test('alt-preservation: dirty-path edited CommonMarkImage with original empty alt re-emits ![](src)', () => {
+    const json = mdManager.parse('![](https://example.com/img.png)\n');
+    const node = findJsxComponentInJson(json, 'CommonMarkImage');
+    expect(node).not.toBeNull();
+    expect((node?.attrs?.props as Record<string, unknown>).alt).toBe('');
+    if (node?.attrs) node.attrs.sourceDirty = true;
+    expect(mdManager.serialize(json)).toBe('![](https://example.com/img.png)\n');
+  });
 });

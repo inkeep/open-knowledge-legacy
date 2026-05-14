@@ -1,9 +1,18 @@
-import { existsSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { OK_PROJECT_MARKER } from '@inkeep/open-knowledge-core';
 
 const ANCESTOR_WALK_DEPTH_LIMIT = 30;
 
-const OK_CONFIG_MARKER = '.ok/config.yml';
+export function isProjectRoot(dir: string): boolean {
+  try {
+    return statSync(resolve(dir, OK_PROJECT_MARKER)).isFile();
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+    throw err;
+  }
+}
 
 export interface FindEnclosingProjectRootResult {
   readonly rootPath: string;
@@ -16,7 +25,7 @@ export function findEnclosingProjectRoot(dir: string): FindEnclosingProjectRootR
   while (distance < ANCESTOR_WALK_DEPTH_LIMIT) {
     let hit = false;
     try {
-      hit = existsSync(resolve(cursor, OK_CONFIG_MARKER));
+      hit = isProjectRoot(cursor);
     } catch {
       hit = false;
     }

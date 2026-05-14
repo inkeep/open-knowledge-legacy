@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { OK_DIR } from '@inkeep/open-knowledge-core';
+import { OK_PROJECT_MARKER } from '@inkeep/open-knowledge-core';
+import { isProjectRoot } from '../fs/find-project-root.ts';
 import { assertEntryPathInProject } from './path-safety.ts';
 import { DEFAULT_PACK_ID, resolvePack, STARTER_FOLDER_FRONTMATTER_FILENAME } from './starter.ts';
 import type { FileEntry, ScaffoldPlan, SeedOptions, SkipEntry } from './types.ts';
@@ -37,11 +38,10 @@ function joinRelative(root: string, path: string): string {
 
 export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
   const projectDir = resolve(opts.projectDir ?? process.cwd());
-  const okDir = join(projectDir, OK_DIR);
 
-  if (!existsSync(okDir)) {
+  if (!isProjectRoot(projectDir)) {
     throw new SeedPrerequisiteError(
-      `No ${OK_DIR}/ directory found at ${projectDir}. Run \`ok init\` first to scaffold the tool config.`,
+      `No ${OK_PROJECT_MARKER} found at ${projectDir}. Run \`ok init\` first to scaffold the tool config.`,
     );
   }
 

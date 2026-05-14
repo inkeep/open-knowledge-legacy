@@ -45,7 +45,8 @@ describe('I21: CommonMark `![alt](src)` → `<img>` block-context promotion', ()
     expect(image).not.toBeNull();
     const props = image?.attrs?.props as Record<string, unknown> | undefined;
     expect(props?.src).toBe('/pure.png');
-    expect(props?.alt).toBeUndefined();
+    expect(props && Object.hasOwn(props, 'alt')).toBe(true);
+    expect(props?.alt).toBe('');
   });
 
   test('CommonMark image props === MDX JSX <img> props (render-time equivalence)', () => {

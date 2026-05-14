@@ -25,7 +25,7 @@ export async function promptForExistingFolder(
   const testSeam = readTestPickedPath();
   if (testSeam !== null) return testSeam;
   const result = await dialogModule.showOpenDialog({
-    properties: ['openDirectory'],
+    properties: ['openDirectory', 'createDirectory'],
     ...(opts.defaultPath !== undefined ? { defaultPath: opts.defaultPath } : {}),
   });
   if (result.canceled) return null;

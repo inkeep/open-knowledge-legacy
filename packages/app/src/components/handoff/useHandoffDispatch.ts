@@ -4,6 +4,7 @@ import {
   type HandoffOutcome,
   type HandoffPayload,
   type HandoffTarget,
+  type TargetData,
 } from '@inkeep/open-knowledge-core';
 import { toast as sonnerToast } from 'sonner';
 import {
@@ -12,6 +13,7 @@ import {
   reinstallCoworkSkill,
 } from '@/lib/handoff/cowork-skill-install';
 import { dispatchHandoff as defaultDispatchHandoff } from '@/lib/handoff/dispatch';
+import { openExternal as defaultOpenExternal } from '@/lib/handoff/open-external';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import {
   recordHandoff as defaultRecordHandoff,
@@ -22,7 +24,7 @@ import { docNameToRelativePath, joinWorkspacePath, type Workspace } from '@/lib/
 import '@/lib/desktop-bridge-types';
 
 export interface HandoffDispatchInput {
-  readonly docContext: DocContext;
+  readonly docContext: DocContext | null;
   readonly projectDir: string;
   readonly docPath: string;
 }
@@ -39,6 +41,21 @@ export function buildHandoffInput(args: {
     projectDir: contentDir,
     docPath: joinWorkspacePath(contentDir, relativePath, pathSeparator),
   };
+}
+
+export function buildProjectScopedHandoffInput(args: {
+  readonly workspace: Workspace | null;
+}): HandoffDispatchInput | null {
+  if (!args.workspace?.contentDir) return null;
+  return {
+    docContext: null,
+    projectDir: args.workspace.contentDir,
+    docPath: '',
+  };
+}
+
+export function openInstallUrl(target: TargetData): Promise<void> {
+  return defaultOpenExternal(target.installUrl).then(() => undefined);
 }
 
 export interface ToastAction {
@@ -126,7 +143,7 @@ export async function runHandoffDispatch(
     target,
     projectDir: input.projectDir,
     docPath: input.docPath,
-    prompt: composePrompt(input.docContext),
+    prompt: input.docContext === null ? '' : composePrompt(input.docContext),
   };
 
   const outcome = await deps.dispatchHandoff(payload);

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { type Dirent, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, extname, join, relative } from 'node:path';
 import { ASSET_EXTENSIONS } from '@inkeep/open-knowledge-core';
@@ -697,10 +697,63 @@ function updateFolderIndexFromRawEvents(
     upsertFolderIndexEntry(folderIndex, contentDir, raw.path, folderStat, canonicalPath);
     if (!hadFolder) {
       events.push({ kind: 'folder-create', path: raw.path, relativePath });
+      scanForUntrackedSubfolders(canonicalPath, contentDir, contentFilter, folderIndex, events);
     }
   }
 
   return events;
+}
+
+function scanForUntrackedSubfolders(
+  startPath: string,
+  contentDir: string,
+  contentFilter: ContentFilter | undefined,
+  folderIndex: Map<string, FolderIndexEntry>,
+  events: FolderDiskEvent[],
+): void {
+  const queue: string[] = [startPath];
+  while (queue.length > 0) {
+    const dir = queue.shift();
+    if (dir === undefined) continue;
+
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        console.warn(`[file-watcher] folder rescan readdir failed for ${dir} (${code})`);
+      }
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+
+      const fullPath = join(dir, entry.name);
+      const relPath = contentRelativePath(contentDir, fullPath);
+      if (!relPath) continue;
+      if (contentFilter?.isDirExcluded(relPath)) continue;
+
+      let stat: ReturnType<typeof lstatSync>;
+      try {
+        stat = lstatSync(fullPath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') {
+          console.warn(`[file-watcher] folder rescan lstat failed for ${fullPath} (${code})`);
+        }
+        continue;
+      }
+      if (!stat.isDirectory()) continue;
+
+      if (!folderIndex.has(relPath)) {
+        upsertFolderIndexEntry(folderIndex, contentDir, fullPath, stat);
+        events.push({ kind: 'folder-create', path: fullPath, relativePath: relPath });
+      }
+      queue.push(fullPath);
+    }
+  }
 }
 
 export async function handleRawEvents(

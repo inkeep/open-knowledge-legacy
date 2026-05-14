@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { OK_PROJECT_MARKER } from '@inkeep/open-knowledge-core';
 import {
   type AgentIdentity,
   buildInstructions,
   type Config,
   getLocalDir,
+  isProjectRoot,
   MCP_SERVER_NAME,
   RUNTIME_VERSION,
   registerAllTools,
@@ -16,7 +17,6 @@ import {
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createProjectConfigResolver } from '../config/loader.ts';
-import { OK_DIR } from '../constants.ts';
 import { startKeepalive } from './keepalive.ts';
 import { parseSpawnTimeoutEnv, resolveMcpHttpUrl, resolveMcpKeepaliveWsUrl } from './shim.ts';
 
@@ -39,24 +39,14 @@ interface KeepaliveHandle {
 export function findProjectDir(startCwd: string): string {
   let dir = resolve(startCwd);
   while (true) {
-    if (isOkMarkerDir(join(dir, OK_DIR))) return dir;
+    if (isProjectRoot(dir)) return dir;
     const parent = dirname(dir);
     if (parent === dir) {
       throw new Error(
-        `No Open Knowledge project found at or above ${startCwd}. Pass an explicit \`cwd\` argument that points inside an OK project (a directory with a \`${OK_DIR}/\`).`,
+        `No Open Knowledge project found at or above ${startCwd}. Pass an explicit \`cwd\` argument that points inside an OK project (a directory with a \`${OK_PROJECT_MARKER}\`).`,
       );
     }
     dir = parent;
-  }
-}
-
-function isOkMarkerDir(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException | undefined)?.code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
-    throw err;
   }
 }
 

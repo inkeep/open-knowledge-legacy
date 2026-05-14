@@ -150,7 +150,7 @@ test.describe('Create-new-project smoke', () => {
       await expect(navigator.locator('[data-testid="create-name"]')).toBeFocused();
 
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(parent, {
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(parent, {
         timeout: 15_000,
       });
 
@@ -204,9 +204,12 @@ test.describe('Create-new-project smoke', () => {
       });
 
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(subFolder, {
-        timeout: 15_000,
-      });
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(
+        subFolder,
+        {
+          timeout: 15_000,
+        },
+      );
 
       await navigator.locator('[data-testid="create-name"]').fill('Nested');
 
@@ -245,9 +248,12 @@ test.describe('Create-new-project smoke', () => {
       });
 
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(pickedParent, {
-        timeout: 15_000,
-      });
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(
+        pickedParent,
+        {
+          timeout: 15_000,
+        },
+      );
 
       await navigator.locator('[data-testid="create-name"]').fill(projectName);
 

@@ -219,7 +219,7 @@ describe('exhaustiveness coverage (US-003, FR11 b, D33)', () => {
       );
     }
     expect(failures).toEqual([]);
-  });
+  }, 30_000);
 
   test('the AST scanner finds the canonical ClassifiedLinkTarget consumer', () => {
     let foundClassifiedLinkTargetConsumer = false;

@@ -48,7 +48,7 @@ export function FrontmatterFields({
           aria-invalid={showTitleError}
         />
         {showTitleError ? (
-          <FieldError>Required — title is the agent menu surface.</FieldError>
+          <FieldError>Required. Title is the agent menu surface.</FieldError>
         ) : null}
       </Field>
       <Field>

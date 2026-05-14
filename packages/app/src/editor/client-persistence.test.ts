@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import * as Y from 'yjs';
 import {
@@ -199,6 +199,63 @@ describe('createClientPersistence', () => {
 
     await providerB.destroy();
     docB.destroy();
+  });
+
+  test('clearData onblocked logs structured event and settles via onsuccess once blocker closes', async () => {
+    const docName = uniqueDocName('cp-onblocked');
+    const dbName = `ok-ydoc:${TEST_BRANCH}:${TEST_SERVER_INSTANCE_ID}:${docName}`;
+
+    const docA = new Y.Doc();
+    const provider = createClientPersistence({
+      branch: TEST_BRANCH,
+      serverInstanceId: TEST_SERVER_INSTANCE_ID,
+      docName,
+      doc: docA,
+    });
+    await provider.whenSynced;
+    docA.getText('t').insert(0, 'will-be-cleared');
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(
+      await countPersistedUpdates(TEST_BRANCH, TEST_SERVER_INSTANCE_ID, docName),
+    ).toBeGreaterThan(0);
+
+    const blocker: IDBDatabase = await new Promise((resolve, reject) => {
+      const req = indexedDB.open(dbName);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const clearPromise = provider.clearData();
+
+      const settled = await Promise.race([
+        clearPromise.then(
+          () => 'resolved' as const,
+          () => 'rejected' as const,
+        ),
+        new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 50)),
+      ]);
+      expect(settled).toBe('pending');
+
+      const events = warnSpy.mock.calls.map((call) => String(call[0] ?? ''));
+      const blockedWarn = events.find((s) =>
+        s.includes('"event":"ok-client-persistence-clear-blocked"'),
+      );
+      expect(blockedWarn).toBeDefined();
+      expect(blockedWarn).toContain(dbName);
+
+      blocker.close();
+      await clearPromise;
+
+      expect(await countPersistedUpdates(TEST_BRANCH, TEST_SERVER_INSTANCE_ID, docName)).toBe(0);
+    } finally {
+      warnSpy.mockRestore();
+      try {
+        blocker.close();
+      } catch {}
+      docA.destroy();
+    }
   });
 
   test('destroy preserves persisted data for the next open', async () => {

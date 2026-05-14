@@ -663,7 +663,7 @@ describe('bootStartServer — no auto git-init from ok start (US-004)', () => {
   });
 });
 
-describe('bootStartServer — rejects with init-required when .ok/ is absent', () => {
+describe('bootStartServer — rejects with init-required when .ok/config.yml is absent', () => {
   let tmpDir: string;
 
   beforeEach(async () => {
@@ -701,6 +701,20 @@ describe('bootStartServer — rejects with init-required when .ok/ is absent', (
   });
 
   test('fresh dir (no .ok/) → bootStartServer does not create config.yml', async () => {
+    await expect(
+      bootStartServer({
+        config: makeTestConfig(),
+        cwd: tmpDir,
+        host: TEST_HOST,
+        skipAutoInit: false,
+        skipUiAutoSpawn: true,
+      }),
+    ).rejects.toBeInstanceOf(OkDirMissingError);
+    expect(existsSync(join(tmpDir, '.ok', 'config.yml'))).toBe(false);
+  });
+
+  test('bare .ok/ without config.yml is NOT a project root — bootStartServer still throws', async () => {
+    mkdirSync(join(tmpDir, '.ok'), { recursive: true });
     await expect(
       bootStartServer({
         config: makeTestConfig(),

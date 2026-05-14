@@ -173,6 +173,131 @@ describe('highlight-promoter — multi-match', () => {
   });
 });
 
+describe('highlight-promoter — cross-children body (==**bold**==, ==*italic*==, ==`code`==)', () => {
+  test('`==**bold**==` carries both highlight + strong', () => {
+    const json = mdManager.parse('==**bold**==\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe('bold');
+    const markTypes = (marks[0].marks ?? []).map((m) => m.type).sort();
+    expect(markTypes).toEqual(['highlight', 'strong']);
+  });
+
+  test('`==*italic*==` carries both highlight + emphasis', () => {
+    const json = mdManager.parse('==*italic*==\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe('italic');
+    const markTypes = (marks[0].marks ?? []).map((m) => m.type).sort();
+    expect(markTypes).toEqual(['emphasis', 'highlight']);
+  });
+
+  test('` ==`code`== ` carries both highlight + code', () => {
+    const json = mdManager.parse('==`code`==\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe('code');
+    const markTypes = (marks[0].marks ?? []).map((m) => m.type).sort();
+    expect(markTypes).toEqual(['code', 'highlight']);
+  });
+
+  test('`==~~strike~~==` carries highlight + strike', () => {
+    const json = mdManager.parse('==~~strike~~==\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe('strike');
+    const markTypes = (marks[0].marks ?? []).map((m) => m.type).sort();
+    expect(markTypes).toEqual(['highlight', 'strike']);
+  });
+
+  test('mid-paragraph `a ==**bold**== b` highlights only the bold', () => {
+    const json = mdManager.parse('a ==**bold**== b\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(1);
+    expect(marks[0].text).toBe('bold');
+    expect(plainTextOf(json)).toBe('a bold b');
+  });
+
+  test('`==**a** **b**==` highlights the full body — both bolds plus separator', () => {
+    const json = mdManager.parse('==**a** **b**==\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.length).toBe(3);
+    expect(marks.map((m) => m.text)).toEqual(['a', ' ', 'b']);
+    const markSets = marks.map((m) =>
+      (m.marks ?? [])
+        .map((mm) => mm.type)
+        .sort()
+        .join(','),
+    );
+    expect(markSets).toEqual(['highlight,strong', 'highlight', 'highlight,strong']);
+  });
+
+  test('flanking rule 2 — `== **bold**==` (open followed by space) stays prose', () => {
+    const json = mdManager.parse('a == **bold**== b\n');
+    expect(collectHighlightedTextNodes(json).length).toBe(0);
+  });
+
+  test('flanking rule 4 — `==**bold** ==` (close preceded by space) stays prose', () => {
+    const json = mdManager.parse('a ==**bold** == b\n');
+    expect(collectHighlightedTextNodes(json).length).toBe(0);
+  });
+
+  test('`==Bold: **bold thing** end.==j` — open + close mid-text with formatting in body (user repro)', () => {
+    const json = mdManager.parse('==Bold: **bold thing** end.==j\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.map((m) => m.text)).toEqual(['Bold: ', 'bold thing', ' end.']);
+    const strongMark = marks.find((m) => m.text === 'bold thing');
+    expect((strongMark?.marks ?? []).map((mm) => mm.type).sort()).toEqual(['highlight', 'strong']);
+    expect(plainTextOf(json)).toBe('Bold: bold thing end.j');
+    const src = '==Bold: **bold thing** end.==j\n';
+    expect(mdManager.serialize(json)).toBe(src);
+    const second = mdManager.parse(mdManager.serialize(json));
+    expect(collectHighlightedTextNodes(second).length).toBe(3);
+  });
+
+  test('opaque inline (link) inside `==[anchor](url)==` — stays prose', () => {
+    const json = mdManager.parse('==[anchor](url)==\n');
+    expect(collectHighlightedTextNodes(json).length).toBe(0);
+  });
+
+  test('opaque inline (inline math) inside `==$x$==` — stays prose', () => {
+    const json = mdManager.parse('==$x$==\n');
+    expect(collectHighlightedTextNodes(json).length).toBe(0);
+  });
+
+  test('close `==` followed by `=` via inlineCode start char — rule 5 cross-boundary rejection', () => {
+    const src = '==**bold**==`=code`\n';
+    const json = mdManager.parse(src);
+    const marks = collectHighlightedTextNodes(json);
+    for (const m of marks) {
+      expect(m.text).not.toContain('=code');
+    }
+  });
+
+  test('`==prefix *em* and **strong** suffix==` — multi-inline body wrapped by `==…==`', () => {
+    const json = mdManager.parse('==prefix *em* and **strong** suffix==\n');
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.map((m) => m.text)).toEqual(['prefix ', 'em', ' and ', 'strong', ' suffix']);
+  });
+
+  test('chained `==**bold**== and ==*italic*== and ==`code`==` highlights all three runs', () => {
+    const src = '==**bold**== and ==*italic*== and ==`code`==\n';
+    const json = mdManager.parse(src);
+    const marks = collectHighlightedTextNodes(json);
+    expect(marks.map((m) => m.text)).toEqual(['bold', 'italic', 'code']);
+  });
+
+  test('byte-stable round-trip — `==**bold**==` survives parse + serialize + reparse', () => {
+    const src = 'a ==**bold**== b\n';
+    const first = mdManager.parse(src);
+    const round = mdManager.serialize(first);
+    expect(round).toBe(src);
+    const second = mdManager.parse(round);
+    expect(mdManager.serialize(second)).toBe(src);
+    expect(collectHighlightedTextNodes(second).length).toBe(1);
+  });
+});
+
 describe('highlight-promoter — MDX `<mark>` JSX form', () => {
   test('`<mark>hello</mark>` parses as highlight mark', () => {
     const json = mdManager.parse('<mark>hello</mark>\n');

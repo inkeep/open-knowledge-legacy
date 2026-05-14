@@ -45,7 +45,7 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
   };
 
   const triggerDisabled = input === null;
-  const prompt = input !== null ? composePrompt(input.docContext) : '';
+  const prompt = input !== null && input.docContext !== null ? composePrompt(input.docContext) : '';
 
   const handleSelect = (target: TargetData): void => {
     if (input === null) return;

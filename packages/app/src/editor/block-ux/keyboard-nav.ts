@@ -1,5 +1,57 @@
+import { incrementJsxArrowNodeSelectFailed } from '@inkeep/open-knowledge-core';
+import type { Editor } from '@tiptap/core';
 import { Extension } from '@tiptap/core';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
+
+type ArrowDirection = 'up' | 'down' | 'left' | 'right';
+
+function tryL0NodeSelect(editor: Editor, dir: ArrowDirection): boolean {
+  const { state, view } = editor;
+  if (!state.selection.empty) return false;
+  if (!view.endOfTextblock(dir)) return false;
+
+  const $head = state.selection.$head;
+  const isForward = dir === 'down' || dir === 'right';
+
+  let adj: ReturnType<typeof state.doc.nodeAt> | null = null;
+  let adjPos = -1;
+  if (isForward) {
+    const afterPos = $head.after();
+    if (afterPos >= state.doc.content.size) return false;
+    adj = state.doc.nodeAt(afterPos);
+    adjPos = afterPos;
+  } else {
+    const beforePos = $head.before();
+    if (beforePos <= 0) return false;
+    const $beforePos = state.doc.resolve(beforePos);
+    adj = $beforePos.nodeBefore;
+    if (!adj) return false;
+    adjPos = beforePos - adj.nodeSize;
+  }
+
+  if (!adj) return false;
+  if (adj.type.name !== 'jsxComponent') return false;
+  if (adj.childCount !== 0) return false;
+  if (!NodeSelection.isSelectable(adj)) return false;
+
+  try {
+    const sel = NodeSelection.create(state.doc, adjPos);
+    editor.view.dispatch(state.tr.setSelection(sel).scrollIntoView());
+    return true;
+  } catch (err) {
+    if (!(err instanceof RangeError)) throw err;
+    incrementJsxArrowNodeSelectFailed(dir);
+    console.warn(
+      JSON.stringify({
+        event: 'jsx-component-arrow-node-select-failed',
+        direction: dir,
+        tier: 'L0',
+        reason: err.message.slice(0, 500),
+      }),
+    );
+    return true;
+  }
+}
 
 export const KeyboardNav = Extension.create({
   name: 'keyboardNav',
@@ -26,6 +78,8 @@ export const KeyboardNav = Extension.create({
       },
 
       ArrowUp: ({ editor }) => {
+        if (tryL0NodeSelect(editor, 'up')) return true;
+
         const { state } = editor;
         if (!(state.selection instanceof NodeSelection)) return false;
 
@@ -47,12 +101,24 @@ export const KeyboardNav = Extension.create({
           const sel = NodeSelection.create(state.doc, prevPos - prevNode.nodeSize);
           editor.view.dispatch(state.tr.setSelection(sel).scrollIntoView());
           return true;
-        } catch {
+        } catch (err) {
+          if (!(err instanceof RangeError)) throw err;
+          incrementJsxArrowNodeSelectFailed('up');
+          console.warn(
+            JSON.stringify({
+              event: 'jsx-component-arrow-node-select-failed',
+              direction: 'up',
+              tier: 'L2',
+              reason: err.message.slice(0, 500),
+            }),
+          );
           return false;
         }
       },
 
       ArrowDown: ({ editor }) => {
+        if (tryL0NodeSelect(editor, 'down')) return true;
+
         const { state } = editor;
         if (!(state.selection instanceof NodeSelection)) return false;
 
@@ -68,10 +134,24 @@ export const KeyboardNav = Extension.create({
           const sel = NodeSelection.create(state.doc, nextPos);
           editor.view.dispatch(state.tr.setSelection(sel).scrollIntoView());
           return true;
-        } catch {
+        } catch (err) {
+          if (!(err instanceof RangeError)) throw err;
+          incrementJsxArrowNodeSelectFailed('down');
+          console.warn(
+            JSON.stringify({
+              event: 'jsx-component-arrow-node-select-failed',
+              direction: 'down',
+              tier: 'L2',
+              reason: err.message.slice(0, 500),
+            }),
+          );
           return false;
         }
       },
+
+      ArrowLeft: ({ editor }) => tryL0NodeSelect(editor, 'left'),
+
+      ArrowRight: ({ editor }) => tryL0NodeSelect(editor, 'right'),
 
       Enter: ({ editor }) => {
         const { state } = editor;

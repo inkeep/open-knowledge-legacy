@@ -1,0 +1,108 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 123e40d63bca06f42e7873261864227330926149..6330df84874afcd0b19bac6193e68a2ab0b5c833 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -506,11 +506,47 @@ function dragHandler(event, editor, nestedOptions, dragContext) {
+   });
+   wrapper.style.position = "absolute";
+   wrapper.style.top = "-10000px";
++  // Force content-visibility:visible on the wrapper and any cloned descendants
++  // that inherited `content-visibility: auto` (via cloneElement's computed-style
++  // copy). Off-screen `content-visibility: auto` makes Chrome skip painting,
++  // which produces a blank drag-image snapshot. `OK`'s `.ok-chunk-wrapper`
++  // applies this property as a viewport-virtualization perf optimization, so
++  // every drag preview hits this path unless we override.
++  wrapper.style.contentVisibility = "visible";
+   document.body.append(wrapper);
++  for (const el of wrapper.querySelectorAll("*")) {
++    if (el.style && el.style.contentVisibility === "auto") {
++      el.style.contentVisibility = "visible";
++    }
++  }
+   event.dataTransfer.clearData();
+   const wrapperRect = wrapper.getBoundingClientRect();
+-  const dragImageX = event.clientX - wrapperRect.left;
+-  event.dataTransfer.setDragImage(wrapper, Math.max(0, Math.min(dragImageX, wrapperRect.width)), 0);
++  // Place the drag image so the cursor lands *inside* the cloned block's
++  // visible content, not at the off-screen wrapper's top-left corner. The
++  // wrapper is positioned at `top: -10000px` with no `left`, so its rect's
++  // left ≈ 0 regardless of where the source block actually lives. Falling
++  // back to that rect makes the cursor sit on the image's edge (whitespace),
++  // not on the text. Compute the cursor's offset within the *source* block
++  // and clamp into the image bounds with a small inset so the cursor always
++  // overlaps the rendered content.
++  // Pin the drag image to the source block's natural on-screen position. The
++  // X offset is *intentionally unclamped* on the negative side: when the drag
++  // grip lives in the left margin (off the block content), the cursor stays
++  // in that margin and the ghost block aligns with where the source block
++  // actually was — so the preview reads as "lifting a copy of this block off
++  // the page", not "the cursor stuck onto the text". On the right side we
++  // still cap inside `wrapperRect.width` so the cursor doesn't fly past the
++  // image's far edge for unusually wide blocks. Y is clamped into the image
++  // bounds so the cursor stays vertically on the ghost.
++  const sourceDom = view.nodeDOM(from);
++  const sourceRect = sourceDom && sourceDom.nodeType === 1 ? sourceDom.getBoundingClientRect() : null;
++  const dragImageX = sourceRect
++    ? Math.min(event.clientX - sourceRect.left, wrapperRect.width)
++    : Math.max(0, Math.min(event.clientX - wrapperRect.left, wrapperRect.width));
++  const dragImageY = sourceRect
++    ? Math.min(Math.max(event.clientY - sourceRect.top, 0), wrapperRect.height)
++    : 0;
++  event.dataTransfer.setDragImage(wrapper, dragImageX, dragImageY);
+   let cleanedUp = false;
+   const cleanupDragPreview = () => {
+     if (cleanedUp) {
+diff --git a/dist/index.js b/dist/index.js
+index d50c956280b83ae3e0ad2cea93a6caf5af073ac3..2f991c99b5b7ee8c7e27dadec19392fc3c9a099b 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -478,11 +478,47 @@ function dragHandler(event, editor, nestedOptions, dragContext) {
+   });
+   wrapper.style.position = "absolute";
+   wrapper.style.top = "-10000px";
++  // Force content-visibility:visible on the wrapper and any cloned descendants
++  // that inherited `content-visibility: auto` (via cloneElement's computed-style
++  // copy). Off-screen `content-visibility: auto` makes Chrome skip painting,
++  // which produces a blank drag-image snapshot. `OK`'s `.ok-chunk-wrapper`
++  // applies this property as a viewport-virtualization perf optimization, so
++  // every drag preview hits this path unless we override.
++  wrapper.style.contentVisibility = "visible";
+   document.body.append(wrapper);
++  for (const el of wrapper.querySelectorAll("*")) {
++    if (el.style && el.style.contentVisibility === "auto") {
++      el.style.contentVisibility = "visible";
++    }
++  }
+   event.dataTransfer.clearData();
+   const wrapperRect = wrapper.getBoundingClientRect();
+-  const dragImageX = event.clientX - wrapperRect.left;
+-  event.dataTransfer.setDragImage(wrapper, Math.max(0, Math.min(dragImageX, wrapperRect.width)), 0);
++  // Place the drag image so the cursor lands *inside* the cloned block's
++  // visible content, not at the off-screen wrapper's top-left corner. The
++  // wrapper is positioned at `top: -10000px` with no `left`, so its rect's
++  // left ≈ 0 regardless of where the source block actually lives. Falling
++  // back to that rect makes the cursor sit on the image's edge (whitespace),
++  // not on the text. Compute the cursor's offset within the *source* block
++  // and clamp into the image bounds with a small inset so the cursor always
++  // overlaps the rendered content.
++  // Pin the drag image to the source block's natural on-screen position. The
++  // X offset is *intentionally unclamped* on the negative side: when the drag
++  // grip lives in the left margin (off the block content), the cursor stays
++  // in that margin and the ghost block aligns with where the source block
++  // actually was — so the preview reads as "lifting a copy of this block off
++  // the page", not "the cursor stuck onto the text". On the right side we
++  // still cap inside `wrapperRect.width` so the cursor doesn't fly past the
++  // image's far edge for unusually wide blocks. Y is clamped into the image
++  // bounds so the cursor stays vertically on the ghost.
++  const sourceDom = view.nodeDOM(from);
++  const sourceRect = sourceDom && sourceDom.nodeType === 1 ? sourceDom.getBoundingClientRect() : null;
++  const dragImageX = sourceRect
++    ? Math.min(event.clientX - sourceRect.left, wrapperRect.width)
++    : Math.max(0, Math.min(event.clientX - wrapperRect.left, wrapperRect.width));
++  const dragImageY = sourceRect
++    ? Math.min(Math.max(event.clientY - sourceRect.top, 0), wrapperRect.height)
++    : 0;
++  event.dataTransfer.setDragImage(wrapper, dragImageX, dragImageY);
+   let cleanedUp = false;
+   const cleanupDragPreview = () => {
+     if (cleanedUp) {

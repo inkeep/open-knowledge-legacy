@@ -13,15 +13,27 @@ describe('planSeed — nested .ok/ era', () => {
   beforeEach(async () => {
     projectDir = await mkdtemp(join(tmpdir(), 'seed-plan-'));
     mkdirSync(join(projectDir, '.ok'), { recursive: true });
+    writeFileSync(join(projectDir, '.ok', 'config.yml'), '', 'utf-8');
   });
 
   afterEach(async () => {
     await rm(projectDir, { recursive: true, force: true });
   });
 
-  test('throws SeedPrerequisiteError when .ok/ is absent', async () => {
+  test('throws SeedPrerequisiteError when .ok/config.yml is absent', async () => {
     const bare = await mkdtemp(join(tmpdir(), 'seed-bare-'));
     try {
+      await expect(planSeed({ projectDir: bare })).rejects.toThrow(SeedPrerequisiteError);
+    } finally {
+      await rm(bare, { recursive: true, force: true });
+    }
+  });
+
+  test('throws SeedPrerequisiteError when .ok/ exists but config.yml is absent', async () => {
+    const bare = await mkdtemp(join(tmpdir(), 'seed-sidecar-'));
+    try {
+      mkdirSync(join(bare, '.ok'), { recursive: true });
+      writeFileSync(join(bare, '.ok', 'frontmatter.yml'), 'title: x\n', 'utf-8');
       await expect(planSeed({ projectDir: bare })).rejects.toThrow(SeedPrerequisiteError);
     } finally {
       await rm(bare, { recursive: true, force: true });

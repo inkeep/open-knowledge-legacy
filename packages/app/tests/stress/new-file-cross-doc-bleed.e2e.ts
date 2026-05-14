@@ -97,8 +97,8 @@ async function assertVisibleActivityHasOnlyEmptyEditor(page: Page): Promise<void
   ).toHaveText('');
 }
 
-test.describe('new-file cross-doc bleed (H6 mechanism — architectural fix pending)', () => {
-  test.fixme('open doc then New File: new file Activity must contain exactly one empty editor', async ({
+test.describe('new-file cross-doc bleed', () => {
+  test('open doc then New File: new file Activity must contain exactly one empty editor', async ({
     page,
     api,
   }) => {
@@ -121,7 +121,7 @@ test.describe('new-file cross-doc bleed (H6 mechanism — architectural fix pend
     await assertVisibleActivityHasOnlyEmptyEditor(page);
   });
 
-  test.fixme('open A, navigate to B, then New File: new file Activity must contain exactly one empty editor', async ({
+  test('open A, navigate to B, then New File: new file Activity must contain exactly one empty editor', async ({
     page,
     api,
   }) => {
@@ -149,7 +149,7 @@ test.describe('new-file cross-doc bleed (H6 mechanism — architectural fix pend
     await assertVisibleActivityHasOnlyEmptyEditor(page);
   });
 
-  test.fixme('open A, delete A, then New File with the just-deleted docName: still exactly one empty editor', async ({
+  test('open A, delete A, then New File with the just-deleted docName: still exactly one empty editor', async ({
     page,
     api,
     baseURL,

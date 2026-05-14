@@ -51,6 +51,7 @@ export interface TiptapCacheEntry {
   scrollTop: number;
   hadFocus: boolean;
   activeMountKey: string | null;
+  parkingNode: HTMLElement | null;
   __uncached?: boolean;
 }
 
@@ -62,6 +63,13 @@ export interface CmCacheEntry {
   scrollTop: number;
   hadFocus: boolean;
   activeMountKey: string | null;
+  /** See `TiptapCacheEntry.parkingNode`. CM6 doesn't exhibit the same H6
+   * vacuum primitive that `@tiptap/react`'s `PureEditorContent` does, but
+   * keeping per-entry parking nodes here too is the symmetric structural
+   * choice (one node per cached editor instance) — avoids any future
+   * adapter coupling between CM6's detach lifecycle and another tree's
+   * lifecycle that could surface a similar bleed. */
+  parkingNode: HTMLElement | null;
   __uncached?: boolean;
 }
 
@@ -105,10 +113,7 @@ const cmLru: string[] = [];
 
 let activityMountList: ReadonlySet<string> = new Set();
 
-let _parkingNode: HTMLElement | null = null;
-
-function tryGetParkingNode(): HTMLElement | null {
-  if (_parkingNode) return _parkingNode;
+function tryCreateParkingNode(): HTMLElement | null {
   if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
     return null;
   }
@@ -117,7 +122,6 @@ function tryGetParkingNode(): HTMLElement | null {
   el.style.display = 'none';
   el.style.position = 'absolute';
   el.style.left = '-99999px';
-  _parkingNode = el;
   return el;
 }
 
@@ -142,6 +146,7 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
       scrollTop: 0,
       hadFocus: false,
       activeMountKey: docName,
+      parkingNode: null,
       __uncached: true,
     };
   }
@@ -200,6 +205,7 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
     scrollTop: 0,
     hadFocus: false,
     activeMountKey: docName,
+    parkingNode: null,
   };
   tiptapCache.set(docName, entry);
   touchLru(tiptapLru, docName);
@@ -256,9 +262,11 @@ export function parkTiptapEditor(entry: TiptapCacheEntry): void {
     if (parent) {
       parent.removeChild(view.dom);
     }
-    const park = tryGetParkingNode();
-    if (park) {
-      park.appendChild(view.dom);
+    if (!entry.parkingNode) {
+      entry.parkingNode = tryCreateParkingNode();
+    }
+    if (entry.parkingNode) {
+      entry.parkingNode.appendChild(view.dom);
     }
   }
 
@@ -334,6 +342,7 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
       scrollTop: 0,
       hadFocus: false,
       activeMountKey: docName,
+      parkingNode: null,
       __uncached: true,
     };
   }
@@ -392,6 +401,7 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
     scrollTop: 0,
     hadFocus: false,
     activeMountKey: docName,
+    parkingNode: null,
   };
   cmCache.set(docName, entry);
   touchLru(cmLru, docName);
@@ -439,9 +449,11 @@ export function parkCmEditor(entry: CmCacheEntry): void {
   if (parent) {
     parent.removeChild(dom);
   }
-  const park = tryGetParkingNode();
-  if (park) {
-    park.appendChild(dom);
+  if (!entry.parkingNode) {
+    entry.parkingNode = tryCreateParkingNode();
+  }
+  if (entry.parkingNode) {
+    entry.parkingNode.appendChild(dom);
   }
   entry.activeMountKey = null;
 }

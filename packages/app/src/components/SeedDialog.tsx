@@ -184,7 +184,7 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
         projectEntries === 0 && personalCount > 0
           ? `${personalCount} personal template${personalCount === 1 ? '' : 's'} written to ~/.ok/templates/`
           : projectEntries === 0
-            ? `${packName} was already set up — nothing to do.`
+            ? `${packName} was already set up. Nothing to do.`
             : personalCount > 0
               ? `${packName} initialized (${projectEntries} ${projectEntries === 1 ? 'entry' : 'entries'}) + ${personalCount} personal template${personalCount === 1 ? '' : 's'}`
               : `${packName} initialized (${projectEntries} ${projectEntries === 1 ? 'entry' : 'entries'})`;
@@ -316,7 +316,7 @@ function PersonalTemplatesToggle({
           <FieldTitle>Include personal templates</FieldTitle>
           <FieldDescription className="text-1sm">
             Adds daily journal, reading log, recipes, and more to <code>~/.ok/templates/</code>.
-            Idempotent — never overwrites your edits.
+            Idempotent. Never overwrites your edits.
           </FieldDescription>
         </FieldContent>
         <Checkbox
@@ -416,7 +416,7 @@ function SeedDialogBody({
       <div className="py-2 text-sm">
         <p className="font-medium">This pack is already set up here.</p>
         <p className="text-muted-foreground">
-          The folders and templates are in place — there's nothing left to scaffold.
+          The folders and templates are in place; there's nothing left to scaffold.
         </p>
       </div>
     );

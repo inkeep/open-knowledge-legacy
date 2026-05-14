@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { type AddressInfo, createServer as createNetServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -94,6 +94,11 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
       : realpathSync(mkdtempSync(join(tmpdir(), 'ok-test-')));
   if (options.contentDir === undefined) {
     writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
+  }
+
+  if (options.contentDir === undefined) {
+    mkdirSync(join(contentDir, '.ok'), { recursive: true });
+    writeFileSync(join(contentDir, '.ok', 'config.yml'), '', 'utf-8');
   }
 
   await ensureProjectGit(contentDir);

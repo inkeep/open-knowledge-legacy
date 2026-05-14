@@ -397,10 +397,10 @@ export function createServer(options: ServerOptions): ServerInstance {
 
     const defaultShouldUnloadDocument = hocuspocus.shouldUnloadDocument.bind(hocuspocus);
     hocuspocus.shouldUnloadDocument = (document) => {
-      if (
-        (shutdownAllowsUnload || forceUnloadSet.has(document)) &&
-        defaultShouldUnloadDocument(document)
-      ) {
+      if (forceUnloadSet.has(document)) {
+        return true;
+      }
+      if (shutdownAllowsUnload && defaultShouldUnloadDocument(document)) {
         return true;
       }
       const name = document.name;

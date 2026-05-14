@@ -165,7 +165,7 @@ export function buildMediaJsxNodeData(
 } {
   const componentName = kind === 'jsx-img' ? 'img' : kind === 'jsx-video' ? 'video' : 'audio';
   const props: Record<string, unknown> =
-    kind === 'jsx-img' ? { src: resolvedSrc, alt: '' } : { src: resolvedSrc, controls: true };
+    kind === 'jsx-img' ? { src: resolvedSrc } : { src: resolvedSrc, controls: true };
   return {
     type: 'jsxComponent',
     attrs: {

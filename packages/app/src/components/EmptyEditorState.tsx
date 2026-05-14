@@ -1,7 +1,10 @@
 import { DocumentListSuccessSchema } from '@inkeep/open-knowledge-core';
-import { ArrowRightIcon, Sparkles } from 'lucide-react';
+import { ArrowRightIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { OkBlob } from '@/components/OkBlob';
+import { AgentHandoffGrid } from '@/components/empty-state/AgentHandoffGrid';
+import { EmptyStateHeader } from '@/components/empty-state/EmptyStateHeader';
+import { KeyboardHintsFooter } from '@/components/empty-state/KeyboardHintsFooter';
+import { ProjectIdentityStrip } from '@/components/empty-state/ProjectIdentityStrip';
 import { PackCardGrid } from '@/components/PackCardGrid';
 import { SeedDialog } from '@/components/SeedDialog';
 import { Button } from '@/components/ui/button';
@@ -90,13 +93,7 @@ export function EmptyEditorState() {
             }}
           />
         ) : (
-          <NoSelectionView
-            celebrateSignal={celebrateSignal}
-            onCtaClick={() => {
-              setSeedDialogInitialPackId(undefined);
-              setSeedDialogOpen(true);
-            }}
-          />
+          <AgentHandoffView celebrateSignal={celebrateSignal} />
         )
       ) : null}
       <SeedDialog
@@ -122,17 +119,11 @@ function OnboardingView({
 }) {
   return (
     <div className="flex w-full flex-col gap-10 py-12 max-w-5xl my-auto">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-        <OkBlob size={64} celebrateSignal={celebrateSignal} />
-        <div className="flex flex-col gap-2">
-          <h2 className="text-2xl font-light tracking-tighter text-balance">
-            Let's set up your project.
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Pick a starter pack to scaffold folders, templates, and AI-readable rules.
-          </p>
-        </div>
-      </div>
+      <EmptyStateHeader
+        title="Let's set up your project."
+        subtitle="Pick a starter pack to scaffold folders, templates, and AI-readable rules."
+        celebrateSignal={celebrateSignal}
+      />
       {/* Group the grid + escape hatch in their own tight container so the
           link sits close beneath the cards while the header above keeps the
           parent's wider `gap-10` breathing room. */}
@@ -155,22 +146,20 @@ function OnboardingView({
   );
 }
 
-function NoSelectionView({
-  celebrateSignal,
-  onCtaClick,
-}: {
-  celebrateSignal: number;
-  onCtaClick: () => void;
-}) {
+function AgentHandoffView({ celebrateSignal }: { celebrateSignal: number }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-6">
-      <OkBlob size={80} celebrateSignal={celebrateSignal} />
-      <div className="flex flex-col items-center gap-3">
-        <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
-        <Button variant="outline" size="sm" onClick={onCtaClick}>
-          <Sparkles aria-hidden="true" className="h-4 w-4" />
-          Pick a starter pack
-        </Button>
+    <div className="flex w-full flex-col gap-10 py-12 max-w-5xl my-auto">
+      <EmptyStateHeader
+        title="Open in your favorite AI editor."
+        subtitle="Select a file from the sidebar, or pick where to edit alongside your agent."
+        celebrateSignal={celebrateSignal}
+      />
+      <div className="flex w-full flex-col gap-6">
+        <AgentHandoffGrid />
+        <div className="flex w-full items-center justify-between gap-4">
+          <ProjectIdentityStrip />
+          <KeyboardHintsFooter />
+        </div>
       </div>
     </div>
   );

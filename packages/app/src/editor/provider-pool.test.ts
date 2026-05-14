@@ -2069,6 +2069,236 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
       failedDocNames: [docHung],
     });
   });
+
+  describe('pendingClears dedup + deferred-attach', () => {
+    interface ControllableStub {
+      stub: ClientPersistenceProvider;
+      clearSpy: ReturnType<typeof mock>;
+    }
+
+    function makeControllableStub(clearImpl: () => Promise<void>): ControllableStub {
+      const clearSpy = mock(clearImpl);
+      const stub = {
+        whenSynced: Promise.resolve(undefined as never),
+        synced: true,
+        destroy: mock(async () => {}),
+        clearData: clearSpy,
+      } as unknown as ClientPersistenceProvider;
+      return { stub, clearSpy };
+    }
+
+    test('closeAndClearPersistence dedups concurrent calls via in-flight reuse', async () => {
+      let resolveClear: () => void = () => {};
+      const { stub, clearSpy } = makeControllableStub(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveClear = resolve;
+          }),
+      );
+      const persistenceFactory = mock(() => stub);
+      const deleteDbSpy = spyOn(indexedDB, 'deleteDatabase');
+
+      pool = new ProviderPool(3, DUMMY_WS, { persistenceFactory, clearDataTimeoutMs: 30_000 });
+      pool.setObservedBranch('main');
+      pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
+      const docName = uniqueDocName('pp-pending-clears-dedup');
+      const entry = pool.open(docName);
+      if (!entry?.persistence) throw new Error('expected persistence');
+
+      const deleteDbCallsBefore = deleteDbSpy.mock.calls.length;
+      const call1 = pool.closeAndClearPersistence(docName);
+      const call2 = pool.closeAndClearPersistence(docName);
+
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(deleteDbSpy.mock.calls.length).toBe(deleteDbCallsBefore);
+
+      resolveClear();
+      await Promise.all([call1, call2]);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(deleteDbSpy.mock.calls.length).toBe(deleteDbCallsBefore);
+    });
+
+    test('deferred persistence attach: pool.open during in-flight clear leaves persistence null synchronously, attaches once clear resolves', async () => {
+      let resolveClear: () => void = () => {};
+      const cleared = makeControllableStub(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveClear = resolve;
+          }),
+      );
+      const fresh = makeControllableStub(async () => {});
+      let callCount = 0;
+      const persistenceFactory = mock(() => {
+        callCount += 1;
+        return callCount === 1 ? cleared.stub : fresh.stub;
+      });
+
+      pool = new ProviderPool(3, DUMMY_WS, { persistenceFactory, clearDataTimeoutMs: 30_000 });
+      pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
+      const docName = uniqueDocName('pp-pending-clears-defer-success');
+
+      const entry1 = pool.open(docName);
+      if (!entry1?.persistence) throw new Error('expected initial persistence');
+
+      const clearPromise = pool.closeAndClearPersistence(docName);
+
+      const entry2 = pool.open(docName);
+      if (!entry2) throw new Error('expected entry2');
+      expect(entry2.persistence).toBeNull();
+
+      resolveClear();
+      await clearPromise;
+      await wait(0);
+      expect(entry2.persistence).toBe(fresh.stub);
+    });
+
+    test('deferred persistence attach skipped on pending-clear-failed (structured warn fires, persistence stays null)', async () => {
+      let rejectClear: (err: Error) => void = () => {};
+      const cleared = makeControllableStub(
+        () =>
+          new Promise<void>((_, reject) => {
+            rejectClear = reject;
+          }),
+      );
+      const persistenceFactory = mock(() => cleared.stub);
+
+      pool = new ProviderPool(3, DUMMY_WS, { persistenceFactory, clearDataTimeoutMs: 30_000 });
+      pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
+      const docName = uniqueDocName('pp-pending-clears-defer-fail');
+
+      pool.open(docName);
+      const clearPromise = pool.closeAndClearPersistence(docName);
+
+      const entry2 = pool.open(docName);
+      if (!entry2) throw new Error('expected entry2');
+      expect(entry2.persistence).toBeNull();
+
+      const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        rejectClear(new Error('idb-clear-blocked'));
+        await clearPromise;
+        await wait(0);
+
+        const skippedWarn = warnSpy.mock.calls
+          .map((call) => String(call[0] ?? ''))
+          .find((s) => s.includes('"event":"ok-pool-deferred-persistence-attach-skipped"'));
+        expect(skippedWarn).toBeDefined();
+        expect(skippedWarn).toContain('"reason":"pending-clear-failed"');
+        expect(entry2.persistence).toBeNull();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    test('dispose() clears pendingClears tracking so the deferred-attach .then never reattaches', async () => {
+      let resolveClear: () => void = () => {};
+      const cleared = makeControllableStub(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveClear = resolve;
+          }),
+      );
+      const fresh = makeControllableStub(async () => {});
+      let callCount = 0;
+      const persistenceFactory = mock(() => {
+        callCount += 1;
+        return callCount === 1 ? cleared.stub : fresh.stub;
+      });
+
+      pool = new ProviderPool(3, DUMMY_WS, { persistenceFactory, clearDataTimeoutMs: 30_000 });
+      pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
+      const docName = uniqueDocName('pp-pending-clears-dispose');
+      pool.open(docName);
+
+      const clearPromise = pool.closeAndClearPersistence(docName);
+      const entry2 = pool.open(docName);
+      if (!entry2) throw new Error('expected entry2');
+      expect(entry2.persistence).toBeNull();
+
+      pool.dispose();
+      resolveClear();
+      await clearPromise;
+      await wait(0);
+
+      expect(persistenceFactory).toHaveBeenCalledTimes(1);
+      expect(entry2.persistence).toBeNull();
+    });
+
+    test('Promise.all batch over closeAndClearPersistence resolves even when one inner clearData rejects', async () => {
+      const ok1 = makeControllableStub(async () => {});
+      const fail = makeControllableStub(() => Promise.reject(new Error('idb-failed')));
+      const ok2 = makeControllableStub(async () => {});
+      const stubs = [ok1.stub, fail.stub, ok2.stub];
+      let idx = 0;
+      const persistenceFactory = mock(() => {
+        const s = stubs[idx];
+        idx += 1;
+        return s;
+      });
+
+      pool = new ProviderPool(3, DUMMY_WS, { persistenceFactory });
+      pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
+      const docs = [
+        uniqueDocName('pp-swallow-ok1'),
+        uniqueDocName('pp-swallow-fail'),
+        uniqueDocName('pp-swallow-ok2'),
+      ];
+      for (const d of docs) pool.open(d);
+
+      const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        await Promise.all(docs.map((d) => pool.closeAndClearPersistence(d)));
+        expect(ok1.clearSpy).toHaveBeenCalledTimes(1);
+        expect(fail.clearSpy).toHaveBeenCalledTimes(1);
+        expect(ok2.clearSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    test('non-concurrent reopen after a failed clear retries the IDB clear before attaching fresh persistence', async () => {
+      const failedStub = makeControllableStub(() => Promise.reject(new Error('idb-blocked')));
+      const freshStub = makeControllableStub(async () => {});
+      let factoryCallCount = 0;
+      const persistenceFactory = mock(() => {
+        factoryCallCount += 1;
+        return factoryCallCount === 1 ? failedStub.stub : freshStub.stub;
+      });
+
+      pool = new ProviderPool(3, DUMMY_WS, { persistenceFactory, clearDataTimeoutMs: 30_000 });
+      pool.setObservedBranch('main');
+      pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
+      const docName = uniqueDocName('pp-clearfail-retry');
+
+      const entry1 = pool.open(docName);
+      if (!entry1?.persistence) throw new Error('expected initial persistence');
+
+      const deleteDbSpy = spyOn(indexedDB, 'deleteDatabase');
+      const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const baselineDeleteCalls = deleteDbSpy.mock.calls.length;
+
+        await pool.closeAndClearPersistence(docName);
+        await wait(0);
+
+        const entry2 = pool.open(docName);
+        if (!entry2) throw new Error('expected entry2');
+
+        expect(entry2.persistence).toBeNull();
+
+        const retryDbName = `ok-ydoc:main:${TEST_SERVER_INSTANCE_ID}:${docName}`;
+        expect(deleteDbSpy.mock.calls.length).toBeGreaterThan(baselineDeleteCalls);
+        expect(deleteDbSpy.mock.calls.some((call) => call[0] === retryDbName)).toBe(true);
+
+        const attached = await waitFor(() => entry2.persistence !== null, 2_000);
+        expect(attached).toBe(true);
+        expect(entry2.persistence).toBe(freshStub.stub);
+      } finally {
+        warnSpy.mockRestore();
+        deleteDbSpy.mockRestore();
+      }
+    });
+  });
 });
 
 describe('ProviderPool buffer-and-replay (US-004)', () => {

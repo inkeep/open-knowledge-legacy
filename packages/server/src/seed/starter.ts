@@ -32,7 +32,7 @@ const KNOWLEDGE_BASE_FOLDERS: readonly StarterFolder[] = [
     path: 'external-sources',
     title: 'External Sources',
     description:
-      'Raw sources SAVED verbatim — not just cited. The actual fetched text of URLs, extracted text of PDFs, and copies of any referenced files live as .md files here, each with frontmatter carrying the original URL, access date, and any publisher / author metadata. Produced by `ingest` — applies whether the user shared the URL OR the agent fetched it itself to ground a knowledge-base claim. The KB is closed-loop: downstream docs cite local paths in this folder, never bare web URLs. Immutable after capture (update only to refresh a stale fetch). No analysis in these files — that belongs in `research/`. Downstream articles cite specific docs here by path so every claim is traceable to preserved evidence rather than a dead link.',
+      'Raw sources SAVED verbatim, not just cited. The actual fetched text of URLs, extracted text of PDFs, and copies of any referenced files live as .md files here, each with frontmatter carrying the original URL, access date, and any publisher / author metadata. Produced by `ingest`; applies whether the user shared the URL OR the agent fetched it itself to ground a knowledge-base claim. The KB is closed-loop: downstream docs cite local paths in this folder, never bare web URLs. Immutable after capture (update only to refresh a stale fetch). No analysis in these files; that belongs in `research/`. Downstream articles cite specific docs here by path so every claim is traceable to preserved evidence rather than a dead link.',
     tags: ['source', 'immutable', 'layer-ingest'],
     starterTemplate: 'clip',
   },
@@ -40,7 +40,7 @@ const KNOWLEDGE_BASE_FOLDERS: readonly StarterFolder[] = [
     path: 'research',
     title: 'Research',
     description:
-      'Provisional analysis synthesizing external sources. Produced by the `research` tool. Every factual claim cites a specific doc in `external-sources/` (or an inline URL if ingest was skipped) — no unsourced assertions. Each article has `status: provisional` and a `sources:` frontmatter list of cited paths. Promoted to `articles/` via `consolidate` once the team decides the findings are stable.',
+      'Provisional analysis synthesizing external sources. Produced by the `research` tool. Every factual claim cites a specific doc in `external-sources/` (or an inline URL if ingest was skipped); no unsourced assertions. Each article has `status: provisional` and a `sources:` frontmatter list of cited paths. Promoted to `articles/` via `consolidate` once the team decides the findings are stable.',
     tags: ['research', 'provisional', 'layer-research'],
     starterTemplate: 'research-log',
   },
@@ -48,7 +48,7 @@ const KNOWLEDGE_BASE_FOLDERS: readonly StarterFolder[] = [
     path: 'articles',
     title: 'Articles',
     description:
-      'Canonical knowledge committed after a team decision. Produced by `consolidate`. Carries `status: canonical` plus a `supersedes:` chain tying back to the `research/` docs it replaces, which in turn cite `external-sources/` — the full evidence chain is traceable without leaving the repo. Source-of-truth for the domain; update only when a new decision supersedes it.',
+      'Canonical knowledge committed after a team decision. Produced by `consolidate`. Carries `status: canonical` plus a `supersedes:` chain tying back to the `research/` docs it replaces, which in turn cite `external-sources/`. The full evidence chain is traceable without leaving the repo. Source-of-truth for the domain; update only when a new decision supersedes it.',
     tags: ['article', 'canonical', 'layer-consolidate'],
     starterTemplate: 'article',
   },
@@ -66,7 +66,7 @@ tags: [source]
 
 ## Source
 
-(Paste / fetch the verbatim source text here. Keep it raw — analysis goes in research/.)
+(Paste / fetch the verbatim source text here. Keep it raw; analysis goes in research/.)
 
 ## Highlights
 
@@ -74,7 +74,7 @@ tags: [source]
 
 ## My notes
 
-(Your reactions, questions, follow-ups. NOT analysis — that belongs in research/.)
+(Your reactions, questions, follow-ups. NOT analysis; that belongs in research/.)
 `,
   'research-log': `---
 title: Research Log
@@ -133,7 +133,7 @@ description: Append-only audit trail. After each turn that creates, edits, or re
 
 # Work Log
 
-Append-only audit trail. **Append a dated entry after any turn that creates, edits, or restructures content in the knowledge base** — one entry per turn, not per file. Silent edits break the chain that makes knowledge-base changes auditable.
+Append-only audit trail. **Append a dated entry after any turn that creates, edits, or restructures content in the knowledge base.** One entry per turn, not per file. Silent edits break the chain that makes knowledge-base changes auditable.
 
 What to log:
 
@@ -143,11 +143,11 @@ What to log:
 - Folder restructures (\`ok seed\`, manual reorganization)
 - \`.ok/config.yml\` changes
 
-**Reference docs as markdown links, not bare paths.** Every doc you touched should appear as \`[path/to/doc](./path/to/doc.md)\` so the log shows up in \`get_backlinks\` for those docs. A bare path string (\`Files touched: foo/bar.md\`) does not register in the doc graph — the audit trail compounds only when the log is a real linker.
+**Reference docs as markdown links, not bare paths.** Every doc you touched should appear as \`[path/to/doc](./path/to/doc.md)\` so the log shows up in \`get_backlinks\` for those docs. A bare path string (\`Files touched: foo/bar.md\`) does not register in the doc graph. The audit trail compounds only when the log is a real linker.
 
 <!-- Example entry shape:
 
-## YYYY-MM-DD — <short title>
+## YYYY-MM-DD: <short title>
 
 - <what was done>
 - Files touched: [path/to/doc-a](./path/to/doc-a.md), [path/to/doc-b](./path/to/doc-b.md)
@@ -162,7 +162,7 @@ const SOFTWARE_LIFECYCLE_FOLDERS: readonly StarterFolder[] = [
     path: 'proposals',
     title: 'Proposals',
     description:
-      'In-flight design proposals (RFC-shape). One file per proposal (`0001-feature-name.md`). Status flows `draft → fcp → accepted/rejected`. Accepted proposals graduate to a record in `decisions/`. Shape mirrors Rust RFCs / Astro proposals — Motivation / Design / Drawbacks / Alternatives / Unresolved questions. Folder named `proposals/` (not `rfcs/`) because "RFC" is overloaded across IETF / npm / Rust dialects; `dotnet/designs`, `withastro/roadmap`, and `kubernetes/enhancements` all converged on `proposals/`. Agent: when a proposal sits at `status: draft` >14 days, surface for the author to advance, park, or close.',
+      'In-flight design proposals (RFC-shape). One file per proposal (`0001-feature-name.md`). Status flows `draft → fcp → accepted/rejected`. Accepted proposals graduate to a record in `decisions/`. Shape mirrors Rust RFCs / Astro proposals: Motivation / Design / Drawbacks / Alternatives / Unresolved questions. Folder named `proposals/` (not `rfcs/`) because "RFC" is overloaded across IETF / npm / Rust dialects; `dotnet/designs`, `withastro/roadmap`, and `kubernetes/enhancements` all converged on `proposals/`. Agent: when a proposal sits at `status: draft` >14 days, surface for the author to advance, park, or close.',
     tags: ['proposal', 'design', 'in-flight'],
     starterTemplate: 'proposal',
   },
@@ -170,7 +170,7 @@ const SOFTWARE_LIFECYCLE_FOLDERS: readonly StarterFolder[] = [
     path: 'decisions',
     title: 'Decisions',
     description:
-      "Architecture Decision Records (MADR / Nygard shape). Frozen decisions. One file per decision (`NNNN-title.md`). Status: `proposed/accepted/deprecated/superseded`. When a new decision supersedes an older one, the new record's `Supersedes:` field links back. Folder named `decisions/` (not `adrs/`) — reads as English; Google Cloud's ADR doc and MADR v3 both accept it interchangeably. Agent: on a new decision, scan existing records touching the same subsystem and surface candidates for `Supersedes:` before commit.",
+      "Architecture Decision Records (MADR / Nygard shape). Frozen decisions. One file per decision (`NNNN-title.md`). Status: `proposed/accepted/deprecated/superseded`. When a new decision supersedes an older one, the new record's `Supersedes:` field links back. Folder named `decisions/` (not `adrs/`) since it reads as English; Google Cloud's ADR doc and MADR v3 both accept it interchangeably. Agent: on a new decision, scan existing records touching the same subsystem and surface candidates for `Supersedes:` before commit.",
     tags: ['decision', 'adr', 'frozen'],
     starterTemplate: 'decision',
   },
@@ -178,7 +178,7 @@ const SOFTWARE_LIFECYCLE_FOLDERS: readonly StarterFolder[] = [
     path: 'specs',
     title: 'Specs',
     description:
-      "Implementation specs derived from accepted proposals. Prefer the `github/spec-kit` shape: one folder per spec (`specs/NNN-name/`) with `spec.md` + `plan.md` + `tasks.md`. Date-stamped flat files (`YYYY-MM-DD-name.md`) also fine for smaller specs. The folder ships THREE templates so you can build the triple — `spec` (Goals / Non-goals / Design / Migration / Test plan), `spec-plan` (per-spec implementation plan), and `spec-tasks` (the per-spec task checklist). References the parent proposal. Agent: when a spec moves to `status: shipped`, suggest a postmortem template if the owner reports an incident touching the spec's subsystem.",
+      "Implementation specs derived from accepted proposals. Prefer the `github/spec-kit` shape: one folder per spec (`specs/NNN-name/`) with `spec.md` + `plan.md` + `tasks.md`. Date-stamped flat files (`YYYY-MM-DD-name.md`) also fine for smaller specs. The folder ships THREE templates so you can build the triple: `spec` (Goals / Non-goals / Design / Migration / Test plan), `spec-plan` (per-spec implementation plan), and `spec-tasks` (the per-spec task checklist). References the parent proposal. Agent: when a spec moves to `status: shipped`, suggest a postmortem template if the owner reports an incident touching the spec's subsystem.",
     tags: ['spec', 'implementation'],
     starterTemplate: 'spec',
     extraTemplates: ['spec-plan', 'spec-tasks'],
@@ -195,7 +195,7 @@ const SOFTWARE_LIFECYCLE_FOLDERS: readonly StarterFolder[] = [
     path: 'guides',
     title: 'Guides',
     description:
-      'How-to guides, onboarding docs, and service-bound runbooks. Diátaxis "how-to" bucket — concrete tasks the reader wants to accomplish. Ships THREE templates: `guide` (generic how-to), `onboarding-guide` (new-hire / new-contributor setup), and `runbook` (service-symptom shape, for runbooks that stay next to the service code). Carries `last_verified` so stale guides surface in periodic sweeps. Modern incident tools (incident.io / Rootly) own dedicated runbooks now — keep service-symptom runbooks here only when they ship next to the service code. Agent: when a postmortem is published, scan its Action items for guide-shaped follow-ups and stub a guide here pre-filled with the symptom and timeline excerpt.',
+      'How-to guides, onboarding docs, and service-bound runbooks. Diátaxis "how-to" bucket: concrete tasks the reader wants to accomplish. Ships THREE templates: `guide` (generic how-to), `onboarding-guide` (new-hire / new-contributor setup), and `runbook` (service-symptom shape, for runbooks that stay next to the service code). Carries `last_verified` so stale guides surface in periodic sweeps. Modern incident tools (incident.io / Rootly) own dedicated runbooks now; keep service-symptom runbooks here only when they ship next to the service code. Agent: when a postmortem is published, scan its Action items for guide-shaped follow-ups and stub a guide here pre-filled with the symptom and timeline excerpt.',
     tags: ['guide', 'how-to', 'onboarding'],
     starterTemplate: 'guide',
     extraTemplates: ['onboarding-guide', 'runbook'],
@@ -286,7 +286,7 @@ tags: [spec]
 (What's the verification story? Unit / integration / manual / load?)
 `,
   'spec-plan': `---
-title: Plan — <Spec Title>
+title: 'Plan: <Spec Title>'
 description: Implementation plan derived from the parent spec. Pairs with spec.md and tasks.md (github/spec-kit triple shape).
 parent_spec:
 created: {{date}}
@@ -315,7 +315,7 @@ tags: [spec, plan]
 (How does this ship? Feature flag? Migration? Gradual rollout? Rollback plan.)
 `,
   'spec-tasks': `---
-title: Tasks — <Spec Title>
+title: 'Tasks: <Spec Title>'
 description: Task checklist for the parent spec. Pairs with spec.md and plan.md (github/spec-kit triple shape).
 parent_spec:
 created: {{date}}
@@ -327,7 +327,7 @@ tags: [spec, tasks]
 
 (Concrete, checkbox-tracked work items. Each should be small enough to ship as one PR.)
 
-- [ ] <Task 1 — what + verification>
+- [ ] <Task 1: what + verification>
 - [ ] <Task 2>
 - [ ] <Task 3>
 
@@ -340,7 +340,7 @@ tags: [spec, tasks]
 (Tasks that surfaced during planning but won't ship in this spec. Link to follow-up specs if any.)
 `,
   guide: `---
-title: <Topic> — <Action>
+title: '<Topic>: <Action>'
 description: One-line summary of what the reader will accomplish.
 category: how-to
 last_verified: {{date}}
@@ -364,7 +364,7 @@ tags: [guide]
 (Related proposals, decisions, specs, postmortems.)
 `,
   'onboarding-guide': `---
-title: Onboarding — <Audience>
+title: 'Onboarding: <Audience>'
 description: First-N-days setup path for <audience> (e.g. new engineer, new contributor, new oncall).
 category: onboarding
 audience:
@@ -376,15 +376,15 @@ tags: [guide, onboarding]
 
 (Role / persona / first-day situation. Be specific.)
 
-## Day 1 — get set up
+## Day 1: get set up
 
 (Concrete account / access / install steps. Commands welcome.)
 
-## Day 1-3 — first useful contribution
+## Day 1-3: first useful contribution
 
 (Smallest meaningful change a newcomer can ship. Link the issue / good-first-task list.)
 
-## Week 1 — orient
+## Week 1: orient
 
 (Key services, where docs live, who to ping, how the team communicates.)
 
@@ -397,7 +397,7 @@ tags: [guide, onboarding]
 (Glossary, architecture overview, key decisions/proposals worth reading first.)
 `,
   runbook: `---
-title: <Service> — <Symptom>
+title: '<Service>: <Symptom>'
 description: Oncall procedure for diagnosing and remediating <symptom> in <service>.
 category: runbook
 service:
@@ -427,7 +427,7 @@ tags: [guide, runbook, oncall]
 (Related postmortems, dashboards, prior incidents.)
 `,
   postmortem: `---
-title: Incident — <short name>
+title: 'Incident: <short name>'
 description: Blameless postmortem for <incident>.
 severity:
 duration:
@@ -465,7 +465,7 @@ const PLAIN_NOTES_FOLDERS: readonly StarterFolder[] = [
     path: 'notes',
     title: 'Notes',
     description:
-      'Flat notes folder. One file per topic. No structure imposed. Use `[[wiki-links]]` to connect notes; OK\'s link graph builds itself from those edges. The "I just want to write" home base — promote a note into a more structured folder layout later if you outgrow this.',
+      'Flat notes folder. One file per topic. No structure imposed. Use `[[wiki-links]]` to connect notes; OK\'s link graph builds itself from those edges. The "I just want to write" home base. Promote a note into a more structured folder layout later if you outgrow this.',
     tags: ['notes', 'flat'],
     starterTemplate: 'note',
   },
@@ -501,15 +501,15 @@ gratitude: []
 tags: [daily]
 ---
 
-## Morning — intentions
+## Morning intentions
 
 (What's the one thing today is for? Top 3 below in frontmatter.)
 
-## Throughout — log
+## Throughout the day
 
 (Capture as you go. Use [[wiki-links]] for anything worth its own page.)
 
-## Evening — reflection
+## Evening reflection
 
 - What shipped:
 - What stalled:
@@ -522,7 +522,7 @@ const WORLDBUILDING_FOLDERS: readonly StarterFolder[] = [
     path: 'characters',
     title: 'Characters',
     description:
-      'One file per character (PC + NPC). Frontmatter carries `type`, status, faction membership, first appearance. Agent: when a chapter excerpt or session log mentions a name not yet captured, stub a file here with backlinks to where they were mentioned. Do NOT add dialog stat-block fields (`xp_awarded`, etc.) — those belong in a future TTRPG variant.',
+      'One file per character (PC + NPC). Frontmatter carries `type`, status, faction membership, first appearance. Agent: when a chapter excerpt or session log mentions a name not yet captured, stub a file here with backlinks to where they were mentioned. Do NOT add dialog stat-block fields (`xp_awarded`, etc.); those belong in a future TTRPG variant.',
     tags: ['character', 'fiction', 'entity'],
     starterTemplate: 'character',
   },
@@ -530,7 +530,7 @@ const WORLDBUILDING_FOLDERS: readonly StarterFolder[] = [
     path: 'settings',
     title: 'Settings',
     description:
-      'Locations, regions, world-rules, atmospheric notes. Frontmatter carries region, controlling faction, danger level. The "where" of the story — physical and felt. Agent: when a new location is referenced, stub it here; when a setting is described in two places with conflicting details, surface the conflict.',
+      'Locations, regions, world-rules, atmospheric notes. Frontmatter carries region, controlling faction, danger level. The "where" of the story, physical and felt. Agent: when a new location is referenced, stub it here; when a setting is described in two places with conflicting details, surface the conflict.',
     tags: ['setting', 'location', 'world'],
     starterTemplate: 'setting',
   },
@@ -538,7 +538,7 @@ const WORLDBUILDING_FOLDERS: readonly StarterFolder[] = [
     path: 'themes',
     title: 'Themes',
     description:
-      'Recurring narrative concerns — love, betrayal, redemption, identity, etc. The "why" of the story. Themes work via opposition; each entry captures the theme + its tension. Agent: surface theme links when characters or settings repeatedly invoke a concept; suggest theme entries when a recurring symbol or motif emerges across chapters.',
+      'Recurring narrative concerns: love, betrayal, redemption, identity, etc. The "why" of the story. Themes work via opposition; each entry captures the theme + its tension. Agent: surface theme links when characters or settings repeatedly invoke a concept; suggest theme entries when a recurring symbol or motif emerges across chapters.',
     tags: ['theme', 'narrative', 'meaning'],
     starterTemplate: 'theme',
   },
@@ -546,7 +546,7 @@ const WORLDBUILDING_FOLDERS: readonly StarterFolder[] = [
     path: 'factions',
     title: 'Factions',
     description:
-      'Political, social, criminal, magical, religious groups. Frontmatter carries leader, members, rivals, alignment. The "who-vs-who" of the story. Ships three templates — `faction` (generic group), `political-faction` (states / houses / parties with holdings + ideology), `religion` (deity / beliefs / rituals / schisms). Agent: extract faction membership when characters declare allegiance; flag when a character\'s `faction` field contradicts their actions in narrative chapters.',
+      'Political, social, criminal, magical, religious groups. Frontmatter carries leader, members, rivals, alignment. The "who-vs-who" of the story. Ships three templates: `faction` (generic group), `political-faction` (states / houses / parties with holdings + ideology), `religion` (deity / beliefs / rituals / schisms). Agent: extract faction membership when characters declare allegiance; flag when a character\'s `faction` field contradicts their actions in narrative chapters.',
     tags: ['faction', 'group', 'politics'],
     starterTemplate: 'faction',
     extraTemplates: ['political-faction', 'religion'],
@@ -555,7 +555,7 @@ const WORLDBUILDING_FOLDERS: readonly StarterFolder[] = [
     path: 'lore',
     title: 'Lore',
     description:
-      'History, mythology, cosmology, magic systems. Long-form prose; the foundational fabric the story stands on. Ships three templates — `lore` (generic entry), `magic-system` (source / costs / limits / practitioners), `historical-event` (when / where / causes / consequences / sources-cited). Agent: when characters or settings reference the same historical event, link them through the relevant lore entry; flag when in-story tellings contradict the canonical lore (themselves a story-shaping detail worth noting).',
+      'History, mythology, cosmology, magic systems. Long-form prose; the foundational fabric the story stands on. Ships three templates: `lore` (generic entry), `magic-system` (source / costs / limits / practitioners), `historical-event` (when / where / causes / consequences / sources-cited). Agent: when characters or settings reference the same historical event, link them through the relevant lore entry; flag when in-story tellings contradict the canonical lore (themselves a story-shaping detail worth noting).',
     tags: ['lore', 'history', 'world'],
     starterTemplate: 'lore',
     extraTemplates: ['magic-system', 'historical-event'],
@@ -655,7 +655,7 @@ tags: [faction]
 
 ## Resources
 
-(What do they bring to bear — wealth, force, knowledge, network?)
+(What do they bring to bear: wealth, force, knowledge, network?)
 
 ## Internal tensions
 
@@ -691,7 +691,7 @@ tags: [faction, politics]
 
 ## Relations
 
-(Allies — bound by what? Rivals — over what? Who would shift sides under pressure?)
+(Allies: bound by what? Rivals: over what? Who would shift sides under pressure?)
 
 ## Pressure points
 
@@ -727,7 +727,7 @@ tags: [faction, religion]
 
 ## Schisms + heresies
 
-(Internal splits — doctrinal or political? Which factions reject the canonical reading?)
+(Internal splits: doctrinal or political? Which factions reject the canonical reading?)
 
 ## Relations with power
 
@@ -776,7 +776,7 @@ tags: [lore, magic]
 
 ## Costs + limits
 
-(What does using it take? Physical, social, moral, spiritual price. What can it NOT do? Costs are what make magic dramatically useful — Sanderson's Second Law.)
+(What does using it take? Physical, social, moral, spiritual price. What can it NOT do? Costs are what make magic dramatically useful, per Sanderson's Second Law.)
 
 ## Practitioners
 
@@ -823,7 +823,7 @@ tags: [lore, history]
 
 ## Source
 
-(Reference works inside the world — chronicles, oral traditions, eyewitness accounts. Mark contested vs. accepted.)
+(Reference works inside the world: chronicles, oral traditions, eyewitness accounts. Mark contested vs. accepted.)
 `,
 };
 
@@ -832,7 +832,7 @@ const WRITING_PIPELINE_FOLDERS: readonly StarterFolder[] = [
     path: 'ideas',
     title: 'Ideas',
     description:
-      'One-line ideas, captured before they fade. Premises, headlines, fragments — anything that might earn a draft. Promote an idea into `drafts/` when you commit to writing the piece. Agent: sweep ideas idle >30 days and surface for park-or-push triage. NOT a draft folder — these are pre-drafts, kept short on purpose. Named `ideas/` (not `seeds/`) — "seeds" in PKM usage means evergreen-note maturity, not pre-drafts.',
+      'One-line ideas, captured before they fade. Premises, headlines, fragments, anything that might earn a draft. Promote an idea into `drafts/` when you commit to writing the piece. Agent: sweep ideas idle >30 days and surface for park-or-push triage. NOT a draft folder; these are pre-drafts, kept short on purpose. Named `ideas/` (not `seeds/`) because "seeds" in PKM usage means evergreen-note maturity, not pre-drafts.',
     tags: ['idea', 'inbox', 'pre-draft'],
     starterTemplate: 'idea',
   },
@@ -840,7 +840,7 @@ const WRITING_PIPELINE_FOLDERS: readonly StarterFolder[] = [
     path: 'drafts',
     title: 'Drafts',
     description:
-      "Active prose. Frontmatter tracks `status: drafting/review`, word count, parent idea. Iterate freely — OK's CRDT history tracks every save, so named-revision folders aren't needed. The Jekyll `_drafts` → `_posts` convention has been load-bearing since 2008; we follow it. Agent: sweep drafts idle >14 days; for drafts in review, suggest publication targets based on `target_form`. If you need per-piece research notes, create `drafts/<slug>/research/` on demand rather than a top-level folder.",
+      "Active prose. Frontmatter tracks `status: drafting/review`, word count, parent idea. Iterate freely; OK's CRDT history tracks every save, so named-revision folders aren't needed. The Jekyll `_drafts` → `_posts` convention has been load-bearing since 2008; we follow it. Agent: sweep drafts idle >14 days; for drafts in review, suggest publication targets based on `target_form`. If you need per-piece research notes, create `drafts/<slug>/research/` on demand rather than a top-level folder.",
     tags: ['draft', 'prose'],
     starterTemplate: 'draft',
   },
@@ -881,7 +881,7 @@ author: {{user}}
 tags: [draft]
 ---
 
-(Write here. Iterate. OK's CRDT history tracks every save — no need to manually fork revisions.)
+(Write here. Iterate. OK's CRDT history tracks every save; no need to manually fork revisions.)
 `,
   published: `---
 title: Published title
@@ -904,7 +904,7 @@ const GBRAIN_FOLDERS: readonly StarterFolder[] = [
     path: 'people',
     title: 'People',
     description:
-      'Person dossiers. Compiled-truth section above `---` (overwritten as new evidence arrives); append-only timeline below (`YYYY-MM-DD:` entries, never edit existing ones — only append). Frontmatter `type: person`. Linked to `companies/` (affiliations, founders, investors) and `meetings/` (attendance). Agent: when a meeting note mentions a person not yet captured, stub a file here; route new facts into either compiled-truth (if they update current understanding) or timeline (raw evidence). Never rewrite the timeline.',
+      'Person dossiers. Compiled-truth section above `---` (overwritten as new evidence arrives); append-only timeline below (`YYYY-MM-DD:` entries, never edit existing ones, only append). Frontmatter `type: person`. Linked to `companies/` (affiliations, founders, investors) and `meetings/` (attendance). Agent: when a meeting note mentions a person not yet captured, stub a file here; route new facts into either compiled-truth (if they update current understanding) or timeline (raw evidence). Never rewrite the timeline.',
     tags: ['person', 'entity', 'dossier'],
     starterTemplate: 'person',
   },
@@ -920,7 +920,7 @@ const GBRAIN_FOLDERS: readonly StarterFolder[] = [
     path: 'meetings',
     title: 'Meetings',
     description:
-      'Meeting notes. Filename `YYYY-MM-DD-<slug>.md`. Frontmatter carries `date`, `attendees: [[wikilinks]]`, and `type: meeting`. Body is raw notes with `[[wiki-links]]` to people, companies, concepts mentioned. Agent: after a meeting note lands, extract entity mentions and append timeline entries to each referenced dossier. Do NOT rewrite the meeting note — it is the verbatim record.',
+      'Meeting notes. Filename `YYYY-MM-DD-<slug>.md`. Frontmatter carries `date`, `attendees: [[wikilinks]]`, and `type: meeting`. Body is raw notes with `[[wiki-links]]` to people, companies, concepts mentioned. Agent: after a meeting note lands, extract entity mentions and append timeline entries to each referenced dossier. Do NOT rewrite the meeting note; it is the verbatim record.',
     tags: ['meeting', 'note'],
     starterTemplate: 'meeting',
   },
@@ -928,7 +928,7 @@ const GBRAIN_FOLDERS: readonly StarterFolder[] = [
     path: 'concepts',
     title: 'Concepts',
     description:
-      'Evergreen idea pages — abstract patterns, frameworks, recurring concepts that surface across people / companies / meetings. Compiled-truth + timeline convention. Frontmatter `type: concept`. Agent: when a meeting note or person dossier references a concept (e.g. "agent-runtime observability") not yet captured, stub a file here; thread links so the concept becomes a hub for everywhere it appears.',
+      'Evergreen idea pages: abstract patterns, frameworks, recurring concepts that surface across people / companies / meetings. Compiled-truth + timeline convention. Frontmatter `type: concept`. Agent: when a meeting note or person dossier references a concept (e.g. "agent-runtime observability") not yet captured, stub a file here; thread links so the concept becomes a hub for everywhere it appears.',
     tags: ['concept', 'idea', 'evergreen'],
     starterTemplate: 'concept',
   },
@@ -936,7 +936,7 @@ const GBRAIN_FOLDERS: readonly StarterFolder[] = [
     path: 'originals',
     title: 'Originals',
     description:
-      "Your own thinking — untransformed. Frontmatter `type: idea`. Use freely; use `[[wiki-links]]` for anything that should become its own entity. Agent: treat originals as authoritative source material when extracting facts — these are the user's words, not inferences. Append timeline entries to referenced dossiers when a clear new claim appears, citing the original by wikilink.",
+      "Your own thinking, untransformed. Frontmatter `type: idea`. Use freely; use `[[wiki-links]]` for anything that should become its own entity. Agent: treat originals as authoritative source material when extracting facts; these are the user's words, not inferences. Append timeline entries to referenced dossiers when a clear new claim appears, citing the original by wikilink.",
     tags: ['original', 'thinking', 'user'],
     starterTemplate: 'original',
   },
@@ -944,7 +944,7 @@ const GBRAIN_FOLDERS: readonly StarterFolder[] = [
     path: 'media',
     title: 'Media',
     description:
-      'Bulk transcripts, voice notes, articles, large attachments. Frontmatter `type: transcript` (template provided). Often `.okignore`-d so the OK index stays light. If gbrain is installed alongside OK, the `media-ingest` skill produces transcripts + backlinks here (video / audio / PDF / books), and the `voice-note-ingest` skill captures voice memos verbatim while routing the extracted content into the right entity dossier. Without gbrain, the agent does both on request. Keep raw — analysis belongs in dossiers, not here.',
+      'Bulk transcripts, voice notes, articles, large attachments. Frontmatter `type: transcript` (template provided). Often `.okignore`-d so the OK index stays light. If gbrain is installed alongside OK, the `media-ingest` skill produces transcripts + backlinks here (video / audio / PDF / books), and the `voice-note-ingest` skill captures voice memos verbatim while routing the extracted content into the right entity dossier. Without gbrain, the agent does both on request. Keep raw; analysis belongs in dossiers, not here.',
     tags: ['media', 'transcript', 'bulk'],
     starterTemplate: 'transcript',
   },
@@ -953,7 +953,7 @@ const GBRAIN_FOLDERS: readonly StarterFolder[] = [
 const GBRAIN_TEMPLATES: Readonly<Record<string, string>> = {
   person: `---
 title: Person Name
-description: One-line characterization — who they are, why they matter to you.
+description: One-line characterization. Who they are, why they matter to you.
 type: person
 created: {{date}}
 author: {{user}}
@@ -968,11 +968,11 @@ tags: [person]
 
 ## Timeline
 
-{{date}}: First entry. Append-only — never edit existing entries, only add new \`YYYY-MM-DD:\` lines.
+{{date}}: First entry. Append-only; never edit existing entries, only add new \`YYYY-MM-DD:\` lines.
 `,
   company: `---
 title: Company Name
-description: One-line company summary — what they do, who's involved.
+description: One-line company summary. What they do, who's involved.
 type: company
 created: {{date}}
 author: {{user}}
@@ -991,7 +991,7 @@ tags: [company]
 `,
   meeting: `---
 title: Meeting Title
-description: One-line meeting summary — fill in after the meeting.
+description: One-line meeting summary. Fill in after the meeting.
 type: meeting
 date: {{date}}
 attendees: []
@@ -1009,7 +1009,7 @@ tags: [meeting]
 `,
   concept: `---
 title: Concept Name
-description: One-line concept summary — what it names and why it recurs.
+description: One-line concept summary. What it names and why it recurs.
 type: concept
 created: {{date}}
 author: {{user}}
@@ -1039,7 +1039,7 @@ tags: [original]
 `,
   transcript: `---
 title: Transcript
-description: One-line transcript summary — source and key topic.
+description: One-line transcript summary. Source and key topic.
 type: transcript
 date: {{date}}
 source:
@@ -1054,24 +1054,24 @@ tags: [transcript, media]
 
 ## Transcript
 
-(Paste raw transcript. The gbrain \`media-ingest\` skill — if installed — produces structured transcripts with backlinks to mentioned entities (video / audio / PDF / books). For voice memos specifically, gbrain's \`voice-note-ingest\` captures verbatim then routes into the right entity dossier. Without gbrain, ask your agent to do it on demand.)
+(Paste raw transcript. The gbrain \`media-ingest\` skill, if installed, produces structured transcripts with backlinks to mentioned entities (video / audio / PDF / books). For voice memos specifically, gbrain's \`voice-note-ingest\` captures verbatim then routes into the right entity dossier. Without gbrain, ask your agent to do it on demand.)
 `,
 };
 
 const GBRAIN_LOG_MD = `---
 title: Work Log
-description: Append-only audit trail. After each turn that creates, edits, or restructures content in the vault, append one dated entry here (one per turn, not per file). gbrain users — your dream-cycle runs land here too.
+description: Append-only audit trail. After each turn that creates, edits, or restructures content in the vault, append one dated entry here (one per turn, not per file). gbrain users, your dream-cycle runs land here too.
 ---
 
 # Work Log
 
-Append-only audit trail. **Append a dated entry after any turn that creates, edits, or restructures content in the vault** — one entry per turn, not per file.
+Append-only audit trail. **Append a dated entry after any turn that creates, edits, or restructures content in the vault.** One entry per turn, not per file.
 
 What to log:
 
 - New entity dossiers stubbed (\`people/\` / \`companies/\` / \`concepts/\`)
 - Meeting notes captured
-- \`dream\` runs (if gbrain is installed alongside) — gbrain writes the phase summary here
+- \`dream\` runs (if gbrain is installed alongside): gbrain writes the phase summary here
 - Original-thinking captures
 - Folder restructures or rule changes
 
@@ -1079,7 +1079,7 @@ What to log:
 
 <!-- Example entry shape:
 
-## YYYY-MM-DD — <short title>
+## YYYY-MM-DD: <short title>
 
 - <what was done>
 - Dossiers updated: [Jane Founder](./people/jane-founder.md), [Jane Co](./companies/jane-co.md)
@@ -1114,14 +1114,14 @@ description: Who you are. Agent reads this on every briefing / enrichment pass. 
 
 const GBRAIN_SOUL_MD = `---
 title: Agent identity
-description: Agent persona, values, voice. If you run gbrain alongside, this is the output of its \`soul-audit\` skill — a 6-phase interview. Fill in by hand or run \`gbrain soul-audit\`.
+description: Agent persona, values, voice. If you run gbrain alongside, this is the output of its \`soul-audit\` skill (a 6-phase interview). Fill in by hand or run \`gbrain soul-audit\`.
 ---
 
 # Agent identity (SOUL.md)
 
 **Persona name:**
 
-**Voice + tone:** (how the agent speaks — formal / casual / direct / hedged / etc.)
+**Voice + tone:** (how the agent speaks: formal / casual / direct / hedged / etc.)
 
 **Values:** (what the agent optimizes for when faced with trade-offs)
 
@@ -1131,29 +1131,29 @@ description: Agent persona, values, voice. If you run gbrain alongside, this is 
 
 - ...
 
-**Run \`gbrain soul-audit\` to populate this via a guided interview.** Or write it by hand — anything here informs every gbrain skill that loads SOUL.md on each call.
+**Run \`gbrain soul-audit\` to populate this via a guided interview.** Or write it by hand. Anything here informs every gbrain skill that loads SOUL.md on each call.
 `;
 
 const GBRAIN_ACCESS_POLICY_MD = `---
 title: Access policy
-description: What the agent may read, write, and surface. gbrain's 4-tier privacy model — but useful even without gbrain.
+description: What the agent may read, write, and surface. gbrain's 4-tier privacy model, useful even without gbrain.
 ---
 
 # Access policy
 
-## Tier 1 — Public
+## Tier 1: Public
 
 (Things the agent may surface in any briefing or shared context.)
 
-## Tier 2 — Internal / professional
+## Tier 2: Internal / professional
 
 (Things the agent may use to inform briefings + dossiers, but should not surface to external parties without prompting.)
 
-## Tier 3 — Personal
+## Tier 3: Personal
 
 (Things the agent may use to anchor briefings, but should never write into a dossier that might be shared.)
 
-## Tier 4 — Restricted
+## Tier 4: Restricted
 
 (Things the agent should never read or surface. Use \`.okignore\` to enforce hard exclusion at the file level.)
 
@@ -1161,7 +1161,7 @@ description: What the agent may read, write, and surface. gbrain's 4-tier privac
 
 const GBRAIN_HEARTBEAT_MD = `---
 title: Operational cadence
-description: When the agent does scheduled work — daily briefings, end-of-day dossier maintenance, weekly audits. If gbrain is installed, its \`dream\` schedule also lands here.
+description: When the agent does scheduled work: daily briefings, end-of-day dossier maintenance, weekly audits. If gbrain is installed, its \`dream\` schedule also lands here.
 ---
 
 # Heartbeat
@@ -1181,7 +1181,7 @@ description: When the agent does scheduled work — daily briefings, end-of-day 
 
 ## Monthly
 
-- Run OK's \`get_dead_links\` across the vault — triage redlinks into new entities (gbrain creates dossiers), typo fixes (OK edits in place), or intentional placeholders.
+- Run OK's \`get_dead_links\` across the vault. Triage redlinks into new entities (gbrain creates dossiers), typo fixes (OK edits in place), or intentional placeholders.
 
 `;
 
@@ -1190,7 +1190,7 @@ export const STARTER_PACKS: Readonly<Record<PackId, StarterPack>> = {
     id: 'knowledge-base',
     name: 'Knowledge base',
     description:
-      'Source-grounded canonical articles. Three layers — sources → research → articles — wired to the ingest / research / consolidate MCP tools.',
+      'Source-grounded canonical articles. Three layers (sources → research → articles) wired to the ingest / research / consolidate MCP tools.',
     defaultSubfolder: 'brain',
     folders: KNOWLEDGE_BASE_FOLDERS,
     templates: KNOWLEDGE_BASE_TEMPLATES,
@@ -1200,7 +1200,7 @@ export const STARTER_PACKS: Readonly<Record<PackId, StarterPack>> = {
     id: 'software-lifecycle',
     name: 'Software lifecycle',
     description:
-      'Proposals, decisions, specs, postmortems, guides — the doc lifecycle for an engineering team or OSS project.',
+      'Proposals, decisions, specs, postmortems, guides. The doc lifecycle for an engineering team or OSS project.',
     defaultSubfolder: 'project-docs',
     folders: SOFTWARE_LIFECYCLE_FOLDERS,
     templates: SOFTWARE_LIFECYCLE_TEMPLATES,
@@ -1209,7 +1209,7 @@ export const STARTER_PACKS: Readonly<Record<PackId, StarterPack>> = {
     id: 'plain-notes',
     name: 'Plain notes',
     description:
-      'Just notes/ + daily/. The "I just want to write" escape hatch — no posture imposed, link freely.',
+      'Just notes/ + daily/. The "I just want to write" escape hatch. No posture imposed, link freely.',
     defaultSubfolder: undefined,
     folders: PLAIN_NOTES_FOLDERS,
     templates: PLAIN_NOTES_TEMPLATES,
@@ -1218,7 +1218,7 @@ export const STARTER_PACKS: Readonly<Record<PackId, StarterPack>> = {
     id: 'worldbuilding',
     name: 'Worldbuilding',
     description:
-      'Encyclopedia for fiction: characters, settings, themes, factions, lore. The graph is the product — agent excels at auto-stub creation and dead-link sweeps.',
+      'Encyclopedia for fiction: characters, settings, themes, factions, lore. The graph is the product; agent excels at auto-stub creation and dead-link sweeps.',
     defaultSubfolder: 'world',
     folders: WORLDBUILDING_FOLDERS,
     templates: WORLDBUILDING_TEMPLATES,
@@ -1236,7 +1236,7 @@ export const STARTER_PACKS: Readonly<Record<PackId, StarterPack>> = {
     id: 'gbrain',
     name: 'Gbrain',
     description:
-      "Track people, companies, and meetings — each gets a dossier with a rewritable summary and an append-only timeline. Inspired by Garry Tan's gbrain.",
+      "Track people, companies, and meetings. Each gets a dossier with a rewritable summary and an append-only timeline. Inspired by Garry Tan's gbrain.",
     defaultSubfolder: 'vault',
     folders: GBRAIN_FOLDERS,
     templates: GBRAIN_TEMPLATES,

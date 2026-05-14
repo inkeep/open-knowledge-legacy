@@ -28,6 +28,7 @@ export interface ParseHealthMetrics {
   jsxPopoverCloseRestoreFailed: Record<string, number>;
   jsxKeyboardDeleteFailed: Record<string, number>;
   blockGripClickSelectFailed: Record<string, number>;
+  jsxArrowNodeSelectFailed: Record<string, number>;
 }
 
 const metrics: {
@@ -42,6 +43,7 @@ const metrics: {
   jsxPopoverCloseRestoreFailed: Record<string, number>;
   jsxKeyboardDeleteFailed: Record<string, number>;
   blockGripClickSelectFailed: Record<string, number>;
+  jsxArrowNodeSelectFailed: Record<string, number>;
 } = {
   parseFallback: { blockLevel: 0, wholeDoc: 0 },
   jsxRenderFailure: {},
@@ -54,6 +56,7 @@ const metrics: {
   jsxPopoverCloseRestoreFailed: {},
   jsxKeyboardDeleteFailed: {},
   blockGripClickSelectFailed: {},
+  jsxArrowNodeSelectFailed: {},
 };
 
 export function incrementBlockFallback(): void {
@@ -108,6 +111,13 @@ export function incrementBlockGripClickSelectFailed(nodeType: string): void {
     (metrics.blockGripClickSelectFailed[nodeType] ?? 0) + 1;
 }
 
+export function incrementJsxArrowNodeSelectFailed(
+  direction: 'up' | 'down' | 'left' | 'right',
+): void {
+  metrics.jsxArrowNodeSelectFailed[direction] =
+    (metrics.jsxArrowNodeSelectFailed[direction] ?? 0) + 1;
+}
+
 export function incrementYpsMismatchBlock(): void {
   ypsCounters().block++;
 }
@@ -131,6 +141,7 @@ export function getParseHealth(): ParseHealthMetrics {
     jsxPopoverCloseRestoreFailed: { ...metrics.jsxPopoverCloseRestoreFailed },
     jsxKeyboardDeleteFailed: { ...metrics.jsxKeyboardDeleteFailed },
     blockGripClickSelectFailed: { ...metrics.blockGripClickSelectFailed },
+    jsxArrowNodeSelectFailed: { ...metrics.jsxArrowNodeSelectFailed },
   };
 }
 
@@ -151,6 +162,8 @@ export function resetParseHealth(): void {
     delete metrics.jsxKeyboardDeleteFailed[k];
   for (const k of Object.keys(metrics.blockGripClickSelectFailed))
     delete metrics.blockGripClickSelectFailed[k];
+  for (const k of Object.keys(metrics.jsxArrowNodeSelectFailed))
+    delete metrics.jsxArrowNodeSelectFailed[k];
   const yps = ypsCounters();
   yps.block = 0;
   yps.inline = 0;

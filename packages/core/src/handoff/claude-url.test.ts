@@ -104,3 +104,18 @@ test('buildClaudeUrl single-encodes Windows backslash path (cowork) — DC8.5', 
   expect(url).toContain('&folder=C%3A%5CUsers%5Cwho%5Cproj');
   expect(url).toContain('&file=C%3A%5CUsers%5Cwho%5Cproj%5Cdocs%5Cnote.md');
 });
+
+test('buildClaudeUrl project-scoped (prompt="" + docPath="") drops q and file, keeps folder', () => {
+  const url = buildClaudeUrl({ mode: 'cowork' }, payload({ prompt: '', docPath: '' }));
+  expect(url).toBe('claude://cowork/new?folder=%2FUsers%2Fwho%2Fproj');
+  expect(url).not.toContain('q=');
+  expect(url).not.toContain('file=');
+});
+
+test('buildClaudeUrl project-scoped applies to code mode as well', () => {
+  const url = buildClaudeUrl(
+    { mode: 'code' },
+    payload({ target: 'claude-code', prompt: '', docPath: '' }),
+  );
+  expect(url).toBe('claude://code/new?folder=%2FUsers%2Fwho%2Fproj');
+});
