@@ -83,6 +83,7 @@ import {
   createChildNode,
   focusInsertedComponent,
 } from '../slash-command/component-items.tsx';
+import { runWithAlignAnimation } from '../utils/animate-align-change.ts';
 import { formatContainerAriaLabel } from '../utils/editor-strings.ts';
 import { reconstructSource } from '../utils/reconstruct-source.ts';
 import { sanitizeComponentProps } from '../utils/sanitize-url.ts';
@@ -600,10 +601,13 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                   aria-label={label}
                   aria-pressed={isActive}
                   data-active={isActive ? 'true' : undefined}
-                  onClick={() => {
+                  onClick={(e) => {
                     if (typeof pos !== 'number') return;
                     const curNode = editor.state.doc.nodeAt(pos);
                     if (!curNode || curNode.type.name !== 'jsxComponent') return;
+                    const wrapperEl = (e.currentTarget as HTMLElement).closest<HTMLElement>(
+                      '.jsx-component-wrapper',
+                    );
                     const curDescriptorName = String(curNode.attrs.componentName ?? '');
                     if (
                       curDescriptorName !== 'img' &&
@@ -626,8 +630,10 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                           sourceDirty: true,
                         }
                       : { ...curNode.attrs, props: nextProps, sourceDirty: true };
-                    editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, null, nextAttrs));
-                    markUserTyping();
+                    runWithAlignAnimation(wrapperEl, () => {
+                      editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, null, nextAttrs));
+                      markUserTyping();
+                    });
                   }}
                 >
                   <Icon size={12} aria-hidden="true" />
