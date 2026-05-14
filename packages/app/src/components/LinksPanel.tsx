@@ -496,9 +496,9 @@ export function LinksPanel({ docName, className = '' }: { docName: string; class
   return (
     <Panel className={className}>
       <PanelBody className="px-0 py-0">
-        <BacklinksSection docName={docName} />
-        <Separator />
         <ForwardLinksSection docName={docName} />
+        <Separator />
+        <BacklinksSection docName={docName} />
       </PanelBody>
     </Panel>
   );
