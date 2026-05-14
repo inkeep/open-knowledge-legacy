@@ -106,14 +106,16 @@ function EditorAreaInner({
   const userCollapsedRef = useRef(false);
 
   useEffect(() => {
-    if (docPanelLayout === 'panel') {
+    if (docPanelLayout !== 'panel') return;
+    const handle = requestAnimationFrame(() => {
       if (autoCollapse) {
         userCollapsedRef.current = false;
         panelRef.current?.collapse();
       } else if (!userCollapsedRef.current) {
         panelRef.current?.expand();
       }
-    }
+    });
+    return () => cancelAnimationFrame(handle);
   }, [autoCollapse, docPanelLayout, panelRef]);
 
   useEffect(() => {
@@ -289,10 +291,49 @@ function EditorAreaInner({
     </div>
   );
 
-  if (isSheetMode) {
-    return (
-      <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1">{editorContent}</div>
+  return (
+    <div className="flex min-h-0 flex-1">
+      <ResizablePanelGroup orientation="horizontal">
+        <ResizablePanel
+          minSize={isSheetMode ? '100%' : '30%'}
+          defaultSize={isSheetMode ? '100%' : '75%'}
+        >
+          {editorContent}
+        </ResizablePanel>
+
+        {/*
+          DocPanel side is conditionally rendered as siblings of the editor
+          panel. React's reconciler preserves the editor panel at a stable
+          first-child position when `isSheetMode` flips — adding or removing
+          the handle + doc-panel siblings does not affect the editor panel's
+          identity or its descendants' mount lifecycle. Inline conditionals
+          (no inner fragment) keep the sibling positions stable for the
+          reconciler.
+        */}
+        {!isSheetMode ? <ResizableHandle withHandle /> : null}
+        {!isSheetMode ? (
+          <ResizablePanel
+            panelRef={panelRef}
+            defaultSize="25%"
+            minSize="300px"
+            maxSize="40%"
+            collapsible
+            collapsedSize={0}
+            onResize={(size) => setIsCollapsed(size.asPercentage === 0)}
+            className="flex flex-col bg-muted/20"
+          >
+            <DocPanel
+              docName={activeDocName}
+              isSourceMode={isSourceMode}
+              activeTab={activeTab}
+              onActiveTabChange={onActiveTabChange}
+              mode={docPanelMode}
+            />
+          </ResizablePanel>
+        ) : null}
+      </ResizablePanelGroup>
+
+      {isSheetMode ? (
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
           <SheetContent side="right" className="flex w-80 sm:w-96 flex-col gap-0 p-0">
             <SheetHeader className="sr-only">
@@ -307,38 +348,7 @@ function EditorAreaInner({
             />
           </SheetContent>
         </Sheet>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex min-h-0 flex-1">
-      <ResizablePanelGroup orientation="horizontal">
-        <ResizablePanel minSize="30%" defaultSize="75%">
-          {editorContent}
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        <ResizablePanel
-          panelRef={panelRef}
-          defaultSize="25%"
-          minSize="300px"
-          maxSize="40%"
-          collapsible
-          collapsedSize={0}
-          onResize={(size) => setIsCollapsed(size.asPercentage === 0)}
-          className="flex flex-col bg-muted/20"
-        >
-          <DocPanel
-            docName={activeDocName}
-            isSourceMode={isSourceMode}
-            activeTab={activeTab}
-            onActiveTabChange={onActiveTabChange}
-            mode={docPanelMode}
-          />
-        </ResizablePanel>
-      </ResizablePanelGroup>
+      ) : null}
     </div>
   );
 }
