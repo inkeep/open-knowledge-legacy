@@ -51,7 +51,10 @@ function PanelBody({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="panel-body"
-      className={cn('subtle-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-3', className)}
+      className={cn(
+        'subtle-scrollbar scroll-fade-mask min-h-0 flex-1 overflow-y-auto px-4 py-3',
+        className,
+      )}
       {...props}
     />
   );
