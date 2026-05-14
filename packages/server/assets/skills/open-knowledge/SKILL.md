@@ -149,6 +149,8 @@ Before creating or editing docs in a folder, **always** call `list_documents(<fo
 
 Pre-write checklist:
 
+0. **First-contact check.** If `list_documents(<folder>)` returns empty `frontmatter_defaults` AND empty `templates_available` AND `exec("ls")` shows substantial content elsewhere, the project hasn't been onboarded — STOP and invoke `discover` (see Workflow tools table) before writing. Skip this check on subsequent writes in the same session once you've confirmed the project is configured.
+
 1. **Read `frontmatter_defaults`** — the merged folder defaults (title shape, description, tags) that any new doc here will inherit. Surfaces nested `<folder>/.ok/frontmatter.yml` cascade walked root → leaf, leaf wins per-key. **Don't redeclare** keys the cascade already provides — let inheritance carry them. Override per-file only when the file truly differs.
 2. **Read `templates_available`** — the menu of starter shapes for `write_document({ template })`. Each entry has `name`, `title`, `description`, and `scope` (`local` / `inherited` / `user`). If an entry matches, prefer it over free-form markdown — see "When to use a template" and "When to create a template" below.
 3. **Read recent siblings** — `list_documents` enrichment shows recent edits and per-child frontmatter. New docs should match the shape of existing ones (filename pattern, frontmatter keys, body structure). Inconsistency is the enemy.
@@ -172,6 +174,7 @@ Skip the template only when (a) `templates_available` is empty, (b) no entry mat
 
 Templates are how a folder's structure becomes durable. Create them proactively, not just when asked:
 
+- **You're onboarding an existing repo with 2+ siblings in a folder and no template yet.** Don't extract one folder at a time — invoke `discover` (Workflow tools table) for the multi-folder sweep. The bullets below apply during normal session work; `discover` is the bulk path.
 - **You're about to write a doc in a folder where no template fits, AND the shape you're about to use is reusable.** Save it as a template the same turn (`write_template` with the body you'd have hand-authored), then instantiate via `template:`. The first doc carries the same body either way; the difference is whether the next agent gets a menu entry or re-derives it from a sibling.
 - **You spot a sibling pattern in a folder that has no template.** Two or more docs sharing the same body skeleton (heading order, required sections, frontmatter shape) is enough — extract the skeleton via `write_template` so subsequent docs pick from `templates_available` instead of copying a sibling.
 - **You're scaffolding a new folder for a doc category.** Pair the folder rule (`set_folder_rule` for tags/title shape) with a template (`write_template` for body structure) in the same turn. Don't ship a folder-with-discipline-but-no-template — it leaves the next agent to invent the body each time.
@@ -184,6 +187,8 @@ Authoring API (frontmatter requirements, substitution allowlist, `{shape}` seman
 If you find yourself writing the **same** frontmatter (tags, title prefix, description shape) on multiple sibling docs by hand, that's the signal to call `set_folder_rule` once and let the cascade do it. Pair it with a template (above) when the body skeleton repeats too — folder rules cover frontmatter; templates cover body shape.
 
 Repetition is the smell; folder rules and templates are the fix. Don't accumulate ad-hoc per-file frontmatter when one folder rule would carry it.
+
+**Bulk onboarding.** If most folders already have siblings but no frontmatter, invoke `discover` (Workflow tools table) for the multi-folder sweep instead of per-folder hand-application.
 
 ## Folder structure + metadata — nested `<folder>/.ok/`
 
@@ -308,6 +313,7 @@ The skill carries the trigger ("KB content changed this turn — go look"). The 
 | Add an image                                    | empty alt `![](./x.png)` or generic alt `![image](./x)`                            | meaningful alt + source caption below                                             |
 | Catalog folder contents                         | create `INDEX.md` hub file                                                         | `set_folder_rule({ rules: [{ match, frontmatter }] })` writes `<folder>/.ok/frontmatter.yml` |
 | Write a doc in an unfamiliar folder             | go straight to `write_document` with hand-authored markdown                        | `list_documents(<folder>)` first — read `frontmatter_defaults` + `templates_available` before writing |
+| Land in an existing repo without orienting      | go straight to `write_document` or run the per-folder pre-write checklist ad-hoc when no folder frontmatter / templates exist | invoke `discover` once for the project — it extracts conventions from siblings, sets folder frontmatter, writes templates, and activates the link graph |
 | Author a doc when a matching template exists    | `write_document({ markdown: "..." })` from scratch                                 | `write_document({ template, position: "replace" })` — templates carry the folder's frontmatter + body discipline |
 | Repeat the same frontmatter on sibling docs     | hand-set identical `tags` / `title` prefix on every new file                       | `set_folder_rule(...)` once — the cascade carries it to every child                |
 | Re-derive the same body skeleton repeatedly     | copy-paste the structure from a sibling each time                                  | `write_template(...)` once, then pick from `templates_available` thereafter        |
@@ -318,13 +324,14 @@ The skill carries the trigger ("KB content changed this turn — go look"). The 
 
 ## Workflow tools — when to invoke them
 
-Three MCP tools build on the primitives above and correspond to [Karpathy's three-layer knowledge-base pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f):
+Four MCP tools build on the primitives above. Three of them correspond to [Karpathy's three-layer knowledge-base pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (`ingest` / `research` / `consolidate`); the fourth (`discover`) operates at the project-metadata layer and is the brownfield counterpart to the greenfield `ok seed` CLI:
 
 | Tool          | Layer                   | When to invoke                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ingest`      | Raw sources (immutable) | User shares a URL/PDF/file to preserve verbatim, **OR you fetched a URL** (`WebFetch` / `WebSearch` / equivalent) to ground a claim that's about to land in the knowledge base. The KB is closed-loop — agent-initiated fetches are not exempt. No analysis in the file itself — takeaways go back to the user in chat.                                                                                                                                  |
 | `research`    | KB, provisional         | User asks you to investigate, compare alternatives, or synthesize multiple sources. Produces a `status: provisional` article with a `sources:` list. Follows scan-first routing, a STOP scoping gate, 3P-external framing, and a validate checklist — the tool body enforces each step. |
 | `consolidate` | KB, canonical           | Team has actually decided after research and wants the outcome committed as source-of-truth. Starts with a STOP gate confirming the decision exists; writes a `status: canonical` article with a `supersedes:` chain.                                                                   |
+| `discover`    | Project metadata        | First arrival at a repo with existing content AND no folder frontmatter / templates set. Extracts conventions from siblings; activates the link graph (orphans, hubs, untextualized mentions); proposes folder frontmatter + templates + `.okignore`; per-phase user confirmation. Requires `open-knowledge start` running (Phase 1 step 0 gates). Skip on empty repos (use `ok seed`). One-shot; idempotent on re-run. |
 
 Each tool returns a multi-step instructional body when invoked. The bodies enforce their own gates — follow the numbered steps in order, don't skip the STOP gates.
 
@@ -334,7 +341,7 @@ Typical day-2 flow: user shares a URL → `ingest` (preserve) → user asks "now
 
 **Do not chain silently.** After `ingest`, ask the user whether to proceed to `research`. After `research`, let the user decide whether the findings are ready to `consolidate`. Each tool completes on its own terms — the user drives the transitions.
 
-**Project scaffolding is a CLI operation (optional).** Users who want the Karpathy three-layer layout as their folder structure can run `ok seed` once from a terminal. That command scaffolds `external-sources/` + `research/` + `articles/`, seeds an append-only `log.md` at the project root, and registers per-layer folder defaults so agents see layer descriptions at every `list_documents(<folder>)` / `exec("ls <folder>")` call. It is **not required**: the three workflow tools above work against any folder structure the project already uses (`specs/`, `docs/`, `reports/`, or anything else). Only mention `ok seed` if the user explicitly asks for a starter layout or wants the Karpathy pattern specifically.
+**Project scaffolding — two paths.** **Empty repo:** run `ok seed` once from a terminal (scaffolds Karpathy three-layer + seeds `log.md` + registers folder defaults). **Existing content:** invoke `discover` (MCP tool, table above — extracts conventions from siblings, sets folder frontmatter + templates, curates `.okignore`, activates link graph; per-phase confirmation gates). Neither is required; the four workflow tools work against any folder structure. Only mention each when explicitly relevant.
 
 ## Server lifecycle
 
@@ -345,3 +352,5 @@ If `write_document` or `edit_document` returns a "Hocuspocus server is not runni
 When MCP is connected, the server's `instructions` echo the **resolved** `content.dir` for this session — that's where Open Knowledge looks for documents. `.gitignore` and `.okignore` (at the project root and at any folder depth) define exclusions. Folder defaults + templates live in nested `<folder>/.ok/frontmatter.yml` + `<folder>/.ok/templates/` files — NOT in `.ok/config.yml`.
 
 Default mental model (no jargon): **every `.md` and `.mdx` under `content.dir`** not excluded by `.gitignore` or `.okignore` is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. Read `.okignore` (and any nested `.okignore` files) once per turn to know what's excluded.
+
+**First session in this project?** If `frontmatter_defaults` and `templates_available` are empty for substantial folders, the project hasn't been onboarded yet — invoke `discover` (Workflow tools table) before writing. Once onboarded, the cascade carries the discipline.

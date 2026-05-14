@@ -894,14 +894,19 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     lines.push(`  1. Open your editor (${info(configuredLabels.join(' / '))})`);
     lines.push('  2. Approve the MCP server when prompted');
     lines.push('  3. (Optional) scaffold the starter knowledge-base structure:');
-    lines.push(`     - ${info('ok seed')}`);
-    lines.push('  4. Use the three MCP workflow tools as you build the wiki:');
-    lines.push(`     - ${info('mcp__open-knowledge__ingest')}      — capture an external source`);
     lines.push(
-      `     - ${info('mcp__open-knowledge__research')}    — gather sources and write findings`,
+      `     - ${info('ok seed')}                              — empty repo, Karpathy 3-layer`,
     );
     lines.push(
-      `     - ${info('mcp__open-knowledge__consolidate')} — promote research to canonical articles`,
+      `     - ${info('mcp__open-knowledge__discover')}      — existing repo, extract conventions`,
+    );
+    lines.push('  4. Use the MCP workflow tools as you build the wiki:');
+    lines.push(`     - ${info('mcp__open-knowledge__ingest')}        — capture an external source`);
+    lines.push(
+      `     - ${info('mcp__open-knowledge__research')}      — gather sources and write findings`,
+    );
+    lines.push(
+      `     - ${info('mcp__open-knowledge__consolidate')}   — promote research to canonical articles`,
     );
   }
 

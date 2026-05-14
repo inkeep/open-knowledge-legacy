@@ -13,6 +13,7 @@ import {
   DESCRIPTION as DELETE_TEMPLATE_DESCRIPTION,
   register as registerDeleteTemplate,
 } from './delete-template.ts';
+import { DESCRIPTION as DISCOVER_DESCRIPTION, register as registerDiscover } from './discover.ts';
 import {
   DESCRIPTION as EDIT_DOCUMENT_DESCRIPTION,
   register as registerEditDocument,
@@ -94,6 +95,7 @@ const _TOOL_DESCRIPTIONS = {
   ingest: INGEST_DESCRIPTION,
   research: RESEARCH_DESCRIPTION,
   consolidate: CONSOLIDATE_DESCRIPTION,
+  discover: DISCOVER_DESCRIPTION,
   read_document: READ_DOCUMENT_DESCRIPTION,
   rename_document: RENAME_DOCUMENT_DESCRIPTION,
   rename_folder: RENAME_FOLDER_DESCRIPTION,
@@ -165,6 +167,8 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     config: opts.config,
     resolveCwd: named('consolidate'),
   });
+
+  registerDiscover(registrationServer, { config: opts.config, resolveCwd: named('discover') });
 
   registerReadDocument(registrationServer, {
     resolveCwd: named('read_document'),
