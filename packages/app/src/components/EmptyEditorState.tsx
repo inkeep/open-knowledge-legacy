@@ -106,8 +106,14 @@ export function EmptyEditorState() {
   );
 }
 
-function countEntries(entries: ReadonlyArray<{ kind?: unknown }>): number {
-  return entries.filter((entry) => entry.kind === 'document' || entry.kind === 'folder').length;
+export function countEntries(
+  entries: ReadonlyArray<{ kind?: unknown; docName?: string; path?: string }>,
+): number {
+  return entries.filter((entry) => {
+    if (entry.kind !== 'document' && entry.kind !== 'folder') return false;
+    const ref = entry.docName ?? entry.path ?? '';
+    return ref !== '' && !ref.split('/').some((seg) => seg.startsWith('.'));
+  }).length;
 }
 
 function OnboardingView({
