@@ -12,6 +12,7 @@ interface MockBridge {
   };
   project: {
     listRecent: ReturnType<typeof mock>;
+    removeRecent: ReturnType<typeof mock>;
     getSessionState: ReturnType<typeof mock>;
     setSessionState: ReturnType<typeof mock>;
     open: ReturnType<typeof mock>;
@@ -35,6 +36,7 @@ function makeBridge(overrides: Partial<MockBridge> = {}): MockBridge {
     },
     project: {
       listRecent: mock(() => Promise.resolve([])),
+      removeRecent: mock(() => Promise.resolve()),
       getSessionState: mock(() =>
         Promise.resolve({
           openTabs: [],
@@ -74,6 +76,7 @@ describe('NavigatorApp bridge contract', () => {
             { path: '/tmp/b', name: 'b', lastOpenedAt: '2026-04-19T00:00:00Z', missing: true },
           ]),
         ),
+        removeRecent: mock(() => Promise.resolve()),
         getSessionState: mock(() =>
           Promise.resolve({
             openTabs: [],
@@ -94,6 +97,12 @@ describe('NavigatorApp bridge contract', () => {
     expect(list.length).toBe(2);
     expect(list[0]?.path).toBe('/tmp/a');
     expect(list[1]?.missing).toBe(true);
+  });
+
+  test('bridge.project.removeRecent accepts a project path', async () => {
+    const bridge = makeBridge();
+    await bridge.project.removeRecent('/tmp/stale');
+    expect(bridge.project.removeRecent).toHaveBeenCalledWith('/tmp/stale');
   });
 
   test('bridge.project.open accepts the new-window request shape', async () => {
@@ -118,6 +127,27 @@ describe('NavigatorApp bridge contract', () => {
     });
     const result = await bridge.dialog.openFolder();
     expect(result).toBe('/tmp/picked');
+  });
+});
+
+describe('NavigatorApp recent-project removal helpers', () => {
+  test('removeRecentFromList drops only the matching path and preserves order', async () => {
+    const { removeRecentFromList } = await import('./NavigatorApp');
+    const next = removeRecentFromList(
+      [
+        { path: '/tmp/a', name: 'a', lastOpenedAt: '2026-04-20T00:00:00Z' },
+        { path: '/tmp/b', name: 'b', lastOpenedAt: '2026-04-19T00:00:00Z', missing: true },
+        { path: '/tmp/c', name: 'c', lastOpenedAt: '2026-04-18T00:00:00Z' },
+      ],
+      '/tmp/b',
+    );
+    expect(next.map((row) => row.path)).toEqual(['/tmp/a', '/tmp/c']);
+  });
+
+  test('removeRecentFromList is a no-op for unknown paths', async () => {
+    const { removeRecentFromList } = await import('./NavigatorApp');
+    const recents = [{ path: '/tmp/a', name: 'a', lastOpenedAt: '2026-04-20T00:00:00Z' }];
+    expect(removeRecentFromList(recents, '/tmp/missing')).toEqual(recents);
   });
 });
 

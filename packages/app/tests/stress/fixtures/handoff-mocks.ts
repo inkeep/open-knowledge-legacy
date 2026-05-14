@@ -232,6 +232,7 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         },
         project: {
           listRecent: async () => [],
+          removeRecent: async () => {},
           getSessionState: async () => ({
             openTabs: [],
             pinnedTabIds: [],

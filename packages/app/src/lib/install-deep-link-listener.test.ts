@@ -33,6 +33,7 @@ function makeBridge(
     },
     project: {
       listRecent: mock(() => Promise.resolve([])),
+      removeRecent: mock(() => Promise.resolve()),
       getSessionState: mock(() =>
         Promise.resolve({
           openTabs: [],
