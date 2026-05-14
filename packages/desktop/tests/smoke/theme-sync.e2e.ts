@@ -97,7 +97,6 @@ test.describe('chrome-modernization theme-sync smoke', () => {
         }).toPass({ timeout: 1_000 });
       }
     } finally {
-      await app.close();
       rmSync(projectDir, { recursive: true, force: true });
     }
   });
@@ -217,7 +216,6 @@ test.describe('chrome-modernization theme-sync smoke', () => {
         await window.okDesktop?.setThemeSource?.('light');
       });
     } finally {
-      await app.close();
       rmSync(projectDir, { recursive: true, force: true });
     }
   });
@@ -329,7 +327,6 @@ test.describe('chrome-modernization theme-sync smoke', () => {
         expect(after).toBe('light');
       }).toPass({ timeout: 1_000 });
     } finally {
-      await app.close();
       rmSync(projectDir, { recursive: true, force: true });
     }
   });

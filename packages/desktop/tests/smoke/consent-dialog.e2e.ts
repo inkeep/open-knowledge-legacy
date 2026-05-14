@@ -76,13 +76,6 @@ async function launchApp(tmpHome: string, opts: LaunchOpts = {}): Promise<Electr
   });
 }
 
-async function closeAppSafely(app: ElectronApplication | null): Promise<void> {
-  if (app === null) return;
-  try {
-    await app.close();
-  } catch {}
-}
-
 async function findWindowByMode(
   app: ElectronApplication,
   mode: 'navigator' | 'editor',
@@ -147,30 +140,25 @@ test.describe('Consent-dialog smoke', () => {
     const projectDir = seedFreshNonGitProject('enter-to-start');
     trackForCleanup(tmpHome, projectDir);
 
-    let app: ElectronApplication | null = null;
-    try {
-      app = await launchApp(tmpHome, { pickedPath: projectDir });
-      captureStderrFor(app);
-      const navigator = await findWindowByMode(app, 'navigator');
+    const app = await launchApp(tmpHome, { pickedPath: projectDir });
+    captureStderrFor(app);
+    const navigator = await findWindowByMode(app, 'navigator');
 
-      await navigator.locator('[data-testid="nav-open"]').click();
-      const contentDir = navigator.locator('[data-testid="consent-content-dir"]');
-      await expect(contentDir).toBeVisible({ timeout: 15_000 });
+    await navigator.locator('[data-testid="nav-open"]').click();
+    const contentDir = navigator.locator('[data-testid="consent-content-dir"]');
+    await expect(contentDir).toBeVisible({ timeout: 15_000 });
 
-      await contentDir.focus();
-      await contentDir.press('Enter');
+    await contentDir.focus();
+    await contentDir.press('Enter');
 
-      await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'editor'), {
-          timeout: 30_000,
-        })
-        .toBeGreaterThanOrEqual(1);
-      await expect
-        .poll(() => existsSync(join(projectDir, '.ok', 'config.yml')), { timeout: 15_000 })
-        .toBe(true);
-    } finally {
-      await closeAppSafely(app);
-    }
+    await expect
+      .poll(() => countWindowsByMode(app, 'editor'), {
+        timeout: 30_000,
+      })
+      .toBeGreaterThanOrEqual(1);
+    await expect
+      .poll(() => existsSync(join(projectDir, '.ok', 'config.yml')), { timeout: 15_000 })
+      .toBe(true);
   });
 
   test('Browse button populates content.dir with project-relative path', async ({
@@ -180,28 +168,23 @@ test.describe('Consent-dialog smoke', () => {
     const projectDir = seedFreshNonGitProject('browse');
     trackForCleanup(tmpHome, projectDir);
 
-    let app: ElectronApplication | null = null;
-    try {
-      app = await launchApp(tmpHome, { pickedPath: projectDir });
-      captureStderrFor(app);
-      const navigator = await findWindowByMode(app, 'navigator');
+    const app = await launchApp(tmpHome, { pickedPath: projectDir });
+    captureStderrFor(app);
+    const navigator = await findWindowByMode(app, 'navigator');
 
-      await navigator.locator('[data-testid="nav-open"]').click();
+    await navigator.locator('[data-testid="nav-open"]').click();
 
-      const contentDirInput = navigator.locator('[data-testid="consent-content-dir"]');
-      await expect(contentDirInput).toBeVisible({ timeout: 15_000 });
+    const contentDirInput = navigator.locator('[data-testid="consent-content-dir"]');
+    await expect(contentDirInput).toBeVisible({ timeout: 15_000 });
 
-      await contentDirInput.fill('docs');
-      await expect(contentDirInput).toHaveValue('docs');
+    await contentDirInput.fill('docs');
+    await expect(contentDirInput).toHaveValue('docs');
 
-      const browseBtn = navigator.locator('[data-testid="consent-content-dir-browse"]');
-      await expect(browseBtn).toBeVisible();
-      await browseBtn.click();
+    const browseBtn = navigator.locator('[data-testid="consent-content-dir-browse"]');
+    await expect(browseBtn).toBeVisible();
+    await browseBtn.click();
 
-      await expect(contentDirInput).toHaveValue('.', { timeout: 15_000 });
-    } finally {
-      await closeAppSafely(app);
-    }
+    await expect(contentDirInput).toHaveValue('.', { timeout: 15_000 });
   });
 
   test('Pick Existing on a sub-folder of a git repo lands .ok/ at the git root', async ({
@@ -211,36 +194,31 @@ test.describe('Consent-dialog smoke', () => {
     const { repoRoot, subFolder } = seedGitRepoWithSubFolder(tmpHome, 'git-root-promote');
     trackForCleanup(tmpHome);
 
-    let app: ElectronApplication | null = null;
-    try {
-      app = await launchApp(tmpHome, { pickedPath: subFolder });
-      captureStderrFor(app);
-      const navigator = await findWindowByMode(app, 'navigator');
+    const app = await launchApp(tmpHome, { pickedPath: subFolder });
+    captureStderrFor(app);
+    const navigator = await findWindowByMode(app, 'navigator');
 
-      await navigator.locator('[data-testid="nav-open"]').click();
+    await navigator.locator('[data-testid="nav-open"]').click();
 
-      const contentDir = navigator.locator('[data-testid="consent-content-dir"]');
-      await expect(contentDir).toBeVisible({ timeout: 15_000 });
-      await expect(contentDir).toHaveValue('.');
+    const contentDir = navigator.locator('[data-testid="consent-content-dir"]');
+    await expect(contentDir).toBeVisible({ timeout: 15_000 });
+    await expect(contentDir).toHaveValue('.');
 
-      const startBtn = navigator.locator('[data-testid="consent-start"]');
-      await startBtn.click();
+    const startBtn = navigator.locator('[data-testid="consent-start"]');
+    await startBtn.click();
 
-      await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'editor'), {
-          timeout: 30_000,
-        })
-        .toBeGreaterThanOrEqual(1);
-      await expect
-        .poll(() => existsSync(join(repoRoot, '.ok', 'config.yml')), { timeout: 15_000 })
-        .toBe(true);
-      expect(existsSync(join(subFolder, '.ok', 'config.yml'))).toBe(false);
+    await expect
+      .poll(() => countWindowsByMode(app, 'editor'), {
+        timeout: 30_000,
+      })
+      .toBeGreaterThanOrEqual(1);
+    await expect
+      .poll(() => existsSync(join(repoRoot, '.ok', 'config.yml')), { timeout: 15_000 })
+      .toBe(true);
+    expect(existsSync(join(subFolder, '.ok', 'config.yml'))).toBe(false);
 
-      const cfg = readFileSync(join(repoRoot, '.ok', 'config.yml'), 'utf8');
-      expect(cfg).not.toMatch(/^\s*dir:\s*docs/m);
-      expect(cfg).toMatch(/^# content:/m);
-    } finally {
-      await closeAppSafely(app);
-    }
+    const cfg = readFileSync(join(repoRoot, '.ok', 'config.yml'), 'utf8');
+    expect(cfg).not.toMatch(/^\s*dir:\s*docs/m);
+    expect(cfg).toMatch(/^# content:/m);
   });
 });

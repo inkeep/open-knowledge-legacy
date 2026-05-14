@@ -150,7 +150,6 @@ test.describe('sidebar search pill — Electron lockstep-fade smoke', () => {
       expect(collapsed.headerHasTransition).toBe(true);
       expect(collapsed.pillRowHasTransition).toBe(true);
     } finally {
-      await app.close();
       rmSync(projectDir, { recursive: true, force: true });
     }
   });
