@@ -95,13 +95,6 @@ async function waitForConsentDialog(app: ElectronApplication, timeoutMs = 20_000
     });
 }
 
-async function closeAppSafely(app: ElectronApplication | null): Promise<void> {
-  if (app === null) return;
-  try {
-    await app.close();
-  } catch {}
-}
-
 function forceRemove(pathsToRestore: readonly string[], dir: string): void {
   for (const p of pathsToRestore) {
     try {
@@ -130,9 +123,8 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
   }) => {
     const tmpHome = createTmpHome('happy');
     seedEditorDetectionDirs(tmpHome, ['.claude']);
-    let app: ElectronApplication | null = null;
     try {
-      app = await launchApp({ tmpHome });
+      const app = await launchApp({ tmpHome });
       captureStderrFor(app);
       const window = await waitForConsentDialog(app);
       await window.getByTestId('mcp-consent-add').click();
@@ -161,7 +153,6 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
       expect(okEntry?.command).toMatch(/\.app\/Contents\/Resources\/cli\/bin\/ok\.sh$/);
       expect(okEntry?.args).toEqual(['mcp']);
     } finally {
-      await closeAppSafely(app);
       forceRemove([], tmpHome);
     }
   });
@@ -171,9 +162,8 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
   }) => {
     const tmpHome = createTmpHome('skip');
     seedEditorDetectionDirs(tmpHome, ['.claude']);
-    let app: ElectronApplication | null = null;
     try {
-      app = await launchApp({ tmpHome });
+      const app = await launchApp({ tmpHome });
       captureStderrFor(app);
       const window = await waitForConsentDialog(app);
       await window.getByTestId('mcp-consent-skip').click();
@@ -192,7 +182,6 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
       expect(existsSync(join(tmpHome, '.claude.json'))).toBe(false);
       expect(existsSync(join(tmpHome, '.cursor', 'mcp.json'))).toBe(false);
     } finally {
-      await closeAppSafely(app);
       forceRemove([], tmpHome);
     }
   });
@@ -213,9 +202,8 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
     );
     seedEditorDetectionDirs(tmpHome, ['.claude']);
 
-    let app: ElectronApplication | null = null;
     try {
-      app = await launchApp({ tmpHome });
+      const app = await launchApp({ tmpHome });
       captureStderrFor(app);
       const firstWindow = await app.firstWindow({ timeout: 15_000 });
       expect(firstWindow).toBeDefined();
@@ -229,7 +217,6 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
       const marker = readMarker(tmpHome);
       expect(marker).toMatchObject({ configured: true, editors: ['claude'] });
     } finally {
-      await closeAppSafely(app);
       forceRemove([], tmpHome);
     }
   });
@@ -242,9 +229,8 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
     const cursorDir = join(tmpHome, '.cursor');
     chmodSync(cursorDir, 0o444);
 
-    let app: ElectronApplication | null = null;
     try {
-      app = await launchApp({ tmpHome });
+      const app = await launchApp({ tmpHome });
       captureStderrFor(app);
       const window = await waitForConsentDialog(app);
       await window.getByTestId('mcp-consent-add').click();
@@ -261,7 +247,6 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
       expect(existsSync(join(tmpHome, '.claude.json'))).toBe(true);
       expect(existsSync(join(tmpHome, '.cursor', 'mcp.json'))).toBe(false);
     } finally {
-      await closeAppSafely(app);
       forceRemove([cursorDir], tmpHome);
     }
   });
@@ -299,9 +284,8 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
       }),
     );
 
-    let app: ElectronApplication | null = null;
     try {
-      app = await launchApp({ tmpHome });
+      const app = await launchApp({ tmpHome });
       captureStderrFor(app);
 
       const window = await waitForConsentDialog(app);
@@ -317,7 +301,6 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
       const marker = readMarker(tmpHome);
       expect(marker).toMatchObject({ configured: true });
     } finally {
-      await closeAppSafely(app);
       forceRemove([], tmpHome);
       rmSync(projectDir, { recursive: true, force: true });
     }

@@ -122,13 +122,6 @@ async function findFirstWindowByMode(
   throw new Error(`${mode} window vanished between poll resolution and read`);
 }
 
-async function closeAppSafely(app: ElectronApplication | null): Promise<void> {
-  if (app === null) return;
-  try {
-    await app.close();
-  } catch {}
-}
-
 function rmTmpHomeSafely(tmpHome: string): void {
   try {
     rmSync(tmpHome, { recursive: true, force: true });
@@ -147,13 +140,12 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
     captureStderrFor,
   }) => {
     const { tmpHome, projectDir } = seedHomeWithoutLastOpenedProject('happy');
-    let app: ElectronApplication | null = null;
     try {
-      app = await launchApp(tmpHome);
+      const app = await launchApp(tmpHome);
       captureStderrFor(app);
 
       await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'navigator'), {
+        .poll(() => countWindowsByMode(app, 'navigator'), {
           timeout: 20_000,
           message: 'navigator window did not appear at cold boot',
         })
@@ -167,14 +159,14 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       }, projectDir);
 
       await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'editor'), {
+        .poll(() => countWindowsByMode(app, 'editor'), {
           timeout: 30_000,
           message: 'editor window did not appear after project.open()',
         })
         .toBe(1);
 
       await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'navigator'), {
+        .poll(() => countWindowsByMode(app, 'navigator'), {
           timeout: 10_000,
           message: 'navigator window did not close after project window resolved',
         })
@@ -183,7 +175,6 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       expect(await countWindowsByMode(app, 'editor')).toBe(1);
       expect(await countWindowsByMode(app, 'navigator')).toBe(0);
     } finally {
-      await closeAppSafely(app);
       rmTmpHomeSafely(tmpHome);
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -193,13 +184,12 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
     captureStderrFor,
   }) => {
     const { tmpHome, projectAPath, projectBPath } = seedHomeWithLastOpenedProjectAndExtra('switch');
-    let app: ElectronApplication | null = null;
     try {
-      app = await launchApp(tmpHome);
+      const app = await launchApp(tmpHome);
       captureStderrFor(app);
 
       await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'editor'), {
+        .poll(() => countWindowsByMode(app, 'editor'), {
           timeout: 30_000,
           message: 'Editor A did not appear from lastOpenedProject',
         })
@@ -211,7 +201,7 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
         await window.okDesktop?.navigator.open();
       });
       await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'navigator'), {
+        .poll(() => countWindowsByMode(app, 'navigator'), {
           timeout: 15_000,
           message: 'navigator window did not appear after bridge.navigator.open()',
         })
@@ -223,14 +213,14 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       }, projectBPath);
 
       await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'editor'), {
+        .poll(() => countWindowsByMode(app, 'editor'), {
           timeout: 30_000,
           message: 'Editor B did not appear after Navigator picked Project B',
         })
         .toBe(2);
 
       await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'navigator'), {
+        .poll(() => countWindowsByMode(app, 'navigator'), {
           timeout: 10_000,
           message: 'navigator window did not close after Project B opened',
         })
@@ -239,7 +229,6 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       expect(editorA.isClosed()).toBe(false);
       expect(await countWindowsByMode(app, 'editor')).toBe(2);
     } finally {
-      await closeAppSafely(app);
       rmTmpHomeSafely(tmpHome);
       rmSync(projectAPath, { recursive: true, force: true });
       rmSync(projectBPath, { recursive: true, force: true });
@@ -249,13 +238,12 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
   test('Navigator stays visible when project open fails', async ({ captureStderrFor }) => {
     const { tmpHome, projectDir } = seedHomeWithoutLastOpenedProject('failure');
     const bogusProjectPath = join(tmpHome, 'does-not-exist');
-    let app: ElectronApplication | null = null;
     try {
-      app = await launchApp(tmpHome);
+      const app = await launchApp(tmpHome);
       captureStderrFor(app);
 
       await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'navigator'), {
+        .poll(() => countWindowsByMode(app, 'navigator'), {
           timeout: 20_000,
           message: 'navigator window did not appear at cold boot',
         })
@@ -285,7 +273,7 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       }, bogusProjectPath);
 
       await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'editor'), {
+        .poll(() => countWindowsByMode(app, 'editor'), {
           timeout: 10_000,
           message: 'editor window appeared even though project.open() failed',
         })
@@ -305,7 +293,6 @@ test.describe('Project Navigator close-on-project-open smoke', () => {
       expect(dialogState.calls).toBeGreaterThan(0);
       expect(dialogState.title).toBe('Cannot open this folder');
     } finally {
-      await closeAppSafely(app);
       rmTmpHomeSafely(tmpHome);
       rmSync(projectDir, { recursive: true, force: true });
     }

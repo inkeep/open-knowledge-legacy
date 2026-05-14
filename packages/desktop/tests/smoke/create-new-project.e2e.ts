@@ -60,13 +60,6 @@ async function launchApp(tmpHome: string, opts: LaunchOpts = {}): Promise<Electr
   });
 }
 
-async function closeAppSafely(app: ElectronApplication | null): Promise<void> {
-  if (app === null) return;
-  try {
-    await app.close();
-  } catch {}
-}
-
 async function findWindowByMode(
   app: ElectronApplication,
   mode: 'navigator' | 'editor',
@@ -136,49 +129,44 @@ test.describe('Create-new-project smoke', () => {
     const expectedTarget = join(parent, projectName);
     trackForCleanup(tmpHome);
 
-    let app: ElectronApplication | null = null;
-    try {
-      app = await launchApp(tmpHome, { pickedPath: parent });
-      captureStderrFor(app);
-      const navigator = await findWindowByMode(app, 'navigator');
+    const app = await launchApp(tmpHome, { pickedPath: parent });
+    captureStderrFor(app);
+    const navigator = await findWindowByMode(app, 'navigator');
 
-      await navigator.locator('[data-testid="nav-create-new"]').click();
+    await navigator.locator('[data-testid="nav-create-new"]').click();
 
-      const dialog = navigator.locator('[data-testid="create-project-dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 15_000 });
+    const dialog = navigator.locator('[data-testid="create-project-dialog"]');
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
 
-      await expect(navigator.locator('[data-testid="create-name"]')).toBeFocused();
+    await expect(navigator.locator('[data-testid="create-name"]')).toBeFocused();
 
-      await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(parent, {
-        timeout: 15_000,
-      });
+    await navigator.locator('[data-testid="create-browse"]').click();
+    await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(parent, {
+      timeout: 15_000,
+    });
 
-      await navigator.locator('[data-testid="create-name"]').fill(projectName);
+    await navigator.locator('[data-testid="create-name"]').fill(projectName);
 
-      await expect(navigator.locator('[data-testid="create-target-caption"]')).toContainText(
-        expectedTarget,
-        { timeout: 15_000 },
-      );
-      await expect(navigator.locator('[data-testid="create-banner-nested"]')).toHaveCount(0);
-      await expect(navigator.locator('[data-testid="create-banner-git-confirm"]')).toHaveCount(0);
-      await expect(navigator.locator('[data-testid="create-banner-nonempty"]')).toHaveCount(0);
+    await expect(navigator.locator('[data-testid="create-target-caption"]')).toContainText(
+      expectedTarget,
+      { timeout: 15_000 },
+    );
+    await expect(navigator.locator('[data-testid="create-banner-nested"]')).toHaveCount(0);
+    await expect(navigator.locator('[data-testid="create-banner-git-confirm"]')).toHaveCount(0);
+    await expect(navigator.locator('[data-testid="create-banner-nonempty"]')).toHaveCount(0);
 
-      const submit = navigator.locator('[data-testid="create-submit"]');
-      await expect(submit).toBeEnabled();
-      await submit.click();
+    const submit = navigator.locator('[data-testid="create-submit"]');
+    await expect(submit).toBeEnabled();
+    await submit.click();
 
-      await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'editor'), {
-          timeout: 30_000,
-        })
-        .toBeGreaterThanOrEqual(1);
-      await expect
-        .poll(() => existsSync(join(expectedTarget, '.ok', 'config.yml')), { timeout: 15_000 })
-        .toBe(true);
-    } finally {
-      await closeAppSafely(app);
-    }
+    await expect
+      .poll(() => countWindowsByMode(app, 'editor'), {
+        timeout: 30_000,
+      })
+      .toBeGreaterThanOrEqual(1);
+    await expect
+      .poll(() => existsSync(join(expectedTarget, '.ok', 'config.yml')), { timeout: 15_000 })
+      .toBe(true);
   });
 
   test('blocks creation when parent is inside an existing OK project', async ({
@@ -192,35 +180,27 @@ test.describe('Create-new-project smoke', () => {
     mkdirSync(subFolder, { recursive: true });
     trackForCleanup(tmpHome);
 
-    let app: ElectronApplication | null = null;
-    try {
-      app = await launchApp(tmpHome, { pickedPath: subFolder });
-      captureStderrFor(app);
-      const navigator = await findWindowByMode(app, 'navigator');
+    const app = await launchApp(tmpHome, { pickedPath: subFolder });
+    captureStderrFor(app);
+    const navigator = await findWindowByMode(app, 'navigator');
 
-      await navigator.locator('[data-testid="nav-create-new"]').click();
-      await expect(navigator.locator('[data-testid="create-project-dialog"]')).toBeVisible({
-        timeout: 15_000,
-      });
+    await navigator.locator('[data-testid="nav-create-new"]').click();
+    await expect(navigator.locator('[data-testid="create-project-dialog"]')).toBeVisible({
+      timeout: 15_000,
+    });
 
-      await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(
-        subFolder,
-        {
-          timeout: 15_000,
-        },
-      );
+    await navigator.locator('[data-testid="create-browse"]').click();
+    await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(subFolder, {
+      timeout: 15_000,
+    });
 
-      await navigator.locator('[data-testid="create-name"]').fill('Nested');
+    await navigator.locator('[data-testid="create-name"]').fill('Nested');
 
-      const nestedBanner = navigator.locator('[data-testid="create-banner-nested"]');
-      await expect(nestedBanner).toBeVisible({ timeout: 15_000 });
-      await expect(nestedBanner).toContainText(rootPath);
-      await expect(navigator.locator('[data-testid="create-banner-nested-open"]')).toBeVisible();
-      await expect(navigator.locator('[data-testid="create-submit"]')).toBeDisabled();
-    } finally {
-      await closeAppSafely(app);
-    }
+    const nestedBanner = navigator.locator('[data-testid="create-banner-nested"]');
+    await expect(nestedBanner).toBeVisible({ timeout: 15_000 });
+    await expect(nestedBanner).toContainText(rootPath);
+    await expect(navigator.locator('[data-testid="create-banner-nested-open"]')).toBeVisible();
+    await expect(navigator.locator('[data-testid="create-submit"]')).toBeDisabled();
   });
 
   test('promotes project root to git root; content.dir defaults to the git root, not the picked sub-folder', async ({
@@ -236,49 +216,44 @@ test.describe('Create-new-project smoke', () => {
     const target = join(pickedParent, projectName);
     trackForCleanup(tmpHome);
 
-    let app: ElectronApplication | null = null;
-    try {
-      app = await launchApp(tmpHome, { pickedPath: pickedParent });
-      captureStderrFor(app);
-      const navigator = await findWindowByMode(app, 'navigator');
+    const app = await launchApp(tmpHome, { pickedPath: pickedParent });
+    captureStderrFor(app);
+    const navigator = await findWindowByMode(app, 'navigator');
 
-      await navigator.locator('[data-testid="nav-create-new"]').click();
-      await expect(navigator.locator('[data-testid="create-project-dialog"]')).toBeVisible({
+    await navigator.locator('[data-testid="nav-create-new"]').click();
+    await expect(navigator.locator('[data-testid="create-project-dialog"]')).toBeVisible({
+      timeout: 15_000,
+    });
+
+    await navigator.locator('[data-testid="create-browse"]').click();
+    await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(
+      pickedParent,
+      {
         timeout: 15_000,
-      });
+      },
+    );
 
-      await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(
-        pickedParent,
-        {
-          timeout: 15_000,
-        },
-      );
+    await navigator.locator('[data-testid="create-name"]').fill(projectName);
 
-      await navigator.locator('[data-testid="create-name"]').fill(projectName);
+    const gitBanner = navigator.locator('[data-testid="create-banner-git-confirm"]');
+    await expect(gitBanner).toBeVisible({ timeout: 15_000 });
+    await expect(gitBanner).toContainText(repoRoot);
+    const submit = navigator.locator('[data-testid="create-submit"]');
+    await expect(submit).toBeEnabled();
+    await submit.click();
 
-      const gitBanner = navigator.locator('[data-testid="create-banner-git-confirm"]');
-      await expect(gitBanner).toBeVisible({ timeout: 15_000 });
-      await expect(gitBanner).toContainText(repoRoot);
-      const submit = navigator.locator('[data-testid="create-submit"]');
-      await expect(submit).toBeEnabled();
-      await submit.click();
-
-      await expect
-        .poll(() => countWindowsByMode(app as ElectronApplication, 'editor'), {
-          timeout: 30_000,
-        })
-        .toBeGreaterThanOrEqual(1);
-      await expect
-        .poll(() => existsSync(join(repoRoot, '.ok', 'config.yml')), { timeout: 15_000 })
-        .toBe(true);
-      expect(existsSync(join(target, '.ok', 'config.yml'))).toBe(false);
-      expect(existsSync(target)).toBe(true);
-      const cfg = readFileSync(join(repoRoot, '.ok', 'config.yml'), 'utf8');
-      expect(cfg).not.toMatch(/^\s*dir:\s*notes\/MyProj/m);
-      expect(cfg).toMatch(/^# content:/m);
-    } finally {
-      await closeAppSafely(app);
-    }
+    await expect
+      .poll(() => countWindowsByMode(app, 'editor'), {
+        timeout: 30_000,
+      })
+      .toBeGreaterThanOrEqual(1);
+    await expect
+      .poll(() => existsSync(join(repoRoot, '.ok', 'config.yml')), { timeout: 15_000 })
+      .toBe(true);
+    expect(existsSync(join(target, '.ok', 'config.yml'))).toBe(false);
+    expect(existsSync(target)).toBe(true);
+    const cfg = readFileSync(join(repoRoot, '.ok', 'config.yml'), 'utf8');
+    expect(cfg).not.toMatch(/^\s*dir:\s*notes\/MyProj/m);
+    expect(cfg).toMatch(/^# content:/m);
   });
 });

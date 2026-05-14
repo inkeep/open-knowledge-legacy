@@ -156,13 +156,6 @@ async function findNavigatorWindow(app: ElectronApplication, timeoutMs = 15_000)
   throw new Error('navigator window vanished between poll resolution and read');
 }
 
-async function closeAppSafely(app: ElectronApplication | null): Promise<void> {
-  if (app === null) return;
-  try {
-    await app.close();
-  } catch {}
-}
-
 function rmTmpHomeSafely(tmpHome: string): void {
   try {
     rmSync(tmpHome, { recursive: true, force: true });
@@ -181,20 +174,19 @@ test.describe('Project Navigator return-affordance smoke', () => {
     captureStderrFor,
   }) => {
     const { tmpHome, projectDir } = seedHomeWithLastOpenedProject('happy');
-    let app: ElectronApplication | null = null;
     try {
-      app = await launchApp(tmpHome);
+      const app = await launchApp(tmpHome);
       captureStderrFor(app);
 
       const editor = await findEditorWindow(app);
-      await expect.poll(() => countNavigatorWindows(app as ElectronApplication)).toBe(0);
+      await expect.poll(() => countNavigatorWindows(app)).toBe(0);
 
       await editor.evaluate(async () => {
         await window.okDesktop?.navigator.open();
       });
 
       await expect
-        .poll(() => countNavigatorWindows(app as ElectronApplication), {
+        .poll(() => countNavigatorWindows(app), {
           timeout: 15_000,
           message: 'navigator window did not appear after bridge.navigator.open()',
         })
@@ -207,14 +199,13 @@ test.describe('Project Navigator return-affordance smoke', () => {
         await window.okDesktop?.navigator.open();
       });
       await expect
-        .poll(() => countNavigatorWindows(app as ElectronApplication), {
+        .poll(() => countNavigatorWindows(app), {
           timeout: 2_000,
           intervals: [50, 100, 200, 400],
           message: 'navigator window count exceeded 1 across re-invokes',
         })
         .toBe(1);
     } finally {
-      await closeAppSafely(app);
       rmTmpHomeSafely(tmpHome);
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -224,13 +215,12 @@ test.describe('Project Navigator return-affordance smoke', () => {
     captureStderrFor,
   }) => {
     const { tmpHome, projectDir } = seedHomeWithLastOpenedProject('close');
-    let app: ElectronApplication | null = null;
     try {
-      app = await launchApp(tmpHome);
+      const app = await launchApp(tmpHome);
       captureStderrFor(app);
 
       const editor = await findEditorWindow(app);
-      await expect.poll(() => countEditorWindows(app as ElectronApplication)).toBe(1);
+      await expect.poll(() => countEditorWindows(app)).toBe(1);
 
       await editor.evaluate(async () => {
         await window.okDesktop?.navigator.open();
@@ -240,14 +230,14 @@ test.describe('Project Navigator return-affordance smoke', () => {
       await navigatorPage.close();
 
       await expect
-        .poll(() => countNavigatorWindows(app as ElectronApplication), {
+        .poll(() => countNavigatorWindows(app), {
           timeout: 5_000,
           message: 'navigator window did not close',
         })
         .toBe(0);
 
       await expect
-        .poll(() => countEditorWindows(app as ElectronApplication), {
+        .poll(() => countEditorWindows(app), {
           timeout: 2_000,
           message: 'editor window disappeared when navigator closed',
         })
@@ -257,7 +247,6 @@ test.describe('Project Navigator return-affordance smoke', () => {
         .catch(() => null);
       expect(stillEditorMode).toBe('editor');
     } finally {
-      await closeAppSafely(app);
       rmTmpHomeSafely(tmpHome);
       rmSync(projectDir, { recursive: true, force: true });
     }

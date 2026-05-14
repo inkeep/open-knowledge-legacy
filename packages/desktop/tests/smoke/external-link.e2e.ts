@@ -105,7 +105,6 @@ test.describe('external-link safety-net delegation', () => {
         expect(callsAfterBridge).toContain('https://docs.example.com/help');
       }).toPass({ timeout: 15_000 });
     } finally {
-      await app.close();
       rmSync(projectDir, { recursive: true, force: true });
     }
   });

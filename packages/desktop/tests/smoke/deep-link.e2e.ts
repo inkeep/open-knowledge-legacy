@@ -66,7 +66,6 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
         throw new Error('no window has hash matching the extension-less producer form yet');
       }).toPass({ timeout: 15_000 });
     } finally {
-      await app.close();
       rmSync(projectDir, { recursive: true, force: true });
       rmTmpHomeSafely(tmpHome);
     }
@@ -109,7 +108,6 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
         throw new Error('no window has nested-doc hash yet');
       }).toPass({ timeout: 15_000 });
     } finally {
-      await app.close();
       rmSync(projectDir, { recursive: true, force: true });
       rmTmpHomeSafely(tmpHome);
     }
