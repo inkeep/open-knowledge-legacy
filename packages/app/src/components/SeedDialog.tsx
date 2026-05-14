@@ -1,6 +1,7 @@
-import { FileText, Folder, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, FileText, Folder, Loader2, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { PackCardGrid } from '@/components/PackCardGrid';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -43,6 +44,7 @@ type DialogPhase =
   | { kind: 'applying'; plan: OkScaffoldPlan };
 
 type RootChoice = 'project-root' | 'subfolder';
+type DialogStep = 'pick' | 'configure';
 
 export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }: SeedDialogProps) {
   const [phase, setPhase] = useState<DialogPhase>({ kind: 'loading' });
@@ -51,6 +53,7 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
   const [includePersonalTemplates, setIncludePersonalTemplates] = useState(true);
   const [rootChoice, setRootChoice] = useState<RootChoice>('project-root');
   const [subfolder, setSubfolder] = useState<string>('');
+  const [step, setStep] = useState<DialogStep>(initialPackId !== undefined ? 'configure' : 'pick');
   const isFirstLoadRef = useRef(true);
 
   const selectedPack = packs?.find((p) => p.id === selectedPackId);
@@ -88,6 +91,8 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
       setIncludePersonalTemplates(true);
       setRootChoice('project-root');
       setSubfolder('');
+      setStep(initialPackId !== undefined ? 'configure' : 'pick');
+      setPhase({ kind: 'loading' });
       isFirstLoadRef.current = true;
     }
   }, [open, initialPackId]);
@@ -102,6 +107,7 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
 
   useEffect(() => {
     if (!open) return;
+    if (step !== 'configure') return;
     if (packs === null) return; // wait for pack list before planning
 
     if (subfolderInvalid) {
@@ -152,6 +158,7 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
     };
   }, [
     open,
+    step,
     packs,
     selectedPackId,
     includePersonalTemplates,
@@ -199,15 +206,29 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
 
   const packLocked = initialPackId !== undefined;
   const title =
-    packLocked && selectedPack ? `Initialize ${selectedPack.name}` : 'Initialize a starter pack';
+    step === 'configure' && selectedPack
+      ? `Initialize ${selectedPack.name}`
+      : 'Initialize a starter pack';
   const description =
-    packLocked && selectedPack
+    step === 'configure' && selectedPack
       ? selectedPack.description
       : "Pick a layout that matches what you're building. Each pack ships with folders, templates, and agent-readable descriptions. You can mix and match later.";
 
+  function handlePackSelect(id: OkPackId) {
+    setSelectedPackId(id);
+    setStep('configure');
+    isFirstLoadRef.current = true;
+  }
+
+  function handleBack() {
+    setStep('pick');
+    setPhase({ kind: 'loading' });
+    isFirstLoadRef.current = true;
+  }
+
   return (
     <DialogRoot open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl" data-ok-layer-spawned="">
+      <DialogContent className="sm:max-w-3xl" data-ok-layer-spawned="">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles aria-hidden="true" className="h-4 w-4 text-foreground opacity-70" />
@@ -216,29 +237,34 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
-        <DialogBody className="space-y-6">
-          {packLocked ? null : (
-            <PackPicker
-              packs={packs}
-              selectedPackId={selectedPackId}
-              onSelect={setSelectedPackId}
+        {step === 'pick' ? (
+          <DialogBody>
+            <PackCardGrid packs={packs} onPackSelect={handlePackSelect} />
+          </DialogBody>
+        ) : (
+          <DialogBody className="space-y-6">
+            <PersonalTemplatesToggle
+              checked={includePersonalTemplates}
+              onCheckedChange={setIncludePersonalTemplates}
             />
-          )}
-          <PersonalTemplatesToggle
-            checked={includePersonalTemplates}
-            onCheckedChange={setIncludePersonalTemplates}
-          />
-          <RootPicker
-            choice={rootChoice}
-            subfolder={subfolder}
-            placeholder={selectedPack?.defaultSubfolder ?? 'subfolder'}
-            onChoiceChange={setRootChoice}
-            onSubfolderChange={setSubfolder}
-          />
-          <SeedDialogBody phase={phase} selectedPack={selectedPack} />
-        </DialogBody>
+            <RootPicker
+              choice={rootChoice}
+              subfolder={subfolder}
+              placeholder={selectedPack?.defaultSubfolder ?? 'subfolder'}
+              onChoiceChange={setRootChoice}
+              onSubfolderChange={setSubfolder}
+            />
+            <SeedDialogBody phase={phase} selectedPack={selectedPack} />
+          </DialogBody>
+        )}
 
         <DialogFooter>
+          {step === 'configure' && !packLocked ? (
+            <Button className="mr-auto uppercase font-mono" variant="ghost" onClick={handleBack}>
+              <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+              Back
+            </Button>
+          ) : null}
           <Button
             className="uppercase font-mono"
             variant="ghost"
@@ -246,11 +272,11 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
           >
             {phase.kind === 'already-seeded' || phase.kind === 'error' ? 'Close' : 'Cancel'}
           </Button>
-          {phase.kind === 'plan' ? (
+          {step === 'configure' && phase.kind === 'plan' ? (
             <Button onClick={handleApply} disabled={subfolderInvalid}>
               Initialize
             </Button>
-          ) : phase.kind === 'applying' ? (
+          ) : step === 'configure' && phase.kind === 'applying' ? (
             <Button disabled>
               <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
               Setting up
@@ -259,46 +285,6 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
         </DialogFooter>
       </DialogContent>
     </DialogRoot>
-  );
-}
-
-function PackPicker({
-  packs,
-  selectedPackId,
-  onSelect,
-}: {
-  packs: OkSeedPackInfo[] | null;
-  selectedPackId: OkPackId;
-  onSelect: (id: OkPackId) => void;
-}) {
-  return (
-    <div className="space-y-2 py-1">
-      <p className="text-sm font-medium">Pick a starter pack</p>
-      {packs === null ? (
-        <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
-          <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-          Loading packs
-        </div>
-      ) : (
-        <RadioGroup
-          className="grid gap-2 sm:grid-cols-3"
-          value={selectedPackId}
-          onValueChange={(next) => onSelect(next as OkPackId)}
-        >
-          {packs.map((pack) => (
-            <FieldLabel key={pack.id} htmlFor={`pack-${pack.id}`}>
-              <Field orientation="horizontal" className="h-full">
-                <FieldContent>
-                  <FieldTitle className="text-sm">{pack.name}</FieldTitle>
-                  <FieldDescription className="text-xs">{pack.description}</FieldDescription>
-                </FieldContent>
-                <RadioGroupItem value={pack.id} id={`pack-${pack.id}`} />
-              </Field>
-            </FieldLabel>
-          ))}
-        </RadioGroup>
-      )}
-    </div>
   );
 }
 

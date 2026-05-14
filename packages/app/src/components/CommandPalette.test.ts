@@ -181,6 +181,48 @@ describe('Settings entry (US-010 / FR-1 / D54 — source-level guards)', () => {
   });
 });
 
+describe('Initialize starter pack entry (source-level guards)', () => {
+  const SRC_PATH = join(__dirname, 'CommandPalette.tsx');
+  const src = readFileSync(SRC_PATH, 'utf-8');
+
+  const seedBlock = (() => {
+    const chunks = src.split(/(?=<CommandItem\b)/);
+    const ours = chunks.find((c) =>
+      c.includes('data-testid="command-palette-initialize-starter-pack"'),
+    );
+    if (!ours) return '';
+    return ours.split('</CommandItem>')[0] ?? '';
+  })();
+
+  test('CommandItem carries the Sparkles icon and "Initialize starter pack" label', () => {
+    expect(
+      seedBlock,
+      'CommandItem with command-palette-initialize-starter-pack not found',
+    ).toBeTruthy();
+    expect(seedBlock).toContain('<Sparkles');
+    expect(seedBlock).toContain('<span>Initialize starter pack</span>');
+  });
+
+  test('onSelect closes the palette and opens SeedDialog', () => {
+    expect(seedBlock).toContain('onOpenChange(false)');
+    expect(seedBlock).toContain('setSeedDialogOpen(true)');
+  });
+
+  test('search-token value covers initialize / scaffold / seed / pack substrings', () => {
+    const valueLine = seedBlock.match(/value="initialize[^"]*"/)?.[0] ?? '';
+    expect(valueLine).toContain('initialize');
+    expect(valueLine).toContain('starter');
+    expect(valueLine).toContain('pack');
+    expect(valueLine).toContain('scaffold');
+    expect(valueLine).toContain('seed');
+  });
+
+  test('showInitializeStarterPack participates in hasAnyResults', () => {
+    const aggregate = src.match(/const hasAnyResults =[\s\S]*?;/)?.[0] ?? '';
+    expect(aggregate).toContain('showInitializeStarterPack');
+  });
+});
+
 describe('CommandPalette entry-point propagation (source-level guards)', () => {
   const SRC_PATH = join(__dirname, 'CommandPalette.tsx');
   const src = readFileSync(SRC_PATH, 'utf-8');
