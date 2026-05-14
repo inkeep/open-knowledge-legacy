@@ -139,7 +139,8 @@ What to log:
 
 - \`ingest\` runs (new external sources captured)
 - \`research\` / \`consolidate\` runs (provisional or canonical articles produced)
-- Direct \`write_document\` / \`edit_document\` / renames / deletions outside the three workflow tools
+- Direct \`write_document\` / \`edit_document\` / renames / deletions outside the three Karpathy-layer tools (\`ingest\` / \`research\` / \`consolidate\`)
+- \`discover\` runs (project conventions extracted; folder frontmatter / templates / \`.okignore\` proposals applied; link-graph activations)
 - Folder restructures (\`ok seed\`, manual reorganization)
 - \`.ok/config.yml\` changes
 

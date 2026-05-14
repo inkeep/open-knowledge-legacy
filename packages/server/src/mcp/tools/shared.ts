@@ -72,7 +72,7 @@ Open Knowledge accretes a persistent wiki through three workflow tools, mapped t
 - **Wiki, provisional** — \`research\`
 - **Wiki, canonical** — \`consolidate\`
 
-(Project-level folder structure + \`config.yml\` scaffolding is handled by the \`ok seed\` CLI, not by an MCP tool.)
+(Project-level folder structure: \`ok seed\` for fresh repos with the Karpathy three-layer; \`discover\` MCP tool for existing-content repos that need conventions extracted from siblings. Neither is required — these three tools work against any folder structure the project already uses.)
 
 **This tool operates in the ${ROLE_LABEL[role]}.**
 
