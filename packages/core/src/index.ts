@@ -591,6 +591,8 @@ export {
   TemplatePutSuccessSchema,
   type TestRescanBacklinksSuccess,
   TestRescanBacklinksSuccessSchema,
+  type TestRescanFilesSuccess,
+  TestRescanFilesSuccessSchema,
   type TestResetSuccess,
   TestResetSuccessSchema,
   type UploadAssetSuccess,

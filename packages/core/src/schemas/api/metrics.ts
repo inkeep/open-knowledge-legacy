@@ -55,6 +55,9 @@ export type TestResetSuccess = z.infer<typeof TestResetSuccessSchema>;
 export const TestRescanBacklinksSuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
 export type TestRescanBacklinksSuccess = z.infer<typeof TestRescanBacklinksSuccessSchema>;
 
+export const TestRescanFilesSuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
+export type TestRescanFilesSuccess = z.infer<typeof TestRescanFilesSuccessSchema>;
+
 export const MetricsReconciliationSuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
 export type MetricsReconciliationSuccess = z.infer<typeof MetricsReconciliationSuccessSchema>;
 

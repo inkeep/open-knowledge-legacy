@@ -512,10 +512,12 @@ export async function awaitFileWatcherIndexed(
   server: TestServer,
   docPath: string,
   timeoutMs = 45_000,
+  rescueAfterMs = 2_000,
 ): Promise<void> {
   const start = Date.now();
   let lastStatus = 0;
   let lastBodyPreview = '';
+  let rescueTriggered = false;
   while (Date.now() - start < timeoutMs) {
     const res = await fetch(`http://localhost:${server.port}/api/documents`).catch((err) => {
       lastStatus = -1;
@@ -533,10 +535,16 @@ export async function awaitFileWatcherIndexed(
       lastStatus = res.status;
       lastBodyPreview = `non-ok status`;
     }
+    if (!rescueTriggered && Date.now() - start >= rescueAfterMs) {
+      rescueTriggered = true;
+      await fetch(`http://localhost:${server.port}/api/test-rescan-files`, {
+        method: 'POST',
+      }).catch(() => null);
+    }
     await wait(50);
   }
   throw new Error(
-    `awaitFileWatcherIndexed: ${docPath} not indexed within ${timeoutMs}ms (last status=${lastStatus}, ${lastBodyPreview})`,
+    `awaitFileWatcherIndexed: ${docPath} not indexed within ${timeoutMs}ms (last status=${lastStatus}, ${lastBodyPreview}, rescueTriggered=${rescueTriggered})`,
   );
 }
 

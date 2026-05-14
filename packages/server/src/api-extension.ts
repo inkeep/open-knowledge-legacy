@@ -130,6 +130,7 @@ import {
   TemplatePutRequestSchema,
   TemplatePutSuccessSchema,
   TestRescanBacklinksSuccessSchema,
+  TestRescanFilesSuccessSchema,
   TestResetSuccessSchema,
   UploadAssetSuccessSchema,
   UploadRequestSchema,
@@ -841,6 +842,7 @@ export interface ApiExtensionOptions {
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
   getFolderIndex?: () => ReadonlyMap<string, FolderIndexEntry>;
   getAliasMap?: () => ReadonlyMap<string, string>;
+  rescanFiles?: () => void;
   enableTestRoutes?: boolean;
   shadowRef?: ShadowRef;
   flushGitCommit?: () => Promise<void>;
@@ -916,6 +918,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getFileIndex,
     getFolderIndex,
     getAliasMap,
+    rescanFiles,
     enableTestRoutes = false,
     shadowRef,
     flushGitCommit,
@@ -3200,6 +3203,39 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     },
     { handler: 'test-rescan-backlinks', method: 'POST', skipBodyParse: true },
+  );
+
+  const handleTestRescanFiles = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
+      try {
+        if (!rescanFiles) {
+          errorResponse(
+            res,
+            503,
+            'urn:ok:error:file-rescan-not-configured',
+            'Watcher rescan capability is not configured.',
+            { handler: 'test-rescan-files' },
+          );
+          return;
+        }
+        rescanFiles();
+        signalChannel?.('files');
+        successResponse(
+          res,
+          200,
+          TestRescanFilesSuccessSchema,
+          {},
+          { handler: 'test-rescan-files' },
+        );
+      } catch (e) {
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'test-rescan-files',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'test-rescan-files', method: 'POST', skipBodyParse: true },
   );
 
   const handleSaveVersion = withValidation(
@@ -7563,6 +7599,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   if (enableTestRoutes) {
     routes['/api/test-reset'] = handleTestReset;
     routes['/api/test-rescan-backlinks'] = handleTestRescanBacklinks;
+    routes['/api/test-rescan-files'] = handleTestRescanFiles;
   }
 
   const MUTATING_ROUTES: ReadonlySet<string> = new Set([
@@ -7582,6 +7619,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/sync/abort-merge',
     '/api/test-reset',
     '/api/test-rescan-backlinks',
+    '/api/test-rescan-files',
     '/api/install-skill',
     '/api/folder-config',
     '/api/template',

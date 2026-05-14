@@ -11,6 +11,7 @@ import {
   MetricsParseHealthSuccessSchema,
   MetricsReconciliationSuccessSchema,
   TestRescanBacklinksSuccessSchema,
+  TestRescanFilesSuccessSchema,
   TestResetSuccessSchema,
 } from './index.ts';
 
@@ -191,6 +192,17 @@ describe('TestResetSuccessSchema', () => {
 describe('TestRescanBacklinksSuccessSchema', () => {
   test('parses an empty body', () => {
     expect(TestRescanBacklinksSuccessSchema.safeParse({}).success).toBe(true);
+  });
+});
+
+describe('TestRescanFilesSuccessSchema', () => {
+  test('parses an empty body', () => {
+    expect(TestRescanFilesSuccessSchema.safeParse({}).success).toBe(true);
+  });
+  test('parses a body with extra fields (.loose())', () => {
+    expect(TestRescanFilesSuccessSchema.safeParse({ extraField: 'forward-compat' }).success).toBe(
+      true,
+    );
   });
 });
 
