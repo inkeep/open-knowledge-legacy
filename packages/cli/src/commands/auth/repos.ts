@@ -1,5 +1,6 @@
 import { Octokit } from '@octokit/rest';
 import { Command } from 'commander';
+import { detectGh } from '../../auth/gh-detect.ts';
 import type { TokenStore } from '../../auth/token-store.ts';
 import { validateGitHubHost } from './validate-host.ts';
 
@@ -8,17 +9,28 @@ interface ReposOptions {
   json: boolean;
 }
 
+export async function resolveReposToken(
+  host: string,
+  tokenStore: TokenStore,
+  _detectGhFn: (host?: string) => ReturnType<typeof detectGh> = detectGh,
+): Promise<string | null> {
+  const gh = _detectGhFn(host);
+  if (gh.available && gh.token) return gh.token;
+  const entry = await tokenStore.get(host);
+  return entry?.token ?? null;
+}
+
 async function runRepos(opts: ReposOptions, tokenStore: TokenStore): Promise<void> {
   const { host, json } = opts;
   validateGitHubHost(host);
-  const entry = await tokenStore.get(host);
-  if (entry == null) {
+  const token = await resolveReposToken(host, tokenStore);
+  if (token == null) {
     process.stderr.write(`Not logged in to ${host}\n`);
     process.exit(1);
   }
 
   const baseUrl = host === 'github.com' ? undefined : `https://${host}/api/v3`;
-  const octokit = new Octokit({ auth: entry.token, ...(baseUrl ? { baseUrl } : {}) });
+  const octokit = new Octokit({ auth: token, ...(baseUrl ? { baseUrl } : {}) });
 
   const repos: { full_name: string; clone_url: string; private: boolean }[] = [];
   for await (const response of octokit.paginate.iterator(octokit.repos.listForAuthenticatedUser, {

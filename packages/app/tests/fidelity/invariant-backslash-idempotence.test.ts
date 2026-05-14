@@ -65,7 +65,7 @@ describe('backslash escape idempotence — double round-trip stable (R24)', () =
   );
 });
 
-describe('NG-04 — backslash-escape preservation for R23-PUA chars (FR-14)', () => {
+describe('backslash-escape-r23-pua-preservation — backslash-escape survival for R23-PUA chars', () => {
   test('escaped less-than `\\<` survives byte-identical round-trip', () => {
     const input = 'a \\<b\n';
     expect(mdRoundTrip(input)).toBe(input);

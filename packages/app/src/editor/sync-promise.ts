@@ -176,7 +176,7 @@ function detach(entry: CacheEntry): void {
  * (precedent #18(c), spec G1+G5) work — without this gate, every
  * Activity-evicted-but-pool-resident revisit would hang for 30s waiting on a
  * listener that can never fire. The first call still pays one Suspense cycle
- * (Promise.resolve has no React `.status` field initially); subsequent calls
+ * (Promise.resolve has no React `.status` field on first read); subsequent calls
  * return the same cached reference and short-circuit.
  */
 export function syncPromise(docName: string, provider: HocuspocusProvider): Promise<void> {

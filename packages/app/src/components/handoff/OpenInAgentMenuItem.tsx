@@ -62,7 +62,7 @@ interface RowAffordance {
 }
 
 /** Submenu payload for a disabled row. `null` while install state is `null`
- *  (initial probe in flight) — disabled-but-no-submenu per AC8. */
+ *  (initial probe in flight) — disabled-but-no-submenu. */
 interface DisabledTooltip {
   /** Main message — describes why the row is disabled (used for the short
    *  hint text rendered inline on the trigger row). */

@@ -13,8 +13,11 @@ describe('Invariant B — playwright-topass-budget GritQL plugin', () => {
     });
     expect(result.status).not.toBe(0);
     const output = `${result.stdout}\n${result.stderr}`;
-    const fires = (output.match(/Invariant B: `toPass\(\{ timeout \}\)`/g) ?? []).length;
+    const fires = (output.match(/Invariant B: raise the `toPass/g) ?? []).length;
     expect(fires).toBe(5);
+    expect(output).toContain('raise the `toPass({ timeout })` budget');
+    expect(output).toMatch(/https?:\/\/[^\s]+/);
+    expect(output).toContain('biome-plugins/README.md#playwright-topass-budgetgrit');
   });
 
   test('plugin is registered in biome.jsonc overrides, scoped to deep-link + external-link + fixture', () => {

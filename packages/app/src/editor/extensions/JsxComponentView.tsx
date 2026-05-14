@@ -828,14 +828,14 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         {/*
         Reset mechanism: rely on `componentDidUpdate`'s resetKey-comparison
         branch (L107) to clear `errored` state when primitive props change.
-        Previously we also set `key={resetKey}`, which forced a full remount
-        of the live fumadocs subtree on every prop edit — losing component-
-        local state (ImageZoom's zoom level, in-flight Radix animations)
-        and making `componentDidUpdate` unreachable (key-remount always
-        produces a fresh instance where prevProps === props). Keeping only
-        the prop-comparison reset preserves component state on healthy
-        renders and still clears the error path when the user fixes a
-        prop that was causing the render to throw.
+        Setting `key={resetKey}` here would force a full remount of the
+        live fumadocs subtree on every prop edit — losing component-local
+        state (ImageZoom's zoom level, in-flight Radix animations) and
+        making `componentDidUpdate` unreachable (key-remount always
+        produces a fresh instance where prevProps === props). Keeping
+        only the prop-comparison reset preserves component state on
+        healthy renders and still clears the error path when the user
+        fixes a prop that was causing the render to throw.
       */}
         {showPlaceholder && resolvedPlaceholder ? (
           <PopoverAnchor asChild>

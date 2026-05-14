@@ -27,10 +27,10 @@ export interface ReconciliationMetrics {
   serverObserverErrorsA: number;
   serverObserverErrorsB: number;
   /** Count of successful atomic disk writes from persistence.onStoreDocument.
-   *  Used as the Mutation F regression gate: if OBSERVER_SYNC_ORIGIN drops
-   *  skipStoreHooks, onStoreDocument fires on every observer write and
-   *  produces amplified disk I/O. Under skipStoreHooks: true, a single
-   *  agent-write produces exactly one persistence disk write. */
+   *  Regression gate: if OBSERVER_SYNC_ORIGIN drops skipStoreHooks,
+   *  onStoreDocument fires on every observer write and produces amplified
+   *  disk I/O. Under skipStoreHooks: true, a single agent-write produces
+   *  exactly one persistence disk write. */
   persistenceDiskWrites: number;
   /** Bridge-correctness SPEC §6 R9 — count of Observer A Path B
    *  content-preservation post-condition violations. Calibration signal
@@ -40,15 +40,15 @@ export interface ReconciliationMetrics {
    *  checkpoints written via saveInMemoryCheckpoint. Bounds the rate a user
    *  might see in TimelinePanel; if high, R7c coalescing becomes worth adding. */
   bridgeMergeCheckpointCreated: number;
-  /** Y.Text-is-truth contract (spec FR-31) — count of bridge invariant
-   *  violation events emitted by the watchdog (Observer B post-Phase-1, the
-   *  persistence pre-write sanity check, and any test-harness watcher).
+  /** Y.Text-is-truth contract — count of bridge invariant violation events
+   *  emitted by the watchdog (Observer B post-Phase-1, the persistence
+   *  pre-write sanity check, and any test-harness watcher).
    *  Steady-state target: ~0 in production. A non-zero value means
    *  ytext bytes diverged from `serialize(fragment)` outside the tolerated
    *  equivalence classes enumerated in `normalizeBridge`. Surface via
    *  `bridge-invariant-violation` log events for triage. */
   bridgeInvariantViolations: number;
-  /** Y.Text-is-truth contract (spec FR-31b) — count of suppressed
+  /** Y.Text-is-truth contract — count of suppressed
    *  bridge-invariant-violation events that the rate-limiter dropped to
    *  prevent log flooding when a single (site, doc) tuple fires repeatedly
    *  within the debounce window. (Tolerance-class is NOT a rate-limit
@@ -58,18 +58,17 @@ export interface ReconciliationMetrics {
    *  — actual violation rate = `bridgeInvariantViolations` +
    *  `bridgeInvariantViolationsSuppressed`. */
   bridgeInvariantViolationsSuppressed: number;
-  /** Y.Text-is-truth contract (spec FR-33) — count of persistence cycles
-   *  that the quiescence gate skipped because `isDocQuiescent` returned
-   *  false (Hocuspocus's debounce fired mid-burst before
-   *  `afterAllTransactions` had landed since the last user-origin
-   *  transaction). The next debounce cycle retries; a healthy
-   *  steady-state has occasional skips during heavy collaborative bursts
-   *  but they always converge to a flush within `QUIESCENCE_MAX_DEFER`
-   *  cycles. Persistent non-zero growth alongside
-   *  `persistenceForceFlushDuringBurst` indicates the user has been
-   *  typing without pause for ≥16 s — surfacing the FR-33b backstop. */
+  /** Quiescence gate — count of persistence cycles that the quiescence gate
+   *  skipped because `isDocQuiescent` returned false (Hocuspocus's debounce
+   *  fired mid-burst before `afterAllTransactions` had landed since the last
+   *  user-origin transaction). The next debounce cycle retries; a healthy
+   *  steady-state has occasional skips during heavy collaborative bursts but
+   *  they always converge to a flush within `QUIESCENCE_MAX_DEFER` cycles.
+   *  Persistent non-zero growth alongside `persistenceForceFlushDuringBurst`
+   *  indicates the user has been typing without pause for ≥16 s — surfacing
+   *  the force-flush backstop. */
   persistenceSkipNonQuiescent: number;
-  /** Y.Text-is-truth contract (spec FR-33b) — count of force-flushes that
+  /** Quiescence-gate backstop — count of force-flushes that
    *  proceeded despite the document not being quiescent because the
    *  per-doc deferral counter exceeded `QUIESCENCE_MAX_DEFER` (default 8
    *  ≈ 16 s of sustained typing under default 2 s debounce). Bounds
@@ -94,7 +93,7 @@ export interface ReconciliationMetrics {
    *  monopolizing the single Node event loop during Yjs integration. */
   collabMessageTooLargeCount: number;
   /** Count of legacy WIP refs deleted by the allowlist-based sweep in
-   *  initShadowRepo on first run post-upgrade (US-018, NFR-6, D35). */
+   *  initShadowRepo on first run post-upgrade. */
   shadowMigrationLegacyRefsDeleted: number;
   effectDiffCaptureFailures: number;
   /** Count of awareness-mutation failures in `AgentPresenceBroadcaster`
@@ -107,18 +106,18 @@ export interface ReconciliationMetrics {
    *  the correlated `[agent-presence] awareness mutation failed` log line. */
   agentPresenceMutationErrors: number;
   /** Successful agent-write API calls that reached recordContributor —
-   *  denominator for the M1 summary-adoption metric in spec §7. Incremented
-   *  by the five agent-write handlers only AFTER a successful recordContributor
-   *  (D22: UI-driven rollback/rename without agentId does NOT increment). */
+   *  denominator for the summary-adoption metric. Incremented by the five
+   *  agent-write handlers only AFTER a successful recordContributor;
+   *  UI-driven rollback/rename without agentId does NOT increment. */
   agentWriteCalls: number;
   /** Agent-write calls that carried a non-empty summary through
-   *  normalizeSummary — numerator for M1. Adoption rate = summariesProvided /
-   *  agentWriteCalls. */
+   *  normalizeSummary — numerator for the summary-adoption metric.
+   *  Adoption rate = summariesProvided / agentWriteCalls. */
   summariesProvided: number;
   /** Agent-write calls whose input summary exceeded the API cap and was
-   *  truncated to 79 visible chars + `…`. Spec M2 steady-state target <10 %. */
+   *  truncated to 79 visible chars + `…`. Steady-state target <10 %. */
   summariesTruncated: number;
-  /** Y.Text-is-truth contract (spec FR-36) — count of `agent-patch`
+  /** Y.Text-is-truth contract — count of `agent-patch`
    *  invocations whose `find` target failed to match the document's source
    *  bytes (returns 404 not-found OR 409 stale-target). Useful for
    *  detecting downstream tools that compute offsets against canonical
@@ -127,7 +126,7 @@ export interface ReconciliationMetrics {
    *  (agents legitimately try-and-retry); spikes correlate with tool
    *  upgrades that bypass the user-bytes search surface. */
   agentPatchFindMismatches: number;
-  /** Y.Text-is-truth contract (spec FR-41) — count of bridge-tolerance-applied
+  /** Y.Text-is-truth contract — count of bridge-tolerance-applied
    *  events emitted per tolerance class. Each entry tracks how often the
    *  comparator passed via that tolerance class while bytes were not
    *  byte-equal pre-normalization. Steady-state non-zero is acceptable
@@ -140,7 +139,7 @@ export interface ReconciliationMetrics {
    *  resistance at compile time so no caller can silently pollute the map
    *  with arbitrary labels and drop those counters from operator visibility. */
   bridgeToleranceApplied: Partial<Record<BridgeToleranceClass, number>>;
-  /** Y.Text-is-truth contract (spec FR-41) — count of Observer A Path B
+  /** Y.Text-is-truth contract — count of Observer A Path B
    *  fires (mergeThreeWay slow path triggered by ytext divergence from the
    *  baseline) that escaped the per-doc rate-limiter and emitted a
    *  structured `observer-a-path-b-fired` event. Steady-state non-zero is
@@ -160,7 +159,7 @@ export interface ReconciliationMetrics {
    *  Path-B rate via `actual_rate = observerAPathBFires +
    *  observerAPathBFiresSuppressed`. */
   observerAPathBFiresSuppressed: number;
-  /** Y.Text-is-truth contract (spec FR-33) — count of best-effort
+  /** Y.Text-is-truth contract — count of best-effort
    *  fragment-reconciliation attempts (`reconcileFragmentNow`) that
    *  threw inside persistence's pre-write sanity-check recovery path. The
    *  reconciliation is the second half of the contract's R7 hazard
@@ -184,7 +183,7 @@ export interface ReconciliationMetrics {
    *  indicates `parseWithFallback`'s paragraph fallback isn't catching some
    *  malformed-bytes class. */
   externalChangeHandlerErrors: number;
-  /** Y.Text-is-truth contract (spec FR-33) — count of persistence pre-write
+  /** Y.Text-is-truth contract — count of persistence pre-write
    *  sanity-check cycles where `mdManager.serialize` itself threw, blocking
    *  the bridge invariant assertion from running. Distinct from
    *  `bridgeInvariantViolations` (assertion ran and detected divergence)
@@ -197,7 +196,7 @@ export interface ReconciliationMetrics {
    *  fragment side is producing values the canonical serializer rejects —
    *  worth investigating before the divergence becomes systemic. */
   persistenceSanityCheckSerializeFailures: number;
-  /** Audit-framework phase 2 spec FR-9 — count of deferred-drain cycles in
+  /** Audit-framework phase 2 — count of deferred-drain cycles in
    *  `flushDeferredStores` where `storeDocumentNow` threw past its inner
    *  catches. The deferred drain runs after a quiescence-gate timeout post-
    *  burst; the worst-case frequency is tens-per-day, so there is no rate-

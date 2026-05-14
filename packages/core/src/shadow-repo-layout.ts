@@ -402,7 +402,7 @@ function parseOkActorObject(obj: Record<string, unknown>): OkActorEntry | null {
     'summaries' in obj && Array.isArray(obj.summaries)
       ? (obj.summaries as unknown[]).every((s) => typeof s === 'string')
         ? (obj.summaries as string[])
-        : undefined // D27 divergence: drop field on malformed, keep entry
+        : undefined // Drop field on malformed, keep entry
       : undefined;
   const previous_paths = parsePreviousPaths(obj);
   return {

@@ -46,10 +46,10 @@ export interface DeleteDocumentDeps {
   serverUrl: ServerUrlOrResolver;
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
-  /** Identity passthrough for attribution threading (FR-5, D42). The
-   *  server-side handler calls `extractAgentIdentity(body)` even though it
-   *  does not currently surface the agent in the response — keep the field
-   *  so future timeline/audit work picks up MCP-driven deletes correctly. */
+  /** Identity passthrough for attribution threading. The server-side handler
+   *  calls `extractAgentIdentity(body)` even though it does not currently
+   *  surface the agent in the response — keep the field so future
+   *  timeline/audit work picks up MCP-driven deletes correctly. */
   identityRef?: { current: AgentIdentity };
 }
 

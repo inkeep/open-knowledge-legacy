@@ -52,10 +52,13 @@ export function httpAuthQueryTransport(): AuthQueryTransport {
       const data = (await res.json()) as Record<string, unknown>;
       const h = typeof data.host === 'string' ? data.host : host;
       if (data.authenticated === true && typeof data.login === 'string') {
+        const tier =
+          data.tier === 'A' || data.tier === 'B' || data.tier === 'C' ? data.tier : undefined;
         return {
           authenticated: true,
           host: h,
           login: data.login,
+          tier,
           name: typeof data.name === 'string' ? data.name : undefined,
           email: typeof data.email === 'string' ? data.email : undefined,
         };

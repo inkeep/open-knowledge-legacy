@@ -19,7 +19,7 @@ or {
         $text <: r"(?s).*….*",
         register_diagnostic(
             span = $text,
-            message = "Microcopy: drop the trailing `…`. Reserve U+2026 for macOS native menus (menu.ts) or truncation indicators."
+            message = "Microcopy: drop the trailing `…`. Reserve U+2026 for macOS native menus (menu.ts) or truncation indicators. See https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#microcopy-ellipsisgrit"
         )
     },
 
@@ -32,7 +32,7 @@ or {
         $value <: contains r"(?s).*….*",
         register_diagnostic(
             span = $value,
-            message = "Microcopy: drop the trailing `…` from this UI-facing attribute."
+            message = "Microcopy: drop the trailing `…` from this UI-facing attribute. See https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#microcopy-ellipsisgrit"
         )
     }
 }

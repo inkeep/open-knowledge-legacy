@@ -105,6 +105,30 @@ describe('runAuthStatusSubprocess', () => {
     }
   });
 
+  test.each(['A', 'B', 'C'] as const)('forwards tier %s through the parser', async (tier) => {
+    const result = await runAuthStatusSubprocess({
+      cliArgs: fixtureCli(`
+        console.log(JSON.stringify({type:'status', host:'github.com', authenticated:true, tier:'${tier}', login:'octocat'}));
+      `),
+    });
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) {
+      expect(result.tier).toBe(tier);
+    }
+  });
+
+  test('drops an unknown tier value (forward-compat: future tiers are ignored, not crashed)', async () => {
+    const result = await runAuthStatusSubprocess({
+      cliArgs: fixtureCli(`
+        console.log(JSON.stringify({type:'status', host:'github.com', authenticated:true, tier:'Z', login:'octocat'}));
+      `),
+    });
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) {
+      expect(result.tier).toBeUndefined();
+    }
+  });
+
   test('uses a custom host when provided', async () => {
     const result = await runAuthStatusSubprocess({
       cliArgs: fixtureCli(`

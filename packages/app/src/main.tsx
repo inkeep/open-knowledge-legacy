@@ -85,7 +85,7 @@ createRoot(root).render(
         </TooltipProvider>
         {/*
          * Sonner toaster for ad-hoc status/error toasts (clone dialog, file
-         * tree, etc.). M3 auto-update notices are NOT routed here — they live
+         * tree, etc.). Auto-update notices are NOT routed here — they live
          * in the sidebar footer via <UpdateNotices /> for a persistent home
          * that matches their permanent-until-clicked semantics.
          */}

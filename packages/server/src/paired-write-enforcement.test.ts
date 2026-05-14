@@ -1,8 +1,14 @@
-import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { beforeAll, describe, expect, test } from 'bun:test';
 import { join, relative } from 'node:path';
 import { Glob } from 'bun';
-import ts from 'typescript';
+import {
+  type CallExpression,
+  type Expression,
+  type Node,
+  Project,
+  type SourceFile,
+  SyntaxKind,
+} from 'ts-morph';
 
 const SANCTIONED_PRIMITIVES = new Set<string>([
   'composeAndWriteRawBody',
@@ -38,100 +44,106 @@ interface TransactCall {
   readonly file: string;
   readonly line: number;
   readonly originExpr: string;
-  readonly fnBody: ts.Node | undefined;
+  readonly fnBody: Node | undefined;
 }
 
 const SERVER_SRC_DIR = join(import.meta.dir);
 
-function loadServerSourceFiles(): ReadonlyArray<readonly [string, ts.SourceFile]> {
-  const out: Array<readonly [string, ts.SourceFile]> = [];
+function loadServerSourceFiles(): ReadonlyArray<readonly [string, SourceFile]> {
+  const project = new Project({
+    skipFileDependencyResolution: true,
+    skipLoadingLibFiles: true,
+    skipAddingFilesFromTsConfig: true,
+    compilerOptions: {
+      noLib: true,
+      allowJs: false,
+    },
+  });
+  const out: Array<readonly [string, SourceFile]> = [];
   const glob = new Glob('**/*.ts');
   for (const rel of glob.scanSync({ cwd: SERVER_SRC_DIR, absolute: false, onlyFiles: true })) {
     if (rel.endsWith('.test.ts') || rel.endsWith('.d.ts')) continue;
     const abs = join(SERVER_SRC_DIR, rel);
-    const text = readFileSync(abs, 'utf-8');
-    const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.ES2022, /* setParentNodes */ true);
+    const sf = project.addSourceFileAtPath(abs);
     out.push([abs, sf] as const);
   }
   return out;
 }
 
-/** Render a property-access chain (`session.dc.document.transact`) to its
- * trailing two segments — enough to identify `<x>.transact` and to extract
- * the receiver-side trailing accessor for origin matching. */
-function renderAccessChain(node: ts.Node): string {
-  if (ts.isIdentifier(node)) return node.text;
-  if (ts.isPropertyAccessExpression(node)) {
-    return `${renderAccessChain(node.expression)}.${node.name.text}`;
+function renderAccessChain(node: Node): string {
+  if (node.isKind(SyntaxKind.Identifier)) return node.getText();
+  if (node.isKind(SyntaxKind.PropertyAccessExpression)) {
+    return `${renderAccessChain(node.getExpression())}.${node.getName()}`;
   }
-  if (ts.isCallExpression(node)) return renderAccessChain(node.expression);
-  return node.getText(node.getSourceFile());
+  if (node.isKind(SyntaxKind.CallExpression)) {
+    return renderAccessChain(node.getExpression());
+  }
+  return node.getText();
 }
 
-function isTransactPropertyAccess(node: ts.Expression): boolean {
-  return ts.isPropertyAccessExpression(node) && node.name.text === 'transact';
+function isTransactPropertyAccess(node: Expression): boolean {
+  return node.isKind(SyntaxKind.PropertyAccessExpression) && node.getName() === 'transact';
 }
 
-function findTransactCalls(file: string, sf: ts.SourceFile): TransactCall[] {
+function findTransactCalls(file: string, sf: SourceFile): TransactCall[] {
   const calls: TransactCall[] = [];
-  function visit(node: ts.Node): void {
-    if (
-      ts.isCallExpression(node) &&
-      isTransactPropertyAccess(node.expression) &&
-      node.arguments.length >= 2
-    ) {
-      const fnArg = node.arguments[0];
-      const originArg = node.arguments[1];
-      const lineStart = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
-      const fnBody =
-        fnArg && (ts.isArrowFunction(fnArg) || ts.isFunctionExpression(fnArg))
-          ? fnArg.body
-          : undefined;
-      calls.push({
-        file,
-        line: lineStart,
-        originExpr: originArg ? renderAccessChain(originArg) : '<missing>',
-        fnBody,
-      });
-    }
-    ts.forEachChild(node, visit);
+  for (const call of sf.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    if (!isTransactPropertyAccess(call.getExpression())) continue;
+    const args = call.getArguments();
+    if (args.length < 2) continue;
+    const fnArg = args[0];
+    const originArg = args[1];
+    const fnBody =
+      fnArg &&
+      (fnArg.isKind(SyntaxKind.ArrowFunction) || fnArg.isKind(SyntaxKind.FunctionExpression))
+        ? fnArg.getBody()
+        : undefined;
+    calls.push({
+      file,
+      line: call.getStartLineNumber(),
+      originExpr: originArg ? renderAccessChain(originArg) : '<missing>',
+      fnBody,
+    });
   }
-  visit(sf);
   return calls;
 }
 
-function bodyCallsSanctionedPrimitive(body: ts.Node | undefined): {
+function bodyCallsSanctionedPrimitive(body: Node | undefined): {
   matched: boolean;
   matchedName: string | null;
 } {
   if (body === undefined) return { matched: false, matchedName: null };
   let matched = false;
   let matchedName: string | null = null;
-  function visit(node: ts.Node): void {
-    if (matched) return;
-    if (ts.isCallExpression(node)) {
-      const callee = node.expression;
-      const calleeName = ts.isIdentifier(callee)
-        ? callee.text
-        : ts.isPropertyAccessExpression(callee)
-          ? callee.name.text
-          : null;
-      if (calleeName !== null) {
-        if (SANCTIONED_PRIMITIVES.has(calleeName) || TRANSITIVE_PRIMITIVE_CALLERS.has(calleeName)) {
-          matched = true;
-          matchedName = calleeName;
-          return;
-        }
-      }
+  body.forEachDescendant((node, traversal) => {
+    if (matched) {
+      traversal.stop();
+      return;
     }
-    ts.forEachChild(node, visit);
-  }
-  visit(body);
+    if (!node.isKind(SyntaxKind.CallExpression)) return;
+    const callExpr = node as CallExpression;
+    const callee = callExpr.getExpression();
+    const calleeName = callee.isKind(SyntaxKind.Identifier)
+      ? callee.getText()
+      : callee.isKind(SyntaxKind.PropertyAccessExpression)
+        ? callee.getName()
+        : null;
+    if (calleeName === null) return;
+    if (SANCTIONED_PRIMITIVES.has(calleeName) || TRANSITIVE_PRIMITIVE_CALLERS.has(calleeName)) {
+      matched = true;
+      matchedName = calleeName;
+      traversal.stop();
+    }
+  });
   return { matched, matchedName };
 }
 
-describe('paired-write enforcement (FR-6)', () => {
-  const sources = loadServerSourceFiles();
+describe('paired-write enforcement', () => {
+  let sources: ReadonlyArray<readonly [string, SourceFile]>;
+
+  beforeAll(() => {
+    sources = loadServerSourceFiles();
+  }, 30_000);
 
   test('every transact() call site has a recognized origin', () => {
     const failures: string[] = [];
@@ -205,26 +217,23 @@ describe('paired-write enforcement (FR-6)', () => {
   });
 
   test('all three sanctioned primitives are exported from bridge-intake.ts', () => {
+    const project = new Project({
+      skipFileDependencyResolution: true,
+      skipLoadingLibFiles: true,
+      skipAddingFilesFromTsConfig: true,
+      compilerOptions: {
+        noLib: true,
+        allowJs: false,
+      },
+    });
     const intakePath = join(SERVER_SRC_DIR, 'bridge-intake.ts');
-    const text = readFileSync(intakePath, 'utf-8');
-    const sf = ts.createSourceFile(
-      'bridge-intake.ts',
-      text,
-      ts.ScriptTarget.ES2022,
-      /* setParentNodes */ true,
-    );
+    const sf = project.addSourceFileAtPath(intakePath);
     const exportedNames = new Set<string>();
-    function visit(node: ts.Node): void {
-      if (
-        ts.isFunctionDeclaration(node) &&
-        node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) &&
-        node.name
-      ) {
-        exportedNames.add(node.name.text);
-      }
-      ts.forEachChild(node, visit);
+    for (const fn of sf.getDescendantsOfKind(SyntaxKind.FunctionDeclaration)) {
+      if (!fn.hasExportKeyword()) continue;
+      const name = fn.getName();
+      if (name) exportedNames.add(name);
     }
-    visit(sf);
     for (const primitive of SANCTIONED_PRIMITIVES) {
       expect(exportedNames.has(primitive)).toBe(true);
     }

@@ -3,7 +3,14 @@ import { runSubprocess } from './subprocess.ts';
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 export type AuthStatusResponse =
-  | { authenticated: true; host: string; login: string; name?: string; email?: string }
+  | {
+      authenticated: true;
+      host: string;
+      login: string;
+      tier?: 'A' | 'B' | 'C';
+      name?: string;
+      email?: string;
+    }
   | { authenticated: false; host: string; error?: string };
 
 export interface RepoEntry {
@@ -41,10 +48,13 @@ export async function runAuthStatusSubprocess(
     if (line.type !== 'status') continue;
     const lineHost = typeof line.host === 'string' ? line.host : host;
     if (line.authenticated === true && typeof line.login === 'string') {
+      const tier =
+        line.tier === 'A' || line.tier === 'B' || line.tier === 'C' ? line.tier : undefined;
       return {
         authenticated: true,
         host: lineHost,
         login: line.login,
+        tier,
         name: typeof line.name === 'string' ? line.name : undefined,
         email: typeof line.email === 'string' ? line.email : undefined,
       };

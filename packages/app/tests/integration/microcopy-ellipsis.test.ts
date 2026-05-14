@@ -15,6 +15,9 @@ describe('microcopy-ellipsis GritQL plugin', () => {
     const output = `${result.stdout}\n${result.stderr}`;
     const fires = (output.match(/Microcopy: drop the trailing/g) ?? []).length;
     expect(fires).toBe(2);
+    expect(output).toContain('drop the trailing');
+    expect(output).toMatch(/https?:\/\/[^\s]+/);
+    expect(output).toContain('biome-plugins/README.md#microcopy-ellipsisgrit');
   });
 
   test('plugin is registered in biome.jsonc', () => {

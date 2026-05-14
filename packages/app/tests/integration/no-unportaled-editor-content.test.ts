@@ -13,8 +13,11 @@ describe('no-unportaled-editor-content GritQL plugin', () => {
     });
     expect(result.status).not.toBe(0);
     const output = `${result.stdout}\n${result.stderr}`;
-    const fires = (output.match(/Portal-only: <EditorContent>/g) ?? []).length;
+    const fires = (output.match(/Portal-only: render <EditorContent/g) ?? []).length;
     expect(fires).toBe(3);
+    expect(output).toContain('render <EditorContent />');
+    expect(output).toMatch(/https?:\/\/[^\s]+/);
+    expect(output).toContain('biome-plugins/README.md#no-unportaled-editor-contentgrit');
   });
 
   test('plugin is registered in biome.jsonc', () => {

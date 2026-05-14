@@ -39,14 +39,14 @@ function knownTargetsSignature(
 
 /** Hash is the source of truth for navigation; all navigation sets the hash;
  *  this handler is the single place that resolves the active navigation target
- *  and calls openTargetTransition(). The transition wrapper keeps a previously-
- *  revealed doc visible while the next entry suspends on syncPromise (fast/warm
- *  path, SPEC G2); on cold paths `openTargetTransition` drops the transition
- *  and lets `<Suspense fallback={<EditorSkeleton />}>` paint immediately. Agent-
- *  driven nav via SystemDocSubscriber flows through `window.location.hash`, so
- *  it inherits the same UX without a separate code path (SPEC §F7). Target
- *  resolution (doc / folder-index / folder / missing) lives in
- *  resolveNavigationTarget (PR #175). */
+ *  and calls openTargetTransition(). The transition wrapper keeps the
+ *  already-revealed doc visible while the next entry suspends on syncPromise
+ *  (fast/warm path); on cold paths `openTargetTransition` drops the transition
+ *  and lets `<Suspense fallback={<EditorSkeleton />}>` paint immediately.
+ *  Agent-driven nav via SystemDocSubscriber flows through
+ *  `window.location.hash`, so it inherits the same UX without a separate code
+ *  path. Target resolution (doc / folder-index / folder / missing) lives in
+ *  resolveNavigationTarget. */
 function NavigationHandler() {
   const { clearTarget, syncOpenTabsWithKnownTargets, tabSessionLoaded } = useDocumentContext();
   const { openTargetTransition } = useDocumentTransition();
@@ -225,10 +225,10 @@ export function App() {
             <NewItemShortcutHandler />
             <SettingsShortcutHandler />
             <InstallInClaudeDesktopTrigger />
-            {/* M6b first-launch consent dialog — host-agnostic per D-M6-R10.
-                Self-gates on the shared `mcpConsentStore` snapshot; renders
-                nothing until main fires `ok:mcp-wiring:show`. Mounted
-                identically in NavigatorApp. */}
+            {/* First-launch consent dialog — host-agnostic. Self-gates on
+                the shared `mcpConsentStore` snapshot; renders nothing until
+                main fires `ok:mcp-wiring:show`. Mounted identically in
+                NavigatorApp. */}
             <McpConsentDialog />
             <CommandPalette
               bridge={desktopBridge}

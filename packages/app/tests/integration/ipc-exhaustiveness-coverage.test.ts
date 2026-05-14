@@ -2,7 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { Glob } from 'bun';
-import * as ts from 'typescript';
+import {
+  type Expression,
+  type Node,
+  Project,
+  type SourceFile,
+  type Statement,
+  type SwitchStatement,
+  SyntaxKind,
+} from 'ts-morph';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../../..');
 const SCAN_ROOTS = [join(REPO_ROOT, 'packages/core/src'), join(REPO_ROOT, 'packages/app/src')];
@@ -53,63 +61,70 @@ function* enumerateSourceFiles(): Generator<string> {
   }
 }
 
+function makeProject(): Project {
+  return new Project({
+    skipFileDependencyResolution: true,
+    skipLoadingLibFiles: true,
+    skipAddingFilesFromTsConfig: true,
+    compilerOptions: {
+      noLib: true,
+      allowJs: false,
+    },
+  });
+}
+
 interface SwitchInfo {
-  readonly node: ts.SwitchStatement;
+  readonly node: SwitchStatement;
   readonly line: number;
   readonly caseLabels: readonly string[];
   readonly hasDefault: boolean;
-  readonly defaultStatements: readonly ts.Statement[];
+  readonly defaultStatements: readonly Statement[];
   readonly hasOptOutComment: boolean;
 }
 
-function getStringCaseLabel(expr: ts.Expression): string | null {
-  if (ts.isStringLiteral(expr)) return expr.text;
-  if (ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
+function getStringCaseLabel(expr: Expression): string | null {
+  if (expr.isKind(SyntaxKind.StringLiteral)) return expr.getLiteralText();
+  if (expr.isKind(SyntaxKind.NoSubstitutionTemplateLiteral)) return expr.getLiteralText();
   return null;
 }
 
-function collectSwitches(source: ts.SourceFile, content: string): SwitchInfo[] {
+function collectSwitches(sf: SourceFile, content: string): SwitchInfo[] {
   const out: SwitchInfo[] = [];
-  function visit(node: ts.Node): void {
-    if (ts.isSwitchStatement(node)) {
-      const caseLabels: string[] = [];
-      let hasDefault = false;
-      let defaultStatements: readonly ts.Statement[] = [];
-      let nonLiteralCase = false;
-      for (const clause of node.caseBlock.clauses) {
-        if (ts.isDefaultClause(clause)) {
-          hasDefault = true;
-          defaultStatements = clause.statements;
+  for (const sw of sf.getDescendantsOfKind(SyntaxKind.SwitchStatement)) {
+    const caseLabels: string[] = [];
+    let hasDefault = false;
+    let defaultStatements: readonly Statement[] = [];
+    let nonLiteralCase = false;
+    for (const clause of sw.getCaseBlock().getClauses()) {
+      if (clause.isKind(SyntaxKind.DefaultClause)) {
+        hasDefault = true;
+        defaultStatements = clause.getStatements();
+      } else {
+        const label = getStringCaseLabel(clause.getExpression());
+        if (label === null) {
+          nonLiteralCase = true;
         } else {
-          const label = getStringCaseLabel(clause.expression);
-          if (label === null) {
-            nonLiteralCase = true;
-          } else {
-            caseLabels.push(label);
-          }
+          caseLabels.push(label);
         }
       }
-      if (!nonLiteralCase && caseLabels.length > 0) {
-        const start = node.getStart(source);
-        const { line } = source.getLineAndCharacterOfPosition(start);
-        const lineStart = content.lastIndexOf('\n', start - 1) + 1;
-        const previousLineEnd = lineStart - 1;
-        const previousLineStart = content.lastIndexOf('\n', previousLineEnd - 1) + 1;
-        const previousLine = content.slice(previousLineStart, previousLineEnd);
-        const hasOptOutComment = OPT_OUT_MARKER.test(previousLine);
-        out.push({
-          node,
-          line: line + 1,
-          caseLabels,
-          hasDefault,
-          defaultStatements,
-          hasOptOutComment,
-        });
-      }
     }
-    ts.forEachChild(node, visit);
+    if (!nonLiteralCase && caseLabels.length > 0) {
+      const start = sw.getStart();
+      const lineStart = content.lastIndexOf('\n', start - 1) + 1;
+      const previousLineEnd = lineStart - 1;
+      const previousLineStart = content.lastIndexOf('\n', previousLineEnd - 1) + 1;
+      const previousLine = content.slice(previousLineStart, previousLineEnd);
+      const hasOptOutComment = OPT_OUT_MARKER.test(previousLine);
+      out.push({
+        node: sw,
+        line: sw.getStartLineNumber(),
+        caseLabels,
+        hasDefault,
+        defaultStatements,
+        hasOptOutComment,
+      });
+    }
   }
-  visit(source);
   return out;
 }
 
@@ -124,10 +139,7 @@ function matchesDu(caseLabels: readonly string[], du: DuRegistration): boolean {
   return false;
 }
 
-function defaultEndsWithHelper(
-  defaultStatements: readonly ts.Statement[],
-  helper: string,
-): boolean {
+function defaultEndsWithHelper(defaultStatements: readonly Statement[], helper: string): boolean {
   if (defaultStatements.length === 0) return false;
   for (const stmt of defaultStatements) {
     if (statementCallsHelper(stmt, helper)) return true;
@@ -135,29 +147,29 @@ function defaultEndsWithHelper(
   return false;
 }
 
-function statementCallsHelper(stmt: ts.Statement, helper: string): boolean {
-  if (ts.isExpressionStatement(stmt)) return expressionCallsHelper(stmt.expression, helper);
-  if (ts.isReturnStatement(stmt) && stmt.expression !== undefined) {
-    return expressionCallsHelper(stmt.expression, helper);
+function statementCallsHelper(stmt: Statement | Node, helper: string): boolean {
+  if (stmt.isKind(SyntaxKind.ExpressionStatement)) {
+    return expressionCallsHelper(stmt.getExpression(), helper);
   }
-  if (ts.isThrowStatement(stmt)) return expressionCallsHelper(stmt.expression, helper);
-  if (ts.isBlock(stmt)) {
-    for (const inner of stmt.statements) {
+  if (stmt.isKind(SyntaxKind.ReturnStatement)) {
+    const expr = stmt.getExpression();
+    return expr !== undefined && expressionCallsHelper(expr, helper);
+  }
+  if (stmt.isKind(SyntaxKind.ThrowStatement)) {
+    return expressionCallsHelper(stmt.getExpression(), helper);
+  }
+  if (stmt.isKind(SyntaxKind.Block)) {
+    for (const inner of stmt.getStatements()) {
       if (statementCallsHelper(inner, helper)) return true;
     }
   }
   return false;
 }
 
-function expressionCallsHelper(expr: ts.Expression, helper: string): boolean {
-  if (
-    ts.isCallExpression(expr) &&
-    ts.isIdentifier(expr.expression) &&
-    expr.expression.text === helper
-  ) {
-    return true;
-  }
-  return false;
+function expressionCallsHelper(expr: Expression, helper: string): boolean {
+  if (!expr.isKind(SyntaxKind.CallExpression)) return false;
+  const callee = expr.getExpression();
+  return callee.isKind(SyntaxKind.Identifier) && callee.getText() === helper;
 }
 
 interface Violation {
@@ -173,11 +185,12 @@ function collectViolations(): {
 } {
   const violations: Violation[] = [];
   let optOutCount = 0;
+  const project = makeProject();
   for (const file of enumerateSourceFiles()) {
     const content = readFileSync(file, 'utf8');
     if (!/switch\s*\(/.test(content)) continue;
-    const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
-    for (const sw of collectSwitches(source, content)) {
+    const sf = project.addSourceFileAtPath(file);
+    for (const sw of collectSwitches(sf, content)) {
       for (const du of REGISTRY) {
         if (!matchesDu(sw.caseLabels, du)) continue;
         if (sw.hasOptOutComment) {
@@ -194,6 +207,7 @@ function collectViolations(): {
         }
       }
     }
+    project.removeSourceFile(sf);
   }
   return { violations, optOutCount };
 }

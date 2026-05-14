@@ -92,8 +92,8 @@ export interface RenameDocumentDeps {
   serverUrl: ServerUrlOrResolver;
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
-  /** Same identity passthrough pattern as write-document (D15). Without this,
-   *  MCP-driven renames post no agentId → the server-side D22 guard skips
+  /** Same identity passthrough pattern as write-document. Without this,
+   *  MCP-driven renames post no agentId → the server-side guard skips
    *  attribution, so summaries would have no contributor entry to live on. */
   identityRef?: { current: AgentIdentity };
 }
