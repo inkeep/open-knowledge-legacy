@@ -56,6 +56,7 @@ export const ProblemTypeSchema = z.enum([
   'urn:ok:error:rollback-not-configured',
   'urn:ok:error:doc-not-available',
   'urn:ok:error:backlink-index-not-configured',
+  'urn:ok:error:file-rescan-not-configured',
   'urn:ok:error:shadow-not-configured',
   'urn:ok:error:host-not-allowed',
   'urn:ok:error:principal-not-available',

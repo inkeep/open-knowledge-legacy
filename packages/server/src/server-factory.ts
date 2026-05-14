@@ -558,6 +558,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
       getFolderIndex: () => (watcher ? watcher.getFolderIndex() : new Map()),
       getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
+      rescanFiles: () => watcher?.rescanFromDisk(),
       enableTestRoutes,
       shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),

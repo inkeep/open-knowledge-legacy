@@ -73,6 +73,7 @@ export interface WatcherHandle {
   getFolderIndex: () => ReadonlyMap<string, FolderIndexEntry>;
   getAliasMap: () => ReadonlyMap<string, string>;
   pruneFileIndexNowExcluded: () => number;
+  rescanFromDisk: () => void;
 }
 
 export const writeTracker = new Map<string, Array<{ hash: string; timestamp: number }>>();
@@ -1123,6 +1124,9 @@ export async function startWatcher(
         }
       }
       return pruned;
+    },
+    rescanFromDisk() {
+      seedLastKnownHashes(contentDir, contentDir, contentFilter, fileIndex, folderIndex, aliasMap);
     },
   };
 }
