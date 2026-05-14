@@ -1,4 +1,5 @@
 import {
+  Box,
   Download,
   FilePlus2,
   FileText,
@@ -7,8 +8,8 @@ import {
   Hash,
   LayoutGrid,
   Network,
+  Package,
   Settings,
-  Sparkles,
 } from 'lucide-react';
 import {
   type Dispatch,
@@ -642,7 +643,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                   }}
                   data-testid="command-palette-initialize-starter-pack"
                 >
-                  <Sparkles />
+                  <Package />
                   <span>Initialize starter pack</span>
                 </CommandItem>
               ) : null}
@@ -788,9 +789,10 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                           )
                         }
                         data-testid={`command-palette-recent-${row.path}`}
+                        className="items-start"
                       >
-                        <Sparkles />
-                        <div className="flex min-w-0 flex-col">
+                        <Box className="mt-0.5" />
+                        <div className="flex min-w-0 flex-col gap-1">
                           <span className="truncate font-medium">{row.name}</span>
                           <span className="truncate text-muted-foreground text-xs">
                             {row.path}
