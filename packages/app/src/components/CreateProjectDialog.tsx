@@ -266,6 +266,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
 
   const sanitized = sanitizeFolderName(name);
   const target = sanitized === '' || parent === '' ? '' : joinPathPreview(parent, sanitized);
+  const previewPath = target !== '' ? target : parent;
   const canSubmit =
     !busy &&
     sanitized !== '' &&
@@ -346,8 +347,8 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
           className="flex min-h-0 flex-1 flex-col"
         >
           <DialogBody className="space-y-4">
-            <div>
-              <Label htmlFor="create-name" className="mb-1 block">
+            <div className="space-y-2">
+              <Label htmlFor="create-name" className="block">
                 Name
               </Label>
               <Input
@@ -367,21 +368,13 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
               />
             </div>
 
-            <div>
-              <Label htmlFor="create-location" className="mb-1 block">
+            <div className="space-y-2">
+              <Label htmlFor="create-location" className="block">
                 Location
               </Label>
               <div className="flex items-stretch gap-2">
-                <Input
-                  id="create-location"
-                  value={parentLoading ? '' : parent}
-                  readOnly
-                  disabled={busy}
-                  placeholder={parentLoading ? 'Loading' : ''}
-                  className="flex-1"
-                  data-testid="create-location"
-                />
                 <Button
+                  id="create-location"
                   type="button"
                   variant="outline"
                   disabled={busy || parentLoading}
@@ -393,17 +386,14 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
               </div>
               <p
                 id="create-target-caption"
-                className="mt-1 text-xs text-muted-foreground"
+                className="text-xs text-muted-foreground"
                 aria-live="polite"
                 data-testid="create-target-caption"
               >
-                {target === '' ? (
-                  <>
-                    <span aria-hidden="true">—</span>
-                    <span className="sr-only">No target path yet</span>
-                  </>
+                {previewPath === '' ? (
+                  <span className="sr-only">No target path yet</span>
                 ) : (
-                  target
+                  previewPath
                 )}
               </p>
             </div>

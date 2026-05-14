@@ -11,17 +11,19 @@ afterEach(() => {
   else process.env.OK_DESKTOP_TEST_PICKED_PATH = ORIGINAL_PICKED;
 });
 
-describe('promptForExistingFolder (no createDirectory)', () => {
+describe('promptForExistingFolder', () => {
   beforeEach(() => {
     delete process.env.OK_DESKTOP_E2E_SMOKE;
     delete process.env.OK_DESKTOP_TEST_PICKED_PATH;
   });
 
-  test('OS picker uses openDirectory only', async () => {
+  test('OS picker uses openDirectory + createDirectory (macOS shows New Folder button)', async () => {
     const showOpenDialog = mock(async () => ({ canceled: false, filePaths: ['/picked'] }));
     const result = await promptForExistingFolder({ showOpenDialog });
     expect(result).toBe('/picked');
-    expect(showOpenDialog).toHaveBeenCalledWith({ properties: ['openDirectory'] });
+    expect(showOpenDialog).toHaveBeenCalledWith({
+      properties: ['openDirectory', 'createDirectory'],
+    });
   });
 
   test('OS picker returns null on cancel', async () => {
@@ -61,7 +63,7 @@ describe('promptForExistingFolder (no createDirectory)', () => {
     const showOpenDialog = mock(async () => ({ canceled: false, filePaths: ['/picked'] }));
     await promptForExistingFolder({ showOpenDialog }, { defaultPath: '/project/root' });
     expect(showOpenDialog).toHaveBeenCalledWith({
-      properties: ['openDirectory'],
+      properties: ['openDirectory', 'createDirectory'],
       defaultPath: '/project/root',
     });
   });
@@ -69,6 +71,8 @@ describe('promptForExistingFolder (no createDirectory)', () => {
   test('omits defaultPath when not provided', async () => {
     const showOpenDialog = mock(async () => ({ canceled: false, filePaths: ['/picked'] }));
     await promptForExistingFolder({ showOpenDialog });
-    expect(showOpenDialog).toHaveBeenCalledWith({ properties: ['openDirectory'] });
+    expect(showOpenDialog).toHaveBeenCalledWith({
+      properties: ['openDirectory', 'createDirectory'],
+    });
   });
 });

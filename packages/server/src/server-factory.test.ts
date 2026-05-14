@@ -1908,6 +1908,85 @@ describe('createServer() — phantom-doc unload', () => {
   });
 });
 
+describe('createServer() — shouldUnloadDocument forceUnloadSet branched guard', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'ok-shouldunload-'));
+  });
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('force-unload via delete-path unloads document despite live in-process connection and non-empty content', async () => {
+    const docName = 'force-unload-target';
+    writeFileSync(join(tmpDir, `${docName}.md`), '# initial-content\n', 'utf-8');
+
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+    });
+
+    let localHttp: import('node:http').Server | undefined;
+    try {
+      await server.ready;
+
+      const conn = await server.hocuspocus.openDirectConnection(docName);
+      expect(server.hocuspocus.documents.has(docName)).toBe(true);
+
+      await conn.transact((doc) => {
+        const ytext = doc.getText('source');
+        ytext.insert(0, 'pending-bytes');
+      });
+      const doc = server.hocuspocus.documents.get(docName);
+      if (!doc) throw new Error('document missing after transact');
+      expect(doc.getText('source').toString().length).toBeGreaterThan(0);
+
+      const apiExt = server.hocuspocus.configuration.extensions.find(
+        (e: unknown) =>
+          typeof (e as { onRequest?: unknown }).onRequest === 'function' &&
+          (e as { priority?: number }).priority === 100,
+      ) as
+        | {
+            onRequest: (ctx: {
+              request: import('node:http').IncomingMessage;
+              response: import('node:http').ServerResponse;
+            }) => Promise<void>;
+          }
+        | undefined;
+      if (!apiExt) throw new Error('api-extension not found in extensions array');
+
+      const { createServer: createNodeHttp } = await import('node:http');
+      localHttp = createNodeHttp((req, res) => {
+        void apiExt.onRequest({ request: req, response: res });
+      });
+      await new Promise<void>((resolve) => localHttp?.listen(0, '127.0.0.1', resolve));
+      const address = localHttp.address();
+      if (typeof address !== 'object' || address === null) {
+        throw new Error('local HTTP server did not bind to a port');
+      }
+      const baseURL = `http://127.0.0.1:${address.port}`;
+
+      const res = await fetch(`${baseURL}/api/delete-path`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ kind: 'file', path: docName }),
+      });
+      expect(res.status).toBe(200);
+
+      expect(server.hocuspocus.documents.has(docName)).toBe(false);
+    } finally {
+      if (localHttp) {
+        await new Promise<void>((resolve, reject) =>
+          localHttp?.close((err) => (err ? reject(err) : resolve())),
+        );
+      }
+      await server.destroy();
+    }
+  });
+});
+
 describe('createServer() — removalRedirectGuard registration', () => {
   let tmpDir: string;
 

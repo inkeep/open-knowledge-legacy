@@ -8,6 +8,7 @@ export const KNOWN_TARGETS = [
     schemes: ['claude:'],
     installUrl: 'https://claude.com/download',
     hasWebFallback: true,
+    tagline: "Conversational pairing in Claude Desktop's Cowork tab.",
   },
   {
     id: 'claude-code',
@@ -16,6 +17,7 @@ export const KNOWN_TARGETS = [
     schemes: ['claude:'],
     installUrl: 'https://claude.com/download',
     hasWebFallback: true,
+    tagline: "Agentic coding in Claude Desktop's Code tab.",
   },
   {
     id: 'codex',
@@ -23,11 +25,13 @@ export const KNOWN_TARGETS = [
     appBrandName: 'Codex Desktop',
     schemes: ['codex:'],
     installUrl: 'https://openai.com/codex',
+    tagline: "OpenAI's coding agent, terminal-native.",
   },
   {
     id: 'cursor',
     displayName: 'Cursor',
     schemes: ['cursor:'],
     installUrl: 'https://cursor.com/',
+    tagline: 'AI-first VS Code fork with multi-file edits.',
   },
 ] as const satisfies ReadonlyArray<TargetData>;

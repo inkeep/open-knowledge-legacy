@@ -53,7 +53,16 @@ export function useInstalledAgents(): UseInstalledAgentsResult {
     handleRef.current = handle;
     const unsub = handle.subscribe(setStates);
     void handle.probe();
+    const onFocus = () => {
+      void handle.probe();
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', onFocus);
+    }
     return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', onFocus);
+      }
       unsub();
       handle.cancel();
       handleRef.current = null;

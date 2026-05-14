@@ -42,6 +42,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
+  const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
   const { channel } = useUpdateChannel();
   const { theme: themeValue } = useTheme();
@@ -91,28 +92,34 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-primary-foreground dark:bg-background text-foreground">
       <div
-        className={`mx-auto flex w-full max-w-5xl flex-1 flex-col overflow-hidden p-12 space-y-10 ${
+        className={`shrink-0 ${isElectronHost ? '[-webkit-app-region:drag]' : ''}`}
+        data-testid="nav-chrome-row"
+      >
+        <div className="mx-auto w-full max-w-5xl px-12 pt-12 pb-10">
+          <header className="shrink-0 flex-wrap flex items-center gap-2.5">
+            <OkIcon className="size-12 shrink-0" />
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <h1 className="font-medium text-xl tracking-tight">Open Knowledge</h1>
+                <BetaBadge />
+              </div>
+              <div className="flex items-center gap-2">
+                <p className="text-muted-foreground text-xs font-mono">v{bridge.appVersion}</p>
+                {channel !== null && (
+                  <Badge variant="gray" className="text-2xs font-mono">
+                    {channel === 'beta' ? 'Beta' : 'Stable'}
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </header>
+        </div>
+      </div>
+      <div
+        className={`mx-auto flex w-full max-w-5xl flex-1 flex-col overflow-hidden px-12 pb-12 space-y-10 ${
           !loading && recents.length === 0 ? 'justify-center' : ''
         }`}
       >
-        <header className="shrink-0 flex-wrap flex items-center gap-2.5">
-          <OkIcon className="size-12 shrink-0" />
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <h1 className="font-medium text-xl tracking-tight">Open Knowledge</h1>
-              <BetaBadge />
-            </div>
-            <div className="flex items-center gap-2">
-              <p className="text-muted-foreground text-xs font-mono">v{bridge.appVersion}</p>
-              {channel !== null && (
-                <Badge variant="gray" className="text-2xs font-mono">
-                  {channel === 'beta' ? 'Beta' : 'Stable'}
-                </Badge>
-              )}
-            </div>
-          </div>
-        </header>
-
         <section className="grid shrink-0 sm:grid-cols-3 gap-3">
           <NavigatorCard
             title="Clone from GitHub"

@@ -322,6 +322,7 @@ function EditorVisual() {
               pointerEvents: mode === 'visual' ? 'auto' : 'none',
             }}
           >
+            {/* biome-ignore lint/plugin/no-unportaled-editor-content: single-editor docs showcase — no cross-Activity DOM neighbor possible; H6 vacuum precondition (shared view.dom parent) cannot arise here */}
             <EditorContent editor={editor} />
           </div>
           <div

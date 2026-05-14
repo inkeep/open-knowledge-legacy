@@ -39,3 +39,9 @@ test('buildCodexUrl does NOT thread docPath (only projectDir via path=)', () => 
   expect(url).not.toContain('SPECIFIC-FILE');
   expect(url).not.toContain('file=');
 });
+
+test('buildCodexUrl project-scoped (prompt="") drops prompt= and keeps path=', () => {
+  const url = buildCodexUrl(payload({ prompt: '', docPath: '' }));
+  expect(url).toBe('codex://new?path=%2FUsers%2Fwho%2Fproj');
+  expect(url).not.toContain('prompt=');
+});

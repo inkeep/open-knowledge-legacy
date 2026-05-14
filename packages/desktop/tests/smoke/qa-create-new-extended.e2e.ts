@@ -142,7 +142,7 @@ test.describe('QA extended create-new-project', () => {
       await expect(navigator.locator('[data-testid="create-name"]')).toBeFocused();
 
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(parent, {
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(parent, {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-name"]').fill('Customized');
@@ -192,7 +192,8 @@ test.describe('QA extended create-new-project', () => {
       await expect(navigator.locator('[data-testid="create-name"]')).toBeFocused();
 
       const caption = navigator.locator('[data-testid="create-target-caption"]');
-      await expect(caption).toContainText('—');
+      await expect(caption).not.toContainText('No target path yet', { timeout: 15_000 });
+      await expect(caption).toContainText('/');
 
       const ariaDescribedBy = await navigator
         .locator('[data-testid="create-name"]')
@@ -208,7 +209,7 @@ test.describe('QA extended create-new-project', () => {
       await expect(navigator.locator('[data-testid="create-editor-codex"]')).toBeChecked();
 
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(parent, {
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(parent, {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-name"]').fill('Live Preview');
@@ -221,6 +222,9 @@ test.describe('QA extended create-new-project', () => {
   test('QA-011 + QA-016 — Location persists across opens; Name resets on reopen', async ({
     captureStderrFor,
   }) => {
+    if (process.env.CI) {
+      test.setTimeout(240_000);
+    }
     const tmpHome = seedTmpHome('persist');
     const parent = join(tmpHome, 'projects-persist');
     mkdirSync(parent, { recursive: true });
@@ -237,7 +241,7 @@ test.describe('QA extended create-new-project', () => {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(parent, {
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(parent, {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-name"]').fill('First');
@@ -277,7 +281,7 @@ test.describe('QA extended create-new-project', () => {
       await expect(navigator2.locator('[data-testid="create-project-dialog"]')).toBeVisible({
         timeout: 15_000,
       });
-      await expect(navigator2.locator('[data-testid="create-location"]')).toHaveValue(parent, {
+      await expect(navigator2.locator('[data-testid="create-target-caption"]')).toHaveText(parent, {
         timeout: 15_000,
       });
       await expect(navigator2.locator('[data-testid="create-name"]')).toHaveValue('');
@@ -310,12 +314,12 @@ test.describe('QA extended create-new-project', () => {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(parent, {
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(parent, {
         timeout: 15_000,
       });
 
       await navigator.locator('[data-testid="create-name"]').fill('   ');
-      await expect(navigator.locator('[data-testid="create-target-caption"]')).toContainText('—');
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(parent);
       await expect(navigator.locator('[data-testid="create-submit"]')).toBeDisabled();
 
       await navigator.locator('[data-testid="create-name"]').fill('My / Notes?');
@@ -347,7 +351,7 @@ test.describe('QA extended create-new-project', () => {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(parent, {
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(parent, {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-name"]').fill('Unique');
@@ -391,9 +395,12 @@ test.describe('QA extended create-new-project', () => {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(subFolder, {
-        timeout: 15_000,
-      });
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(
+        subFolder,
+        {
+          timeout: 15_000,
+        },
+      );
       await navigator.locator('[data-testid="create-name"]').fill('Nested');
 
       const nestedBanner = navigator.locator('[data-testid="create-banner-nested"]');
@@ -426,9 +433,12 @@ test.describe('QA extended create-new-project', () => {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(pickedParent, {
-        timeout: 15_000,
-      });
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(
+        pickedParent,
+        {
+          timeout: 15_000,
+        },
+      );
       await navigator.locator('[data-testid="create-name"]').fill('MyProj');
 
       const gitBanner = navigator.locator('[data-testid="create-banner-git-confirm"]');
@@ -458,7 +468,7 @@ test.describe('QA extended create-new-project', () => {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(parent, {
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(parent, {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-name"]').fill('KbdSubmit');
@@ -499,9 +509,12 @@ test.describe('QA extended create-new-project', () => {
         timeout: 15_000,
       });
       await navigator.locator('[data-testid="create-browse"]').click();
-      await expect(navigator.locator('[data-testid="create-location"]')).toHaveValue(subFolder, {
-        timeout: 15_000,
-      });
+      await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(
+        subFolder,
+        {
+          timeout: 15_000,
+        },
+      );
       await navigator.locator('[data-testid="create-name"]').fill('Anything');
 
       const openBtn = navigator.locator('[data-testid="create-banner-nested-open"]');

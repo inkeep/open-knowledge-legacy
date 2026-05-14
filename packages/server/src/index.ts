@@ -117,6 +117,7 @@ export {
 export {
   type FindEnclosingProjectRootResult,
   findEnclosingProjectRoot,
+  isProjectRoot,
 } from './fs/find-project-root.ts';
 export {
   classifyFsPath,

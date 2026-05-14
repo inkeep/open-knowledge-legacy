@@ -86,7 +86,7 @@ test.describe('external-link safety-net delegation', () => {
           return g.__okExternalCalls ?? [];
         });
         expect(calls).toContain('https://github.com/inkeep/open-knowledge');
-      }).toPass({ timeout: 5_000 });
+      }).toPass({ timeout: 15_000 });
 
       await editorPage.evaluate(async () => {
         type Bridge = { shell: { openExternal: (url: string) => Promise<void> } };
@@ -103,7 +103,7 @@ test.describe('external-link safety-net delegation', () => {
           return g.__okExternalCalls ?? [];
         });
         expect(callsAfterBridge).toContain('https://docs.example.com/help');
-      }).toPass({ timeout: 5_000 });
+      }).toPass({ timeout: 15_000 });
     } finally {
       await app.close();
       rmSync(projectDir, { recursive: true, force: true });

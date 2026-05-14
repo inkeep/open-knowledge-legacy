@@ -3,7 +3,8 @@
   "plugins": [
     "./biome-plugins/microcopy-ellipsis.grit",
     "./biome-plugins/no-loosely-typed-webcontents-ipc.grit",
-    "./biome-plugins/no-resolved-value-theme-source.grit"
+    "./biome-plugins/no-resolved-value-theme-source.grit",
+    "./biome-plugins/no-unportaled-editor-content.grit"
   ],
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "formatter": {
@@ -56,6 +57,23 @@
       }
     }
   },
+  "overrides": [
+    {
+      // Apple-Event / IPC roundtrip toPass budget enforcement is scoped to
+      // the desktop-smoke files (and the plugin's own fixture for testing).
+      // packages/app's *.e2e.ts files drive Chromium in-process, NOT macOS
+      // `open(1)` Apple-Event dispatch, so their sub-15s toPass budgets are
+      // legitimate (fast in-process roundtrip, no Launch Services latency).
+      // Pairs with `tests/smoke/calibration.test.ts` Invariant B, which is
+      // scoped to the same surface via `TOPASS_BUDGET_FILES`.
+      "includes": [
+        "packages/desktop/tests/smoke/deep-link.e2e.ts",
+        "packages/desktop/tests/smoke/external-link.e2e.ts",
+        "biome-plugins/__fixtures__/playwright-topass-budget.fixture.tsx"
+      ],
+      "plugins": ["./biome-plugins/playwright-topass-budget.grit"]
+    }
+  ],
   "files": {
     "includes": [
       "**",

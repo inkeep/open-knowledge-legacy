@@ -214,6 +214,7 @@ describe("'ok:shell:spawn-cursor' round-trips spawn outcomes", () => {
       return spawnCursorImpl(
         {
           platform: 'darwin',
+          resolveCursorBinary: async () => null,
           getApplicationInfoForProtocol: async () => {
             resolveCalled++;
             return { name: '', path: '' };

@@ -13,7 +13,8 @@ import Collaboration from '@tiptap/extension-collaboration';
 import Placeholder from '@tiptap/extension-placeholder';
 import { EditorContent } from '@tiptap/react';
 import { initProseMirrorDoc, yCursorPlugin, ySyncPluginKey } from '@tiptap/y-tiptap';
-import { type FC, use, useEffect, useRef, useState } from 'react';
+import { type FC, use, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { SelectionAnnouncer } from '@/components/editor/SelectionAnnouncer';
 import { parkTiptapEditor } from './editor-cache';
 import { InteractionLayerView } from './interaction-layer';
@@ -80,6 +81,7 @@ interface TiptapEditorProps {
   provider: HocuspocusProvider;
   placeholder?: string;
   isSourceMode: boolean;
+  portalTarget: HTMLElement;
 }
 
 type ClipboardState = ReturnType<typeof buildClipboardState>;
@@ -211,7 +213,12 @@ export function buildPatternDConstructorOptions(
   };
 }
 
-export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isSourceMode }) => {
+export const TiptapEditor: FC<TiptapEditorProps> = ({
+  provider,
+  placeholder,
+  isSourceMode,
+  portalTarget,
+}) => {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
   const identity = useIdentity();
@@ -262,6 +269,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
       editor={editor}
       wrapperRef={wrapperRef}
       flashStateRef={flashStateRef}
+      portalTarget={portalTarget}
     />
   );
 };
@@ -276,6 +284,7 @@ interface TiptapEditorChromeProps {
   editor: Editor;
   wrapperRef: React.RefObject<HTMLDivElement | null>;
   flashStateRef: React.RefObject<AgentFlashState>;
+  portalTarget: HTMLElement;
 }
 
 const TiptapEditorChrome: FC<TiptapEditorChromeProps> = ({
@@ -288,7 +297,19 @@ const TiptapEditorChrome: FC<TiptapEditorChromeProps> = ({
   editor,
   wrapperRef,
   flashStateRef,
+  portalTarget,
 }) => {
+  const portalSlotRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const slot = portalSlotRef.current;
+    if (!slot) return;
+    slot.appendChild(portalTarget);
+    return () => {
+      if (portalTarget.parentNode === slot) {
+        slot.removeChild(portalTarget);
+      }
+    };
+  }, [portalTarget]);
   useEffect(() => {
     const docName = provider.configuration.name ?? null;
     setEditorDocName(editor, docName);
@@ -581,15 +602,30 @@ const TiptapEditorChrome: FC<TiptapEditorChromeProps> = ({
           'removeChild' on 'Node'` — regression validated against
           docs-open F1/F4/F5/F10, 2026-04-18. */}
       {/*
-       * <EditorContent> owns the React-side DOM mount and sets
-       * editor.contentComponent (load-bearing for ReactRenderer + the
-       * SlashCommandMenu suggestion popup + ReactNodeViewRenderer used by
-       * JsxComponentView). It does NOT destroy the editor on unmount —
-       * just moves view.dom to a fresh detached div. The V2 cache holds
-       * the editor instance across React unmount; EditorContent re-attaches
-       * view.dom on remount. Editor identity preserved across navigation.
+       * Portal slot — JSX-rendered placeholder where the per-Activity
+       * portal target is imperatively appended (see the useLayoutEffect
+       * above). The actual `<EditorContent>` renders into the portal
+       * target via `createPortal` below, but the DOM appears here in
+       * the `.tiptap-editor` grid — matching the pre-fix position so
+       * scroll geometry (specifically `docs-open.e2e.ts:262` F1 warm-nav
+       * scroll restoration) is unchanged.
+       *
+       * Structural H6 cross-doc-bleed fix: `<EditorContent>` renders into
+       * the per-Activity portal target via `createPortal`, making
+       * `editor.view.dom.parentNode` structurally private to THIS editor.
+       * Other DOM children of this wrapper (`BubbleMenuBar`,
+       * `TableControlsMenu`, `SelectionAnnouncer`, `InteractionLayerView`)
+       * deliberately stay OUTSIDE the portal — they are not editor-view
+       * DOM and don't participate in the
+       * `appendChild(...parentNode.childNodes)` vacuum that the upstream
+       * `PureEditorContent` lifecycle performs on `view.dom.parentNode`.
        */}
-      <EditorContent editor={editor} className="h-full" />
+      <div ref={portalSlotRef} style={{ display: 'contents' }} />
+      {createPortal(
+        // biome-ignore lint/plugin/no-unportaled-editor-content: canonical portaled site — H6 fix per PRECEDENTS.md #44
+        <EditorContent editor={editor} className="tiptap-editor-portal-content h-full" />,
+        portalTarget,
+      )}
       {/* Aria-live announcer for selection changes. Always in the DOM
           (role=status + sr-only) and updates imperatively. */}
       <SelectionAnnouncer editor={editor} />

@@ -31,6 +31,7 @@ export default {
     'packages/app/src/editor/http-client.ts': ['types'],
     'biome-plugins/__fixtures__/**': ['files'],
     'scripts/compute-next-beta.mjs': ['files'],
+    'scripts/compute-next-beta.test.mjs': ['files'],
   },
   workspaces: {
     'packages/app': {
@@ -61,6 +62,7 @@ export default {
       project: 'src/**',
     },
     docs: {
+      entry: ['source.config.ts'],
       ignoreDependencies: [
         'postcss', // Bundled in Next.js
       ],

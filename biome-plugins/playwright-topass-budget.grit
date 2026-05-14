@@ -1,0 +1,48 @@
+// playwright-topass-budget — flag `toPass({ timeout: N })` with N < 15_000.
+//
+// Pairs with `tests/smoke/calibration.test.ts` Invariant B (per-assertion
+// timeout calibration). The calibration unit test enforces the invariant
+// at `bun run check` time (PR-tier gate); this rule fires at editor-save
+// / lint-time so authors see the regression instantly instead of waiting
+// for the gate to run.
+//
+// Why 15_000: macOS `open(1)` Apple-Event delivery + window creation +
+// IPC roundtrip empirically takes 2-8s on a healthy CI runner and can hit
+// 8.8s under sustained load. 15s gives 2-3x headroom over typical worst
+// case. Precedent: `external-link.e2e.ts:83` `firstWindow({ timeout:
+// 15_000 })`.
+//
+// Scope: the cumulative-budget invariant (Invariant A — cumulative inner
+// timeouts ≤ outer per-test budget) is enforced by the calibration unit
+// test, NOT here. Invariant A requires aggregation across same-file
+// helper-call graphs, which GritQL pattern matching can't express. Only
+// Invariant B's single-pattern check fits cleanly.
+//
+// Regex captures the canonical `N_000` / `N000` thousand-range literal
+// forms: 1000-9999 (single-digit prefix + 3 digits) and 10000-14999
+// (1[0-4] prefix + 3 digits), with optional `_` digit separator. Above
+// 15_000 doesn't match — those are well-calibrated.
+//
+// Suppress legitimate uses (e.g., a fast non-Electron path that doesn't
+// touch Apple-Event delivery) with:
+//   // biome-ignore lint/plugin/playwright-topass-budget: <reason>
+
+language js
+
+// `toPass` is always invoked as a member call on the result of `expect(...)`
+// (per Playwright's API surface). The dominant shape is
+// `expect(probeFn).toPass({ timeout: N })`. `$_.toPass($opts)` matches the
+// member-call form and captures the options bag as `$opts`.
+//
+// `contains \`timeout: $n\`` traverses into the options-object literal to
+// find the `timeout: N` property; `$n` captures the numeric-literal AST
+// node, whose text the regex below matches against.
+
+`$_.toPass($opts)` as $call where {
+    $opts <: contains `timeout: $n`,
+    $n <: r"^(?:[0-9]|1[0-4])_?[0-9]{3}$",
+    register_diagnostic(
+        span = $call,
+        message = "Invariant B: `toPass({ timeout })` budget below 15_000ms — macOS Apple-Event / IPC roundtrip needs ≥15s headroom under CI runner-class load. See packages/desktop/tests/smoke/calibration.test.ts."
+    )
+}

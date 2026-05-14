@@ -768,6 +768,74 @@ describe('file-watcher ContentFilter refcount hooks', () => {
       expect.objectContaining({ kind: 'folder-delete', relativePath: 'notes' }),
     );
   });
+
+  test('mkdir -p race: single create event for parent surfaces folder-create for all pre-existing subdirs', async () => {
+    const folderIndex = new Map();
+    const collected: DiskEvent[] = [];
+    const deepDir = resolve(contentDir, 'deep');
+    const nestedDir = resolve(deepDir, 'nested');
+    const emptyDir = resolve(nestedDir, 'empty');
+    mkdirSync(emptyDir, { recursive: true });
+
+    await handleRawEvents(
+      [{ type: 'create', path: deepDir }],
+      contentDir,
+      undefined,
+      new Map(),
+      folderIndex,
+      async (e) => {
+        collected.push(e);
+      },
+    );
+
+    expect(folderIndex.has('deep')).toBe(true);
+    expect(folderIndex.has('deep/nested')).toBe(true);
+    expect(folderIndex.has('deep/nested/empty')).toBe(true);
+    expect(collected).toContainEqual(
+      expect.objectContaining({ kind: 'folder-create', relativePath: 'deep' }),
+    );
+    expect(collected).toContainEqual(
+      expect.objectContaining({ kind: 'folder-create', relativePath: 'deep/nested' }),
+    );
+    expect(collected).toContainEqual(
+      expect.objectContaining({ kind: 'folder-create', relativePath: 'deep/nested/empty' }),
+    );
+
+    const folderEvents = collected
+      .filter((e) => e.kind === 'folder-create')
+      .map((e) => e.relativePath);
+    expect(folderEvents.indexOf('deep')).toBeLessThan(folderEvents.indexOf('deep/nested'));
+    expect(folderEvents.indexOf('deep/nested')).toBeLessThan(
+      folderEvents.indexOf('deep/nested/empty'),
+    );
+  });
+
+  test('rescan does not double-emit when an inner folder already arrived as its own raw event', async () => {
+    const folderIndex = new Map();
+    const collected: DiskEvent[] = [];
+    const deepDir = resolve(contentDir, 'deep');
+    const nestedDir = resolve(deepDir, 'nested');
+    mkdirSync(nestedDir, { recursive: true });
+
+    await handleRawEvents(
+      [
+        { type: 'create', path: deepDir },
+        { type: 'create', path: nestedDir },
+      ],
+      contentDir,
+      undefined,
+      new Map(),
+      folderIndex,
+      async (e) => {
+        collected.push(e);
+      },
+    );
+
+    const nestedCreates = collected.filter(
+      (e) => e.kind === 'folder-create' && e.relativePath === 'deep/nested',
+    );
+    expect(nestedCreates).toHaveLength(1);
+  });
 });
 
 describe('startWatcher symlink handling', () => {

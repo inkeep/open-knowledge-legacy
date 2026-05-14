@@ -80,7 +80,6 @@ class ClientPersistenceImpl implements ClientPersistenceProvider {
         req.onerror = () => reject(req.error);
         req.onblocked = () => {
           console.warn(JSON.stringify({ event: 'ok-client-persistence-clear-blocked', dbName }));
-          reject(new Error(`idb-clear-blocked: ${dbName}`));
         };
       });
     } finally {

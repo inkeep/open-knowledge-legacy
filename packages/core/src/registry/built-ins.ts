@@ -90,8 +90,7 @@ const htmlImgProps: PropDef[] = [
   {
     name: 'alt',
     type: 'string',
-    required: false,
-    defaultValue: '',
+    required: true,
     description: 'Alt text',
   },
   {

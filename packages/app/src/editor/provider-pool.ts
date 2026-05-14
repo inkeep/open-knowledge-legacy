@@ -220,6 +220,8 @@ export class ProviderPool {
   } | null = null;
   private recoveryMismatchStaleClaim: string | undefined;
   private readonly bufferedUpdates = new Map<string, Uint8Array>();
+  private readonly pendingClears = new Map<string, Promise<void>>();
+  private readonly clearFailures = new Set<string>();
   private readonly persistenceFactory: ClientPersistenceFactory;
 
   private readonly storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
@@ -291,6 +293,7 @@ export class ProviderPool {
   }
 
   private attachDeferredPersistence(serverInstanceId: string): void {
+    let anyAttached = false;
     for (const entry of this._entries.values()) {
       if (entry.kind !== 'active') continue;
       if (entry.persistence !== null) continue;
@@ -300,6 +303,7 @@ export class ProviderPool {
           entry.docName,
           entry.provider.document,
         );
+        anyAttached = true;
       } catch (err: unknown) {
         const errorName = err instanceof Error ? err.name : 'non-error-throw';
         this.emitStructuredClientRecoveryEvent({
@@ -309,6 +313,9 @@ export class ProviderPool {
           errorMessage: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+    if (anyAttached) {
+      this.notify();
     }
   }
 
@@ -594,9 +601,15 @@ export class ProviderPool {
     });
 
     const persistenceServerInstanceId = this.cachedServerInstanceId;
+    if (this.clearFailures.has(docName)) {
+      void this.runCloseAndClearPersistence(docName);
+    }
+    const pendingClearForDocName = this.pendingClears.get(docName);
     const idbAttachStart = import.meta.env.PROD === true ? 0 : performance.now();
     const persistence: ClientPersistenceProvider | null =
-      persistenceServerInstanceId !== null && persistenceServerInstanceId.length > 0
+      persistenceServerInstanceId !== null &&
+      persistenceServerInstanceId.length > 0 &&
+      pendingClearForDocName === undefined
         ? this.buildPersistence(persistenceServerInstanceId, docName, provider.document)
         : null;
     if (import.meta.env.PROD !== true) {
@@ -828,7 +841,56 @@ export class ProviderPool {
     this.touch(docName);
     this.notify();
 
+    if (
+      pendingClearForDocName !== undefined &&
+      persistenceServerInstanceId !== null &&
+      persistenceServerInstanceId.length > 0
+    ) {
+      const stableServerInstanceId = persistenceServerInstanceId;
+      void pendingClearForDocName.then(
+        () => {
+          this.attachDeferredPersistenceForEntry(entry, stableServerInstanceId);
+        },
+        (err: unknown) => {
+          console.warn(
+            JSON.stringify({
+              event: 'ok-pool-deferred-persistence-attach-skipped',
+              docName,
+              reason: 'pending-clear-failed',
+              message: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        },
+      );
+    }
+
     return entry;
+  }
+
+  private attachDeferredPersistenceForEntry(
+    entry: ActivePoolEntry,
+    serverInstanceId: string,
+  ): void {
+    const current = this._entries.get(entry.docName);
+    if (current !== entry || current.kind !== 'active' || current.persistence !== null) {
+      return;
+    }
+    try {
+      current.persistence = this.buildPersistence(
+        serverInstanceId,
+        entry.docName,
+        current.provider.document,
+      );
+      this.notify();
+    } catch (err: unknown) {
+      const errorName = err instanceof Error ? err.name : 'non-error-throw';
+      this.emitStructuredClientRecoveryEvent({
+        event: 'ok-client-persistence-attach-failed',
+        ...this.recoveryTelemetryBase(entry.docName),
+        errorName,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private handleServerInstanceMismatch(staleClaimedServerInstanceId: string): void {
@@ -1003,6 +1065,35 @@ export class ProviderPool {
   }
 
   async closeAndClearPersistence(docName: string): Promise<void> {
+    try {
+      await this.runCloseAndClearPersistence(docName);
+    } catch {}
+  }
+
+  private runCloseAndClearPersistence(docName: string): Promise<void> {
+    const inFlight = this.pendingClears.get(docName);
+    if (inFlight !== undefined) {
+      return inFlight;
+    }
+    let resolveWork: () => void = () => {};
+    let rejectWork: (err: unknown) => void = () => {};
+    const work = new Promise<void>((resolve, reject) => {
+      resolveWork = resolve;
+      rejectWork = reject;
+    });
+    this.pendingClears.set(docName, work);
+    const finalize = () => {
+      if (this.pendingClears.get(docName) === work) {
+        this.pendingClears.delete(docName);
+      }
+    };
+    void work.then(finalize, finalize);
+    this.executeCloseAndClearPersistence(docName).then(resolveWork, rejectWork);
+    return work;
+  }
+
+  private async executeCloseAndClearPersistence(docName: string): Promise<void> {
+    this.clearFailures.delete(docName);
     const entry = this.entries.get(docName);
     if (entry?.kind === 'active' && entry.persistence !== null) {
       const persistence = entry.persistence;
@@ -1012,14 +1103,20 @@ export class ProviderPool {
         console.warn(`[ProviderPool] close before clearData threw for ${docName}:`, err);
       }
       try {
-        await persistence.clearData();
+        await this.withClearDataTimeout(docName, persistence.clearData());
       } catch (err) {
         console.warn(`[ProviderPool] clearData on rename failed for ${docName}:`, err);
+        this.clearFailures.add(docName);
+        throw err;
       }
       return;
     }
     if (entry) {
-      this.close(docName);
+      try {
+        this.close(docName);
+      } catch (err) {
+        console.warn(`[ProviderPool] close before IDB-by-name delete threw for ${docName}:`, err);
+      }
     }
 
     const branch = this.getOrInitObservedBranch();
@@ -1028,17 +1125,21 @@ export class ProviderPool {
 
     const dbName = `ok-ydoc:${branch}:${serverInstanceId}:${docName}`;
     try {
-      await new Promise<void>((resolve, reject) => {
-        const req = indexedDB.deleteDatabase(dbName);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-        req.onblocked = () => {
-          console.warn(`[ProviderPool] IDB delete blocked for ${dbName}`);
-          reject(new Error(`idb-clear-blocked: ${dbName}`));
-        };
-      });
+      await this.withClearDataTimeout(
+        docName,
+        new Promise<void>((resolve, reject) => {
+          const req = indexedDB.deleteDatabase(dbName);
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+          req.onblocked = () => {
+            console.warn(`[ProviderPool] IDB delete blocked for ${dbName}`);
+          };
+        }),
+      );
     } catch (err) {
       console.warn(`[ProviderPool] IDB delete on rename failed for ${dbName}:`, err);
+      this.clearFailures.add(docName);
+      throw err;
     }
   }
 
@@ -1106,6 +1207,8 @@ export class ProviderPool {
     this.activeDocName = null;
     this.onChange = null;
     this.bufferedUpdates.clear();
+    this.pendingClears.clear();
+    this.clearFailures.clear();
     this.onBranchMismatch = null;
     this.branchMismatchInFlight = null;
     this.onRenameRedirect = null;

@@ -22,19 +22,24 @@ describe('findProjectDir', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test('returns the dir itself when `.ok/` is at the start', () => {
-    mkdirSync(resolve(tmpDir, '.ok'), { recursive: true });
+  function seedProjectMarker(dir: string): void {
+    mkdirSync(resolve(dir, '.ok'), { recursive: true });
+    writeFileSync(resolve(dir, '.ok', 'config.yml'), '', 'utf-8');
+  }
+
+  test('returns the dir itself when `.ok/config.yml` is at the start', () => {
+    seedProjectMarker(tmpDir);
     expect(findProjectDir(tmpDir)).toBe(resolve(tmpDir));
   });
 
   test('walks up from a subdirectory to the nearest project root', () => {
-    mkdirSync(resolve(tmpDir, '.ok'), { recursive: true });
+    seedProjectMarker(tmpDir);
     const sub = resolve(tmpDir, 'a', 'b', 'c');
     mkdirSync(sub, { recursive: true });
     expect(findProjectDir(sub)).toBe(resolve(tmpDir));
   });
 
-  test('throws with a clear message when no `.ok/` ancestor exists', () => {
+  test('throws with a clear message when no `.ok/config.yml` ancestor exists', () => {
     expect(() => findProjectDir(tmpDir)).toThrow(/No Open Knowledge project found/);
   });
 
@@ -48,8 +53,32 @@ describe('findProjectDir', () => {
     expect(() => findProjectDir(tmpDir)).toThrow(/No Open Knowledge project found/);
   });
 
-  test('prefers the nearest `.ok/` directory over a deeper file marker', () => {
+  test('rejects an empty `.ok/` directory with no config.yml and keeps walking up', () => {
     mkdirSync(resolve(tmpDir, '.ok'), { recursive: true });
+    expect(() => findProjectDir(tmpDir)).toThrow(/No Open Knowledge project found/);
+  });
+
+  test('rejects a folder-rule-style `.ok/frontmatter.yml` without config.yml', () => {
+    mkdirSync(resolve(tmpDir, '.ok'), { recursive: true });
+    writeFileSync(resolve(tmpDir, '.ok', 'frontmatter.yml'), 'title: oops\n', 'utf-8');
+    expect(() => findProjectDir(tmpDir)).toThrow(/No Open Knowledge project found/);
+  });
+
+  test('rejects a directory at `.ok/config.yml` (not a file) and keeps walking up', () => {
+    mkdirSync(resolve(tmpDir, '.ok', 'config.yml'), { recursive: true });
+    expect(() => findProjectDir(tmpDir)).toThrow(/No Open Knowledge project found/);
+  });
+
+  test('walks past a folder-rule `.ok/` sidecar to the real project root above', () => {
+    seedProjectMarker(tmpDir);
+    const inner = resolve(tmpDir, 'specs', 'foo');
+    mkdirSync(resolve(inner, '.ok'), { recursive: true });
+    writeFileSync(resolve(inner, '.ok', 'frontmatter.yml'), 'title: x\n', 'utf-8');
+    expect(findProjectDir(inner)).toBe(resolve(tmpDir));
+  });
+
+  test('prefers the nearest project root over a deeper stray `.ok` file', () => {
+    seedProjectMarker(tmpDir);
     const inner = resolve(tmpDir, 'inner');
     mkdirSync(inner, { recursive: true });
     writeFileSync(resolve(inner, '.ok'), 'oops');
@@ -220,6 +249,7 @@ describe('resolveCwdWithFallback', () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-mcp-resolve-cwd-'));
     mkdirSync(resolve(tmpDir, '.ok'), { recursive: true });
+    writeFileSync(resolve(tmpDir, '.ok', 'config.yml'), '', 'utf-8');
   });
 
   afterEach(async () => {

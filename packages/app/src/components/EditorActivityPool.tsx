@@ -452,6 +452,13 @@ function ActivityEntry({
 }: ActivityEntryProps) {
   const recoveryView = getServerRestartRecoveryView(entry.docName, serverRestartRecovery);
 
+  const [portalTarget] = useState<HTMLDivElement>(() => {
+    const target = document.createElement('div');
+    target.setAttribute('data-ok-editor-portal', entry.docName);
+    target.style.display = 'contents';
+    return target;
+  });
+
   const ytextLength = entry.provider.document.getText('source').length;
 
   const [visitedSource, setVisitedSource] = useState(isSourceMode);
@@ -604,6 +611,7 @@ function ActivityEntry({
                             provider={entry.provider}
                             placeholder={editorPlaceholder}
                             isSourceMode={isSourceMode}
+                            portalTarget={portalTarget}
                           />
                         </div>
                       ) : null}

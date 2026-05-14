@@ -800,6 +800,31 @@
   position: relative;
 }
 
+/* H6 cross-doc-bleed structural fix: `<EditorContent>`'s refDiv is rendered
+ * via `React.createPortal` into a per-Activity `data-ok-editor-portal` div,
+ * which itself is appended into a JSX `portalSlot` placeholder (`display:
+ * contents`) inside `.tiptap-editor`. Both wrappers use `display: contents`
+ * so the refDiv remains the effective grid item of `.tiptap-editor` — same
+ * grid placement, scroll geometry, and box model as the pre-portal inline
+ * `<EditorContent>` mount.
+ *
+ * The `.tiptap-editor > *` rule above selects DOM DIRECT children only.
+ * Two layers of `display: contents` (portalSlot + portalTarget) make the
+ * refDiv a DOM great-grandchild of `.tiptap-editor` even though, for grid
+ * layout purposes, it acts as a direct grid item. The descendant selector
+ * `.tiptap-editor .tiptap-editor-portal-content` matches it explicitly and
+ * applies the same `grid-column: content; position: relative` that the
+ * inline refDiv used to inherit via `.tiptap-editor > *`. Without this
+ * rule, the refDiv falls into the first grid track (the left margin) at
+ * intrinsic-min width and collapses ProseMirror to a ~104px column —
+ * surfaced via the slash-menu's `onMouseEnter` racing the cursor's now-
+ * overlapping popup.
+ */
+.tiptap-editor .tiptap-editor-portal-content {
+  grid-column: content;
+  position: relative;
+}
+
 /* Editor polish */
 .ProseMirror {
   outline: none;
@@ -2252,22 +2277,18 @@ html.electron-mode [data-slot="sidebar-inner"] {
   }
 }
 
-/* Per-block-type tuning. Media blocks (Image, Video) use a tight inset because
- * their visual bounds are sharper than text-heavy blocks. Callouts read
- * --callout-type-color (set inline by the DIY Callout renderer in US-005) so
- * the halo matches the callout's chroma; the fallback to var(--ring) covers
- * unregistered / wildcard paths. Accordions use the default halo — they are
- * text-heavy block containers whose visual bounds already have a subtle
- * border, so no inset/radius override is needed. Cards/Steps per-type rules
- * were removed in US-004 alongside the fumadocs cherry-pick — those
- * descriptor names fall through to the '*' wildcard now. */
+/* Per-block-type tuning. Media blocks (Image, Video) keep a tighter
+ * border-radius that matches their inner element's corner geometry; the
+ * halo inset itself is uniform across all substrates (set on the wrapper
+ * default at the top of this block). Callouts read --callout-type-color
+ * (set inline by the DIY Callout renderer) so the halo matches the
+ * callout's chroma; the fallback to var(--ring) covers unregistered /
+ * wildcard paths. Other substrates fall through to the wildpath defaults. */
 .ProseMirror .jsx-component-wrapper[data-component-type="img"] {
-  --selection-halo-inset: -2px;
   --selection-halo-radius: calc(0.625rem + 2px);
 }
 
 .ProseMirror .jsx-component-wrapper[data-component-type="video"] {
-  --selection-halo-inset: -2px;
   --selection-halo-radius: calc(0.625rem + 2px);
 }
 

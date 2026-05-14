@@ -222,7 +222,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       if (p.type !== 'string') return false;
       if (!p.required) return false;
       if ('hidden' in p && p.hidden) return false;
-      return currentProps[p.name] === '';
+      return !Object.hasOwn(currentProps, p.name);
     });
 
   const showPlaceholder = shouldRenderPlaceholder(descriptor, currentProps);

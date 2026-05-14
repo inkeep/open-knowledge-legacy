@@ -3,7 +3,12 @@ export type HandoffTarget = 'claude-cowork' | 'claude-code' | 'codex' | 'cursor'
 export interface HandoffPayload {
   readonly target: HandoffTarget;
   readonly projectDir: string;
+  /** Absolute path to the current doc (OS-native separator).
+   *  `''` ⇒ project-scoped handoff; URL builders that thread `docPath`
+   *  (currently only claude) skip the `file=` param. */
   readonly docPath: string;
+  /** OK-composed prompt; stays under a 1 KB hard cap.
+   *  `''` ⇒ project-scoped handoff; URL builders skip the prompt query param. */
   readonly prompt: string;
 }
 
@@ -36,4 +41,5 @@ export interface TargetData {
   readonly schemes: ReadonlyArray<string>;
   readonly installUrl: string;
   readonly hasWebFallback?: boolean;
+  readonly tagline?: string;
 }

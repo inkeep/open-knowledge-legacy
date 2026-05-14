@@ -63,7 +63,7 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
 
   const claudeInstalled = installStates['claude-cowork']?.installed === true;
 
-  const prompt = input !== null ? composePrompt(input.docContext) : '';
+  const prompt = input !== null && input.docContext !== null ? composePrompt(input.docContext) : '';
 
   const handleClaudeWebFallback = (): void => {
     if (input === null) return;

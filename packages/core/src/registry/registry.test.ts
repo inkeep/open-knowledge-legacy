@@ -243,6 +243,26 @@ describe('builtInComponents manifest', () => {
     }
   });
 
+  test('img.alt is required with no defaultValue (WCAG 1.1.1 — must be a deliberate decision)', () => {
+    const img = builtInComponents.find((m) => m.name === 'img');
+    const alt = img?.props.find((p) => p.name === 'alt');
+    expect(alt).toBeDefined();
+    expect(alt?.required).toBe(true);
+    expect(alt && 'defaultValue' in alt).toBe(false);
+  });
+
+  test('CommonMarkImage.alt inherits required:true via htmlImgProps[1] identity-share', () => {
+    const img = builtInComponents.find((m) => m.name === 'img');
+    const cmi = builtInComponents.find((m) => m.name === 'CommonMarkImage');
+    const imgAlt = img?.props.find((p) => p.name === 'alt');
+    const cmiAlt = cmi?.props.find((p) => p.name === 'alt');
+    expect(imgAlt).toBeDefined();
+    expect(cmiAlt).toBeDefined();
+    expect(Object.is(imgAlt, cmiAlt)).toBe(true);
+    expect(cmiAlt?.required).toBe(true);
+    expect(cmiAlt && 'defaultValue' in cmiAlt).toBe(false);
+  });
+
   test('CommonMarkImage compat exposes exactly src + alt + title (no align)', () => {
     const cmi = builtInComponents.find((m) => m.name === 'CommonMarkImage');
     expect(cmi).toBeDefined();
@@ -623,4 +643,53 @@ describe('common/advanced split per descriptor', () => {
       expect(advanced).toEqual(split.advanced);
     });
   }
+
+  test('no required string prop declares `defaultValue: ""` (defeats key-absence predicate)', () => {
+    const EXEMPT_BY_UPLOAD_FLOW = new Set<string>([
+      'img.src',
+      'video.src',
+      'audio.src',
+      'Pdf.src',
+      'File.src',
+      'Embed.src',
+      'CommonMarkImage.src',
+    ]);
+
+    const offenders: string[] = [];
+    for (const d of builtInComponents) {
+      for (const p of d.props) {
+        if (p.type !== 'string') continue;
+        if (p.required !== true) continue;
+        if (!('defaultValue' in p)) continue;
+        if (p.defaultValue !== '') continue;
+        if (EXEMPT_BY_UPLOAD_FLOW.has(`${d.name}.${p.name}`)) continue;
+        offenders.push(`${d.name}.${p.name}`);
+      }
+    }
+    if (offenders.length > 0) {
+      throw new Error(
+        `Schema-flip drift detected — these required string props declare \`defaultValue: ""\` ` +
+          `which silently disables the chrome-bar gear nudge (precedent #46). Drop \`defaultValue\` ` +
+          `to make the key-absence predicate fire on slash-insert (correct behavior for ` +
+          `the WCAG-1.1.1 decorative opt-in pattern), or set a meaningful non-empty default ` +
+          `if the prop has a real default value. Offenders: ${offenders.join(', ')}. ` +
+          `If the descriptor uses an upload-flow ergonomic (slash-insert dialog fills the prop ` +
+          `before the component lands), add the descriptor+prop tuple (e.g., 'Foo.src') to ` +
+          `EXEMPT_BY_UPLOAD_FLOW with a comment naming the dialog source.`,
+      );
+    }
+    expect(offenders).toHaveLength(0);
+  });
+
+  test('at least one descriptor exercises the required-no-defaultValue tri-state contract', () => {
+    let count = 0;
+    for (const d of builtInComponents) {
+      for (const p of d.props) {
+        if (p.type === 'string' && p.required === true && !('defaultValue' in p)) {
+          count++;
+        }
+      }
+    }
+    expect(count).toBeGreaterThanOrEqual(2);
+  });
 });

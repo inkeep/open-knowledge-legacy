@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { homedir as nodeHomedir } from 'node:os';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { isProjectRoot } from '@inkeep/open-knowledge-server';
 
 const ANCESTOR_WALK_DEPTH_LIMIT = 30;
-const OK_CONFIG_MARKER = '.ok/config.yml';
 
 export interface ResolveProjectRootResult {
   /** Where `.ok/` lives or will live. Equals `realpath(cwd)` when no
@@ -71,7 +71,7 @@ export function resolveProjectRoot(
   let depth = 0;
   while (depth < ANCESTOR_WALK_DEPTH_LIMIT) {
     if (cursor === home || cursor === '/' || cursor === '') break;
-    if (existsSync(resolve(cursor, OK_CONFIG_MARKER))) {
+    if (isProjectRoot(cursor)) {
       return {
         projectRoot: cursor,
         defaultContentDir: '.',

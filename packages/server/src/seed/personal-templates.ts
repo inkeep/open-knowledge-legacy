@@ -5,7 +5,7 @@ import { join } from 'node:path';
 export const PERSONAL_TEMPLATES: Readonly<Record<string, string>> = {
   'daily-journal': `---
 title: '{{date}}'
-description: Daily journal entry — universal template, works in any vault.
+description: Daily journal entry. Universal template, works in any vault.
 date: '{{date}}'
 author: '{{user}}'
 mood:
@@ -16,22 +16,22 @@ links: []
 tags: [daily, journal]
 ---
 
-## Morning — intentions
+## Morning intentions
 
 (What's the one thing today is for? Top 3 below in frontmatter.)
 
-## Throughout — log
+## Throughout the day
 
 (Capture as you go. Use [[wiki-links]] for anything worth its own page.)
 
-## Evening — reflection
+## Evening reflection
 
 - What shipped:
 - What stalled:
 - Gratitude (also in frontmatter for sweeps):
 `,
   'meeting-notes': `---
-title: Meeting — <topic>
+title: 'Meeting: <topic>'
 description: One file per meeting. Update title with the actual topic after instantiation.
 date: '{{date}}'
 author: '{{user}}'
@@ -52,15 +52,15 @@ tags: [meeting]
 
 ## Decisions
 
-(Concrete decisions made — also in frontmatter for sweeps.)
+(Concrete decisions made. Also in frontmatter for sweeps.)
 
 ## Action items
 
-(Concrete TODOs with owners — also in frontmatter for sweeps.)
+(Concrete TODOs with owners. Also in frontmatter for sweeps.)
 `,
   'weekly-review': `---
 title: 'Week of {{date}}'
-description: Friday sweep — what shipped, what stalled, what's next.
+description: Friday sweep. What shipped, what stalled, what's next.
 week_of: '{{date}}'
 author: '{{user}}'
 shipped: []
@@ -103,7 +103,7 @@ tags: [reading]
 
 ## Highlights
 
-(Direct quotes worth pulling out — with location/page if applicable.)
+(Direct quotes worth pulling out, with location/page if applicable.)
 
 ## My notes
 
@@ -111,10 +111,10 @@ tags: [reading]
 
 ## Connections
 
-(Other reading this links to — \`[[wiki-links]]\` to other entries.)
+(Other reading this links to. Use \`[[wiki-links]]\` to other entries.)
 `,
   'gym-log': `---
-title: '{{date}} — <workout type>'
+title: '{{date}}: <workout type>'
 description: Per-workout log entry.
 date: '{{date}}'
 author: '{{user}}'
@@ -175,7 +175,7 @@ tags: [travel]
 
 ## Bookings
 
-(Flights, hotels, reservations — with confirmation numbers.)
+(Flights, hotels, reservations, with confirmation numbers.)
 
 ## Packing
 

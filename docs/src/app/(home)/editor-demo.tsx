@@ -223,6 +223,7 @@ export function EditorDemo() {
             }}
           >
             <div className="mx-auto max-w-4xl">
+              {/* biome-ignore lint/plugin/no-unportaled-editor-content: single-editor docs demo — no cross-Activity DOM neighbor possible; H6 vacuum precondition (shared view.dom parent) cannot arise here */}
               <EditorContent editor={editor} />
             </div>
           </div>

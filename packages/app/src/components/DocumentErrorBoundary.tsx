@@ -144,7 +144,7 @@ function DocumentErrorFallback({
     >
       <OkBlob size={80} variant="sleeping" />
       <div className="flex flex-col items-center gap-1">
-        <h2 id="document-error-title" className="text-lg font-medium">
+        <h2 id="document-error-title" className="text-2xl font-light tracking-tighter text-balance">
           {title}
         </h2>
         <p className="max-w-sm text-sm text-muted-foreground">{summary}</p>

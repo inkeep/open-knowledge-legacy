@@ -156,6 +156,7 @@ describe('seed path-safety — plan rejects rootDir symlink escape', () => {
   beforeEach(async () => {
     projectDir = await mkdtemp(join(tmpdir(), 'seed-plan-pathsafe-'));
     mkdirSync(join(projectDir, '.ok'), { recursive: true });
+    writeFileSync(join(projectDir, '.ok', 'config.yml'), '', 'utf-8');
   });
 
   afterEach(async () => {

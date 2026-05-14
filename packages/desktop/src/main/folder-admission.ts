@@ -18,6 +18,7 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import { homedir as nodeHomedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { isProjectRoot } from '@inkeep/open-knowledge-server';
 
 const execFileAsync = promisify(execFile);
 
@@ -123,10 +124,6 @@ export interface DiscoverProjectOptions {
 
 const ANCESTOR_WALK_DEPTH_LIMIT = 30;
 
-/** Marker file we look for at every ancestor level. Project layout invariant
- * per `.ok/config.yml` references throughout the codebase. */
-const OK_CONFIG_MARKER = '.ok/config.yml';
-
 export async function discoverProject(
   pickedPath: string,
   opts: DiscoverProjectOptions,
@@ -157,7 +154,7 @@ export async function discoverProject(
   let depth = 0;
   while (depth < ANCESTOR_WALK_DEPTH_LIMIT) {
     if (cursor === home || cursor === '/' || cursor === '') break;
-    if (existsSync(resolve(cursor, OK_CONFIG_MARKER))) {
+    if (isProjectRoot(cursor)) {
       const ancestorPromoted = cursor !== realPicked;
       if (ancestorPromoted && dirSizeProbe !== null) {
         const { exceedsCap } = await dirSizeProbe(cursor);

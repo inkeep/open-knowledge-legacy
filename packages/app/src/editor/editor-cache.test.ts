@@ -1279,6 +1279,131 @@ describe('setActivityMountList — connect/disconnect transitions', () => {
   });
 });
 
+describe('parkingNode — per-entry exclusivity', () => {
+  beforeEach(() => {
+    __resetCacheForTests();
+    installDocumentStub();
+  });
+  afterEach(() => {
+    __resetCacheForTests();
+    uninstallDocumentStub();
+  });
+
+  test('TipTap: two parked entries hold distinct parkingNode references with exclusive children', () => {
+    const a = makeTiptapHarness('doc-a-parking');
+    const b = makeTiptapHarness('doc-b-parking');
+    mountTiptapEditor({
+      docName: a.docName,
+      container: a.container as unknown as HTMLElement,
+      factory: a.factory as unknown as (el: HTMLElement) => ReturnType<typeof a.factory>,
+    });
+    mountTiptapEditor({
+      docName: b.docName,
+      container: b.container as unknown as HTMLElement,
+      factory: b.factory as unknown as (el: HTMLElement) => ReturnType<typeof b.factory>,
+    });
+
+    const entryA = peekTiptap(a.docName);
+    const entryB = peekTiptap(b.docName);
+    if (!entryA || !entryB) throw new Error('cache entries missing');
+
+    parkTiptapEditor(entryA);
+    parkTiptapEditor(entryB);
+
+    expect(entryA.parkingNode).not.toBeNull();
+    expect(entryB.parkingNode).not.toBeNull();
+    expect(entryA.parkingNode).not.toBe(entryB.parkingNode);
+
+    const parkA = entryA.parkingNode as unknown as FakeNode;
+    const parkB = entryB.parkingNode as unknown as FakeNode;
+    expect(parkA.children).toEqual([a.editorDom]);
+    expect(parkB.children).toEqual([b.editorDom]);
+  });
+
+  test('CM6: two parked entries hold distinct parkingNode references with exclusive children', () => {
+    const a = makeCmHarness('cm-doc-a-parking');
+    const b = makeCmHarness('cm-doc-b-parking');
+    mountCmEditor({
+      docName: a.docName,
+      container: a.container as unknown as HTMLElement,
+      factory: a.factory as unknown as (el: HTMLElement) => ReturnType<typeof a.factory>,
+    });
+    mountCmEditor({
+      docName: b.docName,
+      container: b.container as unknown as HTMLElement,
+      factory: b.factory as unknown as (el: HTMLElement) => ReturnType<typeof b.factory>,
+    });
+
+    const entryA = __peekCm(a.docName);
+    const entryB = __peekCm(b.docName);
+    if (!entryA || !entryB) throw new Error('cache entries missing');
+
+    parkCmEditor(entryA);
+    parkCmEditor(entryB);
+
+    expect(entryA.parkingNode).not.toBeNull();
+    expect(entryB.parkingNode).not.toBeNull();
+    expect(entryA.parkingNode).not.toBe(entryB.parkingNode);
+
+    const parkA = entryA.parkingNode as unknown as FakeNode;
+    const parkB = entryB.parkingNode as unknown as FakeNode;
+    expect(parkA.children).toEqual([a.viewDom]);
+    expect(parkB.children).toEqual([b.viewDom]);
+  });
+
+  test('TipTap: re-park after a mount cycle preserves parkingNode identity (lazy idempotency)', () => {
+    const h = makeTiptapHarness('doc-park-cycle-tiptap');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    const entry = peekTiptap(h.docName);
+    if (!entry) throw new Error('cache entry missing');
+
+    parkTiptapEditor(entry);
+    const firstParkingNode = entry.parkingNode;
+    expect(firstParkingNode).not.toBeNull();
+
+    const ctr2 = makeNode();
+    mountTiptapEditor({
+      docName: h.docName,
+      container: ctr2 as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    expect(h.editorDom.parentElement).toBe(ctr2);
+
+    parkTiptapEditor(entry);
+    expect(entry.parkingNode).toBe(firstParkingNode);
+  });
+
+  test('CM6: re-park after a mount cycle preserves parkingNode identity (lazy idempotency)', () => {
+    const h = makeCmHarness('cm-doc-park-cycle');
+    mountCmEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    const entry = __peekCm(h.docName);
+    if (!entry) throw new Error('cache entry missing');
+
+    parkCmEditor(entry);
+    const firstParkingNode = entry.parkingNode;
+    expect(firstParkingNode).not.toBeNull();
+
+    const ctr2 = makeNode();
+    mountCmEditor({
+      docName: h.docName,
+      container: ctr2 as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    expect(h.viewDom.parentElement).toBe(ctr2);
+
+    parkCmEditor(entry);
+    expect(entry.parkingNode).toBe(firstParkingNode);
+  });
+});
+
 describe('subscribePoolEviction — onEvict propagation', () => {
   beforeEach(() => __resetCacheForTests());
   afterEach(() => __resetCacheForTests());

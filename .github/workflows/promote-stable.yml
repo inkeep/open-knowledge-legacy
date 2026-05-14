@@ -158,8 +158,17 @@ jobs:
           # Under the zero-commit-bump cadence, beta release bodies are
           # the source of truth — packages/*/CHANGELOG.md no longer
           # accumulates per-beta entries (only per-stable, written by
-          # main-reset's `bun changeset version` at promotion time).
-          # Aggregate via `gh release view --json body` for each beta tag.
+          # main-reset's `bun changeset version` at promotion time). Each
+          # beta body now carries ONLY the delta introduced in that beta
+          # (compute-next-beta.mjs filters against the prior beta's
+          # embedded consumed-set marker), so simple concatenation across
+          # the cycle's betas yields a clean cumulative changelog with no
+          # duplication.
+          #
+          # Stripped from each body before concatenation:
+          #   - `<!-- ok-consumed-set: ... -->` markers (internal bookkeeping)
+          #   - `Delta since previous beta (...) — N new changesets.`  header
+          #     (the per-beta subheading we emit here is the right framing)
           {
             printf '## %s\n\n' "$STABLE_VERSION"
             printf 'Stable promotion of beta %s.\n\n' "$BETA_TAG_INPUT"
@@ -168,13 +177,11 @@ jobs:
               for tag in $BETA_TAGS_IN_RANGE; do
                 BETA_VER=${tag#v}
                 printf '### %s\n\n' "$BETA_VER"
-                # `gh release view` returns the prerelease Release body
-                # created by release.yml's publish-beta handler. If the
-                # Release is missing (Release-deleted-but-tag-kept edge
-                # case), emit a placeholder and continue — better to ship
-                # an incomplete stable body than to fail the promote.
                 if BODY=$(gh release view "$tag" --json body --jq .body 2>/dev/null) && [[ -n "$BODY" ]]; then
-                  printf '%s\n' "$BODY"
+                  printf '%s\n' "$BODY" \
+                    | sed -E -e '/^<!-- ok-consumed-set:.*-->$/d' \
+                             -e '/^(Delta since previous beta|First beta of the cycle).*$/d' \
+                    | awk 'NF{p=1} p'
                 else
                   printf '_(release body unavailable for %s)_\n' "$tag"
                 fi

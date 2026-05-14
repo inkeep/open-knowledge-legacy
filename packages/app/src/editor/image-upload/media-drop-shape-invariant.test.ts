@@ -47,12 +47,12 @@ describe('media drop-shape ≡ parser-shape invariant', () => {
   test('jsx-img drop shape round-trips through serialize → parse with identical props', () => {
     const dropped = buildMediaJsxNodeData('jsx-img', '/photo.png');
     expect(dropped.attrs.componentName).toBe('img');
-    expect(dropped.attrs.props).toEqual({ src: '/photo.png', alt: '' });
+    expect(dropped.attrs.props).toEqual({ src: '/photo.png' });
 
     const md = mdManager.serialize(wrapInDoc(dropped));
     expect(md).toContain('<img');
     expect(md).toContain('src="/photo.png"');
-    expect(md).toContain('alt=""');
+    expect(md).not.toContain('alt=');
 
     const reparsed = mdManager.parse(md);
     const node = findJsxNode(reparsed, 'img');

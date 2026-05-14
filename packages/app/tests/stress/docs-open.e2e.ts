@@ -169,7 +169,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
       .getByTestId('editor-scroll-container')
       .filter({ hasText: 'Doc A Bottom Marker' });
     await scroller.evaluate((el) => {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'instant' });
+      el.scrollTo({ top: 1500, behavior: 'instant' });
     });
     const scrollBeforeNav = await scroller.evaluate((el) => el.scrollTop);
     expect(scrollBeforeNav).toBeGreaterThan(500);

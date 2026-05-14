@@ -8,6 +8,16 @@ describe('I21 — descriptor source forms round-trip byte-identical via OK→OK 
     expect(mdRoundTrip(src)).toBe(src);
   });
 
+  test('`<img alt="" />` — decorative-image opt-in (WCAG 1.1.1) round-trips', () => {
+    const src = '<img src="https://example.com/x.png" alt="" />\n';
+    expect(mdRoundTrip(src)).toBe(src);
+  });
+
+  test('`<img src="…" />` (no alt) round-trips without stamping alt=""', () => {
+    const src = '<img src="https://example.com/x.png" />\n';
+    expect(mdRoundTrip(src)).toBe(src);
+  });
+
   test('multi-line `<Callout type="note">…</Callout>` — fix for conspicuous codeBlock degradation (BUG class 2)', () => {
     const src = '<Callout type="note">\n\nbody text\n\n</Callout>\n';
     expect(mdRoundTrip(src)).toBe(src);

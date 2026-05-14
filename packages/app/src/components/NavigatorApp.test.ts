@@ -233,6 +233,45 @@ describe('NavigatorApp — Electron theme bridge wiring', () => {
   });
 });
 
+describe('NavigatorApp launcher window drag region', () => {
+  test('detects Electron host via the canonical window.okDesktop != null idiom', () => {
+    expect(NAVIGATOR_SRC).toMatch(
+      /typeof\s+window\s*!==\s*['"]undefined['"]\s*&&\s*window\.okDesktop\s*!=\s*null/,
+    );
+    expect(NAVIGATOR_SRC).toContain('const isElectronHost');
+  });
+
+  test('chrome row spans full window width and is draggable in Electron mode', () => {
+    expect(NAVIGATOR_SRC).toMatch(
+      /data-testid=['"]nav-chrome-row['"][\s\S]*?isElectronHost\s*\?\s*['"]\[-webkit-app-region:drag\]['"]|isElectronHost\s*\?\s*['"]\[-webkit-app-region:drag\]['"][\s\S]*?data-testid=['"]nav-chrome-row['"]/,
+    );
+  });
+
+  test('header element itself does NOT carry drag (chrome row owns it)', () => {
+    expect(NAVIGATOR_SRC).not.toMatch(
+      /<header\b[^>]*\[-webkit-app-region:drag\]|<header\b[\s\S]{0,200}?isElectronHost\s*\?\s*['"]\[-webkit-app-region:drag\]/,
+    );
+  });
+
+  test('outer container is NOT draggable (drag is scoped to the chrome row)', () => {
+    expect(NAVIGATOR_SRC).not.toMatch(
+      /h-screen\s+w-screen[^"`']*\[-webkit-app-region:drag\]|className=\{`flex h-screen[\s\S]*?\[-webkit-app-region:drag\]/,
+    );
+  });
+
+  test('NavigatorCard does NOT carry a no-drag opt-out (no drag ancestor)', () => {
+    const cardFnMatch = NAVIGATOR_SRC.match(/function\s+NavigatorCard\b[\s\S]*?^}/m);
+    expect(cardFnMatch).not.toBeNull();
+    expect(cardFnMatch?.[0] ?? '').not.toMatch(/\[-webkit-app-region:no-drag\]/);
+  });
+
+  test('RecentRow does NOT carry a no-drag opt-out (no drag ancestor)', () => {
+    const rowFnMatch = NAVIGATOR_SRC.match(/function\s+RecentRow\b[\s\S]*?^}/m);
+    expect(rowFnMatch).not.toBeNull();
+    expect(rowFnMatch?.[0] ?? '').not.toMatch(/\[-webkit-app-region:no-drag\]/);
+  });
+});
+
 describe('NavigatorApp entry-point propagation', () => {
   test('Open folder on disk → openProject(..., "pick-existing")', () => {
     expect(NAVIGATOR_SRC).toMatch(/onOpenFolder\s*=[\s\S]*?openProject\([^)]*,\s*'pick-existing'/);

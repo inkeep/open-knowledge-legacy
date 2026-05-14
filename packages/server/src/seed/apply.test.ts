@@ -13,6 +13,7 @@ describe('applySeed — nested .ok/ era', () => {
   beforeEach(async () => {
     projectDir = await mkdtemp(join(tmpdir(), 'seed-apply-'));
     mkdirSync(join(projectDir, '.ok'), { recursive: true });
+    writeFileSync(join(projectDir, '.ok', 'config.yml'), '', 'utf-8');
   });
 
   afterEach(async () => {
