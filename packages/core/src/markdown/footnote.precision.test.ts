@@ -162,3 +162,64 @@ describe('footnotes — surrounding context', () => {
     expect(mdManager.serialize(mdManager.parse(src))).toBe(src);
   });
 });
+
+describe('footnotes — schema-drift defense', () => {
+  const driftMgr = new MarkdownManager({
+    extensions: sharedExtensions.filter(
+      (ext) => ext.name !== 'footnoteReference' && ext.name !== 'footnoteDefinition',
+    ),
+  });
+
+  function paragraphText(json: JSONContent, index: number): string {
+    const paragraphs: JSONContent[] = [];
+    for (const child of json.content ?? []) {
+      if (child.type === 'paragraph') paragraphs.push(child);
+    }
+    const target = paragraphs[index];
+    return target ? plainTextOf(target) : '';
+  }
+
+  test('reference without extension preserves `[^id]` source instead of corrupting to type-name text', () => {
+    const src = 'Hello[^1].\n\n[^1]: Body.\n';
+    const json = driftMgr.parse(src);
+    const flat = JSON.stringify(json);
+    expect(flat).not.toContain('"text":"footnoteReference"');
+    expect(flat).not.toContain('HellofootnoteReference');
+    expect(paragraphText(json, 0)).toBe('Hello[^1].');
+  });
+
+  test('reference without extension preserves source casing on label', () => {
+    const src = 'Casing[^MyNote] check.\n\n[^MyNote]: Body.\n';
+    const json = driftMgr.parse(src);
+    expect(paragraphText(json, 0)).toBe('Casing[^MyNote] check.');
+    expect(paragraphText(json, 1)).toBe('[^MyNote]: ');
+  });
+
+  test('reference without extension round-trips so the [^id] markdown survives serialize', () => {
+    const src = 'Sentence with[^7] reference.\n\n[^7]: Body.\n';
+    const back = driftMgr.serialize(driftMgr.parse(src));
+    expect(back.match(/\[\^7\]/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(back).not.toContain('footnoteReference');
+  });
+
+  test('definition without extension surfaces as visible `[^id]:` marker rather than silently dropping', () => {
+    const src = 'Hi[^x].\n\n[^x]: Lost body text.\n';
+    const json = driftMgr.parse(src);
+    expect(paragraphText(json, 1)).toBe('[^x]: ');
+    expect(JSON.stringify(json)).not.toContain('"text":"footnoteDefinition"');
+    expect(JSON.stringify(json)).not.toContain('Lost body text');
+    const paragraphCount = (json.content ?? []).filter((c) => c.type === 'paragraph').length;
+    expect(paragraphCount).toBe(2);
+  });
+
+  test('inlineUnknownHandler emits node.value when present, never the bare mdast type name', () => {
+    const mgr = new MarkdownManager({
+      extensions: sharedExtensions.filter((ext) => ext.name !== 'mathInline'),
+    });
+    const json = mgr.parse('Wave $\\psi$ here.\n');
+    const flat = JSON.stringify(json);
+    expect(flat).not.toContain('"text":"inlineMath"');
+    expect(flat).not.toContain('Wave inlineMath here');
+    expect(plainTextOf(json)).toContain('\\psi');
+  });
+});

@@ -869,7 +869,7 @@ function buildMdastToPmHandlers(
     position?: { start: { offset: number }; end: { offset: number } };
     value?: string;
   }) => {
-    const sourceRaw = node.value ?? node.type;
+    const sourceRaw = node.value != null ? node.value : `«unknown:${node.type}»`;
     if (n.rawMdxFallback) {
       console.warn(
         JSON.stringify({
@@ -893,7 +893,8 @@ function buildMdastToPmHandlers(
         reason: `Unhandled inline mdast: ${node.type}`,
       }),
     );
-    return schema.text(node.value ?? node.type);
+    if (node.value != null) return schema.text(node.value);
+    return schema.text(`«unknown:${node.type}»`);
   };
 
   if (n.mathInline) {
@@ -911,7 +912,16 @@ function buildMdastToPmHandlers(
         label: node.label ?? node.identifier,
       });
   } else if (!handlers.footnoteReference) {
-    handlers.footnoteReference = inlineUnknownHandler;
+    handlers.footnoteReference = (node: FootnoteReference) => {
+      console.warn(
+        JSON.stringify({
+          event: 'unknown-mdast-type',
+          type: 'footnoteReference',
+          reason: 'FootnoteReference extension missing — recovering [^id] source',
+        }),
+      );
+      return schema.text(`[^${node.label ?? node.identifier}]`);
+    };
   }
   if (n.footnoteDefinition) {
     handlers.footnoteDefinition = toPmNode(n.footnoteDefinition, (node: MdastNodes) => {
@@ -921,6 +931,21 @@ function buildMdastToPmHandlers(
         label: def.label ?? def.identifier,
       };
     });
+  } else if (!handlers.footnoteDefinition) {
+    handlers.footnoteDefinition = (node: FootnoteDefinition) => {
+      console.warn(
+        JSON.stringify({
+          event: 'unknown-mdast-type',
+          type: 'footnoteDefinition',
+          reason: 'FootnoteDefinition extension missing — recovering [^id]: marker',
+        }),
+      );
+      const marker = `[^${node.label ?? node.identifier}]: `;
+      if (n.paragraph) {
+        return n.paragraph.create(null, schema.text(marker));
+      }
+      return null;
+    };
   }
 
   handlers.rawMdxFallbackMdast = (node: {
