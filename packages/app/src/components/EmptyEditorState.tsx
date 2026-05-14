@@ -1,10 +1,9 @@
 import { DocumentListSuccessSchema } from '@inkeep/open-knowledge-core';
-import { ArrowRightIcon } from 'lucide-react';
+import { ArrowRightIcon, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AgentHandoffGrid } from '@/components/empty-state/AgentHandoffGrid';
 import { EmptyStateHeader } from '@/components/empty-state/EmptyStateHeader';
 import { KeyboardHintsFooter } from '@/components/empty-state/KeyboardHintsFooter';
-import { ProjectIdentityStrip } from '@/components/empty-state/ProjectIdentityStrip';
 import { PackCardGrid } from '@/components/PackCardGrid';
 import { SeedDialog } from '@/components/SeedDialog';
 import { Button } from '@/components/ui/button';
@@ -93,7 +92,12 @@ export function EmptyEditorState() {
             }}
           />
         ) : (
-          <AgentHandoffView celebrateSignal={celebrateSignal} />
+          <AgentHandoffView
+            celebrateSignal={celebrateSignal}
+            onAddStarterPack={() => {
+              setSeedDialogOpen(true);
+            }}
+          />
         )
       ) : null}
       <SeedDialog
@@ -152,7 +156,13 @@ function OnboardingView({
   );
 }
 
-function AgentHandoffView({ celebrateSignal }: { celebrateSignal: number }) {
+function AgentHandoffView({
+  celebrateSignal,
+  onAddStarterPack,
+}: {
+  celebrateSignal: number;
+  onAddStarterPack: () => void;
+}) {
   return (
     <div className="flex w-full flex-col gap-10 py-12 max-w-5xl my-auto">
       <EmptyStateHeader
@@ -160,10 +170,18 @@ function AgentHandoffView({ celebrateSignal }: { celebrateSignal: number }) {
         subtitle="Select a file from the sidebar, or pick where to edit alongside your agent."
         celebrateSignal={celebrateSignal}
       />
-      <div className="flex w-full flex-col gap-6">
+      <div className="flex w-full flex-col gap-4">
         <AgentHandoffGrid />
         <div className="flex w-full items-center justify-between gap-4">
-          <ProjectIdentityStrip />
+          <Button
+            onClick={onAddStarterPack}
+            variant="link"
+            size="xs"
+            className="font-mono text-2xs uppercase tracking-wider text-muted-foreground font-normal hover:text-foreground hover:no-underline"
+          >
+            <Plus aria-hidden="true" className="size-3" />
+            Add a starter pack
+          </Button>
           <KeyboardHintsFooter />
         </div>
       </div>

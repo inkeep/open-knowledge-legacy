@@ -194,12 +194,12 @@ describe('Initialize starter pack entry (source-level guards)', () => {
     return ours.split('</CommandItem>')[0] ?? '';
   })();
 
-  test('CommandItem carries the Sparkles icon and "Initialize starter pack" label', () => {
+  test('CommandItem carries the Package icon and "Initialize starter pack" label', () => {
     expect(
       seedBlock,
       'CommandItem with command-palette-initialize-starter-pack not found',
     ).toBeTruthy();
-    expect(seedBlock).toContain('<Sparkles');
+    expect(seedBlock).toContain('<Package');
     expect(seedBlock).toContain('<span>Initialize starter pack</span>');
   });
 

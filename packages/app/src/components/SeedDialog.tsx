@@ -1,6 +1,7 @@
-import { ArrowLeft, FileText, Folder, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { CreatedItemsList } from '@/components/CreatedItemsList';
 import { PackCardGrid } from '@/components/PackCardGrid';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -230,10 +231,7 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
     <DialogRoot open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-3xl" data-ok-layer-spawned="">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkles aria-hidden="true" className="h-4 w-4 text-foreground opacity-70" />
-            {title}
-          </DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
@@ -419,108 +417,5 @@ function SeedDialogBody({
         </div>
       ) : null}
     </div>
-  );
-}
-
-interface CreatedItem {
-  kind: 'folder' | 'file';
-  name: string;
-  description: string;
-}
-
-function basename(path: string): string {
-  return path.split('/').pop() ?? path;
-}
-
-function describeCreatedItems(
-  plan: OkScaffoldPlan,
-  selectedPack: OkSeedPackInfo | undefined,
-): CreatedItem[] {
-  const folderBlurbs = new Map<string, string>();
-  for (const f of selectedPack?.folders ?? []) {
-    folderBlurbs.set(f.path, f.summary);
-  }
-  const folders: CreatedItem[] = plan.created
-    .filter((e) => e.kind === 'folder')
-    .map((e) => ({
-      kind: 'folder',
-      name: `${e.path}/`,
-      description: folderBlurbs.get(basename(e.path)) ?? '',
-    }));
-  const files: CreatedItem[] = plan.created
-    .filter((e) => e.kind === 'file')
-    .map((e) => ({
-      kind: 'file',
-      name: e.path,
-      description: basename(e.path) === 'log.md' ? 'Append-only timeline' : '',
-    }));
-  return [...folders, ...files];
-}
-
-function CreatedItemsList({
-  plan,
-  selectedPack,
-}: {
-  plan: OkScaffoldPlan;
-  selectedPack: OkSeedPackInfo | undefined;
-}) {
-  const items = describeCreatedItems(plan, selectedPack);
-  const personalTemplates = plan.personalTemplates;
-  const personalCount = personalTemplates?.willWrite.length ?? 0;
-
-  return (
-    <section className="space-y-3">
-      <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase font-mono tracking-wider text-primary">
-        <span aria-hidden="true" className="flex items-center justify-center">
-          ◇
-        </span>
-        What gets created
-      </h3>
-      <ul className="space-y-3 overflow-y-auto subtle-scrollbar max-h-full">
-        {items.map((item) => (
-          <li
-            key={item.name}
-            className="flex items-start gap-3 rounded-md border border-border/60 bg-muted/20 p-3"
-          >
-            {item.kind === 'folder' ? (
-              <Folder
-                aria-hidden="true"
-                className="mt-1 h-4 w-4 shrink-0 text-muted-foreground"
-                strokeWidth={1.5}
-              />
-            ) : (
-              <FileText
-                aria-hidden="true"
-                className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
-                strokeWidth={1.5}
-              />
-            )}
-            <div className="min-w-0 flex-1 space-y-0.5">
-              <code className="font-mono text-1sm">{item.name}</code>
-              {item.description ? (
-                <p className="text-1sm text-muted-foreground">{item.description}</p>
-              ) : null}
-            </div>
-          </li>
-        ))}
-        {personalCount > 0 ? (
-          <li className="flex items-start gap-3 rounded-md border border-dashed border-border/60 bg-muted/10 p-3">
-            <FileText
-              aria-hidden="true"
-              className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
-              strokeWidth={1.5}
-            />
-            <div className="min-w-0 flex-1 space-y-0.5">
-              <code className="font-mono text-1sm">
-                ~/.ok/templates/ ({personalCount} {personalCount === 1 ? 'template' : 'templates'})
-              </code>
-              <p className="text-1sm text-muted-foreground">
-                Personal templates: daily journal, reading log, weekly review, recipes, and more.
-              </p>
-            </div>
-          </li>
-        ) : null}
-      </ul>
-    </section>
   );
 }
