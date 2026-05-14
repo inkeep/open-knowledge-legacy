@@ -4,6 +4,7 @@ import { useEditorState } from '@tiptap/react';
 import { AlignCenter, AlignLeft, AlignRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { runWithAlignAnimation } from '../utils/animate-align-change.ts';
 
 type Align = 'center' | 'left' | 'right';
 
@@ -91,7 +92,10 @@ export function ImageAlignButtons({ editor }: ImageAlignButtonsProps) {
                     : { ...liveNode.attrs, props: nextProps, sourceDirty: true };
                   const tr = editor.state.tr.setNodeMarkup(pos, null, nextAttrs);
                   tr.setSelection(NodeSelection.create(tr.doc, pos));
-                  editor.view.dispatch(tr);
+                  const wrapperEl = editor.view.nodeDOM(pos) as HTMLElement | null;
+                  runWithAlignAnimation(wrapperEl, () => {
+                    editor.view.dispatch(tr);
+                  });
                 }}
               >
                 <Icon className="size-3.5" />
