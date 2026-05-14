@@ -6,6 +6,7 @@ import { promptForExistingFolder } from './dialog-helpers.ts';
 
 export interface MenuDeps {
   appName: string;
+  showDevToolsMenu: boolean;
   /** `electron.dialog` — injected so the File → Open Folder click handler
    *  can call `promptForExistingFolder(dialog)` without importing `dialog`
    *  at module scope (breaks Bun-test module load; see file header). */
@@ -166,10 +167,14 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
     {
       label: 'View',
       submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
+        ...(deps.showDevToolsMenu
+          ? ([
+              { role: 'reload' as const },
+              { role: 'forceReload' as const },
+              { role: 'toggleDevTools' as const },
+              { type: 'separator' as const },
+            ] satisfies MenuItemConstructorOptions[])
+          : []),
         { role: 'resetZoom' },
         { role: 'zoomIn' },
         { role: 'zoomOut' },

@@ -663,6 +663,7 @@ async function openProjectOrFallbackToNavigator(
 function refreshApplicationMenu() {
   void installApplicationMenu({
     appName: app.name,
+    showDevToolsMenu: !app.isPackaged || channelFromVersion(app.getVersion()) === 'beta',
     dialog,
     openNavigator,
     openProject: (path, entryPoint) => openProjectOrFallbackToNavigator(path, entryPoint),

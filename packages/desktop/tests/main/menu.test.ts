@@ -21,6 +21,7 @@ type RecentRow = { path: string; name: string };
 function makeDeps(overrides: Partial<MenuDeps> = {}): MenuDeps {
   return {
     appName: 'Open Knowledge',
+    showDevToolsMenu: true,
     dialog: {} as MenuDeps['dialog'],
     openNavigator: mock(() => {}),
     openProject: mock(() => Promise.resolve()),
@@ -164,6 +165,37 @@ describe('buildMenuTemplate', () => {
     expect(topLabels).toContain('View');
     expect(topLabels).toContain('Window');
     expect(topLabels).toContain('Help');
+  });
+
+  describe('View → Reload / Force Reload / Toggle Developer Tools cluster', () => {
+    function viewRoles(deps: MenuDeps): Array<string | undefined> {
+      const template = buildMenuTemplate(deps);
+      const view = template.find((t) => t.label === 'View');
+      const sub = view?.submenu as MenuItemConstructorOptions[] | undefined;
+      return sub?.map((item) => item.role) ?? [];
+    }
+
+    test('showDevToolsMenu: true exposes the dev cluster (dev + beta channel)', () => {
+      const roles = viewRoles(makeDeps({ showDevToolsMenu: true }));
+      expect(roles).toContain('reload');
+      expect(roles).toContain('forceReload');
+      expect(roles).toContain('toggleDevTools');
+      expect(roles).toContain('resetZoom');
+      expect(roles).toContain('zoomIn');
+      expect(roles).toContain('zoomOut');
+      expect(roles).toContain('togglefullscreen');
+    });
+
+    test('showDevToolsMenu: false hides the dev cluster (stable channel)', () => {
+      const roles = viewRoles(makeDeps({ showDevToolsMenu: false }));
+      expect(roles).not.toContain('reload');
+      expect(roles).not.toContain('forceReload');
+      expect(roles).not.toContain('toggleDevTools');
+      expect(roles).toContain('resetZoom');
+      expect(roles).toContain('zoomIn');
+      expect(roles).toContain('zoomOut');
+      expect(roles).toContain('togglefullscreen');
+    });
   });
 
   describe('CLI-on-PATH menu item (M6a / D52)', () => {
