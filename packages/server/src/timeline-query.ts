@@ -470,7 +470,7 @@ export async function getDocumentHistory(
     }
 
     let postFiltered = unique;
-    if (hasRenameHistory && unique.length > 0) {
+    if (unique.length > 0 && chain.length > 0) {
       const filterAncestors: Array<Set<string> | null> = await Promise.all(
         chain.map(async (step) => {
           if (step.renameCommit === null) return null;
