@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { formatOkActor, type OkActorEntry } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
 import {
   appendRenameLogEntry,
@@ -12,8 +13,10 @@ import {
   setRenameLogIndex,
 } from './rename-log.ts';
 import {
+  buildWipTree,
   commitUpstreamImport,
   commitWip,
+  commitWipFromTree,
   initShadowRepo,
   type ParkableDoc,
   parkBranch,
@@ -285,6 +288,61 @@ describe('getDocumentHistory', () => {
       expect(result.total).toBe(0);
       expect(result.hasMore).toBe(false);
     }
+  });
+
+  test("multi-writer fan-out: writer A's commit touching only doc-a does NOT surface in doc-b's timeline", async () => {
+    const { contentDir, shadow } = await setup();
+
+    const writerA: WriterIdentity = {
+      id: 'agent-aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'codex-mcp-client',
+      email: 'agent-aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa@openknowledge.local',
+    };
+    const writerB: WriterIdentity = {
+      id: 'agent-bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',
+      name: 'claude-code',
+      email: 'agent-bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb@openknowledge.local',
+    };
+
+    const commitWriter = async (writer: WriterIdentity, docs: string[], subject: string) => {
+      const treeSha = await buildWipTree(shadow, 'content/docs');
+      const actor: OkActorEntry = {
+        v: 1,
+        writer_id: writer.id,
+        principal: null,
+        agent_session: writer.id.startsWith('agent-') ? writer.id.slice(6) : null,
+        agent_type: null,
+        client_name: writer.name,
+        client_version: null,
+        label: null,
+        display_name: writer.name,
+        color_seed: writer.id,
+        docs,
+      };
+      const message = `wip: ${subject}\n\n${formatOkActor(actor)}`;
+      return commitWipFromTree(shadow, writer, treeSha, message);
+    };
+
+    writeFileSync(resolve(contentDir, 'doc-a.md'), '# A v1\n');
+    const a1 = await commitWriter(writerA, ['doc-a'], 'doc-a v1');
+
+    writeFileSync(resolve(contentDir, 'doc-b.md'), '# B v1\n');
+    const b1 = await commitWriter(writerB, ['doc-b'], 'doc-b v1');
+
+    writeFileSync(resolve(contentDir, 'doc-a.md'), '# A v2\n');
+    const a2 = await commitWriter(writerA, ['doc-a'], 'doc-a v2');
+
+    const aHistory = await getDocumentHistory(shadow, { docName: 'doc-a' }, 'content/docs');
+    const aShas = aHistory.entries.map((e) => e.sha);
+    expect(aShas).toContain(a1);
+    expect(aShas).toContain(a2);
+    expect(aShas).not.toContain(b1);
+
+    const bHistory = await getDocumentHistory(shadow, { docName: 'doc-b' }, 'content/docs');
+    const bShas = bHistory.entries.map((e) => e.sha);
+    expect(bShas).toContain(b1);
+    expect(bShas).not.toContain(a2);
+    expect(bShas).not.toContain(a1);
   });
 
   test('deduplicates entries that appear in multiple ref walks', async () => {
