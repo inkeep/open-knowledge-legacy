@@ -253,6 +253,7 @@ export {
   buildClaudeUrl,
   buildCodexUrl,
   buildCursorUrl,
+  composeProjectPrompt,
   composePrompt,
   type DocContext,
   type HandoffFailureReason,

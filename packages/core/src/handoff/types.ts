@@ -8,7 +8,10 @@ export interface HandoffPayload {
    *  (currently only claude) skip the `file=` param. */
   readonly docPath: string;
   /** OK-composed prompt; stays under a 1 KB hard cap.
-   *  `''` ⇒ project-scoped handoff; URL builders skip the prompt query param. */
+   *  Doc-scoped: `composePrompt(docContext)`.
+   *  Project-scoped: `composeProjectPrompt()`.
+   *  `''` is honored defensively (URL builders skip the prompt query param)
+   *  but no production caller emits it. */
   readonly prompt: string;
 }
 

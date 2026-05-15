@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { buildCodexUrl } from './codex-url.ts';
+import { composeProjectPrompt } from './prompt-composer.ts';
 import type { HandoffPayload } from './types.ts';
 
 function payload(overrides: Partial<HandoffPayload> = {}): HandoffPayload {
@@ -40,8 +41,14 @@ test('buildCodexUrl does NOT thread docPath (only projectDir via path=)', () => 
   expect(url).not.toContain('file=');
 });
 
-test('buildCodexUrl project-scoped (prompt="") drops prompt= and keeps path=', () => {
+test('buildCodexUrl defensive empty-prompt drops prompt= and keeps path=', () => {
   const url = buildCodexUrl(payload({ prompt: '', docPath: '' }));
   expect(url).toBe('codex://new?path=%2FUsers%2Fwho%2Fproj');
   expect(url).not.toContain('prompt=');
+});
+
+test('buildCodexUrl project-scoped (composeProjectPrompt) includes encoded prompt + path', () => {
+  const prompt = composeProjectPrompt();
+  const url = buildCodexUrl(payload({ prompt, docPath: '' }));
+  expect(url).toBe(`codex://new?prompt=${encodeURIComponent(prompt)}&path=%2FUsers%2Fwho%2Fproj`);
 });

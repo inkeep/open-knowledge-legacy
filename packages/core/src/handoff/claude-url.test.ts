@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { buildClaudeUrl } from './claude-url.ts';
+import { composeProjectPrompt } from './prompt-composer.ts';
 import type { HandoffPayload } from './types.ts';
 
 function payload(overrides: Partial<HandoffPayload> = {}): HandoffPayload {
@@ -105,17 +106,26 @@ test('buildClaudeUrl single-encodes Windows backslash path (cowork) — DC8.5', 
   expect(url).toContain('&file=C%3A%5CUsers%5Cwho%5Cproj%5Cdocs%5Cnote.md');
 });
 
-test('buildClaudeUrl project-scoped (prompt="" + docPath="") drops q and file, keeps folder', () => {
+test('buildClaudeUrl defensive empty-prompt + empty docPath drops q and file, keeps folder', () => {
   const url = buildClaudeUrl({ mode: 'cowork' }, payload({ prompt: '', docPath: '' }));
   expect(url).toBe('claude://cowork/new?folder=%2FUsers%2Fwho%2Fproj');
   expect(url).not.toContain('q=');
   expect(url).not.toContain('file=');
 });
 
-test('buildClaudeUrl project-scoped applies to code mode as well', () => {
+test('buildClaudeUrl defensive empty-prompt fallback applies to code mode as well', () => {
   const url = buildClaudeUrl(
     { mode: 'code' },
     payload({ target: 'claude-code', prompt: '', docPath: '' }),
   );
   expect(url).toBe('claude://code/new?folder=%2FUsers%2Fwho%2Fproj');
+});
+
+test('buildClaudeUrl project-scoped (composeProjectPrompt + empty docPath) emits q + folder, no file', () => {
+  const prompt = composeProjectPrompt();
+  const url = buildClaudeUrl({ mode: 'cowork' }, payload({ prompt, docPath: '' }));
+  expect(url).toBe(
+    `claude://cowork/new?q=${encodeURIComponent(prompt)}&folder=%2FUsers%2Fwho%2Fproj`,
+  );
+  expect(url).not.toContain('file=');
 });

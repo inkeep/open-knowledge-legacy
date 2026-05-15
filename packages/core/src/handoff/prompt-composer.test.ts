@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { composePrompt } from './prompt-composer.ts';
+import { composeProjectPrompt, composePrompt } from './prompt-composer.ts';
 
 test('composePrompt interpolates relativePath into the canonical template', () => {
   expect(composePrompt({ relativePath: 'foo.md' })).toBe(
@@ -31,4 +31,18 @@ test('composePrompt handles the boundary case of an empty relative path', () => 
   expect(composePrompt({ relativePath: '' })).toBe(
     'Open Knowledge doc: . Use the open-knowledge MCP tool for backlinks and related context.',
   );
+});
+
+test('composeProjectPrompt returns the canonical project-scoped sentence', () => {
+  expect(composeProjectPrompt()).toBe(
+    'Open Knowledge project. Use the open-knowledge MCP tool to discover docs and backlinks.',
+  );
+});
+
+test('composeProjectPrompt stays under the 1024-char budget', () => {
+  expect(composeProjectPrompt().length).toBeLessThan(1024);
+});
+
+test('composeProjectPrompt is deterministic across calls', () => {
+  expect(composeProjectPrompt()).toBe(composeProjectPrompt());
 });

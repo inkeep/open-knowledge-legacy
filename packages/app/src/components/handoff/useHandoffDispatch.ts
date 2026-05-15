@@ -1,4 +1,5 @@
 import {
+  composeProjectPrompt,
   composePrompt,
   type DocContext,
   type HandoffOutcome,
@@ -143,7 +144,7 @@ export async function runHandoffDispatch(
     target,
     projectDir: input.projectDir,
     docPath: input.docPath,
-    prompt: input.docContext === null ? '' : composePrompt(input.docContext),
+    prompt: input.docContext === null ? composeProjectPrompt() : composePrompt(input.docContext),
   };
 
   const outcome = await deps.dispatchHandoff(payload);
