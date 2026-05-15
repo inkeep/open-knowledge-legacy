@@ -443,3 +443,197 @@ describe('PropPanel — CodeMirror branch (string props with `language`)', () =>
     expect(html).toContain('id="prop-chart"');
   });
 });
+
+describe('PropPanel — media URL validation', () => {
+  test('video src with YouTube URL renders inline embed-provider error + a11y wiring', () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() =>
+      renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ src: 'https://www.youtube.com/watch?v=rekaSOwGMu0' }}
+          onChange={() => {}}
+        />,
+      ),
+    );
+    expect(html).toContain('data-prop-media-error');
+    expect(html).toContain('YouTube');
+    expect(html).toContain('not yet supported');
+    expect(html).not.toMatch(/PRD-\d+/);
+    expect(html).toContain('aria-invalid="true"');
+    expect(html).toContain('aria-describedby="prop-src-error"');
+    expect(html).toContain('id="prop-src-error"');
+    expect(html).toContain('role="alert"');
+  });
+
+  test('video src with Vimeo URL renders inline embed-provider error', () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() =>
+      renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ src: 'https://vimeo.com/123456789' }}
+          onChange={() => {}}
+        />,
+      ),
+    );
+    expect(html).toContain('data-prop-media-error');
+    expect(html).toContain('Vimeo');
+    expect(html).not.toMatch(/PRD-\d+/);
+  });
+
+  test('video src with Loom URL renders inline embed-provider error', () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() =>
+      renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ src: 'https://www.loom.com/share/abc' }}
+          onChange={() => {}}
+        />,
+      ),
+    );
+    expect(html).toContain('data-prop-media-error');
+    expect(html).toContain('Loom');
+    expect(html).not.toMatch(/PRD-\d+/);
+  });
+
+  test('video src with wrong-extension URL renders inline error', () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() =>
+      renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ src: 'https://example.com/page.html' }}
+          onChange={() => {}}
+        />,
+      ),
+    );
+    expect(html).toContain('data-prop-media-error');
+  });
+
+  test('video src with valid mp4 URL renders no error', () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() =>
+      renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ src: 'https://example.com/clip.mp4' }}
+          onChange={() => {}}
+        />,
+      ),
+    );
+    expect(html).not.toContain('data-prop-media-error');
+  });
+
+  test('video src with data: URI renders inline error (sanitizer would strip to #)', () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() =>
+      renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ src: 'data:video/mp4;base64,AAAA' }}
+          onChange={() => {}}
+        />,
+      ),
+    );
+    expect(html).toContain('data-prop-media-error');
+    expect(html).toContain('Data URIs are not supported');
+  });
+
+  test('video src with extensionless CDN URL renders no error (no false positive)', () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() =>
+      renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ src: 'https://cdn.example.com/media/signed-abc123' }}
+          onChange={() => {}}
+        />,
+      ),
+    );
+    expect(html).not.toContain('data-prop-media-error');
+  });
+
+  test("video src empty renders no error (don't show error on blank input)", () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).not.toContain('data-prop-media-error');
+  });
+
+  test('video src input has placeholder describing accepted URL shapes', () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).toContain('placeholder=');
+    expect(html.toLowerCase()).toContain('.mp4');
+  });
+
+  test('img src with YouTube URL renders inline error (image command shares the input)', () => {
+    const d = findBuiltIn('img');
+    const html = withFakeStorage(() =>
+      renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ src: 'https://www.youtube.com/watch?v=abc' }}
+          onChange={() => {}}
+        />,
+      ),
+    );
+    expect(html).toContain('data-prop-media-error');
+    expect(html).toContain('YouTube');
+    expect(html).not.toContain('embeds');
+  });
+
+  test('audio src with YouTube URL renders inline error (audio command shares the input)', () => {
+    const d = findBuiltIn('audio');
+    const html = withFakeStorage(() =>
+      renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ src: 'https://www.youtube.com/watch?v=abc' }}
+          onChange={() => {}}
+        />,
+      ),
+    );
+    expect(html).toContain('data-prop-media-error');
+    expect(html).toContain('YouTube');
+  });
+
+  test('video poster (advanced prop) now validates too — YouTube URL errors', () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() => {
+      persistAdvancedOpenState('video', true);
+      return renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ poster: 'https://www.youtube.com/watch?v=abc' }}
+          onChange={() => {}}
+        />,
+      );
+    });
+    expect(html).toContain('id="prop-poster"');
+    expect(html).toContain('data-prop-media-error');
+    expect(html).toContain('YouTube');
+    expect(html).toContain('not direct image files');
+    expect(html).not.toContain('not yet supported');
+  });
+
+  test('non-media string props (e.g. img.alt) render NO placeholder/error machinery', () => {
+    const d = findBuiltIn('img');
+    const html = withFakeStorage(() =>
+      renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ alt: 'a long alt text describing the image' }}
+          onChange={() => {}}
+        />,
+      ),
+    );
+    expect(html).toContain('id="prop-alt"');
+    expect(html).not.toMatch(/id="prop-alt"[^>]*>[^<]*<[^>]*data-prop-media-error/);
+  });
+});

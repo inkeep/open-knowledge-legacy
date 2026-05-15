@@ -256,6 +256,7 @@ const htmlVideoProps: PropDef[] = [
     required: false,
     advanced: true,
     description: 'Poster image URL shown before playback',
+    accept: ALLOWED_IMAGE_MIME_TYPES,
   },
   {
     name: 'width',

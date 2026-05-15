@@ -17,6 +17,12 @@ import { Switch } from '@/components/ui/switch';
 import { uploadFile } from '@/editor/image-upload/upload-file.ts';
 import type { JsxComponentDescriptor } from '@/editor/registry/types.ts';
 import { getAutoFocusedPropName, humanizePropName } from '@/editor/utils/editor-strings.ts';
+import {
+  mediaKindForAccept,
+  mediaUrlPlaceholder,
+  mediaUrlValidationMessage,
+  validateMediaUrl,
+} from '@/editor/utils/validate-media-url.ts';
 import { CodeMirrorPropInput } from './CodeMirrorPropInput.tsx';
 
 function advancedOpenStateKey(descriptorName: string): string {
@@ -188,6 +194,19 @@ function PropControl({
         );
       }
 
+      const mediaKind = accept !== undefined ? mediaKindForAccept(accept) : undefined;
+      const currentStringValue = (value as string) ?? '';
+      const mediaValidation =
+        mediaKind !== undefined ? validateMediaUrl(currentStringValue, mediaKind) : null;
+      const mediaErrorMessage =
+        mediaValidation !== null &&
+        !mediaValidation.valid &&
+        mediaKind !== undefined &&
+        currentStringValue.trim().length > 0
+          ? mediaUrlValidationMessage(mediaValidation, mediaKind)
+          : null;
+      const mediaPlaceholder = mediaKind !== undefined ? mediaUrlPlaceholder(mediaKind) : undefined;
+
       return (
         <div className="flex flex-col gap-1">
           <label htmlFor={stringId} className="text-xs text-muted-foreground">
@@ -197,7 +216,8 @@ function PropControl({
             <Input
               id={stringId}
               type="text"
-              value={(value as string) ?? ''}
+              value={currentStringValue}
+              placeholder={mediaPlaceholder}
               onChange={(e) => {
                 const raw = e.target.value;
                 if (raw === '' && treatEmptyAsUndefined) {
@@ -208,10 +228,22 @@ function PropControl({
               }}
               autoFocus={isAutoFocused}
               data-prop-autofocus={isAutoFocused ? '' : undefined}
+              aria-invalid={mediaErrorMessage !== null ? true : undefined}
+              aria-describedby={mediaErrorMessage !== null ? `${stringId}-error` : undefined}
               className="h-7 text-sm"
             />
             {showUpload && <PropUploadButton accept={accept} onUploaded={(url) => onChange(url)} />}
           </div>
+          {mediaErrorMessage !== null && (
+            <p
+              id={`${stringId}-error`}
+              data-prop-media-error=""
+              className="text-xs text-destructive"
+              role="alert"
+            >
+              {mediaErrorMessage}
+            </p>
+          )}
         </div>
       );
     }
