@@ -205,8 +205,9 @@ describe('runHandoffDispatch — success path', () => {
     });
   });
 
-  test('project-scoped (docContext: null) emits empty prompt + empty docPath to dispatchHandoff', async () => {
+  test('project-scoped (docContext: null) emits composeProjectPrompt() + empty docPath to dispatchHandoff', async () => {
     const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const { composeProjectPrompt } = await import('@inkeep/open-knowledge-core');
     const deps = buildDeps();
     const input: HandoffDispatchInput = {
       docContext: null,
@@ -223,7 +224,7 @@ describe('runHandoffDispatch — success path', () => {
     expect(payload.target).toBe('codex');
     expect(payload.projectDir).toBe('/Users/sarah/proj');
     expect(payload.docPath).toBe('');
-    expect(payload.prompt).toBe('');
+    expect(payload.prompt).toBe(composeProjectPrompt());
   });
 });
 

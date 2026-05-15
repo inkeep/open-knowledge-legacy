@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { buildCursorUrl } from './cursor-url.ts';
+import { composeProjectPrompt } from './prompt-composer.ts';
 import type { HandoffPayload } from './types.ts';
 
 function payload(overrides: Partial<HandoffPayload> = {}): HandoffPayload {
@@ -68,8 +69,17 @@ test('buildCursorUrl mode= is the literal enum value (not encoded)', () => {
   expect(url.endsWith('&mode=agent')).toBe(true);
 });
 
-test('buildCursorUrl project-scoped (prompt="") drops text= and keeps workspace + mode', () => {
+test('buildCursorUrl defensive empty-prompt drops text= and keeps workspace + mode', () => {
   const url = buildCursorUrl(payload({ prompt: '', docPath: '' }));
   expect(url).toBe('cursor://anysphere.cursor-deeplink/prompt?workspace=proj&mode=agent');
   expect(url).not.toContain('text=');
+});
+
+test('buildCursorUrl project-scoped (composeProjectPrompt) double-encodes prompt + keeps workspace + mode', () => {
+  const prompt = composeProjectPrompt();
+  const url = buildCursorUrl(payload({ prompt, docPath: '' }));
+  const doubleEncoded = encodeURIComponent(encodeURIComponent(prompt));
+  expect(url).toBe(
+    `cursor://anysphere.cursor-deeplink/prompt?text=${doubleEncoded}&workspace=proj&mode=agent`,
+  );
 });
