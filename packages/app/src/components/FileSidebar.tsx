@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { useFolderConfig } from '@/hooks/use-folder-config';
 import { subscribeToCreateTopLevelFile } from '@/lib/create-file-events';
 import { ProfilerBoundary } from '@/lib/perf';
 import { cn } from '@/lib/utils';
@@ -106,6 +107,12 @@ function FileSidebarInner({ onOpenSearch }: FileSidebarProps) {
   const allExpanded = hasFolders && folderState.expandedCount === folderState.folderCount;
   const noneExpanded = folderState.expandedCount === 0;
 
+  const rootFolderConfig = useFolderConfig('');
+  const hasTemplates =
+    rootFolderConfig.state.status === 'ready'
+      ? (rootFolderConfig.state.data.folder.templates_available?.length ?? 0) > 0
+      : true;
+
   return (
     <Sidebar variant="inset">
       <SidebarHeader
@@ -173,11 +180,13 @@ function FileSidebarInner({ onOpenSearch }: FileSidebarProps) {
             label="New File"
             onClick={() => tree?.startCreating('file', initialCreateDir)}
           />
-          <ToolbarButton
-            icon={FilePlus}
-            label="New from template"
-            onClick={() => tree?.startCreatingFromTemplate(initialCreateDir)}
-          />
+          {hasTemplates ? (
+            <ToolbarButton
+              icon={FilePlus}
+              label="New from template"
+              onClick={() => tree?.startCreatingFromTemplate(initialCreateDir)}
+            />
+          ) : null}
           <ToolbarButton
             icon={FolderPlus}
             label="New Folder"

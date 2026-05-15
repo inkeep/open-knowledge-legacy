@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { subscribeToTemplatesChanged } from '@/lib/documents-events';
 import { parseApiError } from '@/lib/parse-api-error';
 
 interface FolderConfig {
@@ -60,6 +61,13 @@ export interface FolderConfigHandle {
 export function useFolderConfig(folderPath: string | null): FolderConfigHandle {
   const [state, setState] = useState<AsyncState<FolderConfigSnapshot>>({ status: 'idle' });
   const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (folderPath === null) return;
+    return subscribeToTemplatesChanged(() => {
+      setRefreshKey((k) => k + 1);
+    });
+  }, [folderPath]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-fetch trigger is the only purpose of refreshKey
   useEffect(() => {

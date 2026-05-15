@@ -40,3 +40,15 @@ export function subscribeToDocumentsChanged(
   window.addEventListener(DOCUMENTS_CHANGED_EVENT, listener);
   return () => window.removeEventListener(DOCUMENTS_CHANGED_EVENT, listener);
 }
+
+const TEMPLATES_CHANGED_EVENT = 'open-knowledge:templates-changed';
+
+export function emitTemplatesChanged(): void {
+  window.dispatchEvent(new CustomEvent(TEMPLATES_CHANGED_EVENT));
+}
+
+export function subscribeToTemplatesChanged(onChange: () => void): () => void {
+  const listener = () => onChange();
+  window.addEventListener(TEMPLATES_CHANGED_EVENT, listener);
+  return () => window.removeEventListener(TEMPLATES_CHANGED_EVENT, listener);
+}

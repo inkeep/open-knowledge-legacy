@@ -197,6 +197,19 @@ test.describe('sidebar-search-pill — discovery, click, keyboard, semantics', (
     if (!folderRes.ok && folderRes.status !== 409) {
       throw new Error(`create-folder failed: ${folderRes.status}`);
     }
+    const templateRes = await fetch(`${workerServer.baseURL}/api/template`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folder: '',
+        name: 'q006-template',
+        frontmatter: { title: 'Q006 template' },
+        body: 'Template body',
+      }),
+    });
+    if (!templateRes.ok) {
+      throw new Error(`PUT /api/template failed: ${templateRes.status}`);
+    }
     await page.setViewportSize(DESKTOP_VIEWPORT);
     await page.goto('/#/q006');
     await page.waitForSelector('[role="treeitem"]', { timeout: 15_000 });
