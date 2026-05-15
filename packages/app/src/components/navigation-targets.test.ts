@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   deriveKnownFolderPaths,
   docNameForNavigationTarget,
+  downgradeFolderIndexForHashNav,
   resolveNavigationTarget,
 } from './navigation-targets';
 
@@ -134,5 +135,50 @@ describe('docNameForNavigationTarget', () => {
         target: 'reports/new-note',
       }),
     ).toBe('reports/new-note');
+  });
+});
+
+describe('downgradeFolderIndexForHashNav', () => {
+  test('rewrites a canonical-index target to its folder overview', () => {
+    expect(
+      downgradeFolderIndexForHashNav({
+        kind: 'folder-index',
+        target: 'reports',
+        folderPath: 'reports',
+        docName: 'reports/index',
+        noteKind: 'canonical-index',
+      }),
+    ).toEqual({
+      kind: 'folder',
+      target: 'reports',
+      folderPath: 'reports',
+    });
+  });
+
+  test('rewrites a legacy-folder-note target to its folder overview', () => {
+    expect(
+      downgradeFolderIndexForHashNav({
+        kind: 'folder-index',
+        target: 'reports',
+        folderPath: 'reports',
+        docName: 'reports/reports',
+        noteKind: 'legacy-folder-note',
+      }),
+    ).toEqual({
+      kind: 'folder',
+      target: 'reports',
+      folderPath: 'reports',
+    });
+  });
+
+  test('passes through non-folder-index targets unchanged', () => {
+    const doc = { kind: 'doc', target: 'foo', docName: 'foo' } as const;
+    expect(downgradeFolderIndexForHashNav(doc)).toBe(doc);
+
+    const folder = { kind: 'folder', target: 'reports', folderPath: 'reports' } as const;
+    expect(downgradeFolderIndexForHashNav(folder)).toBe(folder);
+
+    const missing = { kind: 'missing', target: 'gone' } as const;
+    expect(downgradeFolderIndexForHashNav(missing)).toBe(missing);
   });
 });

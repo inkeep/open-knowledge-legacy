@@ -129,6 +129,17 @@ export function resolveNavigationTarget(
   };
 }
 
+export function downgradeFolderIndexForHashNav(
+  target: ResolvedNavigationTarget,
+): ResolvedNavigationTarget {
+  if (target.kind !== 'folder-index') return target;
+  return {
+    kind: 'folder',
+    target: target.folderPath,
+    folderPath: target.folderPath,
+  };
+}
+
 export function docNameForNavigationTarget(target: ResolvedNavigationTarget): string | null {
   switch (target.kind) {
     case 'doc':

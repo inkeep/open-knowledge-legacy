@@ -12,6 +12,14 @@ describe('App module', () => {
   });
 });
 
+describe('NavigationHandler folder-index downgrade', () => {
+  test('hash-driven nav routes folder-index through downgradeFolderIndexForHashNav', () => {
+    expect(src).toContain('downgradeFolderIndexForHashNav');
+    expect(src).toMatch(/downgradeFolderIndexForHashNav\(\s*resolved\s*\)/);
+    expect(src).toMatch(/openTargetTransition\(\s*target\s*\)/);
+  });
+});
+
 describe('SettingsShortcutHandler wiring (US-010)', () => {
   test('imports isSettingsShortcut and SETTINGS_OPEN_HASH from use-settings-route', () => {
     expect(src).toContain('isSettingsShortcut');
