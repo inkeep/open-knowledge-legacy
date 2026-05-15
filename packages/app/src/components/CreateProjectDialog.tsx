@@ -18,7 +18,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type {
   OkDesktopBridge,
@@ -85,6 +84,19 @@ export function basenamePreview(path: string): string {
   return segments.length > 0 ? (segments[segments.length - 1] ?? path) : path;
 }
 
+export function dirnamePreview(path: string): string {
+  if (path === '') return '';
+  const trimmed = path.replace(/[/\\]+$/, '');
+  if (trimmed === '') return '';
+  const sepMatch = trimmed.match(/[/\\][^/\\]+$/);
+  if (sepMatch === null) return '';
+  const cutAt = trimmed.length - sepMatch[0].length;
+  if (cutAt === 0) {
+    return trimmed[0] ?? '';
+  }
+  return trimmed.slice(0, cutAt);
+}
+
 export function computeCascade(input: {
   parent: string;
   sanitizedName: string;
@@ -122,11 +134,11 @@ function errorCopy(err: CreateNewError): string {
     case 'nested-project':
       return 'A project already exists at this location. Pick a different parent folder.';
     case 'target-not-empty':
-      return 'A non-empty folder with this name already exists. Use a different name.';
+      return 'A non-empty folder already exists at this path. Pick a different folder.';
     case 'invalid-args':
-      return 'Invalid input — please check the name and try again.';
+      return 'Invalid input — pick a different folder.';
     case 'mkdir-failed':
-      return 'Could not create the project folder. Try a different name or location.';
+      return 'Could not create the project folder. Pick a different folder.';
     case 'git-init-failed':
       return 'Project folder created, but git init failed. Try again.';
     case 'init-failed':
@@ -139,9 +151,8 @@ function errorCopy(err: CreateNewError): string {
 }
 
 export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjectDialogProps) {
-  const [name, setName] = useState('');
-  const [parent, setParent] = useState('');
-  const [parentLoading, setParentLoading] = useState(false);
+  const [picked, setPicked] = useState('');
+  const [defaultPath, setDefaultPath] = useState('');
   const [editorIds, setEditorIds] = useState<ReadonlySet<OkMcpWiringEditorId>>(
     () => new Set(ALL_EDITOR_IDS),
   );
@@ -154,7 +165,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
   const firedBanners = useRef<Set<CreateNewBannerKind>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const browseButtonRef = useRef<HTMLButtonElement | null>(null);
   const removeGitCallIdRef = useRef(0);
 
   useEffect(() => {
@@ -163,27 +174,24 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     setSubmitError(null);
     setCascade({ kind: 'idle' });
     setBusy(false);
-    setName('');
+    setPicked('');
     setEditorIds(new Set(ALL_EDITOR_IDS));
     setRemoveGitState({ kind: 'idle' });
     removeGitCallIdRef.current += 1;
 
     let cancelled = false;
-    setParentLoading(true);
+    setDefaultPath('');
     bridge.fs
       .defaultProjectsRoot()
       .then((root) => {
-        if (!cancelled) setParent(root);
+        if (!cancelled) setDefaultPath(root);
       })
       .catch((err) => {
         console.warn('[CreateProjectDialog] defaultProjectsRoot probe failed:', err);
-      })
-      .finally(() => {
-        if (!cancelled) setParentLoading(false);
       });
 
     const raf = requestAnimationFrame(() => {
-      nameInputRef.current?.focus();
+      browseButtonRef.current?.focus();
     });
 
     return () => {
@@ -198,7 +206,12 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     if (debounceRef.current !== null) clearTimeout(debounceRef.current);
     if (abortRef.current !== null) abortRef.current.abort();
 
-    const sanitized = sanitizeFolderName(name);
+    if (picked === '') {
+      setCascade({ kind: 'idle' });
+      return;
+    }
+    const parent = dirnamePreview(picked);
+    const sanitized = sanitizeFolderName(basenamePreview(picked));
     if (parent === '' || sanitized === '') {
       setCascade({ kind: 'idle' });
       return;
@@ -238,7 +251,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
       if (debounceRef.current !== null) clearTimeout(debounceRef.current);
       ctrl.abort();
     };
-  }, [open, name, parent, bridge, probeNonce]);
+  }, [open, picked, bridge, probeNonce]);
 
   useEffect(() => {
     if (!open) return;
@@ -285,13 +298,15 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     bridge.project.recordCreateNewBannerShown(banner).catch(() => {});
   }, [open, cascade, bridge]);
 
-  const sanitized = sanitizeFolderName(name);
-  const target = sanitized === '' || parent === '' ? '' : joinPathPreview(parent, sanitized);
-  const previewPath = target !== '' ? target : parent;
+  const rawBasename = picked === '' ? '' : basenamePreview(picked);
+  const sanitized = picked === '' ? '' : sanitizeFolderName(rawBasename);
+  const sanitizeDiverged = picked !== '' && sanitized !== rawBasename && sanitized !== '';
+  const sanitizeErased = picked !== '' && rawBasename !== '' && sanitized === '';
+  const previewPath = picked;
   const canSubmit =
     !busy &&
+    picked !== '' &&
     sanitized !== '' &&
-    parent !== '' &&
     (cascade.kind === 'free' || cascade.kind === 'confirm-git');
 
   function toggleEditor(id: OkMcpWiringEditorId) {
@@ -305,9 +320,13 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
 
   async function onBrowse() {
     try {
-      const picked = await bridge.dialog.openFolder();
-      if (picked === null) return;
-      setParent(picked);
+      const pickedNew = await bridge.dialog.openFolder(
+        defaultPath !== '' ? { defaultPath } : undefined,
+      );
+      if (pickedNew === null) return;
+      setPicked(pickedNew);
+      setProbeNonce((n) => n + 1);
+      setSubmitError(null);
     } catch (err) {
       console.warn('[CreateProjectDialog] dialog.openFolder failed:', err);
     }
@@ -320,7 +339,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     setSubmitError(null);
     try {
       await bridge.project.createNew({
-        parent,
+        parent: dirnamePreview(picked),
         name: sanitized,
         editors: Array.from(editorIds),
       });
@@ -394,37 +413,18 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
         >
           <DialogBody className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="create-name" className="block">
-                Name
-              </Label>
-              <Input
-                id="create-name"
-                ref={nameInputRef}
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setSubmitError(null);
-                }}
-                disabled={busy}
-                placeholder="My Notes"
-                autoComplete="off"
-                spellCheck={false}
-                aria-describedby="create-target-caption"
-                data-testid="create-name"
-              />
-            </div>
-
-            <div className="space-y-2">
               <Label htmlFor="create-location" className="block">
                 Location
               </Label>
               <div className="flex items-stretch gap-2">
                 <Button
                   id="create-location"
+                  ref={browseButtonRef}
                   type="button"
                   variant="outline"
-                  disabled={busy || parentLoading}
+                  disabled={busy}
                   onClick={() => void onBrowse()}
+                  aria-describedby="create-target-caption"
                   data-testid="create-browse"
                 >
                   Browse
@@ -436,13 +436,38 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
                 aria-live="polite"
                 data-testid="create-target-caption"
               >
-                {previewPath === '' ? (
-                  <span className="sr-only">No target path yet</span>
-                ) : (
-                  previewPath
-                )}
+                {previewPath === ''
+                  ? 'Click Browse to pick or create a project folder.'
+                  : previewPath}
               </p>
             </div>
+
+            {sanitizeDiverged ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+                data-testid="create-banner-sanitize-diverged"
+              >
+                The folder name <code className="font-mono break-all">{rawBasename}</code> contains
+                characters that aren't safe for the project's on-disk identifier. The project will
+                be created as <code className="font-mono break-all">{sanitized}</code>. Click Browse
+                again to pick a folder with a safer name.
+              </div>
+            ) : null}
+
+            {sanitizeErased ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+                data-testid="create-banner-sanitize-erased"
+              >
+                The folder name <code className="font-mono break-all">{rawBasename}</code> can't be
+                used as a project identifier — it has no characters left after sanitization. Click
+                Browse to pick a folder whose name contains at least one alphanumeric character.
+              </div>
+            ) : null}
 
             <CascadeBanner
               cascade={cascade}
@@ -632,7 +657,7 @@ function CascadeBanner({
       className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
       data-testid="create-banner-nonempty"
     >
-      <p>A non-empty folder with this name already exists. Use "Open folder on disk" instead.</p>
+      <p>A non-empty folder already exists at this path. Use "Open folder on disk" instead.</p>
     </div>
   );
 }
