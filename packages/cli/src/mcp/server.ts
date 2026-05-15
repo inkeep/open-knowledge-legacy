@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { realpathSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OK_PROJECT_MARKER } from '@inkeep/open-knowledge-core';
@@ -17,8 +18,16 @@ import {
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createProjectConfigResolver } from '../config/loader.ts';
+import {
+  type BundleIdentityWatcherHandle,
+  captureBootIdentity,
+  detectBundleIdentity,
+  startBundleIdentityWatcher,
+} from './bundle-identity.ts';
 import { startKeepalive } from './keepalive.ts';
 import { parseSpawnTimeoutEnv, resolveMcpHttpUrl, resolveMcpKeepaliveWsUrl } from './shim.ts';
+
+const BUNDLE_IDENTITY_ANCHOR = fileURLToPath(import.meta.url);
 
 interface StartGlobalMcpServerOptions {
   startupCwd: string;
@@ -194,10 +203,12 @@ export async function startGlobalMcpServer(
 
   const transport = new StdioServerTransport();
   let closed = false;
+  let bundleWatcher: BundleIdentityWatcherHandle | undefined;
 
   const close = async (): Promise<void> => {
     if (closed) return;
     closed = true;
+    bundleWatcher?.stop();
     for (const handle of keepalivesByProject.values()) {
       try {
         handle.close();
@@ -222,13 +233,51 @@ export async function startGlobalMcpServer(
   await server.connect(transport);
   stderr.write('[mcp] global stdio server ready (per-call project routing)\n');
 
+  let shuttingDown = false;
   const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    setTimeout(() => {
+      stderr.write('[mcp] shutdown deadline (5s) reached — forcing exit(1)\n');
+      process.exit(1);
+    }, 5000).unref();
     void close().finally(() => {
       process.exit(0);
     });
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
+
+  if (process.platform === 'darwin') {
+    const bootIdentity = captureBootIdentity(BUNDLE_IDENTITY_ANCHOR, {
+      realpathSync,
+      statInoSync: (p) => statSync(p).ino,
+      log: (m) => stderr.write(`${m}\n`),
+    });
+    if (bootIdentity !== undefined) {
+      stderr.write(
+        `[mcp] bundle identity anchor=${bootIdentity.resolvedPath} inode=${bootIdentity.inode} version=${RUNTIME_VERSION}\n`,
+      );
+      const { resolvedPath: capturedAnchorPath, inode: capturedInode } = bootIdentity;
+      bundleWatcher = startBundleIdentityWatcher({
+        detect: () =>
+          detectBundleIdentity({
+            bundleAnchorPath: BUNDLE_IDENTITY_ANCHOR,
+            currentInode: capturedInode,
+            platform: process.platform,
+            realpath: realpathSync,
+            statInode: (p) => statSync(p).ino,
+          }),
+        onReplaced: (state) => {
+          stderr.write(
+            `[mcp] bundle replaced anchor=${capturedAnchorPath} bootInode=${state.currentInode} onDiskInode=${state.onDiskInode} version=${RUNTIME_VERSION} — exiting for host respawn\n`,
+          );
+          shutdown();
+        },
+        log: (msg) => stderr.write(`[mcp] ${msg}\n`),
+      });
+    }
+  }
 
   return { close };
 }
