@@ -51,7 +51,7 @@ interface OkignoreSectionProps {
   synced: boolean;
 }
 
-const PRIMER_HREF = 'https://inkeep.github.io/open-knowledge/features/ignore-patterns';
+const PRIMER_HREF = 'https://openknowledge.ai/docs/features/ignore-patterns';
 const SAVED_FLASH_MS = 1200;
 const HEURISTIC_DEBOUNCE_MS = 150;
 const PREVIEW_DEBOUNCE_MS = 150;

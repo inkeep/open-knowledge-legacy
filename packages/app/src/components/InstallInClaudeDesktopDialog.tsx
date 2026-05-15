@@ -15,7 +15,7 @@ import { dispatchExternalLinkClick } from '@/lib/external-link';
 import { cn } from '@/lib/utils';
 
 const INSTALL_COMMAND = 'npx @inkeep/open-knowledge install-skill';
-const DOCS_URL = 'https://inkeep.github.io/open-knowledge/guides/install-claude-cowork';
+const DOCS_URL = 'https://openknowledge.ai/docs/integrations/claude-desktop';
 
 interface InstallInClaudeDesktopDialogProps {
   open: boolean;

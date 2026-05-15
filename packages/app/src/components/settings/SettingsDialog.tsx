@@ -309,7 +309,7 @@ function SettingsContent({
     return userBinding ? (
       <BoundSchemaSection
         title="Appearance"
-        description="UI preferences. Editor toggles continue to write localStorage as a cache."
+        description="Customize how the editor looks."
         scope="user"
         binding={userBinding}
         fields={FIELDS_APPEARANCE}
@@ -438,7 +438,7 @@ function SchemaSection({
 }: SchemaSectionProps) {
   const titleId = `settings-section-${scope}-title`;
   return (
-    <section aria-labelledby={titleId} className="space-y-10">
+    <section aria-labelledby={titleId} className="space-y-3">
       <div className="space-y-1">
         <h2 id={titleId} className="text-base font-semibold">
           {title}
