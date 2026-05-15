@@ -369,8 +369,14 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
               };
 
   return (
-    <Panel className={isExpanded ? 'fixed inset-0 z-50 bg-background overflow-hidden' : undefined}>
-      <PanelHeader className="flex-wrap gap-3">
+    <Panel className={isExpanded ? 'fixed inset-0 z-50 overflow-hidden bg-background' : undefined}>
+      <PanelHeader
+        className={
+          isExpanded
+            ? 'flex-wrap gap-3 pl-[var(--ok-titlebar-reserve-left,1rem)]'
+            : 'flex-wrap gap-3'
+        }
+      >
         <div className="flex min-w-0 items-center gap-1.5">
           <PanelTitle>Graph</PanelTitle>
           {activeMode === 'explore' && stats ? (
