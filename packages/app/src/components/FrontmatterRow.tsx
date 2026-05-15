@@ -3,6 +3,7 @@ import { CSS } from '@dnd-kit/utilities';
 import type { FrontmatterType, FrontmatterValue } from '@inkeep/open-knowledge-core';
 import { AlertTriangle, GripVertical, Trash2, X } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
+import { useRef } from 'react';
 import {
   BooleanWidget,
   DateWidget,
@@ -383,14 +384,25 @@ export function AddPropertyRow({
   onCancel,
 }: AddPropertyRowProps) {
   const errorId = draft.error ? 'add-property-error-id' : undefined;
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
   return (
     <div
       className="mt-1 rounded border border-dashed bg-background/40 p-1"
       data-testid="add-property-row"
     >
       <div className="flex items-start gap-1">
-        <TypeIconButton keyName="__add__" type={draft.type} onChangeType={onChangeType} />
+        <TypeIconButton
+          keyName="__add__"
+          type={draft.type}
+          onChangeType={onChangeType}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            nameInputRef.current?.focus();
+          }}
+        />
         <Input
+          ref={nameInputRef}
           data-testid="add-property-name-input"
           type="text"
           value={draft.name}

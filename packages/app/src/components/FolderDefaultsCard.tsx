@@ -13,7 +13,11 @@ import {
   InheritedBadge,
   type RenameDraft,
 } from '@/components/FrontmatterRow';
-import { coerceValue, resolveWidgetType } from '@/components/PropertyWidgets';
+import {
+  coerceValue,
+  DEFAULT_VALUE_FOR_TYPE,
+  resolveWidgetType,
+} from '@/components/PropertyWidgets';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -26,14 +30,6 @@ interface Props {
   state: AsyncState<FolderConfigSnapshot>;
   onChange: () => void;
 }
-
-const DEFAULT_VALUE_FOR_TYPE: Record<FrontmatterType, FrontmatterValue> = {
-  text: '',
-  number: 0,
-  boolean: false,
-  date: '',
-  list: [],
-};
 
 export function FolderDefaultsCard({ folderPath, state, onChange }: Props) {
   const [collapsed, setCollapsed] = useState(false);

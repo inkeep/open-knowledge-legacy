@@ -378,11 +378,20 @@ const TYPE_LABEL: Record<FrontmatterType, string> = {
   list: 'List',
 };
 
+export const DEFAULT_VALUE_FOR_TYPE: Record<FrontmatterType, FrontmatterValue> = {
+  text: '',
+  number: 0,
+  boolean: false,
+  date: '',
+  list: [],
+};
+
 interface TypeIconButtonProps {
   keyName: string;
   type: FrontmatterType;
   onChangeType: (next: FrontmatterType) => void;
   disabled?: boolean;
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 export function TypeIconButton({
@@ -390,6 +399,7 @@ export function TypeIconButton({
   type,
   onChangeType,
   disabled = false,
+  onCloseAutoFocus,
 }: TypeIconButtonProps) {
   const Icon = TYPE_ICON[type];
   if (disabled) {
@@ -426,7 +436,11 @@ export function TypeIconButton({
       >
         <Icon className="size-3.5" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" data-testid="type-picker-menu">
+      <DropdownMenuContent
+        align="start"
+        data-testid="type-picker-menu"
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <DropdownMenuRadioGroup
           value={type}
           onValueChange={(next) => onChangeType(next as FrontmatterType)}

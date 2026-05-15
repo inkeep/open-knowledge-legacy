@@ -8,7 +8,6 @@ import type {
 import { CreateProjectDialog } from './CreateProjectDialog';
 
 type WindowGlobals = {
-  MutationObserver?: typeof MutationObserver;
   NodeFilter?: typeof NodeFilter;
 };
 type GlobalWithDomShims = typeof globalThis &
@@ -17,12 +16,6 @@ type GlobalWithDomShims = typeof globalThis &
     ResizeObserver?: unknown;
   };
 const globalWithDomShims = globalThis as GlobalWithDomShims;
-if (
-  globalWithDomShims.MutationObserver === undefined &&
-  globalWithDomShims.window?.MutationObserver !== undefined
-) {
-  globalWithDomShims.MutationObserver = globalWithDomShims.window.MutationObserver;
-}
 if (
   globalWithDomShims.NodeFilter === undefined &&
   globalWithDomShims.window?.NodeFilter !== undefined
