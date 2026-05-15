@@ -389,6 +389,7 @@ export interface OkDesktopBridge {
     folderState(path: string): Promise<OkFolderState>;
     findEnclosingProjectRoot(path: string): Promise<OkFindEnclosingProjectRootResult | null>;
     findEnclosingGitRoot(path: string): Promise<OkFindEnclosingGitRootResult | null>;
+    removeGitFolder(gitRoot: string): Promise<void>;
   };
   navigator: {
     open(): Promise<void>;

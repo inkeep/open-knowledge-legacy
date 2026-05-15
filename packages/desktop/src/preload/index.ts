@@ -246,6 +246,7 @@ const bridge: OkDesktopBridge = {
     folderState: (path: string) => invoke('ok:fs:folder-state', path),
     findEnclosingProjectRoot: (path: string) => invoke('ok:fs:find-enclosing-project-root', path),
     findEnclosingGitRoot: (path: string) => invoke('ok:fs:find-enclosing-git-root', path),
+    removeGitFolder: (gitRoot: string) => invoke('ok:fs:remove-git-folder', gitRoot),
   },
 
   navigator: {
