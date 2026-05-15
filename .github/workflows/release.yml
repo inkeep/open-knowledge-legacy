@@ -401,11 +401,15 @@ jobs:
 
           # Exchange the OIDC JWT with npm's trusted-publishing endpoint
           # for a session token usable on subsequent npm commands. The
-          # endpoint is what `npm publish` calls internally for TP.
+          # endpoint is package-scoped (the returned token is only valid
+          # for operations on that one package — fine here since we only
+          # touch @inkeep/open-knowledge). The non-scoped path
+          # `/oidc/token/exchange` (no `/package/...` suffix) returns 404.
+          # https://api-docs.npmjs.com/#tag/registry.npmjs.org/operation/exchangeOidcToken
           NPM_TOKEN=$(curl -sSLf -X POST \
             -H "Authorization: Bearer ${OIDC_TOKEN}" \
             -H "Content-Type: application/json" \
-            https://registry.npmjs.org/-/npm/v1/oidc/token/exchange \
+            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/%40inkeep%2Fopen-knowledge" \
             | jq -r '.token')
 
           if [[ -z "$NPM_TOKEN" || "$NPM_TOKEN" == "null" ]]; then
