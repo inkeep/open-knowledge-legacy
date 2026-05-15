@@ -1973,25 +1973,46 @@ describe('US-004: D20 mount-promise cancellation wired into evict', () => {
       };
     };
 
-    const pending = mountTiptapEditorPromise({ docName: h.docName, mountId: 'test-id', construct });
-    let consumerRejected = false;
-    pending.catch(() => {
-      consumerRejected = true;
-    });
-    expect(__mountPromiseCacheSize()).toBe(1);
-    expect(__getCacheSize('tiptap')).toBe(0);
+    const origYield = scheduler.yield.bind(scheduler);
+    let stallResolve: (() => void) | null = null;
+    let yieldCallCount = 0;
+    scheduler.yield = (() => {
+      yieldCallCount++;
+      if (yieldCallCount === 1) return Promise.resolve();
+      return new Promise<void>((res) => {
+        stallResolve = res;
+      });
+    }) as typeof scheduler.yield;
 
-    const result = evictTiptapEditor(h.docName);
-    expect(result).toBe(false); // V2 had no entry to evict
-    expect(__mountPromiseCacheSize()).toBe(0);
+    try {
+      const pending = mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'test-id',
+        construct,
+      });
+      let consumerRejected = false;
+      pending.catch(() => {
+        consumerRejected = true;
+      });
+      expect(__mountPromiseCacheSize()).toBe(1);
+      expect(__getCacheSize('tiptap')).toBe(0);
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(consumerRejected).toBe(false);
-    expect(constructed).toBe(true);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(h.spies.destroyCalls).toBe(1);
-    expect(h.spies.mountCalls).toBe(0);
-    expect(__getCacheSize('tiptap')).toBe(0);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(constructed).toBe(true);
+
+      const result = evictTiptapEditor(h.docName);
+      expect(result).toBe(false); // V2 had no entry to evict
+      expect(__mountPromiseCacheSize()).toBe(0);
+
+      if (stallResolve) (stallResolve as () => void)();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(consumerRejected).toBe(false);
+      expect(h.spies.destroyCalls).toBe(1);
+      expect(h.spies.mountCalls).toBe(0);
+      expect(__getCacheSize('tiptap')).toBe(0);
+    } finally {
+      scheduler.yield = origYield;
+    }
   });
 
   test('evict-on-no-entry-anywhere: safe no-op for both caches', () => {

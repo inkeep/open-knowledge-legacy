@@ -218,7 +218,7 @@ describe('cache HIT short-circuit (V2 cache pre-populated)', () => {
   });
 });
 
-describe('cache MISS: construct → yield → mount sequence', () => {
+describe('cache MISS: yield → construct → yield → mount sequence', () => {
   test('cache MISS: runs construct, yields, then calls editor.mount(transient)', async () => {
     const h = makeHarness('doc-miss');
 
@@ -325,8 +325,50 @@ describe('concurrent-call promise reference stability', () => {
 });
 
 describe('invalidate-during-construction silent teardown (D27 silent-only)', () => {
-  test('invalidateMountPromise during the yield-window tears down silently — promise stays orphaned, no rejection, no mark-emit beyond invalidate', async () => {
+  test('invalidateMountPromise during the post-construct yield-window tears down silently — promise stays orphaned, no rejection, no mark-emit beyond invalidate', async () => {
     const h = makeHarness('doc-silent-invalidate');
+    const origYield = scheduler.yield.bind(scheduler);
+    let stallResolve: (() => void) | null = null;
+    let yieldCallCount = 0;
+    scheduler.yield = (() => {
+      yieldCallCount++;
+      if (yieldCallCount === 1) return Promise.resolve();
+      return new Promise<void>((res) => {
+        stallResolve = res;
+      });
+    }) as typeof scheduler.yield;
+
+    try {
+      const promise = mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'test-id',
+        construct: h.construct,
+      });
+      let consumerRejected = false;
+      promise.catch(() => {
+        consumerRejected = true;
+      });
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(h.constructCallCount).toBe(1);
+
+      invalidateMountPromise(h.docName);
+
+      expect(h.spies.destroyCalls).toBe(1);
+      expect(__mountPromiseCacheSize()).toBe(0);
+
+      if (stallResolve) (stallResolve as () => void)();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(consumerRejected).toBe(false);
+      expect(h.spies.mountCalls).toBe(0);
+      expect(h.spies.destroyCalls).toBe(1);
+    } finally {
+      scheduler.yield = origYield;
+    }
+  });
+
+  test('invalidateMountPromise during the pre-construct yield-window tears down silently — construct is skipped entirely, no editor to destroy', async () => {
+    const h = makeHarness('doc-silent-invalidate-pre-construct');
 
     const promise = mountTiptapEditorPromise({
       docName: h.docName,
@@ -339,13 +381,12 @@ describe('invalidate-during-construction silent teardown (D27 silent-only)', () 
     });
 
     invalidateMountPromise(h.docName);
-
-    expect(h.spies.destroyCalls).toBe(1);
     expect(__mountPromiseCacheSize()).toBe(0);
 
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(consumerRejected).toBe(false);
-    expect(h.constructCallCount).toBe(1);
+    expect(h.constructCallCount).toBe(0);
+    expect(h.spies.destroyCalls).toBe(0);
     expect(h.spies.mountCalls).toBe(0);
   });
 
@@ -479,20 +520,40 @@ describe('mount-failure error path', () => {
     const h = makeHarness('doc-destroy-throws-on-abort');
     h.spies.destroyThrows = true;
 
-    const promise = mountTiptapEditorPromise({
-      docName: h.docName,
-      mountId: 'test-id',
-      construct: h.construct,
-    });
-    const controller = getMountAbortController(h.docName);
-    expect(controller).not.toBeNull();
-    controller?.abort();
+    const origYield = scheduler.yield.bind(scheduler);
+    let stallResolve: (() => void) | null = null;
+    let yieldCallCount = 0;
+    scheduler.yield = (() => {
+      yieldCallCount++;
+      if (yieldCallCount === 1) return Promise.resolve();
+      return new Promise<void>((res) => {
+        stallResolve = res;
+      });
+    }) as typeof scheduler.yield;
 
-    await expect(promise).rejects.toMatchObject({
-      name: 'MountAbortError',
-      docName: h.docName,
-    });
-    expect(h.spies.destroyCalls).toBeGreaterThanOrEqual(1);
+    try {
+      const promise = mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'test-id',
+        construct: h.construct,
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(h.constructCallCount).toBe(1);
+
+      const controller = getMountAbortController(h.docName);
+      expect(controller).not.toBeNull();
+      controller?.abort();
+
+      await expect(promise).rejects.toMatchObject({
+        name: 'MountAbortError',
+        docName: h.docName,
+      });
+      if (stallResolve) (stallResolve as () => void)();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(h.spies.destroyCalls).toBe(1);
+    } finally {
+      scheduler.yield = origYield;
+    }
   });
 });
 
@@ -729,7 +790,7 @@ describe('getMountAbortController (FW13 explicit-cancel surface)', () => {
     expect(getMountAbortController('never-registered')).toBeNull();
   });
 
-  test('returns the entry controller; .abort() rejects with MountAbortError', async () => {
+  test('returns the entry controller; .abort() in the pre-construct yield window rejects with MountAbortError, construct skipped', async () => {
     const h = makeHarness('explicit-abort');
     const promise = mountTiptapEditorPromise({
       docName: h.docName,
@@ -743,16 +804,26 @@ describe('getMountAbortController (FW13 explicit-cancel surface)', () => {
       name: 'MountAbortError',
       docName: h.docName,
     });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(h.constructCallCount).toBe(0);
+    expect(h.spies.mountCalls).toBe(0);
+    expect(h.spies.destroyCalls).toBe(0);
   });
 
-  test('explicit abort during the scheduler.yield window: rejects with MountAbortError, destroys pre-mount editor exactly once, mount() never called', async () => {
+  test('explicit abort during the post-construct scheduler.yield window: rejects with MountAbortError, destroys pre-mount editor exactly once, mount() never called', async () => {
     const h = makeHarness('explicit-abort-during-yield');
     const origYield = scheduler.yield.bind(scheduler);
     let stallResolve: (() => void) | null = null;
-    scheduler.yield = (() =>
-      new Promise<void>((res) => {
+    let yieldCallCount = 0;
+    scheduler.yield = (() => {
+      yieldCallCount++;
+      if (yieldCallCount === 1) {
+        return Promise.resolve();
+      }
+      return new Promise<void>((res) => {
         stallResolve = res;
-      })) as typeof scheduler.yield;
+      });
+    }) as typeof scheduler.yield;
 
     try {
       const promise = mountTiptapEditorPromise({
@@ -966,15 +1037,15 @@ describe('scheduler.yield wiring', () => {
     });
   }
 
-  test('cache MISS path invokes scheduler.yield exactly once between construct and mount', async () => {
-    const h = makeHarness('doc-yield-once');
+  test('cache MISS path invokes scheduler.yield exactly twice — once before construct, once between construct and mount', async () => {
+    const h = makeHarness('doc-yield-twice');
     await withYieldSpy(async (calls) => {
       const entry = await mountTiptapEditorPromise({
         docName: h.docName,
         mountId: 'test-id',
         construct: h.construct,
       });
-      expect(calls.count).toBe(1);
+      expect(calls.count).toBe(2);
       expect(h.constructCallCount).toBe(1);
       expect(h.spies.mountCalls).toBe(1);
       expect(entry.editor).toBe(h.editor);
@@ -1005,22 +1076,22 @@ describe('scheduler.yield wiring', () => {
     });
   });
 
-  test('construct() failure rejects before the yield-point — scheduler.yield not invoked', async () => {
+  test('construct() failure rejects after the pre-construct yield-point — the post-construct yield is skipped', async () => {
     await withYieldSpy(async (calls) => {
       const constructError = new Error('synthetic construct failure');
       const promise = mountTiptapEditorPromise({
-        docName: 'doc-construct-fail-no-yield',
+        docName: 'doc-construct-fail-pre-yield',
         mountId: 'test-id',
         construct: () => {
           throw constructError;
         },
       });
       await expect(promise).rejects.toBe(constructError);
-      expect(calls.count).toBe(0);
+      expect(calls.count).toBe(1);
     });
   });
 
-  test('invalidateMountPromise during the yield-window tears down silently — body short-circuits at abort check, no rejection', async () => {
+  test('invalidateMountPromise during the pre-construct yield-window tears down silently — body short-circuits at abort check, no rejection, construct skipped', async () => {
     const h = makeHarness('doc-yield-silent');
 
     await withYieldSpy(async (calls) => {
@@ -1038,21 +1109,48 @@ describe('scheduler.yield wiring', () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(consumerRejected).toBe(false);
-      expect(calls.count).toBe(1); // yield was reached before the invalidate
-      expect(h.constructCallCount).toBe(1); // construct ran before the yield
-      expect(h.spies.mountCalls).toBe(0); // mount was skipped after invalidate
-      expect(h.spies.destroyCalls).toBe(1); // pre-mount editor cleaned up
+      expect(calls.count).toBe(1); // pre-construct yield fired
+      expect(h.constructCallCount).toBe(0); // construct skipped — aborted first
+      expect(h.spies.mountCalls).toBe(0);
+      expect(h.spies.destroyCalls).toBe(0); // no editor existed to destroy
     });
   });
 });
 
 describe('unhandled-throw backstop — body must reject, never hang', () => {
-  test('scheduler.yield throwing → consumer promise rejects AND pre-mount editor is destroyed', async () => {
-    const h = makeHarness('doc-yield-throws');
+  test('pre-construct scheduler.yield throwing → consumer promise rejects, construct skipped, no editor leak', async () => {
+    const h = makeHarness('doc-pre-construct-yield-throws');
 
     const original = scheduler.yield.bind(scheduler);
     const yieldError = new Error('synthetic scheduler.yield failure');
     scheduler.yield = ((): Promise<void> => {
+      return Promise.reject(yieldError);
+    }) as typeof scheduler.yield;
+
+    try {
+      const promise = mountTiptapEditorPromise({
+        docName: h.docName,
+        mountId: 'test-id',
+        construct: h.construct,
+      });
+      await expect(promise).rejects.toBeDefined();
+      expect(h.constructCallCount).toBe(0);
+      expect(h.spies.mountCalls).toBe(0);
+      expect(h.spies.destroyCalls).toBe(0);
+    } finally {
+      scheduler.yield = original;
+    }
+  });
+
+  test('post-construct scheduler.yield throwing → consumer promise rejects AND pre-mount editor is destroyed', async () => {
+    const h = makeHarness('doc-post-construct-yield-throws');
+
+    const original = scheduler.yield.bind(scheduler);
+    const yieldError = new Error('synthetic scheduler.yield failure');
+    let yieldCallCount = 0;
+    scheduler.yield = ((): Promise<void> => {
+      yieldCallCount++;
+      if (yieldCallCount === 1) return Promise.resolve();
       return Promise.reject(yieldError);
     }) as typeof scheduler.yield;
 

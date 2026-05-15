@@ -306,6 +306,12 @@ async function runMountBody(params: MountBodyParams): Promise<void> {
     return;
   }
 
+  await scheduler.yield();
+
+  if (entry.controller.signal.aborted) {
+    return;
+  }
+
   let constructed: ConstructedTiptapBundle | null = null;
   try {
     constructed = construct();
