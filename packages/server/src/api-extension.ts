@@ -3411,6 +3411,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           { handler: 'save-version' },
         );
       } catch (e) {
+        log.error({ err: e }, '[save-version] handler failed');
         errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
           handler: 'save-version',
           cause: e,

@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
 import {
   DiffSuccessSchema,
   ProblemDetailsSchema,
   SaveVersionSuccessSchema,
 } from '@inkeep/open-knowledge-core';
-import { createTestServer, type TestServer } from '../test-harness';
+import { createTestServer, pollDiskContentStable, type TestServer } from '../test-harness';
 
 let server: TestServer;
 
@@ -24,6 +25,11 @@ describe('diff envelope (RFC 9457)', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ docName, markdown: '# Hello\n', position: 'replace' }),
     });
+    await pollDiskContentStable(
+      join(server.contentDir, `${docName}.md`),
+      (c) => c.includes('# Hello'),
+      { timeoutMs: 5000, settleMs: 100 },
+    );
     const saveRes = await fetch(`http://127.0.0.1:${server.port}/api/save-version`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
