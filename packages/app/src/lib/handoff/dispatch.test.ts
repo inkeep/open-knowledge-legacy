@@ -40,7 +40,7 @@ async function readSentBody(fetchImpl: typeof globalThis.fetch): Promise<unknown
 }
 
 describe('dispatchHandoff — claude-cowork', () => {
-  test('POSTs /api/handoff with target=claude-cowork and a claude://cowork/new URL', async () => {
+  test('POSTs /api/handoff with target=claude-cowork and a cwd-only claude://cowork/new URL', async () => {
     const fetchImpl = makeFetch(200);
     const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'claude-cowork' };
     const result = await dispatchHandoff(payload, { fetch: fetchImpl });
@@ -51,29 +51,32 @@ describe('dispatchHandoff — claude-cowork', () => {
       workspacePath?: string;
     };
     expect(body.target).toBe('claude-cowork');
-    expect(body.url).toMatch(/^claude:\/\/cowork\/new\?q=/);
+    expect(body.url).toMatch(/^claude:\/\/cowork\/new\?folder=/);
     expect(body.url).toContain('folder=');
-    expect(body.url).toContain('file=');
+    expect(body.url).not.toContain('file=');
+    expect(body.url).not.toContain('q=');
     expect(body.workspacePath).toBeUndefined();
   });
 });
 
 describe('dispatchHandoff — claude-code', () => {
-  test('POSTs /api/handoff with target=claude-code and a claude://code/new URL', async () => {
+  test('POSTs /api/handoff with target=claude-code and a cwd-only claude://code/new URL', async () => {
     const fetchImpl = makeFetch(200);
     const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'claude-code' };
     const result = await dispatchHandoff(payload, { fetch: fetchImpl });
     expect(result).toEqual({ ok: true });
     const body = (await readSentBody(fetchImpl)) as { target: string; url: string };
     expect(body.target).toBe('claude-code');
-    expect(body.url).toMatch(/^claude:\/\/code\/new\?q=/);
+    expect(body.url).toMatch(/^claude:\/\/code\/new\?folder=/);
     expect(body.url).toContain('folder=');
-    expect(body.url).toContain('file=');
+    expect(body.url).not.toContain('file=');
+    expect(body.url).not.toContain('q=');
+    expect((body as { workspacePath?: string }).workspacePath).toBeUndefined();
   });
 });
 
 describe('dispatchHandoff — codex', () => {
-  test('POSTs /api/handoff with target=codex and a codex://new URL (no file=)', async () => {
+  test('POSTs /api/handoff with target=codex and a cwd-only codex://new URL (no prompt=, no file=)', async () => {
     const fetchImpl = makeFetch(200);
     const payload: HandoffPayload = { ...BASE_PAYLOAD, target: 'codex' };
     const result = await dispatchHandoff(payload, { fetch: fetchImpl });
@@ -84,8 +87,9 @@ describe('dispatchHandoff — codex', () => {
       workspacePath?: string;
     };
     expect(body.target).toBe('codex');
-    expect(body.url).toMatch(/^codex:\/\/new\?prompt=/);
+    expect(body.url).toMatch(/^codex:\/\/new\?path=/);
     expect(body.url).toContain('path=');
+    expect(body.url).not.toContain('prompt=');
     expect(body.url).not.toContain('file=');
     expect(body.workspacePath).toBeUndefined();
   });
@@ -104,6 +108,7 @@ describe('dispatchHandoff — cursor', () => {
     };
     expect(body.target).toBe('cursor');
     expect(body.url).toMatch(/^cursor:\/\/anysphere\.cursor-deeplink\/prompt\?/);
+    expect(body.url).not.toContain('text=');
     expect(body.workspacePath).toBe(BASE_PAYLOAD.projectDir);
   });
 });

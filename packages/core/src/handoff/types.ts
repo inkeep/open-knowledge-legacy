@@ -4,12 +4,21 @@ export interface HandoffPayload {
   readonly target: HandoffTarget;
   readonly projectDir: string;
   /** Absolute path to the current doc (OS-native separator).
-   *  `''` ⇒ project-scoped handoff; URL builders that thread `docPath`
-   *  (currently only claude) skip the `file=` param. */
+   *  `''` ⇒ project-scoped handoff (URL builders emit prompt + folder).
+   *  non-`''` ⇒ doc-scoped handoff (URL builders emit a cwd-only URL per
+   *  precedent #25 — no `file=` attach, no prompt prefill; the agent grounds
+   *  via OK MCP). The docPath bytes are NOT threaded into the URL. */
   readonly docPath: string;
   /** OK-composed prompt; stays under a 1 KB hard cap.
-   *  Doc-scoped: `composePrompt(docContext)`.
-   *  Project-scoped: `composeProjectPrompt()`.
+   *  Project-scoped: `composeProjectPrompt()` — threaded into the URL.
+   *  Doc-scoped: `composePrompt(docContext)` — discarded by the native URL
+   *  builders (precedent #25 — cwd-only). The same `composePrompt` output IS
+   *  still live on the Claude web-fallback path (`OpenInAgentMenu` and
+   *  `OpenInAgentContextSubmenu` → `dispatchClaudeWebFallback` →
+   *  `buildClaudeAiWebUrl`), which is consumed by a different code path that
+   *  does NOT read `HandoffPayload.prompt`. The field's dead-computation status
+   *  is limited to the dispatch path; the prompt-composition function itself
+   *  stays live.
    *  `''` is honored defensively (URL builders skip the prompt query param)
    *  but no production caller emits it. */
   readonly prompt: string;

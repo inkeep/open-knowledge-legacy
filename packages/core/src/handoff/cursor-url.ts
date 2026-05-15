@@ -7,6 +7,9 @@ function basename(p: string): string {
 
 export function buildCursorUrl(payload: HandoffPayload): string {
   const workspace = encodeURIComponent(basename(payload.projectDir));
+  if (payload.docPath !== '') {
+    return `cursor://anysphere.cursor-deeplink/prompt?workspace=${workspace}&mode=agent`;
+  }
   if (payload.prompt === '') {
     return `cursor://anysphere.cursor-deeplink/prompt?workspace=${workspace}&mode=agent`;
   }
