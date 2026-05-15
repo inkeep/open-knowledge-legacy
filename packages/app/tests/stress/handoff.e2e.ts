@@ -62,7 +62,7 @@ async function waitForProbeSettled(page: Page, host: 'electron' | 'web'): Promis
 }
 
 test.describe('handoff — 8-cell matrix', () => {
-  test('cell 1: Electron Claude Cowork happy path dispatches correct URL + success toast', async ({
+  test('cell 1: Electron — claude-cowork row stays hidden even when Claude Desktop is installed', async ({
     page,
     api,
     workerServer,
@@ -77,37 +77,14 @@ test.describe('handoff — 8-cell matrix', () => {
     await seedAndNavigate(page, api);
 
     await openDropdown(page);
-    await page.getByTestId('open-in-agent-item-claude-cowork').click();
 
-    await expect
-      .poll(async () => (await readCapturedHandoff(page)).handoffApiCalls.length, {
-        timeout: 5_000,
-      })
-      .toBe(1);
+    await expect(page.getByTestId('open-in-agent-item-claude-code')).toBeVisible();
+    await expect(page.getByTestId('open-in-agent-item-codex')).toBeVisible();
+    await expect(page.getByTestId('open-in-agent-item-cursor')).toBeVisible();
 
-    const captured = await readCapturedHandoff(page);
-    const call = captured.handoffApiCalls[0];
-    expect(call).toBeTruthy();
-    expect(call?.target).toBe('claude-cowork');
-    const u = new URL(call?.url ?? '');
-    expect(u.protocol).toBe('claude:');
-    expect(u.hostname).toBe('cowork');
-    expect(u.pathname).toBe('/new');
-    expect(u.searchParams.get('q')).toContain('Open Knowledge doc');
-    expect(u.searchParams.get('q')).toContain('open-knowledge MCP');
-    expect(u.searchParams.get('folder')).toBe(resolvedContentDir(workerServer.contentDir));
-    expect(u.searchParams.get('file')).toBe(
-      `${resolvedContentDir(workerServer.contentDir)}/${DOC_NAME}.md`,
-    );
+    await expect(page.getByTestId('open-in-agent-item-claude-cowork')).toHaveCount(0);
 
-    await expect(page.getByText('Opened in Claude Cowork.')).toBeVisible();
-
-    expect(captured.recordHandoffCalls.length).toBe(1);
-    const [line] = captured.recordHandoffCalls;
-    expect(line?.target).toBe('claude-cowork');
-    expect(line?.host).toBe('electron');
-    expect(line?.outcome).toBe('ok');
-    expect(typeof line?.ts).toBe('string');
+    await expect(page.getByTestId('open-in-agent-claude-web-fallback')).toHaveCount(0);
   });
 
   test('cell 2: Electron Cursor two-step spawn → single prompt URL dispatch + success toast', async ({
@@ -176,7 +153,7 @@ test.describe('handoff — 8-cell matrix', () => {
     await expect(codexRow).toBeVisible({ timeout: 5_000 });
   });
 
-  test('cell 4: Web Claude Cowork happy path dispatches via anchor-click + success toast', async ({
+  test('cell 4: Web — claude-cowork row stays hidden even when probe reports installed', async ({
     page,
     api,
     workerServer,
@@ -192,25 +169,10 @@ test.describe('handoff — 8-cell matrix', () => {
 
     await openDropdown(page);
     await waitForProbeSettled(page, 'web');
-    await page.getByTestId('open-in-agent-item-claude-cowork').click();
 
-    await expect
-      .poll(async () => (await readCapturedHandoff(page)).handoffApiCalls.length, {
-        timeout: 15_000,
-      })
-      .toBe(1);
-
-    const captured = await readCapturedHandoff(page);
-    const call = captured.handoffApiCalls[0];
-    expect(call?.target).toBe('claude-cowork');
-    const u = new URL(call?.url ?? '');
-    expect(u.protocol).toBe('claude:');
-    expect(u.hostname).toBe('cowork');
-    expect(u.searchParams.get('folder')).toBe(resolvedContentDir(workerServer.contentDir));
-
-    await expect(page.getByText('Opened in Claude Cowork.')).toBeVisible();
-
-    expect(captured.recordHandoffCalls.length).toBe(0);
+    await expect(page.getByTestId('open-in-agent-item-claude-code')).toBeVisible();
+    await expect(page.getByTestId('open-in-agent-item-claude-cowork')).toHaveCount(0);
+    await expect(page.getByTestId('open-in-agent-claude-web-fallback')).toHaveCount(0);
   });
 
   test('cell 5: Web Cursor happy path → POST /api/handoff (target=cursor, workspacePath) + cursor:// URL', async ({

@@ -7,7 +7,7 @@ import {
   useHandoffDispatch,
 } from '@/components/handoff/useHandoffDispatch';
 import { useInstalledAgents } from '@/components/handoff/useInstalledAgents';
-import { KNOWN_TARGETS } from '@/lib/handoff/targets';
+import { VISIBLE_TARGETS } from '@/lib/handoff/targets';
 import { useWorkspace } from '@/lib/use-workspace';
 import { cn } from '@/lib/utils';
 
@@ -22,8 +22,8 @@ export function AgentHandoffGrid({ className }: AgentHandoffGridProps) {
   const handoffInput = buildProjectScopedHandoffInput({ workspace });
 
   return (
-    <div className={cn('grid w-full max-w-5xl gap-4 sm:grid-cols-2', className)}>
-      {KNOWN_TARGETS.map((target) => {
+    <div className={cn('grid w-full max-w-5xl gap-4 sm:grid-cols-3', className)}>
+      {VISIBLE_TARGETS.map((target) => {
         const probed = states[target.id]?.installed;
         const status: CardStatus =
           probed === true ? 'installed' : probed === false ? 'missing' : 'pending';

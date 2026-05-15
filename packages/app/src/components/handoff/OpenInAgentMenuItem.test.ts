@@ -17,7 +17,6 @@ describe('OpenInAgentMenuItem module surface', () => {
     expect(typeof mod.computeRowHint).toBe('function');
     expect(typeof mod.computeWebFallbackUrl).toBe('function');
     expect(typeof mod.successToastForWebFallback).toBe('function');
-    expect(typeof mod.shouldShowSkillInstallBadge).toBe('function');
     expect(typeof mod.OK_DESKTOP_INSTALL_URL).toBe('string');
     expect(mod.OK_DESKTOP_INSTALL_URL.startsWith('https://')).toBe(true);
   });
@@ -278,65 +277,13 @@ describe('successToastForWebFallback — distinct from dispatch toast copy', () 
   });
 });
 
-describe('shouldShowSkillInstallBadge — enabled-branch INSTALL nudge predicate', () => {
-  test('claude-cowork + onInstallSkillRequest defined → true (badge present)', async () => {
-    const { shouldShowSkillInstallBadge } = await import('./OpenInAgentMenuItem');
-    const result = shouldShowSkillInstallBadge({
-      target: targetById('claude-cowork'),
-      onInstallSkillRequest: () => {},
-    });
-    expect(result).toBe(true);
-  });
-
-  test('claude-cowork + onInstallSkillRequest undefined → false (badge absent)', async () => {
-    const { shouldShowSkillInstallBadge } = await import('./OpenInAgentMenuItem');
-    const result = shouldShowSkillInstallBadge({
-      target: targetById('claude-cowork'),
-      onInstallSkillRequest: undefined,
-    });
-    expect(result).toBe(false);
-  });
-
-  test('non-claude-cowork target (codex) + onInstallSkillRequest defined → false (callback ignored)', async () => {
-    const { shouldShowSkillInstallBadge } = await import('./OpenInAgentMenuItem');
-    expect(
-      shouldShowSkillInstallBadge({
-        target: targetById('codex'),
-        onInstallSkillRequest: () => {},
-      }),
-    ).toBe(false);
-    expect(
-      shouldShowSkillInstallBadge({
-        target: targetById('cursor'),
-        onInstallSkillRequest: () => {},
-      }),
-    ).toBe(false);
-    expect(
-      shouldShowSkillInstallBadge({
-        target: targetById('claude-code'),
-        onInstallSkillRequest: () => {},
-      }),
-    ).toBe(false);
-  });
-});
-
-describe('OpenInAgentMenuItem source-level guards — enabled-branch INSTALL badge wiring', () => {
-  test('enabled branch routes onSelect through the badge predicate', () => {
-    expect(SRC).toMatch(
-      /onSelect=\{showSkillInstallBadge\s*&&\s*onInstallSkillRequest\s*\?\s*onInstallSkillRequest\s*:\s*onSelect\}/,
-    );
-  });
-
-  test('enabled branch swaps the accessible name when the badge is present', () => {
-    expect(SRC).toMatch(/Install Open Knowledge skill in \$\{target\.displayName\}/);
+describe('OpenInAgentMenuItem source-level guards', () => {
+  test('enabled branch dispatches via onSelect (no install-skill side door)', () => {
+    expect(SRC).toMatch(/onSelect=\{onSelect\}/);
     expect(SRC).toMatch(/Open in \$\{target\.displayName\}/);
   });
 
-  test('badge span carries the canonical data-testid', () => {
-    expect(SRC).toContain('"open-in-agent-skill-install-badge"');
-  });
-
-  test('not-installed branch (DropdownMenuSub with the existing submenu) is preserved verbatim', () => {
+  test('not-installed branch (DropdownMenuSub with install + web fallback) is preserved', () => {
     expect(SRC).toContain('DropdownMenuSubTrigger');
     expect(SRC).toContain('open-in-agent-install-');
     expect(SRC).toContain('open-in-agent-web-fallback-');

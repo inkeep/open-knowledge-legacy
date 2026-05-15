@@ -35,3 +35,7 @@ export const KNOWN_TARGETS = [
     tagline: 'AI-first VS Code fork with multi-file edits.',
   },
 ] as const satisfies ReadonlyArray<TargetData>;
+
+export const VISIBLE_TARGETS: ReadonlyArray<TargetData> = KNOWN_TARGETS.filter(
+  (target) => target.id !== 'claude-cowork',
+);

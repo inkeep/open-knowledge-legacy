@@ -15,34 +15,16 @@ describe('OpenInAgentMenu module surface', () => {
   });
 });
 
-describe('OpenInAgentMenu source-level guards — skill-install INSTALL nudge wiring', () => {
-  test('consumes the shared useClaudeDesktopIntegration hook', () => {
-    expect(SRC).toContain('useClaudeDesktopIntegration');
+describe('OpenInAgentMenu source-level guards', () => {
+  test('renders only the VISIBLE_TARGETS subset (cowork hidden from this surface)', () => {
     expect(SRC).toMatch(
-      /skillInstalled,\s*refresh:\s*refreshIntegration\s*\}\s*=\s*useClaudeDesktopIntegration\(\)/,
+      /installedTargets\s*=\s*VISIBLE_TARGETS\.filter\(\s*\(target\)\s*=>\s*states\[target\.id\]\?\.installed\s*===\s*true,?\s*\)/,
     );
   });
 
-  test('passes onInstallSkillRequest only for claude-cowork when skillInstalled === false', () => {
-    expect(SRC).toMatch(
-      /target\.id\s*===\s*['"]claude-cowork['"]\s*&&\s*!skillInstalled[\s\S]{0,200}setInstallDialogOpen\(true\)/,
-    );
-    expect(SRC).toMatch(/onInstallSkillRequest=\{onInstallSkillRequest\}/);
-  });
-
-  test('mounts InstallInClaudeDesktopDialog as a sibling of the dropdown', () => {
-    expect(SRC).toContain("from '@/components/InstallInClaudeDesktopDialog'");
-    expect(SRC).toMatch(/<InstallInClaudeDesktopDialog\s+open=\{installDialogOpen\}/);
-  });
-
-  test('refreshes the integration hook on dialog close (success OR cancel)', () => {
-    expect(SRC).toMatch(/if\s*\(!next\)\s*refreshIntegration\(\)/);
-  });
-
-  test('preserves the installedTargets filter (no row visibility regression)', () => {
-    expect(SRC).toMatch(
-      /installedTargets\s*=\s*KNOWN_TARGETS\.filter\(\(target\)\s*=>\s*states\[target\.id\]\?\.installed\s*===\s*true\)/,
-    );
+  test('claudeInstalled probe keys off the visible claude-code row', () => {
+    expect(SRC).toMatch(/states\[['"]claude-code['"]\]\?\.installed\s*===\s*true/);
+    expect(SRC).not.toContain("states['claude-cowork']");
   });
 
   test('preserves the always-visible Claude web fallback when !claudeInstalled', () => {

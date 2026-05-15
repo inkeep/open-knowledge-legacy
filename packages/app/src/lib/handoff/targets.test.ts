@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { KNOWN_TARGETS } from './targets.ts';
+import { KNOWN_TARGETS, VISIBLE_TARGETS } from './targets.ts';
 
 describe('KNOWN_TARGETS', () => {
   test('has exactly four targets in v0 (PQ2 + PQ3 LOCKED)', () => {
@@ -47,5 +47,24 @@ describe('KNOWN_TARGETS', () => {
     expect(byId.get('claude-code')).toBe('Claude Code');
     expect(byId.get('codex')).toBe('Codex');
     expect(byId.get('cursor')).toBe('Cursor');
+  });
+});
+
+describe('VISIBLE_TARGETS (UI render allow-list)', () => {
+  test('hides claude-cowork from the UI', () => {
+    const ids = new Set(VISIBLE_TARGETS.map((t) => t.id));
+    expect(ids.has('claude-cowork')).toBe(false);
+  });
+
+  test('keeps the remaining three targets visible', () => {
+    const ids = new Set(VISIBLE_TARGETS.map((t) => t.id));
+    expect(ids).toEqual(new Set(['claude-code', 'codex', 'cursor']));
+  });
+
+  test('is a strict subset of KNOWN_TARGETS (data preserved, just filtered)', () => {
+    for (const target of VISIBLE_TARGETS) {
+      expect(KNOWN_TARGETS).toContain(target);
+    }
+    expect(VISIBLE_TARGETS.length).toBeLessThan(KNOWN_TARGETS.length);
   });
 });
