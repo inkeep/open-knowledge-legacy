@@ -118,9 +118,8 @@ test.describe('handoff — 8-cell matrix', () => {
     expect(u.hostname).toBe('anysphere.cursor-deeplink');
     expect(u.pathname).toBe('/prompt');
     expect(u.searchParams.get('mode')).toBe('agent');
-    const textOnce = u.searchParams.get('text');
-    expect(textOnce).toBeTruthy();
-    expect(decodeURIComponent(textOnce as string)).toContain('Open Knowledge doc');
+    expect(u.searchParams.get('text')).toBeNull();
+    expect(u.searchParams.get('workspace')).toBeTruthy();
 
     await expect(page.getByText('Opened in Cursor.')).toBeVisible();
   });
@@ -208,9 +207,8 @@ test.describe('handoff — 8-cell matrix', () => {
     expect(u.hostname).toBe('anysphere.cursor-deeplink');
     expect(u.pathname).toBe('/prompt');
     expect(u.searchParams.get('mode')).toBe('agent');
-    const textOnce = u.searchParams.get('text');
-    expect(textOnce).toBeTruthy();
-    expect(decodeURIComponent(textOnce as string)).toContain('Open Knowledge doc');
+    expect(u.searchParams.get('text')).toBeNull();
+    expect(u.searchParams.get('workspace')).toBeTruthy();
 
     await expect(page.getByText('Opened in Cursor.')).toBeVisible();
 

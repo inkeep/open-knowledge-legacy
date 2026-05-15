@@ -2,6 +2,9 @@ import type { HandoffPayload } from './types.ts';
 
 export function buildCodexUrl(payload: HandoffPayload): string {
   const path = encodeURIComponent(payload.projectDir);
+  if (payload.docPath !== '') {
+    return `codex://new?path=${path}`;
+  }
   if (payload.prompt === '') {
     return `codex://new?path=${path}`;
   }
