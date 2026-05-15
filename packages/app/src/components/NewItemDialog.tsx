@@ -1,9 +1,17 @@
 import { CreatePageSuccessSchema } from '@inkeep/open-knowledge-core';
+import { Check, ChevronsUpDown } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { usePageList } from '@/components/PageListContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import {
   Dialog,
   DialogBody,
@@ -14,7 +22,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   type FolderConfigHandle,
@@ -23,6 +31,7 @@ import {
 } from '@/hooks/use-folder-config';
 import { emitDocumentsChanged } from '@/lib/documents-events';
 import { parseServerResponse } from '@/lib/parse-server-response';
+import { cn } from '@/lib/utils';
 import {
   type DocExtension,
   detectExtension,
@@ -147,6 +156,8 @@ export function NewItemDialog({
   const folderInputId = useId();
   const fileInputId = useId();
   const templatePickerLabelId = useId();
+  const templatePickerTriggerId = useId();
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -159,6 +170,7 @@ export function NewItemDialog({
       setSelectedTemplate(
         kind === 'file' && initialTemplate ? initialTemplate : BLANK_TEMPLATE_VALUE,
       );
+      setTemplatePickerOpen(false);
       const initial = kind === 'file' ? (suggestedName ?? 'untitled') : 'index';
       const sniffed = detectExtension(initial);
       setFileExtension(sniffed ?? '.md');
@@ -296,53 +308,39 @@ export function NewItemDialog({
           <div className="space-y-3">
             {showTemplatePicker && (
               <div>
-                <p id={templatePickerLabelId} className="mb-1.5 text-sm font-medium">
+                {/*
+                 * No `htmlFor` on the label — the trigger is a button with
+                 * role="combobox" + a self-referencing aria-labelledby
+                 * ("<label> <trigger>") that concatenates the static "Start
+                 * from" label with the button's own selected-value text. A
+                 * label/htmlFor pair on a button only forwards click → focus,
+                 * not click → open, so it'd surprise users carrying intuition
+                 * from native <select>.
+                 */}
+                <span id={templatePickerLabelId} className="mb-1.5 block text-sm font-medium">
                   Start from
-                </p>
-                {templatesLoading ? (
-                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                    Loading templates
-                  </div>
-                ) : (
-                  <>
-                    {templatesError ? (
-                      <p role="alert" className="mb-1.5 text-xs text-destructive">
-                        Could not load templates: {templatesError}. You can still create a blank
-                        note.
-                      </p>
-                    ) : null}
-                    <RadioGroup
-                      value={selectedTemplate}
-                      onValueChange={setSelectedTemplate}
-                      aria-labelledby={templatePickerLabelId}
-                      className="max-h-56 overflow-y-auto rounded-md border border-border bg-card subtle-scrollbar"
-                    >
-                      <TemplatePickerRow
-                        value={BLANK_TEMPLATE_VALUE}
-                        title="Blank note"
-                        description="Empty starting content"
-                      />
-                      {templates.length === 0 && !templatesError ? (
-                        <p className="px-3 pb-2 text-xs text-muted-foreground">
-                          No templates resolve here. Add one in this folder's Templates section, or
-                          in Settings → User templates.
-                        </p>
-                      ) : (
-                        templates.map((tpl) => (
-                          <TemplatePickerRow
-                            key={`${tpl.scope}:${tpl.source_folder}:${tpl.name}`}
-                            value={tpl.name}
-                            title={tpl.title ?? tpl.name}
-                            subName={tpl.title && tpl.title !== tpl.name ? tpl.name : undefined}
-                            description={tpl.description}
-                            scope={tpl.scope}
-                            sourceFolder={tpl.source_folder}
-                          />
-                        ))
-                      )}
-                    </RadioGroup>
-                  </>
-                )}
+                </span>
+                {templatesError ? (
+                  <p role="alert" className="mb-1.5 text-xs text-destructive">
+                    Could not load templates: {templatesError}. You can still create a blank note.
+                  </p>
+                ) : null}
+                <TemplatePickerCombobox
+                  triggerId={templatePickerTriggerId}
+                  labelledById={templatePickerLabelId}
+                  open={templatePickerOpen}
+                  onOpenChange={setTemplatePickerOpen}
+                  value={selectedTemplate}
+                  onValueChange={setSelectedTemplate}
+                  templates={templates}
+                  loading={templatesLoading}
+                />
+                {!templatesLoading && !templatesError && templates.length === 0 ? (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    No templates resolve here. Add one in this folder's Templates section, or in
+                    Settings → User templates.
+                  </p>
+                ) : null}
               </div>
             )}
             {kind === 'folder' && (
@@ -414,7 +412,6 @@ export function NewItemDialog({
                     if (v === '.md' || v === '.mdx') setFileExtension(v);
                   }}
                   variant="outline"
-                  size="sm"
                   aria-label="File extension"
                   className="shrink-0"
                 >
@@ -452,51 +449,167 @@ export function NewItemDialog({
   );
 }
 
-interface TemplatePickerRowProps {
+interface TemplatePickerComboboxProps {
+  triggerId: string;
+  labelledById: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   value: string;
-  title: string;
-  subName?: string;
-  description?: string;
-  scope?: TemplateMenuEntry['scope'];
-  sourceFolder?: string;
+  onValueChange: (value: string) => void;
+  templates: readonly TemplateMenuEntry[];
+  loading: boolean;
 }
 
-function TemplatePickerRow({
+function TemplatePickerCombobox({
+  triggerId,
+  labelledById,
+  open,
+  onOpenChange,
   value,
-  title,
-  subName,
-  description,
-  scope,
-  sourceFolder,
-}: TemplatePickerRowProps) {
-  const id = useId();
+  onValueChange,
+  templates,
+  loading,
+}: TemplatePickerComboboxProps) {
+  const listboxId = useId();
+  const selected = templates.find((tpl) => tpl.name === value);
+  const isBlank = value === BLANK_TEMPLATE_VALUE;
+
   return (
-    <label
-      htmlFor={id}
-      className="flex cursor-pointer items-start gap-3 px-3 py-2 transition-colors hover:bg-muted/50 has-data-[state=checked]:bg-muted/70"
-    >
-      <RadioGroupItem id={id} value={value} className="mt-1" />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium">{title}</span>
-          {subName ? (
-            <code className="font-mono text-2xs text-muted-foreground shrink-0">{subName}</code>
-          ) : null}
-          {scope === 'inherited' && sourceFolder ? (
-            <Badge variant="gray" className="ml-auto shrink-0 text-2xs">
-              {sourceFolder || 'root'}
-            </Badge>
-          ) : null}
-          {scope === 'user' ? (
-            <Badge variant="primary" className="ml-auto shrink-0 text-2xs">
-              user
-            </Badge>
-          ) : null}
-        </div>
-        {description ? (
-          <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{description}</p>
-        ) : null}
-      </div>
-    </label>
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <Button
+          id={triggerId}
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-controls={open ? listboxId : undefined}
+          aria-labelledby={`${labelledById} ${triggerId}`}
+          disabled={loading}
+          className="w-full justify-between font-normal"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate">
+              {loading
+                ? 'Loading templates'
+                : isBlank
+                  ? 'Blank note'
+                  : (selected?.title ?? selected?.name ?? value)}
+            </span>
+            {!loading && !isBlank && selected ? <ScopeBadge entry={selected} /> : null}
+          </span>
+          <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" aria-hidden="true" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-[var(--radix-popover-trigger-width)] p-0"
+        align="start"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          (e.currentTarget as HTMLElement).querySelector<HTMLInputElement>('[cmdk-input]')?.focus();
+        }}
+        onWheel={(e) => {
+          e.stopPropagation();
+        }}
+        onTouchMove={(e) => {
+          e.stopPropagation();
+        }}
+      >
+        <Command>
+          <CommandInput placeholder="Search templates" />
+          <CommandList id={listboxId} className="subtle-scrollbar">
+            <CommandEmpty>No templates found.</CommandEmpty>
+            <CommandItem
+              value="Blank note empty"
+              onSelect={() => {
+                onValueChange(BLANK_TEMPLATE_VALUE);
+                onOpenChange(false);
+              }}
+              className="items-start gap-3"
+            >
+              <Check
+                className={cn(
+                  'mt-1 size-4 shrink-0',
+                  value === BLANK_TEMPLATE_VALUE ? 'opacity-100' : 'opacity-0',
+                )}
+                aria-hidden="true"
+              />
+              <div className="min-w-0 flex-1">
+                <span className="text-sm font-medium">Blank note</span>
+                <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                  Empty starting content
+                </p>
+              </div>
+            </CommandItem>
+            {templates.map((tpl) => {
+              const title = tpl.title ?? tpl.name;
+              const subName = tpl.title && tpl.title !== tpl.name ? tpl.name : undefined;
+              const itemKey = `${tpl.scope}:${tpl.source_folder}:${tpl.name}`;
+              return (
+                <CommandItem
+                  key={itemKey}
+                  value={itemKey}
+                  keywords={[
+                    title,
+                    tpl.name,
+                    tpl.description ?? '',
+                    tpl.scope,
+                    tpl.source_folder ?? '',
+                  ]}
+                  onSelect={() => {
+                    onValueChange(tpl.name);
+                    onOpenChange(false);
+                  }}
+                  className="items-start gap-3"
+                >
+                  <Check
+                    className={cn(
+                      'mt-1 size-4 shrink-0',
+                      value === tpl.name ? 'opacity-100' : 'opacity-0',
+                    )}
+                    aria-hidden="true"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium">{title}</span>
+                      {subName ? (
+                        <code className="font-mono text-2xs text-muted-foreground shrink-0">
+                          {subName}
+                        </code>
+                      ) : null}
+                      <ScopeBadge entry={tpl} className="ml-auto" />
+                    </div>
+                    {tpl.description ? (
+                      <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                        {tpl.description}
+                      </p>
+                    ) : null}
+                  </div>
+                </CommandItem>
+              );
+            })}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
+}
+
+function ScopeBadge({ entry, className }: { entry: TemplateMenuEntry; className?: string }) {
+  if (entry.scope === 'user') {
+    return (
+      <Badge variant="primary" className={cn('shrink-0 text-2xs', className)}>
+        user
+      </Badge>
+    );
+  }
+  if (entry.scope === 'inherited') {
+    return (
+      <Badge variant="gray" className={cn('shrink-0 text-2xs', className)}>
+        {entry.source_folder || 'root'}
+      </Badge>
+    );
+  }
+  return null;
 }

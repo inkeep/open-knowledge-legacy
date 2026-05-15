@@ -1,3 +1,4 @@
+import { emitTemplatesChanged } from './documents-events.ts';
 import { parseApiError } from './parse-api-error.ts';
 
 type FolderFrontmatterPatch = Record<string, unknown>;
@@ -54,6 +55,7 @@ export async function saveTemplate(input: {
       created?: boolean;
       warnings?: string[];
     } | null;
+    emitTemplatesChanged();
     return {
       ok: true,
       created: payload?.created ?? false,
@@ -77,6 +79,7 @@ export async function deleteTemplate(
       return { ok: false, error: await readErrorBody(res) };
     }
     const payload = (await res.json().catch(() => null)) as { existed?: boolean } | null;
+    emitTemplatesChanged();
     return { ok: true, existed: payload?.existed ?? false };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
