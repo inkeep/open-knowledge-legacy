@@ -1623,7 +1623,19 @@
 }
 
 .cm-line {
-  @apply pl-4!;
+  /* Per-line padding contract: pl-4 baseline + two per-line variables set inline
+     by source-polish view-plugin for the lines it decorates:
+       --list-hang  (set on .cm-list-item lines:  prefix width 2..8ch)
+       --line-indent (set on .cm-fenced-code-line lines: source-indent count)
+     Both fall back to 0 when unset, so non-decorated .cm-line elements render
+     identically to plain pl-4. The Tailwind ! modifier compiles to !important
+     and defeats CodeMirror 6's bundled .cm-line stylesheet; the additive calc
+     form incorporates the variables directly so the !important declaration
+     varies per-line rather than locking every line to a flat 1rem.
+     See .cm-list-item (hanging-indent) and .cm-fenced-code-line (wrap-preserve-
+     indent) rules later in this file for the original author comments. */
+  @apply ps-[calc(1rem+var(--list-hang,0ch)+var(--line-indent,0)*1ch)]!;
+  text-indent: calc(-1 * var(--list-hang, 0ch));
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -3983,17 +3995,28 @@ html.electron-mode [data-slot="sidebar-inner"] {
 
 /* List hanging-indent: wrapped continuation aligns under item text.
    padding-inline-start pushes ALL visual lines right; text-indent pulls
-   only the FIRST visual line back — so the marker stays at its natural x
-   and wrapped continuations start under the item's text. */
+   only the FIRST visual line back - so the marker stays at its natural x
+   and wrapped continuations start under the item's text.
+   Redundant while .cm-line carries !important on padding-inline-start and
+   the view-plugin always sets --list-hang inline alongside .cm-list-item;
+   retained for documentation. Note the fallback path is not fully self-
+   consistent on its own: .cm-line's text-indent falls back to 0ch while
+   this rule's falls back to 2ch, so if the view-plugin ever stopped setting
+   --list-hang the two declarations would resolve to different values. In
+   practice the view-plugin sets the class and the variable atomically in
+   the same Decoration.line call, so they can't decouple. */
 .cm-list-item {
   padding-inline-start: var(--list-hang, 2ch);
   text-indent: calc(-1 * var(--list-hang, 2ch));
 }
 
-/* Fenced code — wrap-preserve-indent via padding-inline-start only (no text-indent).
+/* Fenced code - wrap-preserve-indent via padding-inline-start only (no text-indent).
    The ViewPlugin sets --line-indent per-line to the leading-whitespace count.
-   NO tint, NO border — the code block visually blends with paragraph text
-   except for monospace font and syntax-highlight colors (already applied by CM). */
+   NO tint, NO border - the code block visually blends with paragraph text
+   except for monospace font and syntax-highlight colors (already applied by CM).
+   Like .cm-list-item, redundant while .cm-line carries !important on padding-
+   inline-start and incorporates --line-indent in its additive calc; retained as
+   documentation. */
 .cm-fenced-code-line {
   padding-inline-start: calc(var(--line-indent, 0) * 1ch);
 }
