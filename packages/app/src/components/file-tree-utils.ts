@@ -58,3 +58,12 @@ export function defaultInitialDir(activeDocName: string | null): string {
   const slash = activeDocName.lastIndexOf('/');
   return slash > 0 ? activeDocName.slice(0, slash) : '';
 }
+
+export function filterVisibleEntries<T extends { kind?: unknown; docName?: string; path?: string }>(
+  entries: ReadonlyArray<T>,
+): T[] {
+  return entries.filter((entry) => {
+    const ref = entry.docName ?? entry.path ?? '';
+    return ref !== '' && !ref.split('/').some((seg) => seg.startsWith('.'));
+  });
+}

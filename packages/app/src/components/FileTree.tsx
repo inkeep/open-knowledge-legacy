@@ -83,6 +83,7 @@ import {
 import {
   type DocumentEntry,
   type FileEntry,
+  filterVisibleEntries,
   isAssetEntry,
   isDocumentEntry,
   isFolderEntry,
@@ -1005,7 +1006,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           if (!success.success) {
             setError('Documents response did not match expected shape.');
           } else {
-            setDocuments(success.data.documents as unknown as FileEntry[]);
+            setDocuments(filterVisibleEntries(success.data.documents as unknown as FileEntry[]));
             setError(null);
           }
         }
