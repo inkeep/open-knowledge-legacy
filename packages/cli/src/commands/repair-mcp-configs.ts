@@ -1,8 +1,12 @@
 import { homedir } from 'node:os';
-import { ALL_EDITOR_IDS, EDITOR_TARGETS, type EditorId, type EditorMcpTarget } from './editors.ts';
+import {
+  ALL_EDITOR_IDS,
+  EDITOR_TARGETS,
+  type EditorId,
+  type EditorMcpTarget,
+  PUBLISHED_MCP_SERVER_ARGS,
+} from './editors.ts';
 import { readExistingMcpEntry, writeEditorMcpConfig } from './init.ts';
-
-const CANONICAL_ARGS: readonly string[] = ['-y', '@inkeep/open-knowledge@latest', 'mcp'];
 
 const LEGACY_BARE_ARG_FORMS: ReadonlyArray<readonly string[]> = [
   ['@inkeep/open-knowledge', 'mcp'],
@@ -13,7 +17,7 @@ export type McpEntryClassification = 'canonical' | 'legacy-bare' | 'preserved';
 
 export function classifyMcpEntry(entry: Record<string, unknown>): McpEntryClassification {
   if (entry.command !== 'npx' || !Array.isArray(entry.args)) return 'preserved';
-  if (argsExactlyMatch(entry.args, CANONICAL_ARGS)) return 'canonical';
+  if (argsExactlyMatch(entry.args, PUBLISHED_MCP_SERVER_ARGS)) return 'canonical';
   for (const form of LEGACY_BARE_ARG_FORMS) {
     if (argsExactlyMatch(entry.args, form)) return 'legacy-bare';
   }
