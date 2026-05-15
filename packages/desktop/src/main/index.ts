@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir as osHomedir, hostname as osHostname } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   ALL_EDITOR_IDS,
   detectInstalledEditors,
@@ -59,6 +59,10 @@ import {
   type StartAutoUpdaterHandle,
 } from './auto-updater.ts';
 import { runBootstrap } from './bootstrap.ts';
+import {
+  type BundleReplaceWatcherHandle,
+  startBundleReplaceWatcher,
+} from './bundle-replace-detector.ts';
 import {
   createBrokenSymlinkRepairHandler,
   getInstallStatus,
@@ -264,6 +268,7 @@ const reducedTransparencyDeps: ReducedTransparencyDeps = {
   },
 };
 let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
+let bundleReplaceWatcherHandle: BundleReplaceWatcherHandle | null = null;
 let debugIpc: DebugIpcHandle | null = null;
 let mcpWiringHandle: RunMcpWiringHandle | null = null;
 
@@ -1645,6 +1650,17 @@ function bootPrimaryInstance(): void {
         },
       });
       refreshApplicationMenu();
+
+      if (process.platform === 'darwin' && app.isPackaged) {
+        const exePath = app.getPath('exe');
+        const infoPlistPath = join(dirname(dirname(exePath)), 'Info.plist');
+        bundleReplaceWatcherHandle = startBundleReplaceWatcher({
+          infoPlistPath,
+          getCurrentVersion: () => app.getVersion(),
+          dialog,
+          app,
+        });
+      }
     })
     .catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
@@ -1655,6 +1671,8 @@ function bootPrimaryInstance(): void {
   app.on('will-quit', () => {
     autoUpdaterHandle?.destroy();
     autoUpdaterHandle = null;
+    bundleReplaceWatcherHandle?.stop();
+    bundleReplaceWatcherHandle = null;
     mcpWiringHandle?.destroy();
     mcpWiringHandle = null;
   });
