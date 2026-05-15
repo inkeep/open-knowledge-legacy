@@ -19,8 +19,8 @@ describe('AgentHandoffGrid source-level guards', () => {
     expect(SRC).toContain('buildProjectScopedHandoffInput');
   });
 
-  test('iterates the canonical KNOWN_TARGETS registry (no hardcoded id list)', () => {
-    expect(SRC).toContain('KNOWN_TARGETS.map');
+  test('iterates the VISIBLE_TARGETS render allow-list (no hardcoded id list)', () => {
+    expect(SRC).toContain('VISIBLE_TARGETS.map');
   });
 
   test('not-installed path opens the editor installUrl via the handoff allowlist', () => {

@@ -63,7 +63,7 @@ import type { TagSummaryEntry } from '@/editor/extensions/tag-suggestion';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
-import { KNOWN_TARGETS } from '@/lib/handoff/targets';
+import { VISIBLE_TARGETS } from '@/lib/handoff/targets';
 import { SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 import { useWorkspace } from '@/lib/use-workspace';
 import { cn, isMacOs } from '@/lib/utils.ts';
@@ -419,7 +419,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
     !isTagMode &&
     handoffInput !== null &&
     (trimmedDeferredQuery === '' ||
-      KNOWN_TARGETS.some((target) =>
+      VISIBLE_TARGETS.some((target) =>
         matchesCommandQuery(`Open in ${target.displayName}`, deferredQuery, [
           target.id,
           'agent handoff',
@@ -652,7 +652,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
 
           {showAgentGroup ? (
             <CommandGroup heading="Open in agent">
-              {KNOWN_TARGETS.filter((target) =>
+              {VISIBLE_TARGETS.filter((target) =>
                 matchesCommandQuery(`Open in ${target.displayName}`, deferredQuery, [
                   target.id,
                   'agent handoff',
