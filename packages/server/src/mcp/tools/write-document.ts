@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
+import { renderInventoryFooter } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 import { resolveLockDir } from '../../config/paths.ts';
 import { parentFolderOf } from '../../content/nested-folder-rules.ts';
@@ -19,7 +20,7 @@ import {
   textResult,
 } from './shared.ts';
 
-export const DESCRIPTION = [
+const BASE_DESCRIPTION = [
   '[Requires: Hocuspocus server] Write markdown content to a document via the CRDT layer.',
   'Content is applied through Hocuspocus and propagated to all connected editors in real-time.',
   '',
@@ -36,6 +37,8 @@ export const DESCRIPTION = [
   '- `position` — Where to insert: "append", "prepend", or "replace". When `template` is set, `position` is forced to "replace".',
   '- `summary` — Optional one-line user-outcome description of this edit (≤80 chars). Appears as a bullet in the document timeline so readers can scan intent without opening every diff. Prefer outcome phrasing ("Fixed token-refresh race") over structural ("Added 3 lines"). Avoid including secrets or PII — summaries are persisted to git history.',
 ].join('\n');
+
+export const DESCRIPTION = `${BASE_DESCRIPTION}\n${renderInventoryFooter()}`;
 
 interface WriteDocumentDeps {
   serverUrl: ServerUrlOrResolver;

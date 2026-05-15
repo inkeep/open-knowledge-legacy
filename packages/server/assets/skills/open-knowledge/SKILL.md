@@ -75,6 +75,36 @@ To delete a doc, call `delete_document` — never `rm` / `unlink` / native `Bash
 
 **If `edit_document` returns "Text not found" on text you can verify exists on disk** (via `exec("cat …")`), the MCP session is likely stale (e.g., after a folder rename or server restart). Treat this as the escape-hatch trigger from the STOP block: prefix your next user-visible sentence with `Open Knowledge MCP unavailable:` and report the inconsistency. Don't loop on retries — the symptom is structural, not transient.
 
+## Components — prefer canonicals when one fits
+
+Some Open Knowledge projects ship a registry of custom JSX components (callouts, tabs, math, file attachments, …) that render with richer affordances than plain CommonMark / GFM. Discovery and authoring follow a three-step pattern — no separate listing call required:
+
+1. **Discover (point-of-authoring).** The JSON-schema `description` of `write_document` and `edit_document` carries an inline inventory of the canonical JSX components available for this project: a list of `{ id, displayName, description, kind }` entries. The agent's host renders that description in its tool-list view, so the catalog is visible at the moment of invoking either write tool. The `kind` is one of `jsx-block` (children-bearing JSX) or `jsx-void` (self-closing JSX).
+
+2. **Fetch full details.** Call `get_components({ ids: ["..."] })` with the ids you picked from the inventory. The response carries per-entry `example` (the literal source-form bytes to copy-paste) and a form-aware `params` schema (each prop's `type`, `values?` for enums, `required`, `defaultValue?`, `description`). Use whichever components are **semantically useful in any part of the doc** — a Callout for a warning, a Tabs/Tab pair for alternative content, etc.
+
+3. **Write.** Compose your markdown body inline using the `example` syntax + your chosen prop values, then call `write_document` or `edit_document` once. Generic placeholder shapes per `kind`:
+
+   ```mdx
+   <BlockComponent prop="value">
+     Body content here.
+   </BlockComponent>
+   ```
+
+   ```mdx
+   <VoidComponent prop="value" />
+   ```
+
+**Fenced code blocks are a separate authoring path.** Open Knowledge renders certain fenced code blocks specially — author these the way you would in any markdown doc; they are NOT in the component inventory and don't need a `get_components` fetch:
+
+- ` ```mermaid ` — renders the block as a Mermaid diagram (flowchart, sequence, class, state, ER, gantt, pie).
+- ` ```html preview ` (also ` ```htm preview ` / ` ```xml preview `) — renders the block as a live iframe preview. Author a standalone HTML/JS/CSS page in the fence and it executes inside the editor. **Use this whenever you want anything interactive or JS-powered** (charts via Chart.js / D3, calculators, animations, demos of an idea, anything that needs live JavaScript). Optional fence-meta tokens: `h=<value>` and `w=<value>` set iframe size (e.g. ` ```html preview h=400px w=600px `).
+- ` ```<lang> ` (any other language) — renders as a syntax-highlighted code block (no preview).
+
+**No-canonical-fits fallback.** If none of the available canonical JSX components matches what you want to author, you can still write any `<TagName>...</TagName>` JSX — Open Knowledge renders unregistered components as raw MDX (the wildcard tolerance contract). Prefer canonicals when one matches; arbitrary JSX is the long-tail escape hatch.
+
+**Don't enumerate first-party canonicals here.** Component names, counts, and instance-specific examples are project-specific — the source of truth is the inventory the write tools currently advertise. Reading SKILL.md never replaces calling `get_components` for current shape.
+
 ## Grounding — every factual claim needs a source (MUST)
 
 Knowledge-base docs are factual artifacts — whether the project is a wiki, an LLM brain, a spec collection, a research log, or anything else markdown-shaped. Every claim must be traceable, and **the source has to live inside the knowledge base**, not float on the public web.

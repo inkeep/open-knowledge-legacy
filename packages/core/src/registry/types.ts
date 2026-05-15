@@ -69,6 +69,7 @@ interface JsxComponentMetaBase {
   searchTerms?: string[];
   emptyChildName?: string;
   placeholder?: { label?: string; icon?: string };
+  exampleBody?: string;
   serialize: (node: PmNode, ctx: SerializeContext) => MdastNodes;
   toClipboardHast?: (
     node: PmNode,

@@ -53,7 +53,7 @@ function reconstructAttrs(
   return preserved;
 }
 
-function propToMdxJsxAttribute(name: string, value: unknown): MdxJsxAttribute {
+export function propToMdxJsxAttribute(name: string, value: unknown): MdxJsxAttribute {
   if (value === true) {
     return { type: 'mdxJsxAttribute', name, value: null };
   }

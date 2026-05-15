@@ -734,6 +734,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     description:
       'Standalone expand/collapse via native HTML5 <details>/<summary>. Group siblings with the `name` prop for exclusive-accordion UX.',
     searchTerms: ['toggle', 'accordion', 'expandable', 'details', 'disclosure', 'collapse', 'fold'],
+    exampleBody: 'Body content revealed when the accordion is expanded.',
     serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx, accordionProps),
   },
   {
@@ -748,6 +749,8 @@ export const builtInComponents: JsxComponentMeta[] = [
     description:
       'Horizontal tab strip + active panel below. Each `<Tab>` child is one panel; clickable pills at the top switch the active one. Active selection is ephemeral (resets on reload).',
     searchTerms: ['tabs', 'tabbed', 'panels', 'tabgroup', 'switcher'],
+    exampleBody:
+      '<Tab label="One">Body of the first tab panel.</Tab>\n  <Tab label="Two">Body of the second tab panel.</Tab>',
     serialize: (node, ctx) => emitMdxJsx('Tabs', node, ctx, tabsProps),
   },
   {
@@ -761,6 +764,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     description:
       'A single tab panel inside a `<Tabs>` container — carries the strip label and the block-content body.',
     searchTerms: ['tab', 'panel'],
+    exampleBody: 'Panel content — must be nested inside a `<Tabs>` parent.',
     serialize: (node, ctx) => emitMdxJsx('Tab', node, ctx, tabProps),
   },
   {
