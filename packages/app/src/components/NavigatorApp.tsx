@@ -105,12 +105,22 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
     }, 'Failed to remove project.');
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-primary-foreground dark:bg-background text-foreground">
+    <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-primary-foreground dark:bg-background text-foreground">
+      {/* Chrome row is absolutely positioned so it doesn't push content
+          out of geometric center. The full window height participates in
+          the my-auto centering math below; the drag strip just overlays
+          the top 36 px (covering the traffic-light zone). `pointer-events-
+          none` keeps stray clicks from being captured by this empty overlay;
+          `-webkit-app-region:drag` operates at Electron's compositor layer
+          BELOW pointer-events, so window-drag still works. */}
       <div
-        className={`shrink-0 ${isElectronHost ? '[-webkit-app-region:drag]' : ''}`}
+        className={`pointer-events-none absolute inset-x-0 top-0 z-10 h-9 ${
+          isElectronHost ? '[-webkit-app-region:drag]' : ''
+        }`}
         data-testid="nav-chrome-row"
-      >
-        <div className="mx-auto w-full max-w-5xl px-12 pt-12 pb-10">
+      />
+      <div className="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden px-12 py-6">
+        <div className="my-auto flex min-h-0 flex-col space-y-10">
           <header className="shrink-0 flex-wrap flex items-center gap-2.5">
             <OkIcon className="size-12 shrink-0" />
             <div className="flex flex-col gap-1">
@@ -128,81 +138,74 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
               </div>
             </div>
           </header>
-        </div>
-      </div>
-      <div
-        className={`mx-auto flex w-full max-w-5xl flex-1 flex-col overflow-hidden px-12 pb-12 space-y-10 ${
-          !loading && recents.length === 0 ? 'justify-center' : ''
-        }`}
-      >
-        <section className="grid shrink-0 sm:grid-cols-3 gap-3">
-          <NavigatorCard
-            title="Clone from GitHub"
-            description="Bring a remote repository onto this machine."
-            onClick={onClone}
-            dataTestId="nav-clone"
-            Icon={GithubIcon}
-          />
-          <NavigatorCard
-            title="Open folder on disk"
-            description="Use a folder you already have."
-            onClick={onOpenFolder}
-            dataTestId="nav-open"
-            Icon={FolderOpenIcon}
-          />
-          <NavigatorCard
-            title="Create new project"
-            description="Make a new folder for a brand-new project."
-            onClick={onCreate}
-            dataTestId="nav-create-new"
-            Icon={PlusIcon}
-          />
-        </section>
 
-        {error !== null ? (
-          <div
-            className="mb-3 flex shrink-0 items-start justify-between gap-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2"
-            data-testid="nav-error-banner"
-            role="alert"
-          >
-            <span className="text-red-700 text-xs dark:text-red-300">{error}</span>
-            <button
-              type="button"
-              onClick={() => setError(null)}
-              className="text-red-700 text-xs underline hover:no-underline dark:text-red-300"
-              data-testid="nav-error-dismiss"
+          <section className="grid shrink-0 sm:grid-cols-3 gap-3">
+            <NavigatorCard
+              title="Clone from GitHub"
+              description="Bring a remote repository onto this machine."
+              onClick={onClone}
+              dataTestId="nav-clone"
+              Icon={GithubIcon}
+            />
+            <NavigatorCard
+              title="Open folder on disk"
+              description="Use a folder you already have."
+              onClick={onOpenFolder}
+              dataTestId="nav-open"
+              Icon={FolderOpenIcon}
+            />
+            <NavigatorCard
+              title="Create new project"
+              description="Make a new folder for a brand-new project."
+              onClick={onCreate}
+              dataTestId="nav-create-new"
+              Icon={PlusIcon}
+            />
+          </section>
+
+          {error !== null ? (
+            <div
+              className="flex shrink-0 items-start justify-between gap-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2"
+              data-testid="nav-error-banner"
+              role="alert"
             >
-              Dismiss
-            </button>
-          </div>
-        ) : null}
-
-        {loading ? (
-          <section className="flex min-h-0 flex-1 flex-col">
-            <div className="flex items-center justify-center h-full">
-              <Loader2Icon className="size-4 animate-spin text-muted-foreground/60" />
+              <span className="text-red-700 text-xs dark:text-red-300">{error}</span>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="text-red-700 text-xs underline hover:no-underline dark:text-red-300"
+                data-testid="nav-error-dismiss"
+              >
+                Dismiss
+              </button>
             </div>
-          </section>
-        ) : recents.length > 0 ? (
-          <section className="flex min-h-0 flex-1 flex-col">
-            <h2 className="mb-2 shrink-0 font-medium text-muted-foreground font-mono text-xs uppercase tracking-wide">
-              Recent
-            </h2>
-            <ul
-              className="min-h-0 flex-1 subtle-scrollbar overflow-y-auto space-y-0.5 -mx-4"
-              data-testid="nav-recent-list"
-            >
-              {recents.map((r) => (
-                <RecentRow
-                  key={r.path}
-                  project={r}
-                  onOpen={() => onOpenRecent(r.path)}
-                  onRemove={() => onRemoveRecent(r.path)}
-                />
-              ))}
-            </ul>
-          </section>
-        ) : null}
+          ) : null}
+
+          {loading ? (
+            <section className="flex shrink-0 flex-col items-center">
+              <Loader2Icon className="size-4 animate-spin text-muted-foreground/60" />
+            </section>
+          ) : recents.length > 0 ? (
+            <section className="flex min-h-0 flex-col">
+              <h2 className="mb-2 shrink-0 font-medium text-muted-foreground font-mono text-xs uppercase tracking-wide">
+                Recent
+              </h2>
+              <ul
+                className="min-h-0 max-h-48 subtle-scrollbar overflow-y-auto space-y-0.5 -mx-4"
+                data-testid="nav-recent-list"
+              >
+                {recents.map((r) => (
+                  <RecentRow
+                    key={r.path}
+                    project={r}
+                    onOpen={() => onOpenRecent(r.path)}
+                    onRemove={() => onRemoveRecent(r.path)}
+                  />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </div>
       </div>
 
       {/* First-launch consent dialog — self-gates on the shared
