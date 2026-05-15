@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import {
   bootAutoUpdater,
+  buildCheckNowResultFromError,
   type DispatchKind,
   type IpcMainLike,
   isClassifiedUpdaterError,
@@ -1051,6 +1052,38 @@ describe('check-now → showCheckNowResult feedback dispatch', () => {
     });
   });
 
+  test('ERR_UPDATER_CHANNEL_FILE_NOT_FOUND routes to not-available (release-cut race window)', () => {
+    const showCheckNowResult = mock(() => {});
+    const { rig } = makeRig({ appVersion: '0.5.0-beta.21', showCheckNowResult });
+    rig.ipc.invoke('ok:update:check-now');
+    const err = Object.assign(
+      new Error(
+        'Cannot find latest-mac.yml in the latest release artifacts (https://github.com/inkeep/open-knowledge/releases/download/v0.5.0-beta.22/latest-mac.yml): HttpError: 404',
+      ),
+      { code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' },
+    );
+    rig.updater.emit('error', err);
+    expect(showCheckNowResult).toHaveBeenCalledTimes(1);
+    expect(showCheckNowResult).toHaveBeenCalledWith({
+      kind: 'not-available',
+      currentVersion: '0.5.0-beta.21',
+    });
+  });
+
+  test('other classified updater errors still surface kind=error (channel-file-not-found is the only narrow case)', () => {
+    const showCheckNowResult = mock(() => {});
+    const { rig } = makeRig({ showCheckNowResult });
+    rig.ipc.invoke('ok:update:check-now');
+    const err = Object.assign(new Error('zip missing'), {
+      code: 'ERR_UPDATER_ZIP_FILE_NOT_FOUND',
+    });
+    rig.updater.emit('error', err);
+    expect(showCheckNowResult).toHaveBeenCalledWith({
+      kind: 'error',
+      message: 'zip missing',
+    });
+  });
+
   test('periodic check (NO menu-check) does NOT fire showCheckNowResult', () => {
     const showCheckNowResult = mock(() => {});
     const { rig } = makeRig({ showCheckNowResult });
@@ -1078,6 +1111,64 @@ describe('check-now → showCheckNowResult feedback dispatch', () => {
       kind: 'error',
       message: 'feed not reachable',
     });
+  });
+
+  test('checkForUpdates synchronous reject with ERR_UPDATER_CHANNEL_FILE_NOT_FOUND routes to not-available', async () => {
+    const showCheckNowResult = mock(() => {});
+    const { rig } = makeRig({ appVersion: '0.5.0-beta.21', showCheckNowResult });
+    const err = Object.assign(new Error('Cannot find latest-mac.yml ...: HttpError: 404'), {
+      code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND',
+    });
+    rig.updater.checkForUpdates = mock(() => Promise.reject(err));
+    rig.ipc.invoke('ok:update:check-now');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(showCheckNowResult).toHaveBeenCalledWith({
+      kind: 'not-available',
+      currentVersion: '0.5.0-beta.21',
+    });
+  });
+});
+
+describe('buildCheckNowResultFromError', () => {
+  test('ERR_UPDATER_CHANNEL_FILE_NOT_FOUND maps to not-available with currentVersion', () => {
+    const err = Object.assign(new Error('Cannot find …'), {
+      code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND',
+    });
+    const result = buildCheckNowResultFromError(err, '0.5.0-beta.21');
+    expect(result).toEqual({ kind: 'not-available', currentVersion: '0.5.0-beta.21' });
+  });
+
+  test('other classified codes map to error with the error.message', () => {
+    const err = Object.assign(new Error('zip missing'), {
+      code: 'ERR_UPDATER_ZIP_FILE_NOT_FOUND',
+    });
+    const result = buildCheckNowResultFromError(err, '0.5.0-beta.21');
+    expect(result).toEqual({ kind: 'error', message: 'zip missing' });
+  });
+
+  test('non-classified errors map to error with the error.message', () => {
+    const result = buildCheckNowResultFromError(new Error('network timeout'), '0.5.0-beta.21');
+    expect(result).toEqual({ kind: 'error', message: 'network timeout' });
+  });
+
+  test('empty error.message falls back to "Update check failed"', () => {
+    const result = buildCheckNowResultFromError(new Error(''), '0.5.0-beta.21');
+    expect(result).toEqual({ kind: 'error', message: 'Update check failed' });
+  });
+
+  test('non-Error rejection (string) maps to error with the string', () => {
+    const result = buildCheckNowResultFromError('something blew up', '0.5.0-beta.21');
+    expect(result).toEqual({ kind: 'error', message: 'something blew up' });
+  });
+
+  test('non-Error rejection (empty string) falls back to "Update check failed"', () => {
+    const result = buildCheckNowResultFromError('', '0.5.0-beta.21');
+    expect(result).toEqual({ kind: 'error', message: 'Update check failed' });
+  });
+
+  test('non-Error rejection (other) falls back to the generic message', () => {
+    const result = buildCheckNowResultFromError({ weird: true }, '0.5.0-beta.21');
+    expect(result).toEqual({ kind: 'error', message: 'Update check failed' });
   });
 });
 

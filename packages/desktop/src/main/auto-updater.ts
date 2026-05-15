@@ -134,6 +134,20 @@ export function channelFromVersion(version: string): UpdateChannel {
   return match[1] ? 'beta' : 'latest';
 }
 
+export function buildCheckNowResultFromError(err: unknown, currentVersion: string): CheckNowResult {
+  const code = err instanceof Error ? (err as Error & { code?: unknown }).code : undefined;
+  if (code === 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND') {
+    return { kind: 'not-available', currentVersion };
+  }
+  const message =
+    err instanceof Error
+      ? err.message || 'Update check failed'
+      : typeof err === 'string'
+        ? err || 'Update check failed'
+        : 'Update check failed';
+  return { kind: 'error', message };
+}
+
 export function versionAtLeast(running: string, pending: string): boolean {
   const parse = (v: string): [number, number, number] | null => {
     if (typeof v !== 'string') return null;
@@ -272,15 +286,16 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     menuCheckPending = true;
     const checkPromise = updater.checkForUpdates();
     void checkPromise.catch((err: unknown) => {
-      logger.debug('check-now checkForUpdates rejected', {
+      const code = err instanceof Error ? (err as Error & { code?: unknown }).code : undefined;
+      const logFn = isClassifiedUpdaterError(err) ? logger.warn : logger.debug;
+      logFn('check-now checkForUpdates rejected', {
+        code,
         message: err instanceof Error ? err.message : String(err),
+        timestamp: now().toISOString(),
       });
       if (menuCheckPending) {
         menuCheckPending = false;
-        showCheckNowResult?.({
-          kind: 'error',
-          message: err instanceof Error ? err.message : String(err),
-        });
+        showCheckNowResult?.(buildCheckNowResultFromError(err, getAppVersion()));
       }
     });
     return checkPromise;
@@ -361,10 +376,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     }
     if (menuCheckPending) {
       menuCheckPending = false;
-      showCheckNowResult?.({
-        kind: 'error',
-        message: err.message || 'Update check failed',
-      });
+      showCheckNowResult?.(buildCheckNowResultFromError(err, getAppVersion()));
     }
     maybeFireStuckHint();
   };
