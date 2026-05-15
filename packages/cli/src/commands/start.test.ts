@@ -646,6 +646,36 @@ describe('bootStartServer (integration)', () => {
     });
     expect(booted.port).toBeGreaterThan(0);
   });
+
+  test('invokes repairLaunchJsonFn with the project cwd before bootServer', async () => {
+    const captured: { projectDir: string }[] = [];
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      host: TEST_HOST,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+      repairLaunchJsonFn: (opts) => {
+        captured.push(opts as { projectDir: string });
+      },
+    });
+    expect(captured).toHaveLength(1);
+    expect(captured[0].projectDir).toBe(tmpDir);
+  });
+
+  test('continues booting even when repairLaunchJsonFn throws', async () => {
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      host: TEST_HOST,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+      repairLaunchJsonFn: () => {
+        throw new Error('synthetic launch-json repair failure');
+      },
+    });
+    expect(booted.port).toBeGreaterThan(0);
+  });
 });
 
 describe('bootStartServer — no auto git-init from ok start (US-004)', () => {

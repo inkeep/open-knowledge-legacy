@@ -193,6 +193,7 @@ interface BootStartServerOptions {
   uiBindTimeoutMs?: number;
   log?: PinoLogger;
   repairMcpConfigsFn?: (opts: { projectDir: string }) => unknown;
+  repairLaunchJsonFn?: (opts: { projectDir: string }) => unknown;
 }
 
 export interface BootedStartServer {
@@ -230,6 +231,14 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     repair({ projectDir: cwd });
   } catch (err) {
     log.warn({ err }, '[start] mcp-config repair sweep failed; continuing');
+  }
+
+  try {
+    const repair =
+      opts.repairLaunchJsonFn ?? (await import('./repair-launch-json.ts')).repairLaunchJson;
+    repair({ projectDir: cwd });
+  } catch (err) {
+    log.warn({ err }, '[start] launch.json repair sweep failed; continuing');
   }
 
   const contentDir = resolveContentDir(config, cwd);

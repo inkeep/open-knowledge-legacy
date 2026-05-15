@@ -27,6 +27,7 @@ import {
   type EditorMcpResult,
   formatInitResult,
   initCommand,
+  LAUNCH_JSON_CANONICAL_ARGS,
   readExistingMcpEntry,
   resolveMcpScope,
   runInit,
@@ -658,7 +659,7 @@ describe('runInit', () => {
       const entry = parsed.configurations[0];
       expect(entry.name).toBe('open-knowledge-ui');
       expect(entry.runtimeExecutable).toBe('npx');
-      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(entry.runtimeArgs).toEqual([...LAUNCH_JSON_CANONICAL_ARGS]);
       expect(entry.port).toBe(LAUNCH_JSON_PORT);
       expect(entry.autoPort).toBe(true);
     });
@@ -689,7 +690,7 @@ describe('runInit', () => {
       expect(result.launchJson?.action).toBe('merged');
 
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(parsed.configurations[0].runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(parsed.configurations[0].runtimeArgs).toEqual([...LAUNCH_JSON_CANONICAL_ARGS]);
     });
 
     it('writes a local dev launch target when --dev-mcp is enabled', async () => {
@@ -790,7 +791,7 @@ describe('runInit', () => {
       const ok = parsed.configurations.find(
         (c: { name: string }) => c.name === 'open-knowledge-ui',
       );
-      expect(ok.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(ok.runtimeArgs).toEqual([...LAUNCH_JSON_CANONICAL_ARGS]);
       expect(ok.port).toBe(LAUNCH_JSON_PORT);
       expect(ok.autoPort).toBe(true);
     });

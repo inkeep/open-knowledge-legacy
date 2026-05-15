@@ -239,7 +239,13 @@ interface InitCommandResult {
 }
 
 const LAUNCH_JSON_VERSION = '0.0.1';
-const LAUNCH_CONFIG_NAME = 'open-knowledge-ui';
+export const LAUNCH_CONFIG_NAME = 'open-knowledge-ui';
+
+export const LAUNCH_JSON_CANONICAL_ARGS: readonly string[] = [
+  '-y',
+  '@inkeep/open-knowledge@latest',
+  'ui',
+];
 
 type LaunchJsonAction = 'created' | 'merged' | 'failed';
 
@@ -272,7 +278,7 @@ export function scaffoldLaunchJson(
       : {
           name: LAUNCH_CONFIG_NAME,
           runtimeExecutable: 'npx',
-          runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
+          runtimeArgs: [...LAUNCH_JSON_CANONICAL_ARGS],
           port: LAUNCH_JSON_PORT,
           autoPort: true,
         };
