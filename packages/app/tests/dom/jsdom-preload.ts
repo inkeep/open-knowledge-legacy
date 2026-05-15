@@ -33,6 +33,7 @@ Object.assign(globalThis, {
   FocusEvent: win.FocusEvent,
   PointerEvent: win.PointerEvent,
   DataTransfer: win.DataTransfer,
+  MutationObserver: win.MutationObserver,
   getComputedStyle: win.getComputedStyle.bind(win),
   requestAnimationFrame: win.requestAnimationFrame.bind(win),
   cancelAnimationFrame: win.cancelAnimationFrame.bind(win),

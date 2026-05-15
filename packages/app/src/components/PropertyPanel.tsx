@@ -35,7 +35,7 @@ import {
   type RenameDraft,
 } from '@/components/FrontmatterRow';
 import { useProperties } from '@/components/PropertyContext';
-import { coerceValue } from '@/components/PropertyWidgets';
+import { coerceValue, DEFAULT_VALUE_FOR_TYPE } from '@/components/PropertyWidgets';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -44,14 +44,6 @@ import { useFolderConfig } from '@/hooks/use-folder-config';
 interface PropertyPanelProps {
   provider: HocuspocusProvider;
 }
-
-const DEFAULT_VALUE_FOR_TYPE: Record<FrontmatterType, FrontmatterValue> = {
-  text: '',
-  number: 0,
-  boolean: false,
-  date: '',
-  list: [],
-};
 
 function readInitialSnapshot(provider: PropertyPanelProps['provider']): FrontmatterSnapshot {
   const ytext = provider.document.getText('source').toString();
