@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority';
-import { PanelLeftIcon } from 'lucide-react';
+import { PanelLeft, PanelLeftOpen } from 'lucide-react';
 import { Slot } from 'radix-ui';
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
@@ -305,7 +305,9 @@ function Sidebar({
           'group-data-[dragging=true]:duration-0! group-data-[dragging=true]_*:!duration-0',
         )}
       />
-      <div
+      <nav
+        id={SIDEBAR_ID}
+        aria-label="File sidebar"
         data-slot="sidebar-container"
         data-side={side}
         className={cn(
@@ -325,7 +327,7 @@ function Sidebar({
         >
           {children}
         </div>
-      </div>
+      </nav>
     </div>
   );
 }
@@ -341,6 +343,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       size="icon-sm"
       aria-expanded={state === 'expanded'}
       aria-controls={SIDEBAR_ID}
+      aria-label={state === 'expanded' ? 'Hide Files' : 'Show Files'}
       className={cn(className)}
       onClick={(event) => {
         onClick?.(event);
@@ -348,8 +351,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       }}
       {...props}
     >
-      <PanelLeftIcon />
-      <span className="sr-only">Toggle Sidebar</span>
+      {state === 'expanded' ? <PanelLeft /> : <PanelLeftOpen />}
     </Button>
   );
 }
@@ -385,7 +387,7 @@ function SidebarRail({
       ref={dragRef}
       data-sidebar="rail"
       data-slot="sidebar-rail"
-      aria-label="Toggle Sidebar"
+      aria-label={state === 'expanded' ? 'Hide Files' : 'Show Files'}
       tabIndex={-1}
       onMouseDown={(event) => {
         onMouseDown?.(event);
@@ -393,7 +395,7 @@ function SidebarRail({
           handleMouseDown(event);
         }
       }}
-      title="Toggle Sidebar"
+      title={state === 'expanded' ? 'Hide Files' : 'Show Files'}
       className={cn(
         'absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:start-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex ltr:-translate-x-1/2 rtl:-translate-x-1/2',
         'in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize',

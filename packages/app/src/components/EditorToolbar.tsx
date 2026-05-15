@@ -12,7 +12,7 @@ interface EditorToolbarProps {
   onModeChange: (mode: EditorModeValue) => void;
   showAddPropertyButton: boolean;
   onAddProperty: () => void;
-  showPanelOpen: boolean;
+  isPanelCollapsed: boolean;
   onTogglePanel: () => void;
 }
 
@@ -22,7 +22,7 @@ export function EditorToolbar({
   onModeChange,
   showAddPropertyButton,
   onAddProperty,
-  showPanelOpen,
+  isPanelCollapsed,
   onTogglePanel,
 }: EditorToolbarProps) {
   return (
@@ -100,15 +100,16 @@ export function EditorToolbar({
               variant="ghost"
               size="icon"
               onClick={onTogglePanel}
-              aria-label={showPanelOpen ? 'Show document panel' : 'Hide document panel'}
+              aria-expanded={!isPanelCollapsed}
+              aria-label={isPanelCollapsed ? 'Show panel' : 'Hide panel'}
               asChild
             >
               <TooltipTrigger>
-                {showPanelOpen ? <PanelRightOpen /> : <PanelRightClose />}
+                {isPanelCollapsed ? <PanelRightOpen /> : <PanelRightClose />}
               </TooltipTrigger>
             </Button>
             <TooltipContent side="bottom">
-              {showPanelOpen ? 'Show panel' : 'Hide panel'}
+              {isPanelCollapsed ? 'Show panel' : 'Hide panel'}
             </TooltipContent>
           </Tooltip>
         </div>

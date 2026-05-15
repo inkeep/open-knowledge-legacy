@@ -179,7 +179,7 @@ function EditorAreaInner({
   const isSourceMode = editorMode === 'source';
   const sourceDisabled = !isConnected;
 
-  const showPanelOpen = isSheetMode ? !sheetOpen : isCollapsed;
+  const isPanelCollapsed = isSheetMode ? !sheetOpen : isCollapsed;
 
   function openAddPropertyForm() {
     if (!activeDocName) return;
@@ -284,7 +284,7 @@ function EditorAreaInner({
           onModeChange={onModeChange}
           showAddPropertyButton={!isSourceMode}
           onAddProperty={openAddPropertyForm}
-          showPanelOpen={showPanelOpen}
+          isPanelCollapsed={isPanelCollapsed}
           onTogglePanel={togglePanel}
         />
       </div>
