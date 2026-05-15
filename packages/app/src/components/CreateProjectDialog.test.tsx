@@ -3,6 +3,7 @@ import {
   basenamePreview,
   CreateProjectDialog,
   computeCascade,
+  dirnamePreview,
   joinPathPreview,
   parseCreateNewError,
 } from './CreateProjectDialog';
@@ -49,6 +50,49 @@ describe('basenamePreview', () => {
 
   test('returns empty string for empty input', () => {
     expect(basenamePreview('')).toBe('');
+  });
+});
+
+describe('dirnamePreview', () => {
+  test('extracts the parent directory from a POSIX path', () => {
+    expect(dirnamePreview('/Users/me/Projects/Foo')).toBe('/Users/me/Projects');
+  });
+
+  test('extracts the parent directory from a Windows path', () => {
+    expect(dirnamePreview('C:\\Users\\me\\Projects\\Foo')).toBe('C:\\Users\\me\\Projects');
+  });
+
+  test('tolerates trailing separators', () => {
+    expect(dirnamePreview('/Users/me/Projects/Foo/')).toBe('/Users/me/Projects');
+    expect(dirnamePreview('C:\\Users\\me\\Foo\\')).toBe('C:\\Users\\me');
+  });
+
+  test('returns empty string when there is no parent (single segment)', () => {
+    expect(dirnamePreview('Foo')).toBe('');
+  });
+
+  test('returns the root separator when path is one segment under root', () => {
+    expect(dirnamePreview('/foo')).toBe('/');
+    expect(dirnamePreview('\\foo')).toBe('\\');
+  });
+
+  test('returns empty string for empty input', () => {
+    expect(dirnamePreview('')).toBe('');
+  });
+
+  test('round-trips with basenamePreview at the submit-time decomposition site', () => {
+    const inputs = [
+      '/Users/me/Projects/MyNotes',
+      '/Users/me/Projects/MyNotes/',
+      'C:\\Users\\me\\Projects\\MyNotes',
+    ];
+    for (const picked of inputs) {
+      const parent = dirnamePreview(picked);
+      const basename = basenamePreview(picked);
+      expect(parent).not.toBe('');
+      expect(basename).not.toBe('');
+      expect(joinPathPreview(parent, basename)).toBe(picked.replace(/[/\\]+$/, ''));
+    }
   });
 });
 
@@ -202,7 +246,7 @@ describe('CreateProjectDialog — load-bearing structural guards', () => {
     expect(SRC).toMatch(
       /<Button[\s\S]{0,400}?type="button"[\s\S]{0,400}?data-testid="create-browse"/,
     );
-    expect(SRC).toContain('bridge.dialog.openFolder()');
+    expect(SRC).toMatch(/bridge\.dialog\.openFolder\s*\(/);
   });
 
   test('onSubmit calls preventDefault to suppress renderer page-reload', () => {
@@ -234,6 +278,8 @@ describe('CreateProjectDialog — load-bearing structural guards', () => {
     expect(SRC).toContain('data-testid="create-banner-git-confirm"');
     expect(SRC).toContain('data-testid="create-banner-nonempty"');
     expect(SRC).toContain('data-testid="create-banner-nested-open"');
+    expect(SRC).toContain('data-testid="create-banner-sanitize-diverged"');
+    expect(SRC).toContain('data-testid="create-banner-sanitize-erased"');
   });
 
   test('No forbidden React Compiler escape hatches (memo / useMemo / useCallback / forwardRef)', () => {
@@ -248,11 +294,24 @@ describe('CreateProjectDialog — load-bearing structural guards', () => {
   });
 
   test('Open-tracking useEffect resets transient state on each open', () => {
-    const block = SRC.match(/if \(!open\) return;[\s\S]{0,800}?bridge\.fs/);
+    const block = SRC.match(/if \(!open\) return;[\s\S]{0,1500}?bridge\.fs/);
     expect(block).not.toBeNull();
     const body = block?.[0] ?? '';
     expect(body).toContain('setBusy(false)');
-    expect(body).toContain("setName('')");
+    expect(body).toContain("setPicked('')");
+    expect(body).toContain("setDefaultPath('')");
     expect(body).toContain('setEditorIds(new Set(ALL_EDITOR_IDS))');
+  });
+
+  test('dialog renders a single Location affordance, no Name <Input>', () => {
+    expect(SRC).not.toMatch(/<Input[\s\S]{0,400}?id="create-name"/);
+    expect(SRC).not.toMatch(/data-testid="create-name"/);
+    expect(SRC).toContain('data-testid="create-browse"');
+    expect(SRC).toContain('data-testid="create-target-caption"');
+  });
+
+  test('submit handler derives parent + name from the picked target', () => {
+    expect(SRC).not.toMatch(/\bconst \[name, setName\] = useState/);
+    expect(SRC).not.toMatch(/\bconst \[parent, setParent\] = useState/);
   });
 });

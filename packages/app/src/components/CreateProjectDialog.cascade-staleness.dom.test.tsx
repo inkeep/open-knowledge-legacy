@@ -34,7 +34,7 @@ if (globalWithDomShims.ResizeObserver === undefined) {
 const ASYNC_TIMEOUT_MS = 2000;
 
 const PARENT = '/Users/test/Projects';
-const NAME = 'Andrew Brain';
+const TARGET = `${PARENT}/Andrew Brain`;
 const FIRST_GIT_RESULT: OkFindEnclosingGitRootResult = {
   gitRoot: '/Users/test',
   distance: 1,
@@ -44,20 +44,32 @@ interface ProgrammableBridgeStub {
   bridge: OkDesktopBridge;
   setEnclosingGitResult(result: OkFindEnclosingGitRootResult | null): void;
   setRemoveGitFolderImpl(impl: (gitRoot: string) => Promise<void>): void;
+  setPickedPath(picked: string | null): void;
   readonly findGitCalls: ReadonlyArray<string>;
+  readonly folderStateCalls: ReadonlyArray<string>;
   readonly removeGitCalls: ReadonlyArray<string>;
+  readonly openFolderCalls: ReadonlyArray<number>;
 }
 
-function makeStubBridge(initial: OkFindEnclosingGitRootResult | null): ProgrammableBridgeStub {
-  let currentGitResult: OkFindEnclosingGitRootResult | null = initial;
+function makeStubBridge(
+  initialGit: OkFindEnclosingGitRootResult | null,
+  initialPicked: string | null,
+): ProgrammableBridgeStub {
+  let currentGitResult: OkFindEnclosingGitRootResult | null = initialGit;
+  let currentPicked: string | null = initialPicked;
   let removeGitImpl: (gitRoot: string) => Promise<void> = async () => undefined;
   const findGitCalls: string[] = [];
+  const folderStateCalls: string[] = [];
   const removeGitCalls: string[] = [];
+  const openFolderCalls: number[] = [];
 
   const bridge = {
     fs: {
       defaultProjectsRoot: async (): Promise<string> => PARENT,
-      folderState: async (_path: string): Promise<OkFolderState> => 'free',
+      folderState: async (path: string): Promise<OkFolderState> => {
+        folderStateCalls.push(path);
+        return 'free';
+      },
       findEnclosingProjectRoot: async (_path: string) => null,
       findEnclosingGitRoot: async (path: string) => {
         findGitCalls.push(path);
@@ -69,7 +81,10 @@ function makeStubBridge(initial: OkFindEnclosingGitRootResult | null): Programma
       },
     },
     dialog: {
-      openFolder: async () => null,
+      openFolder: async (): Promise<string | null> => {
+        openFolderCalls.push(openFolderCalls.length + 1);
+        return currentPicked;
+      },
     },
     project: {
       recordCreateNewBannerShown: async () => undefined,
@@ -86,8 +101,13 @@ function makeStubBridge(initial: OkFindEnclosingGitRootResult | null): Programma
     setRemoveGitFolderImpl: (impl) => {
       removeGitImpl = impl;
     },
+    setPickedPath: (picked) => {
+      currentPicked = picked;
+    },
     findGitCalls,
+    folderStateCalls,
     removeGitCalls,
+    openFolderCalls,
   };
 }
 
@@ -103,23 +123,23 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
     consoleWarnSpy.mockRestore();
   });
 
-  test('cascade banner reflects live FS state after the same target is re-entered following an FS mutation', async () => {
-    const stub = makeStubBridge(FIRST_GIT_RESULT);
+  test('S1: re-engaging Browse with the same target after an FS mutation produces a fresh probe', async () => {
+    const stub = makeStubBridge(FIRST_GIT_RESULT, TARGET);
     render(<CreateProjectDialog open={true} onOpenChange={() => {}} bridge={stub.bridge} />);
 
-    const nameInput = (await screen.findByTestId('create-name', undefined, {
-      timeout: ASYNC_TIMEOUT_MS,
-    })) as HTMLInputElement;
+    expect(screen.queryByTestId('create-name') !== null).toBe(false);
 
+    const browse = (await screen.findByTestId('create-browse', undefined, {
+      timeout: ASYNC_TIMEOUT_MS,
+    })) as HTMLButtonElement;
     await waitFor(
       () => {
-        expect((screen.getByTestId('create-browse') as HTMLButtonElement).disabled).toBe(false);
+        expect(browse.disabled).toBe(false);
       },
       { timeout: ASYNC_TIMEOUT_MS },
     );
 
-    fireEvent.change(nameInput, { target: { value: NAME } });
-
+    fireEvent.click(browse);
     await waitFor(
       () => {
         expect(screen.queryByTestId('create-banner-git-confirm')).not.toBeNull();
@@ -129,47 +149,42 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
 
     stub.setEnclosingGitResult(null);
 
-    fireEvent.change(nameInput, { target: { value: '' } });
-    await waitFor(
-      () => {
-        expect(screen.queryByTestId('create-banner-git-confirm')).toBeNull();
-      },
-      { timeout: ASYNC_TIMEOUT_MS },
-    );
-
-    const callCountBeforeRetype = stub.findGitCalls.filter((p) => p === PARENT).length;
-
-    fireEvent.change(nameInput, { target: { value: NAME } });
+    const probesBeforeReBrowse = stub.findGitCalls.length;
+    fireEvent.click(browse);
 
     await waitFor(
       () => {
-        const delta = stub.findGitCalls.filter((p) => p === PARENT).length - callCountBeforeRetype;
+        const delta = stub.findGitCalls.length - probesBeforeReBrowse;
         expect(delta).toBeGreaterThanOrEqual(1);
       },
       { timeout: ASYNC_TIMEOUT_MS },
     );
 
-    const stillShowingStaleBanner = screen.queryByTestId('create-banner-git-confirm') !== null;
-    expect(stillShowingStaleBanner).toBe(false);
-  });
-
-  test('window focus event triggers a re-probe — banner clears when FS resolves while dialog stays open', async () => {
-    const stub = makeStubBridge(FIRST_GIT_RESULT);
-    render(<CreateProjectDialog open={true} onOpenChange={() => {}} bridge={stub.bridge} />);
-
-    const nameInput = (await screen.findByTestId('create-name', undefined, {
-      timeout: ASYNC_TIMEOUT_MS,
-    })) as HTMLInputElement;
-
     await waitFor(
       () => {
-        expect((screen.getByTestId('create-browse') as HTMLButtonElement).disabled).toBe(false);
+        const stillShowingStaleBanner = screen.queryByTestId('create-banner-git-confirm') !== null;
+        expect(stillShowingStaleBanner).toBe(false);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+  });
+
+  test('S2: window focus event triggers a re-probe — banner clears when FS resolves while dialog stays open', async () => {
+    const stub = makeStubBridge(FIRST_GIT_RESULT, TARGET);
+    render(<CreateProjectDialog open={true} onOpenChange={() => {}} bridge={stub.bridge} />);
+
+    expect(screen.queryByTestId('create-name') !== null).toBe(false);
+    const browse = (await screen.findByTestId('create-browse', undefined, {
+      timeout: ASYNC_TIMEOUT_MS,
+    })) as HTMLButtonElement;
+    await waitFor(
+      () => {
+        expect(browse.disabled).toBe(false);
       },
       { timeout: ASYNC_TIMEOUT_MS },
     );
 
-    fireEvent.change(nameInput, { target: { value: NAME } });
-
+    fireEvent.click(browse);
     await waitFor(
       () => {
         expect(screen.queryByTestId('create-banner-git-confirm')).not.toBeNull();
@@ -178,13 +193,13 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
     );
 
     stub.setEnclosingGitResult(null);
-    const callCountBeforeFocus = stub.findGitCalls.filter((p) => p === PARENT).length;
+    const callCountBeforeFocus = stub.findGitCalls.length;
 
     fireEvent(window, new Event('focus'));
 
     await waitFor(
       () => {
-        const delta = stub.findGitCalls.filter((p) => p === PARENT).length - callCountBeforeFocus;
+        const delta = stub.findGitCalls.length - callCountBeforeFocus;
         expect(delta).toBeGreaterThanOrEqual(1);
       },
       { timeout: ASYNC_TIMEOUT_MS },
@@ -198,23 +213,24 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
     );
   });
 
-  test('remove-.git button: confirm → IPC called → re-probe → banner clears (terminal case, no higher .git)', async () => {
-    const stub = makeStubBridge(FIRST_GIT_RESULT);
+  test('S3: remove-.git button: confirm → IPC called → re-probe → banner clears (terminal case, no higher .git)', async () => {
+    const stub = makeStubBridge(FIRST_GIT_RESULT, TARGET);
     stub.setRemoveGitFolderImpl(async () => {
       stub.setEnclosingGitResult(null);
     });
 
     render(<CreateProjectDialog open={true} onOpenChange={() => {}} bridge={stub.bridge} />);
-    const nameInput = (await screen.findByTestId('create-name', undefined, {
+    expect(screen.queryByTestId('create-name') !== null).toBe(false);
+    const browse = (await screen.findByTestId('create-browse', undefined, {
       timeout: ASYNC_TIMEOUT_MS,
-    })) as HTMLInputElement;
+    })) as HTMLButtonElement;
     await waitFor(
       () => {
-        expect((screen.getByTestId('create-browse') as HTMLButtonElement).disabled).toBe(false);
+        expect(browse.disabled).toBe(false);
       },
       { timeout: ASYNC_TIMEOUT_MS },
     );
-    fireEvent.change(nameInput, { target: { value: NAME } });
+    fireEvent.click(browse);
     await waitFor(
       () => {
         expect(screen.queryByTestId('create-banner-git-confirm')).not.toBeNull();
@@ -241,11 +257,11 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
     );
   });
 
-  test('remove-.git button: when a higher .git exists, banner repaints with the new gitRoot and the user can climb', async () => {
+  test('S4: remove-.git button: when a higher .git exists, banner repaints with the new gitRoot and the user can climb', async () => {
     const FIRST = { gitRoot: '/Users/test', distance: 1 } as const;
     const HIGHER = { gitRoot: '/Users', distance: 2 } as const;
 
-    const stub = makeStubBridge(FIRST);
+    const stub = makeStubBridge(FIRST, TARGET);
     stub.setRemoveGitFolderImpl(async (gitRoot) => {
       if (gitRoot === FIRST.gitRoot) {
         stub.setEnclosingGitResult(HIGHER);
@@ -255,16 +271,17 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
     });
 
     render(<CreateProjectDialog open={true} onOpenChange={() => {}} bridge={stub.bridge} />);
-    const nameInput = (await screen.findByTestId('create-name', undefined, {
+    expect(screen.queryByTestId('create-name') !== null).toBe(false);
+    const browse = (await screen.findByTestId('create-browse', undefined, {
       timeout: ASYNC_TIMEOUT_MS,
-    })) as HTMLInputElement;
+    })) as HTMLButtonElement;
     await waitFor(
       () => {
-        expect((screen.getByTestId('create-browse') as HTMLButtonElement).disabled).toBe(false);
+        expect(browse.disabled).toBe(false);
       },
       { timeout: ASYNC_TIMEOUT_MS },
     );
-    fireEvent.change(nameInput, { target: { value: NAME } });
+    fireEvent.click(browse);
 
     await waitFor(
       () => {
@@ -309,23 +326,54 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
     );
   });
 
-  test('remove-.git button: IPC failure surfaces inline error, banner stays, retry path remains', async () => {
-    const stub = makeStubBridge(FIRST_GIT_RESULT);
+  test('S6: cascade probes folderState against the sanitized creation target, not the raw picked path', async () => {
+    const PICKED_RAW = '/Users/test/.hidden-notes';
+    const EXPECTED_SANITIZED_TARGET = '/Users/test/hidden-notes';
+
+    const stub = makeStubBridge(null, PICKED_RAW);
+    render(<CreateProjectDialog open={true} onOpenChange={() => {}} bridge={stub.bridge} />);
+
+    const browse = (await screen.findByTestId('create-browse', undefined, {
+      timeout: ASYNC_TIMEOUT_MS,
+    })) as HTMLButtonElement;
+    await waitFor(
+      () => {
+        expect(browse.disabled).toBe(false);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+
+    fireEvent.click(browse);
+
+    await waitFor(
+      () => {
+        expect(stub.folderStateCalls.length).toBeGreaterThanOrEqual(1);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+
+    expect(stub.folderStateCalls).toContain(EXPECTED_SANITIZED_TARGET);
+    expect(stub.folderStateCalls).not.toContain(PICKED_RAW);
+  });
+
+  test('S5: remove-.git button: IPC failure surfaces inline error, banner stays, retry path remains', async () => {
+    const stub = makeStubBridge(FIRST_GIT_RESULT, TARGET);
     stub.setRemoveGitFolderImpl(async () => {
       throw new Error('EACCES: permission denied');
     });
 
     render(<CreateProjectDialog open={true} onOpenChange={() => {}} bridge={stub.bridge} />);
-    const nameInput = (await screen.findByTestId('create-name', undefined, {
+    expect(screen.queryByTestId('create-name') !== null).toBe(false);
+    const browse = (await screen.findByTestId('create-browse', undefined, {
       timeout: ASYNC_TIMEOUT_MS,
-    })) as HTMLInputElement;
+    })) as HTMLButtonElement;
     await waitFor(
       () => {
-        expect((screen.getByTestId('create-browse') as HTMLButtonElement).disabled).toBe(false);
+        expect(browse.disabled).toBe(false);
       },
       { timeout: ASYNC_TIMEOUT_MS },
     );
-    fireEvent.change(nameInput, { target: { value: NAME } });
+    fireEvent.click(browse);
     await waitFor(
       () => {
         expect(screen.queryByTestId('create-banner-git-confirm')).not.toBeNull();

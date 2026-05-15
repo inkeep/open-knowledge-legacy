@@ -129,7 +129,7 @@ test.describe('Create-new-project smoke', () => {
     const expectedTarget = join(parent, projectName);
     trackForCleanup(tmpHome);
 
-    const app = await launchApp(tmpHome, { pickedPath: parent });
+    const app = await launchApp(tmpHome, { pickedPath: expectedTarget });
     captureStderrFor(app);
     const navigator = await findWindowByMode(app, 'navigator');
 
@@ -138,16 +138,10 @@ test.describe('Create-new-project smoke', () => {
     const dialog = navigator.locator('[data-testid="create-project-dialog"]');
     await expect(dialog).toBeVisible({ timeout: 15_000 });
 
-    await expect(navigator.locator('[data-testid="create-name"]')).toBeFocused();
+    await expect(navigator.locator('[data-testid="create-name"]')).toHaveCount(0);
 
     await navigator.locator('[data-testid="create-browse"]').click();
-    await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(parent, {
-      timeout: 15_000,
-    });
-
-    await navigator.locator('[data-testid="create-name"]').fill(projectName);
-
-    await expect(navigator.locator('[data-testid="create-target-caption"]')).toContainText(
+    await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(
       expectedTarget,
       { timeout: 15_000 },
     );
@@ -169,7 +163,7 @@ test.describe('Create-new-project smoke', () => {
       .toBe(true);
   });
 
-  test('blocks creation when parent is inside an existing OK project', async ({
+  test('blocks creation when picked target is inside an existing OK project', async ({
     captureStderrFor,
   }) => {
     const tmpHome = seedTmpHome('nested');
@@ -178,9 +172,10 @@ test.describe('Create-new-project smoke', () => {
     writeFileSync(join(rootPath, '.ok', 'config.yml'), 'schemaVersion: 1\ncontent:\n  dir: "."\n');
     const subFolder = join(rootPath, 'sub');
     mkdirSync(subFolder, { recursive: true });
+    const pickedTarget = join(subFolder, 'Nested');
     trackForCleanup(tmpHome);
 
-    const app = await launchApp(tmpHome, { pickedPath: subFolder });
+    const app = await launchApp(tmpHome, { pickedPath: pickedTarget });
     captureStderrFor(app);
     const navigator = await findWindowByMode(app, 'navigator');
 
@@ -189,12 +184,13 @@ test.describe('Create-new-project smoke', () => {
       timeout: 15_000,
     });
 
-    await navigator.locator('[data-testid="create-browse"]').click();
-    await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(subFolder, {
-      timeout: 15_000,
-    });
+    await expect(navigator.locator('[data-testid="create-name"]')).toHaveCount(0);
 
-    await navigator.locator('[data-testid="create-name"]').fill('Nested');
+    await navigator.locator('[data-testid="create-browse"]').click();
+    await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(
+      pickedTarget,
+      { timeout: 15_000 },
+    );
 
     const nestedBanner = navigator.locator('[data-testid="create-banner-nested"]');
     await expect(nestedBanner).toBeVisible({ timeout: 15_000 });
@@ -216,7 +212,7 @@ test.describe('Create-new-project smoke', () => {
     const target = join(pickedParent, projectName);
     trackForCleanup(tmpHome);
 
-    const app = await launchApp(tmpHome, { pickedPath: pickedParent });
+    const app = await launchApp(tmpHome, { pickedPath: target });
     captureStderrFor(app);
     const navigator = await findWindowByMode(app, 'navigator');
 
@@ -225,15 +221,12 @@ test.describe('Create-new-project smoke', () => {
       timeout: 15_000,
     });
 
-    await navigator.locator('[data-testid="create-browse"]').click();
-    await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(
-      pickedParent,
-      {
-        timeout: 15_000,
-      },
-    );
+    await expect(navigator.locator('[data-testid="create-name"]')).toHaveCount(0);
 
-    await navigator.locator('[data-testid="create-name"]').fill(projectName);
+    await navigator.locator('[data-testid="create-browse"]').click();
+    await expect(navigator.locator('[data-testid="create-target-caption"]')).toHaveText(target, {
+      timeout: 15_000,
+    });
 
     const gitBanner = navigator.locator('[data-testid="create-banner-git-confirm"]');
     await expect(gitBanner).toBeVisible({ timeout: 15_000 });
