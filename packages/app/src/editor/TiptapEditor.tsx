@@ -37,6 +37,7 @@ import {
 } from './clipboard/index.ts';
 import { useDocumentContext } from './DocumentContext';
 import { setEditorDocName } from './extensions/doc-context.ts';
+import { setEditorSourceMode } from './extensions/editor-mode-context.ts';
 import { sharedExtensions } from './extensions/shared.ts';
 import { uploadDecorationPlugin } from './image-upload/index.ts';
 import { getMountId } from './mount-id-registry';
@@ -581,6 +582,13 @@ const TiptapEditorChrome: FC<TiptapEditorChromeProps> = ({
     });
   }, [provider, docName, activeDocName, identity, principal, isSourceMode]);
 
+  useEffect(() => {
+    setEditorSourceMode(editor, isSourceMode);
+    return () => {
+      setEditorSourceMode(editor, false);
+    };
+  }, [editor, isSourceMode]);
+
   return (
     <div
       ref={wrapperRef}
@@ -591,9 +599,12 @@ const TiptapEditorChrome: FC<TiptapEditorChromeProps> = ({
       data-agent-flash-agent-id=""
     >
       {/* Both menus portal to document.body, so they escape the
-          `ok-mode-hidden` wrapper. Unmounting them on source-mode also
-          tears down any open slash/wiki/tag suggestion popups, since
-          `unregisterPlugin` triggers PM's `destroyPluginViews()` cascade. */}
+          `ok-mode-hidden` wrapper — the React conditional below is the
+          only gate. Slash, wiki-link, and tag suggestion popups are
+          gated separately via the `getEditorSourceMode` signal in
+          `editor-mode-context.ts`, consumed by each plugin's `allow`
+          predicate; unmounting these React menus does NOT affect those
+          plugins. */}
       {!isSourceMode && <BubbleMenuBar editor={editor} />}
       {!isSourceMode && <TableControlsMenu editor={editor} />}
       {/* Drag handle + "+" chrome is registered as the imperative

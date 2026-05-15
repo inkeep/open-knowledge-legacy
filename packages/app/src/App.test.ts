@@ -49,3 +49,65 @@ describe('SettingsShortcutHandler wiring (US-010)', () => {
     expect(installIdx).toBeGreaterThan(settingsIdx);
   });
 });
+
+const DRAG_LITERAL = '[-webkit-app-region:drag]';
+
+function hasIsElectronHostGatedDrag(appSrc: string): boolean {
+  const lines = appSrc.split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!lines[i]?.includes(DRAG_LITERAL)) continue;
+    const start = Math.max(0, i - 6);
+    const end = Math.min(lines.length, i + 6);
+    const context = lines.slice(start, end).join('\n');
+    if (/isElectronHost\s*(?:&&|\?)/.test(context)) return true;
+  }
+  return false;
+}
+
+describe('Editor BrowserWindow — wrapper-strip drag region contract', () => {
+  test('App.tsx declares an isElectronHost-gated drag region covering the y=0..y=8 wrapper strip', () => {
+    expect(hasIsElectronHostGatedDrag(src)).toBe(true);
+  });
+
+  test('App.tsx uses the canonical isElectronHost detection idiom', () => {
+    expect(src).toMatch(
+      /typeof\s+window\s*!==\s*['"]undefined['"]\s*&&\s*window\.okDesktop\s*!=\s*null/,
+    );
+    expect(src).toContain('const isElectronHost');
+  });
+
+  test('the drag-strip element pins fixed-position 8px-tall full-width pointer-passthrough geometry', () => {
+    const lines = src.split('\n');
+    let geometryPinLanded = false;
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i] ?? '';
+      if (!line.includes(DRAG_LITERAL)) continue;
+      const start = Math.max(0, i - 4);
+      const end = Math.min(lines.length, i + 5);
+      const context = lines.slice(start, end).join('\n');
+      expect(context).toContain('fixed');
+      expect(context).toContain('top-0');
+      expect(context).toContain('h-2');
+      expect(context).toContain('inset-x-0');
+      expect(context).toContain('pointer-events-none');
+      expect(context).toContain('z-50');
+      geometryPinLanded = true;
+    }
+    expect(geometryPinLanded).toBe(true);
+  });
+
+  test('the drag region is conditional on isElectronHost (web mode is unchanged)', () => {
+    const lines = src.split('\n');
+    let dragLiteralFound = false;
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i] ?? '';
+      if (!line.includes(DRAG_LITERAL)) continue;
+      dragLiteralFound = true;
+      const start = Math.max(0, i - 6);
+      const end = Math.min(lines.length, i + 6);
+      const context = lines.slice(start, end).join('\n');
+      expect(context).toMatch(/isElectronHost/);
+    }
+    expect(dragLiteralFound).toBe(true);
+  });
+});
