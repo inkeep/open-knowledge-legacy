@@ -19,3 +19,15 @@ describe('getInitialSidebarWidth source-level guards', () => {
     expect(SRC).toMatch(/SIDEBAR_WIDTH_VALUE_PATTERN\.test\(decodedWidth\)/);
   });
 });
+
+describe('SIDEBAR_ID anchors aria-controls referent on every viewport', () => {
+  test('id={SIDEBAR_ID} is set on both the mobile and desktop sidebar-container', () => {
+    const matches = SRC.match(/id=\{SIDEBAR_ID\}/g);
+    expect(matches?.length).toBe(2);
+  });
+
+  test('nav elements carrying id={SIDEBAR_ID} also carry aria-label="File sidebar"', () => {
+    const ariaLabels = SRC.match(/aria-label="File sidebar"/g);
+    expect(ariaLabels?.length).toBe(2);
+  });
+});
