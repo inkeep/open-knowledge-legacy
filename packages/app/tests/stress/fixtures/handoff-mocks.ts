@@ -225,6 +225,7 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
           folderState: async () => 'free' as const,
           findEnclosingProjectRoot: async () => null,
           findEnclosingGitRoot: async () => null,
+          removeGitFolder: async () => undefined,
         },
         shell: shellStub,
         clipboard: {

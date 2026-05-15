@@ -243,6 +243,17 @@ export interface RequestChannels {
     args: [path: string];
     result: FindEnclosingGitRootResult | null;
   };
+  /** Permanently delete a `.git` directory at `<gitRoot>/.git`. Caller passes
+   *  the gitRoot (the directory CONTAINING `.git`), not the `.git` path itself
+   *  — main appends `.git` and validates the resolved basename. Used only by
+   *  the Create-new-project dialog's confirm-git banner action; the user has
+   *  already confirmed inline. Idempotent: succeeds if `.git` is already
+   *  absent. Refuses any path whose resolved basename isn't `.git` so the
+   *  channel can't be coerced into a general-purpose `rm -rf`. */
+  'ok:fs:remove-git-folder': {
+    args: [gitRoot: string];
+    result: undefined;
+  };
   'ok:project:record-create-new-banner-shown': {
     args: [banner: CreateNewBannerKind];
     result: undefined;

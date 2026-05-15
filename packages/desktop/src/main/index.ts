@@ -120,6 +120,7 @@ import {
   type ReducedTransparencyDeps,
   type VibrancyMaterial,
 } from './reduced-transparency-handler.ts';
+import { removeGitFolder } from './remove-git-folder.ts';
 import { handleShellOpenExternal } from './shell-allowlist.ts';
 import { createShowGateRegistry, type ShowGateRegistry } from './show-gate.ts';
 import {
@@ -845,8 +846,23 @@ function maybeOfferBrokenSymlinkRepair(): Promise<void> {
   return handler();
 }
 
+const RECENT_GIT_ROOTS_CAP = 256;
+
 function registerIpcHandlers() {
   const handle = createHandler(ipcMain);
+
+  const recentGitRoots = new Set<string>();
+  const recordRecentGitRoot = (gitRoot: string): void => {
+    if (recentGitRoots.has(gitRoot)) {
+      recentGitRoots.delete(gitRoot);
+    }
+    recentGitRoots.add(gitRoot);
+    while (recentGitRoots.size > RECENT_GIT_ROOTS_CAP) {
+      const oldest = recentGitRoots.values().next().value;
+      if (oldest === undefined) break;
+      recentGitRoots.delete(oldest);
+    }
+  };
 
   handle('ok:dialog:open-folder', async (_event, opts) => {
     return promptForExistingFolder(dialog, opts);
@@ -1193,7 +1209,16 @@ function registerIpcHandlers() {
     if (typeof path !== 'string' || path.length === 0) {
       throw new Error('ok:fs:find-enclosing-git-root rejected: path must be a non-empty string');
     }
-    return findEnclosingGitRoot(path);
+    const result = findEnclosingGitRoot(path);
+    if (result !== null) {
+      recordRecentGitRoot(result.gitRoot);
+    }
+    return result;
+  });
+
+  handle('ok:fs:remove-git-folder', async (_event, gitRoot) => {
+    await removeGitFolder(gitRoot, { allowedGitRoots: recentGitRoots });
+    return undefined;
   });
 
   handle('ok:project:create-new', async (_event, args) => {

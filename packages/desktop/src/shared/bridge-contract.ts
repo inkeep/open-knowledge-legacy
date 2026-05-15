@@ -342,6 +342,13 @@ export interface OkDesktopBridge {
     folderState(path: string): Promise<OkFolderState>;
     findEnclosingProjectRoot(path: string): Promise<FindEnclosingProjectRootResult | null>;
     findEnclosingGitRoot(path: string): Promise<FindEnclosingGitRootResult | null>;
+    /** Permanently remove `<gitRoot>/.git`. Caller passes the directory
+     *  CONTAINING `.git`; main appends `.git` and validates the resolved
+     *  basename. Used only by the Create-new-project dialog's confirm-git
+     *  banner action after an inline user confirmation step. Idempotent —
+     *  succeeds silently if `.git` is already absent (handles the race
+     *  where an external delete arrives between the probe and the click). */
+    removeGitFolder(gitRoot: string): Promise<void>;
   };
 
   navigator: {

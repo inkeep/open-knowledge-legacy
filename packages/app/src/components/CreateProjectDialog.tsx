@@ -30,6 +30,8 @@ import type {
 
 const PROBE_DEBOUNCE_MS = 180;
 
+const GIT_BANNER_POLL_INTERVAL_MS = 5_000;
+
 type CascadeState =
   | { kind: 'idle' }
   | { kind: 'pending' }
@@ -37,6 +39,12 @@ type CascadeState =
   | { kind: 'confirm-git'; gitRoot: string }
   | { kind: 'block-nonempty' }
   | { kind: 'free' };
+
+type RemoveGitState =
+  | { kind: 'idle' }
+  | { kind: 'confirming'; gitRoot: string }
+  | { kind: 'pending'; gitRoot: string }
+  | { kind: 'error'; message: string };
 
 type CreateNewError =
   | { reason: 'nested-project'; rootPath?: string }
@@ -140,31 +148,25 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
   const [cascade, setCascade] = useState<CascadeState>({ kind: 'idle' });
   const [busy, setBusy] = useState(false);
   const [submitError, setSubmitError] = useState<CreateNewError | null>(null);
+  const [removeGitState, setRemoveGitState] = useState<RemoveGitState>({ kind: 'idle' });
+  const [probeNonce, setProbeNonce] = useState(0);
 
-  const probeCache = useRef(
-    new Map<
-      string,
-      {
-        enclosingProject: OkFindEnclosingProjectRootResult | null;
-        enclosingGit: OkFindEnclosingGitRootResult | null;
-        targetState: OkFolderState;
-      }
-    >(),
-  );
   const firedBanners = useRef<Set<CreateNewBannerKind>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const removeGitCallIdRef = useRef(0);
 
   useEffect(() => {
     if (!open) return;
-    probeCache.current.clear();
     firedBanners.current.clear();
     setSubmitError(null);
     setCascade({ kind: 'idle' });
     setBusy(false);
     setName('');
     setEditorIds(new Set(ALL_EDITOR_IDS));
+    setRemoveGitState({ kind: 'idle' });
+    removeGitCallIdRef.current += 1;
 
     let cancelled = false;
     setParentLoading(true);
@@ -191,6 +193,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
   }, [open, bridge]);
 
   useEffect(() => {
+    void probeNonce;
     if (!open) return;
     if (debounceRef.current !== null) clearTimeout(debounceRef.current);
     if (abortRef.current !== null) abortRef.current.abort();
@@ -201,20 +204,6 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
       return;
     }
     const target = joinPathPreview(parent, sanitized);
-
-    const cached = probeCache.current.get(target);
-    if (cached !== undefined) {
-      setCascade(
-        computeCascade({
-          parent,
-          sanitizedName: sanitized,
-          enclosingProject: cached.enclosingProject,
-          enclosingGit: cached.enclosingGit,
-          targetState: cached.targetState,
-        }),
-      );
-      return;
-    }
 
     setCascade({ kind: 'pending' });
     const ctrl = new AbortController();
@@ -228,7 +217,6 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
       ])
         .then(([enclosingProject, enclosingGit, targetState]) => {
           if (ctrl.signal.aborted) return;
-          probeCache.current.set(target, { enclosingProject, enclosingGit, targetState });
           setCascade(
             computeCascade({
               parent,
@@ -250,7 +238,40 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
       if (debounceRef.current !== null) clearTimeout(debounceRef.current);
       ctrl.abort();
     };
-  }, [open, name, parent, bridge]);
+  }, [open, name, parent, bridge, probeNonce]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onFocus = () => setProbeNonce((n) => n + 1);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (cascade.kind !== 'confirm-git') return;
+    const id = setInterval(() => {
+      setProbeNonce((n) => n + 1);
+    }, GIT_BANNER_POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [open, cascade.kind]);
+
+  useEffect(() => {
+    if (cascade.kind !== 'confirm-git') {
+      if (removeGitState.kind !== 'idle') {
+        removeGitCallIdRef.current += 1;
+        setRemoveGitState({ kind: 'idle' });
+      }
+      return;
+    }
+    if (removeGitState.kind === 'confirming' && removeGitState.gitRoot !== cascade.gitRoot) {
+      setRemoveGitState({ kind: 'idle' });
+    }
+    if (removeGitState.kind === 'pending' && removeGitState.gitRoot !== cascade.gitRoot) {
+      removeGitCallIdRef.current += 1;
+      setRemoveGitState({ kind: 'idle' });
+    }
+  }, [cascade, removeGitState]);
 
   useEffect(() => {
     if (!open) return;
@@ -313,6 +334,31 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
   function onOpenChangeInternal(next: boolean) {
     if (busy) return;
     onOpenChange(next);
+  }
+
+  async function onRequestRemoveGit(gitRoot: string) {
+    setRemoveGitState({ kind: 'confirming', gitRoot });
+  }
+
+  async function onCancelRemoveGit() {
+    setRemoveGitState({ kind: 'idle' });
+  }
+
+  async function onConfirmRemoveGit(gitRoot: string) {
+    const callId = removeGitCallIdRef.current + 1;
+    removeGitCallIdRef.current = callId;
+    setRemoveGitState({ kind: 'pending', gitRoot });
+    try {
+      await bridge.fs.removeGitFolder(gitRoot);
+      if (removeGitCallIdRef.current !== callId) return;
+      setProbeNonce((n) => n + 1);
+      setRemoveGitState({ kind: 'idle' });
+    } catch (err) {
+      if (removeGitCallIdRef.current !== callId) return;
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[CreateProjectDialog] bridge.fs.removeGitFolder failed:', err);
+      setRemoveGitState({ kind: 'error', message });
+    }
   }
 
   async function onOpenNested(rootPath: string) {
@@ -398,7 +444,14 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
               </p>
             </div>
 
-            <CascadeBanner cascade={cascade} onOpenNested={onOpenNested} />
+            <CascadeBanner
+              cascade={cascade}
+              onOpenNested={onOpenNested}
+              removeGitState={removeGitState}
+              onRequestRemoveGit={onRequestRemoveGit}
+              onCancelRemoveGit={onCancelRemoveGit}
+              onConfirmRemoveGit={onConfirmRemoveGit}
+            />
 
             <fieldset className="space-y-2 pb-2">
               <legend className="text-sm font-medium">Connect AI editors</legend>
@@ -457,9 +510,20 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
 interface CascadeBannerProps {
   cascade: CascadeState;
   onOpenNested: (rootPath: string) => void;
+  removeGitState: RemoveGitState;
+  onRequestRemoveGit: (gitRoot: string) => void;
+  onCancelRemoveGit: () => void;
+  onConfirmRemoveGit: (gitRoot: string) => void;
 }
 
-function CascadeBanner({ cascade, onOpenNested }: CascadeBannerProps) {
+function CascadeBanner({
+  cascade,
+  onOpenNested,
+  removeGitState,
+  onRequestRemoveGit,
+  onCancelRemoveGit,
+  onConfirmRemoveGit,
+}: CascadeBannerProps) {
   if (cascade.kind === 'idle' || cascade.kind === 'pending' || cascade.kind === 'free') {
     return null;
   }
@@ -489,6 +553,8 @@ function CascadeBanner({ cascade, onOpenNested }: CascadeBannerProps) {
     );
   }
   if (cascade.kind === 'confirm-git') {
+    const { gitRoot } = cascade;
+    const targetGitPath = `${gitRoot.replace(/\/+$/, '')}/.git`;
     return (
       <div
         role="status"
@@ -497,9 +563,66 @@ function CascadeBanner({ cascade, onOpenNested }: CascadeBannerProps) {
         data-testid="create-banner-git-confirm"
       >
         <p>
-          Open Knowledge will be initialized at <code>{cascade.gitRoot}</code> — the parent of your
-          new folder, because it contains a <code>.git</code> folder (one project per git repo).
+          Open Knowledge will be initialized at <code>{gitRoot}</code> — the parent of your new
+          folder, because it contains a <code>.git</code> folder (one project per git repo).
         </p>
+        {removeGitState.kind === 'idle' || removeGitState.kind === 'error' ? (
+          <div className="mt-2 flex flex-col gap-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onRequestRemoveGit(gitRoot)}
+              data-testid="create-banner-git-remove"
+            >
+              Remove the parent <code>.git</code> folder
+            </Button>
+            {removeGitState.kind === 'error' ? (
+              <p
+                role="alert"
+                className="text-xs text-destructive"
+                data-testid="create-banner-git-remove-error"
+              >
+                Couldn't remove <code>{targetGitPath}</code>: {removeGitState.message}
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <div
+            className="mt-2 flex flex-col gap-2 rounded border border-blue-400/60 bg-white/40 p-2 dark:border-blue-600/60 dark:bg-black/20"
+            data-testid="create-banner-git-remove-confirm"
+          >
+            <p className="text-xs">
+              This will permanently delete{' '}
+              <code className="font-mono break-all">{targetGitPath}</code>. All git history in that
+              folder is lost; the working files stay in place. Only confirm if the parent git
+              repository is unintended. If the parent is intentionally a git repository (you cloned
+              it on purpose), cancel and pick a location outside it instead.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={removeGitState.kind === 'pending'}
+                onClick={() => onConfirmRemoveGit(gitRoot)}
+                data-testid="create-banner-git-remove-confirm-button"
+              >
+                {removeGitState.kind === 'pending' ? 'Removing…' : `Delete ${targetGitPath}`}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={removeGitState.kind === 'pending'}
+                onClick={onCancelRemoveGit}
+                data-testid="create-banner-git-remove-cancel"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
