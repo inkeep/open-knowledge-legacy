@@ -167,7 +167,7 @@ describe('Notice A — ok:update:downloaded', () => {
     expect(addNotice).toHaveBeenCalledTimes(1);
     const [notice] = addNotice.mock.calls[0] as [UpdateNotice];
     expect(notice.body).toBe(toastABody('0.1.1'));
-    expect(notice.id).toBe('update-downloaded-0.1.1');
+    expect(notice.id).toBe('update-downloaded');
     expect(notice.action?.label).toBe(TOAST_A_ACTION);
     expect(notice.variant).toBeUndefined();
     expect(notice.priority).toBe(2); // update-downloaded = A
@@ -240,7 +240,7 @@ describe('Notice A — ok:update:downloaded', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(dismissNotice).toHaveBeenCalledTimes(1);
-    expect(dismissNotice).toHaveBeenCalledWith('update-downloaded-0.1.1');
+    expect(dismissNotice).toHaveBeenCalledWith('update-downloaded');
   });
 
   test('relaunchNow rejection → dismissNotice does NOT fire (error notice takes over)', async () => {
@@ -258,24 +258,40 @@ describe('Notice A — ok:update:downloaded', () => {
     expect(addNotice).toHaveBeenCalledTimes(2);
   });
 
-  test('separate versions produce distinct notice ids (dedup handles repeats)', () => {
+  test('a newer download supersedes the prior notice in place — single stable id, body advances to the latest version', () => {
     const bridge = makeFakeBridge();
     const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
     attachUpdateSubscribers(castBridge(bridge), addNotice);
     bridge._downloaded?.({ version: '0.1.1' });
     bridge._downloaded?.({ version: '0.1.2' });
-    const ids = addNotice.mock.calls.map((c) => (c[0] as UpdateNotice).id);
-    expect(ids).toEqual(['update-downloaded-0.1.1', 'update-downloaded-0.1.2']);
+    const calls = addNotice.mock.calls.map((c) => c[0] as UpdateNotice);
+    expect(calls.map((n) => n.id)).toEqual(['update-downloaded', 'update-downloaded']);
+    expect(calls[1]?.body).toBe(toastABody('0.1.2'));
   });
 
-  test('same version produces the same notice id (list-level dedup gates visible repeat)', () => {
+  test('error notice after supersession carries latest version (closure freshness)', async () => {
+    const bridge = makeFakeBridge();
+    bridge.update.relaunchNow = mock(() => Promise.reject(new Error('quitAndInstall failed')));
+    const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
+    attachUpdateSubscribers(castBridge(bridge), addNotice);
+    bridge._downloaded?.({ version: '0.1.1' });
+    bridge._downloaded?.({ version: '0.1.2' });
+    const latest = addNotice.mock.calls[1]?.[0] as UpdateNotice;
+    latest.action?.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+    const errorNotice = addNotice.mock.calls[2]?.[0] as UpdateNotice;
+    expect(errorNotice.id).toBe('relaunch-error-0.1.2');
+  });
+
+  test('same version dispatched twice keeps the same id (in-place dedup at the store)', () => {
     const bridge = makeFakeBridge();
     const addNotice = mock<(notice: UpdateNotice) => void>(() => {});
     attachUpdateSubscribers(castBridge(bridge), addNotice);
     bridge._downloaded?.({ version: '0.1.1' });
     bridge._downloaded?.({ version: '0.1.1' });
     const ids = addNotice.mock.calls.map((c) => (c[0] as UpdateNotice).id);
-    expect(ids).toEqual(['update-downloaded-0.1.1', 'update-downloaded-0.1.1']);
+    expect(ids).toEqual(['update-downloaded', 'update-downloaded']);
   });
 });
 

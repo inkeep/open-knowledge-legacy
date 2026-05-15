@@ -55,7 +55,7 @@ export function attachUpdateSubscribers(
 
   unsubscribers.push(
     bridge.onUpdateDownloaded(({ version }) => {
-      const noticeId = `update-downloaded-${version}`;
+      const noticeId = 'update-downloaded';
       addNotice({
         id: noticeId,
         body: toastABody(version),
