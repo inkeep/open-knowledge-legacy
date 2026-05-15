@@ -2061,6 +2061,23 @@ button:active:not(:disabled) {
 */
 html.electron-mode {
   background-color: transparent;
+  /*
+    macOS traffic-light safe-area reserve. The Electron main process spreads
+    `trafficLightPosition: { x: 22, y: 24 }` on darwin (see
+    `packages/desktop/src/main/index.ts`), placing OS-drawn close/min/zoom
+    buttons in the renderer's top-left at x=22..~100. Any full-viewport
+    overlay must reserve enough left padding to clear that footprint.
+    78px = trafficLightPosition.x (22) + 3 buttons × ~18px + margin —
+    mirrors the inline literal in `EditorHeader.tsx:69` (PR #677).
+    Web hosts (no `window.okDesktop`) never gain the `electron-mode` class,
+    so the variable is undefined there. Consumers MUST use the fallback
+    form `pl-[var(--ok-titlebar-reserve-left,1rem)]` — `,1rem` matches the
+    base `px-4` so web layout is unchanged. A bare no-fallback
+    `pl-[var(--ok-titlebar-reserve-left)]` is invalid-at-computed-value-time
+    on web and collapses `padding-left` to `0`, discarding the consumer's
+    base padding — a regression, not intended behavior. See precedent #49.
+  */
+  --ok-titlebar-reserve-left: 78px;
 }
 
 html.electron-mode body {
