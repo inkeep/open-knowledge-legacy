@@ -8,7 +8,10 @@ import { defaultInitialDir } from '@/components/file-tree-utils';
 import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
 import { McpConsentDialog } from '@/components/McpConsentDialog';
 import { isNewItemShortcut, NewItemDialog } from '@/components/NewItemDialog';
-import { resolveNavigationTarget } from '@/components/navigation-targets';
+import {
+  downgradeFolderIndexForHashNav,
+  resolveNavigationTarget,
+} from '@/components/navigation-targets';
 import { PageListProvider, usePageList } from '@/components/PageListContext';
 import { SystemDocSubscriber } from '@/components/SystemDocSubscriber';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
@@ -104,14 +107,15 @@ function NavigationHandler() {
         mark('ok/nav/hash-change', { docName, kind: 'deferred-loading' });
         return;
       }
-      const target = resolveNavigationTarget(docName, {
+      const resolved = resolveNavigationTarget(docName, {
         pages,
         folderPaths,
       });
-      if (target.kind === 'missing' && /\/+$/.test(docName.trim())) {
+      if (resolved.kind === 'missing' && /\/+$/.test(docName.trim())) {
         mark('ok/nav/hash-change', { docName, kind: 'deferred-missing-folder' });
         return;
       }
+      const target = downgradeFolderIndexForHashNav(resolved);
       mark('ok/nav/hash-change', { docName, kind: target.kind });
       openTargetTransition(target);
     }
