@@ -156,12 +156,15 @@ import {
   type UtilityProcessLike,
   WindowManager,
 } from './window-manager.ts';
+import { WINDOW_MIN_SIZE } from './window-min-size.ts';
 
 const VIBRANCY_DEFAULT: VibrancyMaterial = 'sidebar';
 
 const DEFAULT_WIN_OPTS: BrowserWindowConstructorOptions = {
   width: 1280,
   height: 800,
+  minWidth: WINDOW_MIN_SIZE.NAVIGATOR.width,
+  minHeight: WINDOW_MIN_SIZE.NAVIGATOR.height,
   show: false,
   ...(process.platform === 'darwin'
     ? {
@@ -329,6 +332,8 @@ function ensureWindowManager() {
     createWindow: (opts) => {
       const win = new BrowserWindow({
         ...DEFAULT_WIN_OPTS,
+        minWidth: WINDOW_MIN_SIZE.EDITOR.width,
+        minHeight: WINDOW_MIN_SIZE.EDITOR.height,
         title: opts.title,
         webPreferences: {
           ...DEFAULT_WIN_OPTS.webPreferences,
@@ -379,8 +384,8 @@ function openNavigator() {
     createWindow: (opts) => {
       const win = new BrowserWindow({
         ...DEFAULT_WIN_OPTS,
-        width: 800,
-        height: 750,
+        width: 840,
+        height: 600,
         webPreferences: {
           ...DEFAULT_WIN_OPTS.webPreferences,
           additionalArguments: withDebugFlagIfAllowed(opts.additionalArguments),
