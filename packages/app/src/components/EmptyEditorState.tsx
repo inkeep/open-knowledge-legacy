@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AgentHandoffGrid } from '@/components/empty-state/AgentHandoffGrid';
 import { EmptyStateHeader } from '@/components/empty-state/EmptyStateHeader';
 import { KeyboardHintsFooter } from '@/components/empty-state/KeyboardHintsFooter';
+import { filterVisibleEntries } from '@/components/file-tree-utils';
 import { PackCardGrid } from '@/components/PackCardGrid';
 import { SeedDialog } from '@/components/SeedDialog';
 import { Button } from '@/components/ui/button';
@@ -113,11 +114,9 @@ export function EmptyEditorState() {
 export function countEntries(
   entries: ReadonlyArray<{ kind?: unknown; docName?: string; path?: string }>,
 ): number {
-  return entries.filter((entry) => {
-    if (entry.kind !== 'document' && entry.kind !== 'folder') return false;
-    const ref = entry.docName ?? entry.path ?? '';
-    return ref !== '' && !ref.split('/').some((seg) => seg.startsWith('.'));
-  }).length;
+  return filterVisibleEntries(entries).filter(
+    (entry) => entry.kind === 'document' || entry.kind === 'folder',
+  ).length;
 }
 
 function OnboardingView({
