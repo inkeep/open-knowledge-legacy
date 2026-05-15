@@ -4,6 +4,7 @@ import { ReactRenderer } from '@tiptap/react';
 import Suggestion, { type SuggestionKeyDownProps, type SuggestionProps } from '@tiptap/suggestion';
 import { filterItems, type SlashCommandItem, slashCommandItems } from '../slash-command/items';
 import { SlashCommandMenu } from '../slash-command/SlashCommandMenu';
+import { getEditorSourceMode } from './editor-mode-context';
 import {
   createSuggestionPopup,
   destroySuggestionPopup,
@@ -40,6 +41,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         pluginKey: slashCommandKey,
         char: '/',
         startOfLine: false,
+        allow: ({ editor }) => !getEditorSourceMode(editor),
 
         items: ({ query }) => {
           const allItems = extension.options.itemsSources.flatMap((source) => {

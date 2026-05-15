@@ -15,6 +15,7 @@ import { ReactRenderer } from '@tiptap/react';
 import Suggestion, { type SuggestionKeyDownProps, type SuggestionProps } from '@tiptap/suggestion';
 import { HttpResponseParseError } from '../http-client';
 import { WikiLinkSuggestionMenu } from '../wiki-link-suggestion/WikiLinkSuggestionMenu';
+import { getEditorSourceMode } from './editor-mode-context';
 import {
   createSuggestionPopup,
   destroySuggestionPopup,
@@ -294,6 +295,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
     char: '[[',
     allowedPrefixes: null,
     findSuggestionMatch: wikiLinkMatcher,
+    allow: ({ editor }) => !getEditorSourceMode(editor),
 
     items: async ({ query }) => {
       const { mode, pageTarget, anchorQuery } = parseQuery(query);

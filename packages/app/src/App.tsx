@@ -212,6 +212,7 @@ function NewItemShortcutHandler() {
 
 export function App() {
   const desktopBridge = typeof window !== 'undefined' ? (window.okDesktop ?? null) : null;
+  const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   return (
@@ -235,6 +236,18 @@ export function App() {
               open={commandPaletteOpen}
               onOpenChange={setCommandPaletteOpen}
             />
+            {/* Electron BrowserWindow renders with `titleBarStyle: 'hiddenInset'` +
+                `transparent: true` + `vibrancy: 'sidebar'`, so the renderer owns
+                window-drag affordance. Existing chrome rows (EditorHeader,
+                SidebarHeader, EditorTabs) cover y=8..y=56; this 8px strip covers
+                the y=0..y=8 vibrancy band above them. */}
+            {isElectronHost && (
+              <div
+                aria-hidden="true"
+                data-testid="editor-window-chrome-drag-strip"
+                className="pointer-events-none fixed inset-x-0 top-0 z-50 h-2 [-webkit-app-region:drag]"
+              />
+            )}
             <SidebarProvider className="h-screen overflow-hidden">
               <FileSidebar onOpenSearch={() => setCommandPaletteOpen(true)} />
               <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">

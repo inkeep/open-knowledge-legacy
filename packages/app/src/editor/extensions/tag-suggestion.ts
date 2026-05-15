@@ -4,6 +4,7 @@ import { PluginKey } from '@tiptap/pm/state';
 import { ReactRenderer } from '@tiptap/react';
 import Suggestion, { type SuggestionKeyDownProps, type SuggestionProps } from '@tiptap/suggestion';
 import { TagSuggestionMenu } from '../tag-suggestion/TagSuggestionMenu';
+import { getEditorSourceMode } from './editor-mode-context';
 import {
   createSuggestionPopup,
   destroySuggestionPopup,
@@ -105,6 +106,7 @@ export function configureTagSuggestion(editor: Editor) {
     char: '#',
     allowedPrefixes: null,
     findSuggestionMatch: tagMatcher,
+    allow: ({ editor }) => !getEditorSourceMode(editor),
 
     items: async ({ query }) => {
       if (!tagsLoaded) {
