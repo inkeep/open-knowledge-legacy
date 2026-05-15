@@ -313,6 +313,17 @@ export {
   createRegistry,
   wildcardMeta,
 } from './registry/index.ts';
+export {
+  type ComponentEntryFull,
+  type ComponentEntryLite,
+  type ComponentKind,
+  type ComponentParam,
+  getAgentCanonicalDescriptors,
+  getCanonicalDescriptors,
+  projectFull,
+  projectLite,
+  renderInventoryFooter,
+} from './registry/projection.ts';
 export type {
   ClipboardHastContext,
   JsxComponentMeta,

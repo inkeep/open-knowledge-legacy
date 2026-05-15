@@ -1,3 +1,4 @@
+import { renderInventoryFooter } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 import { resolveLockDir } from '../../config/paths.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
@@ -14,7 +15,7 @@ import {
   textResult,
 } from './shared.ts';
 
-export const DESCRIPTION = [
+const BASE_DESCRIPTION = [
   '[Requires: Hocuspocus server] Find-and-replace on a live document via the CRDT layer.',
   'The patch is applied through Hocuspocus and propagated to all connected editors in real-time.',
   'Use `offset` when you need to patch an exact occurrence; omit it to preserve first-match behavior.',
@@ -30,6 +31,8 @@ export const DESCRIPTION = [
   '- `offset` (optional) — Exact occurrence to patch, as a JavaScript string offset in the current markdown. If the document changed and the text no longer matches there, the server returns a stale-target error; re-run `suggest_links` to get fresh offsets.',
   '- `summary` — Optional one-line user-outcome description of this edit (≤80 chars). Appears as a bullet in the document timeline so readers can scan intent without opening every diff. Prefer outcome phrasing ("Fixed token-refresh race") over structural ("Changed 1 line"). Avoid including secrets or PII — summaries are persisted to git history.',
 ].join('\n');
+
+export const DESCRIPTION = `${BASE_DESCRIPTION}\n${renderInventoryFooter()}`;
 
 interface EditDocumentDeps {
   serverUrl: ServerUrlOrResolver;

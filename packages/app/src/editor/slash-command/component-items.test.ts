@@ -1,5 +1,15 @@
 import { describe, expect, test } from 'bun:test';
-import { createChildNode, getComponentItems, getInlineComponentItems } from './component-items';
+import {
+  builtInComponents,
+  getAgentCanonicalDescriptors,
+  getCanonicalDescriptors,
+} from '@inkeep/open-knowledge-core';
+import {
+  createChildNode,
+  getComponentItems,
+  getInlineComponentItems,
+  SLASH_HIDDEN_CANONICALS,
+} from './component-items';
 
 describe('getComponentItems (slash menu)', () => {
   test('returns descriptor-driven canonicals + the custom File entry', () => {
@@ -107,6 +117,71 @@ describe('createChildNode — default props on slash insert', () => {
     const content = (node as { content?: unknown[] }).content;
     expect(Array.isArray(content)).toBe(true);
     expect((content as Array<{ type: string }>)[0].type).toBe('paragraph');
+  });
+});
+
+describe('agent-surface ↔ slash-menu filter parity', () => {
+  function broadCanonicalSet(): Set<string> {
+    return new Set(getCanonicalDescriptors().map((d) => d.name));
+  }
+
+  function agentCanonicalSet(): Set<string> {
+    return new Set(getAgentCanonicalDescriptors().map((d) => d.name));
+  }
+
+  function slashMenuCanonicalSet(): Set<string> {
+    return new Set(
+      builtInComponents
+        .filter(
+          (d) =>
+            d.surface === 'canonical' && d.name !== '*' && !SLASH_HIDDEN_CANONICALS.has(d.name),
+        )
+        .map((d) => d.name),
+    );
+  }
+
+  test('both surfaces are subsets of the broad canonical set', () => {
+    const broad = broadCanonicalSet();
+    for (const name of agentCanonicalSet()) {
+      expect(broad.has(name)).toBe(true);
+    }
+    for (const name of slashMenuCanonicalSet()) {
+      expect(broad.has(name)).toBe(true);
+    }
+  });
+
+  test('broad set minus agent set === fence-kind names (today: just MermaidFence)', () => {
+    const broad = broadCanonicalSet();
+    const agent = agentCanonicalSet();
+    const divergence = new Set([...broad].filter((name) => !agent.has(name)));
+    expect(divergence).toEqual(new Set(['MermaidFence']));
+  });
+
+  test('broad set minus slash-menu set === SLASH_HIDDEN_CANONICALS exactly', () => {
+    const broad = broadCanonicalSet();
+    const slash = slashMenuCanonicalSet();
+    const divergence = new Set([...broad].filter((name) => !slash.has(name)));
+    expect(divergence).toEqual(new Set(SLASH_HIDDEN_CANONICALS));
+  });
+
+  test('intersection covers every canonical NOT in either curation set (9 names today)', () => {
+    const agent = agentCanonicalSet();
+    const slash = slashMenuCanonicalSet();
+    const intersection = new Set([...agent].filter((name) => slash.has(name)));
+    expect(intersection.size).toBe(9);
+  });
+
+  test('agent surface excludes wildcard descriptor', () => {
+    expect(agentCanonicalSet().has('*')).toBe(false);
+  });
+
+  test('agent surface excludes every compat descriptor', () => {
+    const agent = agentCanonicalSet();
+    for (const d of builtInComponents) {
+      if (d.surface === 'compat') {
+        expect(agent.has(d.name)).toBe(false);
+      }
+    }
   });
 });
 

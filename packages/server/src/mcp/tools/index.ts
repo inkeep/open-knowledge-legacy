@@ -24,6 +24,10 @@ import {
   register as registerGetBacklinks,
 } from './get-backlinks.ts';
 import {
+  DESCRIPTION as GET_COMPONENTS_DESCRIPTION,
+  register as registerGetComponents,
+} from './get-components.ts';
+import {
   DESCRIPTION as GET_CONFIG_DESCRIPTION,
   register as registerGetConfig,
 } from './get-config.ts';
@@ -110,6 +114,7 @@ const _TOOL_DESCRIPTIONS = {
   rollback_to_version: ROLLBACK_DESCRIPTION,
   list_documents: LIST_DOCUMENTS_DESCRIPTION,
   get_backlinks: GET_BACKLINKS_DESCRIPTION,
+  get_components: GET_COMPONENTS_DESCRIPTION,
   get_forward_links: GET_FORWARD_LINKS_DESCRIPTION,
   get_orphans: GET_ORPHANS_DESCRIPTION,
   get_hubs: GET_HUBS_DESCRIPTION,
@@ -248,6 +253,10 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     serverUrl: opts.serverUrl,
     config: opts.config,
     resolveCwd: named('get_backlinks'),
+  });
+  registerGetComponents(registrationServer, {
+    resolveCwd: named('get_components'),
+    config: opts.config,
   });
   registerGetForwardLinks(registrationServer, {
     serverUrl: opts.serverUrl,

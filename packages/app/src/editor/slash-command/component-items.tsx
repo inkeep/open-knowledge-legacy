@@ -152,7 +152,7 @@ function createInsertCommand(descriptor: JsxComponentDescriptor): (editor: Edito
   };
 }
 
-const SLASH_HIDDEN_CANONICALS = new Set(['File', 'Tab']);
+export const SLASH_HIDDEN_CANONICALS: ReadonlySet<string> = new Set(['File', 'Tab']);
 
 function getCustomBlockComponentItems(): SlashCommandItem[] {
   return [
