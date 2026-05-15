@@ -1,6 +1,6 @@
 ---
 name: open-knowledge
-description: "MUST invoke when the project contains a .ok/ directory — before any read or edit of .md / .mdx files, any mcp__open-knowledge__ tool call, and any write_document / edit_document. Skip if no .ok/ — not an Open Knowledge project. Carries preview-attach (open preview browser at session start; one-shot on `action: attach-preview-once`), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with opt-in nested .ok/ frontmatter + templates, and the anti-pattern table. Authoritative — MCP server instructions and AGENTS.md overlap but do not substitute for the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance carried only here."
+description: "MUST invoke when the project contains a .ok/ directory — before any read or edit of .md / .mdx files, any mcp__open-knowledge__ tool call, and any write_document / edit_document. Skip if no .ok/ — not an Open Knowledge project. Carries preview-attach (open preview browser at session start; one-shot on `action: attach-preview-once`), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with opt-in nested .ok/ frontmatter + templates, and the anti-pattern table."
 compatibility: "Claude Code, Claude Desktop, Claude Cowork, Claude.ai web. Requires Open Knowledge MCP server + code execution."
 metadata:
   version: "0.5.0-beta.5"
@@ -11,17 +11,28 @@ metadata:
 
 Open Knowledge (OK) is a markdown-CRDT collaboration platform exposed via MCP. This skill carries the behavioral rules agents need to use it fluently. Every section is a MUST unless marked otherwise.
 
-> Skill version: tracks `@inkeep/open-knowledge-server` package version. Check `cat ~/.ok/skill-state.yml` to see what's installed locally.
+> **Authoritative source.** Where the MCP server's `instructions` echo overlaps with this skill, this skill wins — the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance live only here.
+
+> Skill version: tracks `@inkeep/open-knowledge-server` package version. Check `cat ~/.ok/skill-state.yml` to see what's installed locally. **Version floor:** `ok seed` (referenced below) requires `@inkeep/open-knowledge` >= 0.4.0. If `ok seed` errors with `unknown command`, upgrade: `npm install -g @inkeep/open-knowledge`.
+
+## TL;DR — the 90% case
+
+1. **Reads:** `exec("cat …")` for a single doc, `exec("ls -A …")` for a directory, `search` for ranked, `grep` for literal. Native `Read` / `Grep` only on source code (`.ts` / `.py` / …), never on in-scope `.md` / `.mdx`.
+2. **Writes:** `write_document` for new or full-replace, `edit_document` for body-only patches. Frontmatter changes go through `write_document({ position: "replace" })` — `edit_document` rejects frontmatter edits with HTTP 400.
+3. **Preview:** open the browser at session start (or when a write response carries `warning: { action: "attach-preview-once" }`). Don't `preview_screenshot` after every edit.
+4. **Workflow tools** (`ingest` / `research` / `consolidate` / `discover`) return procedural guides, not data. Use them when the work fits the layer; follow their numbered steps.
+
+Everything below is depth. Read on demand.
 
 ## STOP — native tools on in-scope `.md` / `.mdx`
 
 When this workspace has Open Knowledge MCP configured, do **not** use your host's native file tools on markdown paths inside the content directory. The ban covers every common rationalization:
 
 - **Native `Read` / `Grep` / `Glob` on in-scope `.md` / `.mdx`** — the original case.
-- **`Bash ls` / `Bash find` / `Bash cat` on dirs containing in-scope markdown** — use `exec("ls …")` / `exec("find … -name '*.md'")` / `exec("cat …")` instead. Native returns bare names; `exec` returns frontmatter, backlink counts, and recent activity per child.
+- **`Bash ls` / `Bash find` / `Bash cat` on dirs containing in-scope markdown** — use `exec("ls -A …")` / `exec("find … -name '*.md'")` / `exec("cat …")` instead. Native returns bare names; `exec` returns frontmatter, backlink counts, and recent activity per child. `-A` shows hidden entries (`.ok/`, `.okignore`) which OK projects carry; omit `.` and `..` rows that `-a` would add.
 - **Glob patterns that target markdown** (`**/*.md`, any dir known to be markdown-heavy like `specs/**`, `reports/**`, `docs/**`) — use `exec` with `find`, or `list_documents({ dir })`.
 - **Dispatching the Explore / general-purpose subagent for markdown-heavy exploration** — subagents use native `Read` / `Grep` / `Glob` internally and bypass Open Knowledge entirely. Do markdown exploration yourself via `exec` / `search` / `grep`. Subagents remain appropriate for **source-code** exploration.
-- **Reading `.ok/AGENTS.md` via native `Read`** — observed failure mode during M1 testing. The `.ok/` directory is in-scope; treat its contents the same as any other knowledge-base file.
+- **Native `Read` / `Grep` on any in-scope markdown inside `.ok/`** — the `.ok/` directory is in-scope; if it carries `.md` / `.mdx`, treat those the same as any other knowledge-base file.
 
 Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project git history that OK's tools return for every matched knowledge-base file. `exec` is the primary read surface; it runs read-only bash (`cat`, `ls`, `grep`, `find`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut` — pipes OK) and returns raw stdout plus enriched metadata per file.
 
@@ -34,7 +45,7 @@ Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project
 ## Reads — examples
 
 - Read a file: `exec("cat <path>.md")` — contents + full rich enrichment
-- List a directory: `exec("ls <dir>")` — per-child frontmatter, recursive markdown counts, most-recently-updated doc per subdir
+- List a directory: `exec("ls -A <dir>")` — per-child frontmatter, recursive markdown counts, most-recently-updated doc per subdir. Prefer `-A` over plain `ls`: OK projects carry dot-prefixed entries (`.ok/`, nested `.ok/`, `.okignore`) that plain `ls` omits. `-A` shows hidden entries without the noisy `.`/`..` rows that `-a` adds, and without the verbose long-format columns that `-la` adds (the per-child enrichment already carries the useful metadata `-l` would surface).
 - Search: `exec("grep -rn <term> <dir> | head -5")` — matches + enrichment on matched files
 - Typed tools (`read_document`, `search`, `grep`, `list_documents`) remain available — prefer them when a structured `structuredContent` shape is useful (e.g., passing results to another tool). For interactive reads, `exec` is lighter. **Pick the right search:** `search` for ranked retrieval (cmd-K parity — title boost + body BM25 + recency); `grep` for every literal-string occurrence grouped by file with frontmatter enrichment.
 
@@ -62,6 +73,8 @@ Call `write_document` / `edit_document` as soon as you have content. Native `Edi
 
 To delete a doc, call `delete_document` — never `rm` / `unlink` / native `Bash` removal on in-scope markdown. The MCP path closes open agent sessions and unloads the doc from Hocuspocus before unlinking; native `rm` desynchronizes those. Deletion is irreversible from this tool — call `save_version` first if you may need to roll back, and `get_backlinks` first if you want to fix the referrers that will become redlinks.
 
+**If `edit_document` returns "Text not found" on text you can verify exists on disk** (via `exec("cat …")`), the MCP session is likely stale (e.g., after a folder rename or server restart). Treat this as the escape-hatch trigger from the STOP block: prefix your next user-visible sentence with `Open Knowledge MCP unavailable:` and report the inconsistency. Don't loop on retries — the symptom is structural, not transient.
+
 ## Grounding — every factual claim needs a source (MUST)
 
 Knowledge-base docs are factual artifacts — whether the project is a wiki, an LLM brain, a spec collection, a research log, or anything else markdown-shaped. Every claim must be traceable, and **the source has to live inside the knowledge base**, not float on the public web.
@@ -88,7 +101,7 @@ Knowledge-base docs are factual artifacts — whether the project is a wiki, an 
 - **Verify before walking away.** After writing a doc, call `get_dead_links({ sourceDocNames: ['your/doc'] })` to find broken references. Fix each redlink or explicitly accept it.
 - **The editor's red-underline visual lies.** Its dead-link detection tolerates slug-fallback (e.g., `foo` may appear resolved because `foo.md` exists at root). `get_dead_links` is strict-exact — trust the tool, not the visual.
 
-**Note on wiki-link syntax (`[[Page]]`):** the parser still handles it for legacy content, but it's NO LONGER the recommended default. Write new content with standard markdown links per above.
+**Note on wiki-link syntax (`[[Page]]`):** the parser still handles it for legacy content, but it's NO LONGER the recommended default. Write new content with standard markdown links per above. Seed-pack templates (`ok seed --pack <name>`) may still emit `[[Page]]` placeholders inside template body text — those are legacy. When you instantiate a seed-pack template, replace the legacy placeholders with standard markdown links during the `{shape}`-fill pass.
 
 ## Media — images and attachments
 
@@ -105,7 +118,7 @@ Knowledge-base docs are factual artifacts — whether the project is a wiki, an 
   1. Fetch it (`WebFetch` / `curl` / your host's equivalent) and save to a local path.
   2. Reference with a relative markdown image link.
   3. Cite the source in a caption (see §4 below).
-- **Conventional location:** `assets/images/<topic>/<filename>` under the content root. If the project already has a different convention, follow it — check via `exec("ls assets/")` or `exec("find . -type d -name images")` first.
+- **Conventional location:** `assets/images/<topic>/<filename>` under the content root. If the project already has a different convention, follow it — check via `exec("ls -A assets/")` or `exec("find . -type d -name images")` first.
 - If you cannot fetch (no network, paywalled source, etc.): DON'T invent a local path. Either omit the image or mark inline `(TODO: image needs sourcing from <URL>)` for a human.
 
 ### 3. Alt-text discipline
@@ -143,13 +156,15 @@ tags:
 
 Folder-level defaults that any new doc here inherits live in opt-in nested `<folder>/.ok/frontmatter.yml` and merge at read time — see *Folder structure + metadata* below.
 
+**Editing frontmatter.** `edit_document` does NOT change frontmatter — it's body-only by design; frontmatter-intersecting find/replace calls return HTTP 400. To change `title` / `description` / `tags`, call `write_document({ docName, position: "replace", markdown })` and include the new YAML block at the top of `markdown`. Folder defaults from the nested `.ok/frontmatter.yml` cascade still merge at read time, so you only need to declare keys that differ from the cascade. (Future server work may add a single-key frontmatter-patch tool with JSON Merge Patch semantics; until that lands, `write_document(replace)` is the canonical pathway.)
+
 ## Follow project conventions — read folder defaults before writing (MUST)
 
-Before creating or editing docs in a folder, **always** call `list_documents(<folder>)` (or `exec("ls <folder>")`) once and act on what it returns. Skipping this step is how agents land docs that violate the folder's discipline (wrong tags, no template, missing frontmatter shape) and force a follow-up cleanup pass.
+Before creating or editing docs in a folder, **always** call `list_documents(<folder>)` (or `exec("ls -A <folder>")`) once and act on what it returns. Skipping this step is how agents land docs that violate the folder's discipline (wrong tags, no template, missing frontmatter shape) and force a follow-up cleanup pass.
 
 Pre-write checklist:
 
-0. **First-contact check.** If `list_documents(<folder>)` returns empty `frontmatter_defaults` AND empty `templates_available` AND `exec("ls")` shows substantial content elsewhere, the project hasn't been onboarded — STOP and invoke `discover` (see Workflow tools table) before writing. Skip this check on subsequent writes in the same session once you've confirmed the project is configured.
+0. **First-contact check.** If `list_documents(<folder>)` returns empty `frontmatter_defaults` AND empty `templates_available` AND `exec("ls -A")` shows substantial content elsewhere, the project hasn't been onboarded — STOP and invoke `discover` (see Workflow tools table) before writing. Skip this check on subsequent writes in the same session once you've confirmed the project is configured.
 
 1. **Read `frontmatter_defaults`** — the merged folder defaults (title shape, description, tags) that any new doc here will inherit. Surfaces nested `<folder>/.ok/frontmatter.yml` cascade walked root → leaf, leaf wins per-key. **Don't redeclare** keys the cascade already provides — let inheritance carry them. Override per-file only when the file truly differs.
 2. **Read `templates_available`** — the menu of starter shapes for `write_document({ template })`. Each entry has `name`, `title`, `description`, and `scope` (`local` / `inherited` / `user`). If an entry matches, prefer it over free-form markdown — see "When to use a template" and "When to create a template" below.
@@ -275,7 +290,7 @@ write_document({
 //    calls — those are author-fill markers, not server-side substitutions.
 ```
 
-Templates resolve via leaf → root walk-up at the target's parent folder, with closest-wins on filename collision (D7). The `scope` field has three values: `"local"` (template lives in this folder's `.ok/templates/`), `"inherited"` (template lives in an ancestor's), and `"user"` (template lives in `~/.ok/templates/`, surfaced when the request was served from the user-global cascade) — all three are first-class menu entries. Descendant templates do NOT appear in the parent's array — they surface only inside `subfolders[].templates_available` when `list_documents` is called with `depth > 1`.
+Templates resolve via leaf → root walk-up at the target's parent folder, with closest-wins on filename collision (D7). The `scope` field has three values: `"local"` (template lives in this folder's `.ok/templates/`), `"inherited"` (template lives in an ancestor's), and `"user"` (template lives in `~/.ok/templates/`, surfaced when the request was served from the user-global cascade). Treat `local` and `inherited` as first-class for the current folder; **skip `user`-scope entries whose `title` / `description` clearly don't match the folder's purpose** (e.g. a `daily-journal` user template won't help in `wiki/`). User-global templates surface in every folder by design — there's no per-folder opt-out today. Descendant templates do NOT appear in the parent's array — they surface only inside `subfolders[].templates_available` when `list_documents` is called with `depth > 1`.
 
 **`template` and `markdown` are mutually exclusive** (D21). Passing both errors with `TEMPLATE_AND_MARKDOWN_BOTH_SET`. The template body becomes the new doc's body verbatim (after `{{date}}`/`{{user}}` substitution); fill `{shape}`-style placeholders via subsequent `edit_document` calls.
 
@@ -285,7 +300,7 @@ When you make a multi-step change (batch of new docs, folder restructure), pause
 
 This is primarily a human-watchability concern — the user watches edits land in the preview; interleaved cadence makes the narrative legible.
 
-**Hub docs.** Don't *create* `INDEX.md` / `README.md` hub files solely to catalog children — `exec("ls <folder>")` returns the same view live, with per-file frontmatter + backlink counts. But if a hub doc *already exists* from prior work, keep it updated as children change — interleave: write child → update hub → write next child, rather than batching five child edits and a single trailing hub update.
+**Hub docs.** Don't *create* `INDEX.md` / `README.md` hub files solely to catalog children — `exec("ls -A <folder>")` returns the same view live, with per-file frontmatter + backlink counts. But if a hub doc *already exists* from prior work, keep it updated as children change — interleave: write child → update hub → write next child, rather than batching five child edits and a single trailing hub update.
 
 ## Log discipline — check for a project log when KB content changes
 
@@ -297,7 +312,7 @@ The skill carries the trigger ("KB content changed this turn — go look"). The 
 
 | Task                                            | Don't                                                                              | Do                                                                                |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| List a markdown-heavy dir                       | `Bash: ls specs/`                                                                  | `exec("ls specs/")`                                                               |
+| List a markdown-heavy dir                       | `Bash: ls specs/`                                                                  | `exec("ls -A specs/")`                                                            |
 | Find all SPEC.md files                          | `Glob: **/SPEC.md`                                                                 | `exec("find specs -name SPEC.md")`                                                |
 | Find the most relevant page for a query         | `Grep: "pattern" *.md` then read three files                                       | `search({ query: "pattern" })` (ranked: title + body BM25 + recency)              |
 | Find every literal occurrence of a phrase       | `Grep: "pattern" *.md`                                                             | `grep({ query: "pattern" })` (literal, grouped by file, with frontmatter)         |
@@ -315,6 +330,7 @@ The skill carries the trigger ("KB content changed this turn — go look"). The 
 | Write a doc in an unfamiliar folder             | go straight to `write_document` with hand-authored markdown                        | `list_documents(<folder>)` first — read `frontmatter_defaults` + `templates_available` before writing |
 | Land in an existing repo without orienting      | go straight to `write_document` or run the per-folder pre-write checklist ad-hoc when no folder frontmatter / templates exist | invoke `discover` once for the project — it extracts conventions from siblings, sets folder frontmatter, writes templates, and activates the link graph |
 | Author a doc when a matching template exists    | `write_document({ markdown: "..." })` from scratch                                 | `write_document({ template, position: "replace" })` — templates carry the folder's frontmatter + body discipline |
+| Change a doc's title / tags                     | `edit_document` to swap the YAML (rejected — HTTP 400 frontmatter-intersect)       | `write_document({ position: "replace", markdown })` with the new frontmatter block at the top of `markdown` |
 | Repeat the same frontmatter on sibling docs     | hand-set identical `tags` / `title` prefix on every new file                       | `set_folder_rule(...)` once — the cascade carries it to every child                |
 | Re-derive the same body skeleton repeatedly     | copy-paste the structure from a sibling each time                                  | `write_template(...)` once, then pick from `templates_available` thereafter        |
 | Scaffold a new folder for a doc category        | `set_folder_rule` for frontmatter and stop there                                   | pair `set_folder_rule` with `write_template` in the same turn — discipline + body shape |
@@ -324,7 +340,9 @@ The skill carries the trigger ("KB content changed this turn — go look"). The 
 
 ## Workflow tools — when to invoke them
 
-Four MCP tools build on the primitives above. Three of them correspond to [Karpathy's three-layer knowledge-base pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (`ingest` / `research` / `consolidate`); the fourth (`discover`) operates at the project-metadata layer and is the brownfield counterpart to the greenfield `ok seed` CLI:
+Four MCP tools build on the primitives above. **They return *procedural guidance* (a multi-step instructional body), not fetched data.** Calling `ingest("https://…")` does not download and write a doc for you — it returns a multi-step plan you then execute. Same for `research` / `consolidate` / `discover`. Plan to follow the numbered steps in order; don't skip the STOP gates.
+
+Three correspond to [Karpathy's three-layer knowledge-base pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (`ingest` / `research` / `consolidate`); the fourth (`discover`) operates at the project-metadata layer and is the brownfield counterpart to the greenfield `ok seed` CLI:
 
 | Tool          | Layer                   | When to invoke                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -333,13 +351,15 @@ Four MCP tools build on the primitives above. Three of them correspond to [Karpa
 | `consolidate` | KB, canonical           | Team has actually decided after research and wants the outcome committed as source-of-truth. Starts with a STOP gate confirming the decision exists; writes a `status: canonical` article with a `supersedes:` chain.                                                                   |
 | `discover`    | Project metadata        | First arrival at a repo with existing content AND no folder frontmatter / templates set. Extracts conventions from siblings; activates the link graph (orphans, hubs, untextualized mentions); proposes folder frontmatter + templates + `.okignore`; per-phase user confirmation. Requires `open-knowledge start` running (Phase 1 step 0 gates). Skip on empty repos (use `ok seed`). One-shot; idempotent on re-run. |
 
-Each tool returns a multi-step instructional body when invoked. The bodies enforce their own gates — follow the numbered steps in order, don't skip the STOP gates.
-
 **These tools are your default move, not `write_document`.** When the work fits one of the three layers — preserving an external source, investigating/synthesizing, committing a decided outcome — invoke the corresponding tool instead of going straight to `write_document` / `edit_document`. The tool bodies enforce framing (sources, status, supersedes chains) that hand-written articles routinely miss. `write_document` is correct for everything that does **not** fit the three layers (specs, runbooks, scratch notes, project pages); for the three that do, lead with the tool. This is doubly true in projects that ran `ok seed` — a doc landing in `external-sources/` / `research/` / `articles/` should have come out of `ingest` / `research` / `consolidate`.
 
 Typical day-2 flow: user shares a URL → `ingest` (preserve) → user asks "now research this" → `research` (provisional article + `ingest`s more sources as needed) → decision lands → `consolidate` (canonical article, supersedes the research).
 
+**Autonomy gates vs session-level autonomy.** Per-tool STOP gates (e.g. `research`'s scoping gate, `consolidate`'s decision-confirmation gate) are not overridden by session-level "work without stopping for clarifying questions" hints. The session-level hint covers trivial back-and-forth ("which file did you mean?"); per-tool gates exist for 1-way-door decisions where the tool deliberately wants confirmation before continuing. When in doubt, treat the per-tool gate as authoritative and the session-level autonomy hint as a default for the in-between turns.
+
 **Do not chain silently.** After `ingest`, ask the user whether to proceed to `research`. After `research`, let the user decide whether the findings are ready to `consolidate`. Each tool completes on its own terms — the user drives the transitions.
+
+**Repeat invocations.** Workflow tools return their full instructional body on every call, including 2nd / 3rd / Nth invocation in the same session. If you've already received a tool's body earlier this session, you can skim the repeat for changes (the body can evolve across server versions) but you don't need to re-internalize it — proceed to the next step with the new arguments.
 
 **Project scaffolding — two paths.** **Empty repo:** run `ok seed` once from a terminal (scaffolds Karpathy three-layer + seeds `log.md` + registers folder defaults). **Existing content:** invoke `discover` (MCP tool, table above — extracts conventions from siblings, sets folder frontmatter + templates, curates `.okignore`, activates link graph; per-phase confirmation gates). Neither is required; the four workflow tools work against any folder structure. Only mention each when explicitly relevant.
 
