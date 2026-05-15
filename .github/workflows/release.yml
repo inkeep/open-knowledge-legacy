@@ -125,7 +125,7 @@ jobs:
           echo "npm $(npm --version)"
 
       - name: Install
-        run: bun install --frozen-lockfile
+        run: bash scripts/bun-install-ci.sh
 
       # `bun changeset publish` invokes `npm publish` per package, which
       # in turn fires the cli's `prepublishOnly` (-> `bun run build`). The

@@ -106,7 +106,7 @@ jobs:
         # modules rebuilt against Electron's Node ABI for a packaged build.
         env:
           ELECTRON_SKIP_REBUILD: "0"
-        run: bun install --frozen-lockfile
+        run: bash scripts/bun-install-ci.sh
 
       # electron-builder.yml's `extraResources` rule copies from
       # `packages/cli/dist/public/`, which the CLI's `build:assets` populates

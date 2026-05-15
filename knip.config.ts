@@ -32,6 +32,7 @@ export default {
     'biome-plugins/__fixtures__/**': ['files'],
     'scripts/compute-next-beta.mjs': ['files'],
     'scripts/compute-next-beta.test.mjs': ['files'],
+    'scripts/bun-install-ci.test.mjs': ['files'],
   },
   workspaces: {
     'packages/app': {
