@@ -203,6 +203,7 @@ export {
 } from './mcp/agent-identity.ts';
 export { buildInstructions } from './mcp/instructions.ts';
 export { getCurrentMcpLogger, McpLogger, runWithMcpLogger } from './mcp/logger.ts';
+export { installPrettyZodErrors } from './mcp/pretty-zod-errors.ts';
 export { buildExecResult, type ExecStructuredResult } from './mcp/tools/exec.ts';
 export { registerAllTools } from './mcp/tools/index.ts';
 export { buildReadResult } from './mcp/tools/read-document.ts';

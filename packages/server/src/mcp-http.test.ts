@@ -210,6 +210,47 @@ test('mcp-tool-path-traversal: explicit cwd outside configured project root is r
   expect(text).toMatch(/not within the configured project root|escapes the configured root/);
 });
 
+test('PRD-6659: tools/call write_document without position returns field name + allowed values', async () => {
+  const config: Config = ConfigSchema.parse({});
+  const harness = await bootHandler(config);
+  openHarnesses.push(harness);
+
+  const session = await openMcpSession(harness.port);
+
+  const callRes = await fetch(`http://localhost:${harness.port}/mcp`, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json, text/event-stream',
+      'content-type': 'application/json',
+      'mcp-session-id': session.sessionId,
+      'mcp-protocol-version': session.protocolVersion,
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 42,
+      method: 'tools/call',
+      params: {
+        name: 'write_document',
+        arguments: { docName: 'foo', markdown: 'hello' },
+      },
+    }),
+  });
+
+  expect(callRes.status).toBe(200);
+  const body = (await callRes.json()) as {
+    result?: { isError?: boolean; content?: Array<{ text?: string }> };
+  };
+  expect(body.result?.isError).toBe(true);
+  const text = body.result?.content?.[0]?.text ?? '';
+  expect(text).toContain('position');
+  expect(text).toContain('append');
+  expect(text).toContain('prepend');
+  expect(text).toContain('replace');
+  expect(text).not.toContain('"code":');
+  expect(text).not.toContain('"path":');
+  expect(text.trim()).not.toBe('Required');
+});
+
 test('forwarded connectionId header reaches /api/agent-write-md as agentId', async () => {
   const config: Config = ConfigSchema.parse({});
   const contentDir = mkdtempSync(join(tmpdir(), 'ok-mcp-http-cid-'));
