@@ -275,6 +275,16 @@ export const slashCommandItems: SlashCommandItem[] = [
       });
     },
     aliases: ['math', 'latex', 'equation', 'formula', 'katex', 'inlinemath'],
+    preview: {
+      description: 'Inline LaTeX math rendered with KaTeX.',
+      render: () => (
+        <p className="text-sm leading-7">
+          The formula{' '}
+          <span className="rounded bg-muted px-1.5 py-0.5 font-serif italic">c = √(a² + b²)</span>{' '}
+          renders inline.
+        </p>
+      ),
+    },
   },
 ];
 
