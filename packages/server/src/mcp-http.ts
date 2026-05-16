@@ -11,6 +11,7 @@ import {
   sanitizeClientName,
 } from './mcp/agent-identity.ts';
 import { buildInstructions } from './mcp/instructions.ts';
+import { installPrettyZodErrors } from './mcp/pretty-zod-errors.ts';
 import { registerAllTools } from './mcp/tools/index.ts';
 import { resolveWithinRoot } from './mcp/tools/path-safety.ts';
 import { RUNTIME_VERSION } from './version-constants.ts';
@@ -66,6 +67,7 @@ function createSessionServer(
       instructions: buildInstructions(config.content),
     },
   );
+  installPrettyZodErrors(server);
 
   const connectionId = forwardedConnectionId ?? randomUUID();
   const identityRef: { current: AgentIdentity } = {

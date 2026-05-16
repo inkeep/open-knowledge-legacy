@@ -8,6 +8,7 @@ import {
   buildInstructions,
   type Config,
   getLocalDir,
+  installPrettyZodErrors,
   isProjectRoot,
   MCP_SERVER_NAME,
   RUNTIME_VERSION,
@@ -126,6 +127,7 @@ export async function startGlobalMcpServer(
       instructions: buildInstructions({ dir: '.' }),
     },
   );
+  installPrettyZodErrors(server);
 
   const connectionId = randomUUID();
   const identityRef: { current: AgentIdentity } = {
