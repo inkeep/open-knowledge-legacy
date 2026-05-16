@@ -40,10 +40,16 @@ describe('textResult', () => {
 });
 
 describe('textPlusStructured', () => {
-  test('wraps body in MCP content array AND mirrors it under structuredContent._text', () => {
+  test('wraps body in MCP content array AND mirrors it under structuredContent.text', () => {
     const result = textPlusStructured('hello', { previewUrl: null });
     expect(result.content).toEqual([{ type: 'text', text: 'hello' }]);
-    expect(result.structuredContent).toEqual({ _text: 'hello', previewUrl: null });
+    expect(result.structuredContent).toEqual({ text: 'hello', previewUrl: null });
+  });
+
+  test('does not surface body under an underscore-prefixed key (PRD-6663 regression guard)', () => {
+    const result = textPlusStructured('hello-body', { previewUrl: null });
+    const keys = Object.keys(result.structuredContent ?? {});
+    expect(keys.filter((k) => k.startsWith('_'))).toEqual([]);
   });
 
   test('preserves caller structured fields alongside the auto-mirror', () => {
@@ -53,24 +59,24 @@ describe('textPlusStructured', () => {
       cwd: '/tmp',
     });
     expect(result.structuredContent).toEqual({
-      _text: 'body',
+      text: 'body',
       previewUrl: 'http://localhost:5173/p/x',
       stdout: 'raw',
       cwd: '/tmp',
     });
   });
 
-  test('caller-provided `_text` field overrides the auto-duplicated body', () => {
-    const result = textPlusStructured('visible', { _text: 'structured-different' });
+  test('caller-provided `text` field overrides the auto-duplicated body', () => {
+    const result = textPlusStructured('visible', { text: 'structured-different' });
     expect(result.content).toEqual([{ type: 'text', text: 'visible' }]);
-    expect(result.structuredContent).toEqual({ _text: 'structured-different' });
+    expect(result.structuredContent).toEqual({ text: 'structured-different' });
   });
 
   test('isError flag propagates to top level', () => {
     const result = textPlusStructured('failed', { error: 'boom' }, true);
     expect(result).toEqual({
       content: [{ type: 'text', text: 'failed' }],
-      structuredContent: { _text: 'failed', error: 'boom' },
+      structuredContent: { text: 'failed', error: 'boom' },
       isError: true,
     });
   });
@@ -82,9 +88,9 @@ describe('textPlusStructured', () => {
     expect(b).not.toHaveProperty('isError');
   });
 
-  test('empty structured object: still emits structuredContent._text', () => {
+  test('empty structured object: still emits structuredContent.text', () => {
     const result = textPlusStructured('done', {});
-    expect(result.structuredContent).toEqual({ _text: 'done' });
+    expect(result.structuredContent).toEqual({ text: 'done' });
   });
 });
 
