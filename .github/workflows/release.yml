@@ -247,7 +247,17 @@ jobs:
             echo "Release ${TAG} already exists; updating notes."
             gh release edit "$TAG" --notes-file "$BODY_FILE"
           else
+            # Create as draft so the release is invisible in the .atom feed
+            # until desktop-release.yml uploads beta-mac.yml AND promotes
+            # draft → published. This closes the publish-window race that
+            # surfaced misleading latest-mac.yml 404 errors in user logs
+            # during the gap between release creation and DMG upload
+            # (typical 5-10 min; up to ~45 min if notary or sign is slow —
+            # desktop-release.yml's job timeout-minutes is 45). Channel-
+            # mirror invariant: see
+            # packages/desktop/src/main/auto-updater.ts:336-356.
             gh release create "$TAG" \
+              --draft \
               --prerelease \
               --title "$TAG" \
               --notes-file "$BODY_FILE"

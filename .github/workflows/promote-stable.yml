@@ -32,9 +32,11 @@ on:
         type: string
 
 permissions:
+  # npm publish (id-token) is delegated to release.yml via repository_dispatch
+  # so promote-stable.yml only needs contents:write for `gh release create`
+  # and `gh release edit`. No packages: write — see release.yml's permission
+  # comment for why npm publishing does not need that scope here.
   contents: write
-  id-token: write
-  packages: write
 
 concurrency:
   group: ok-release-cadence
@@ -206,14 +208,27 @@ jobs:
           # Idempotency: a re-run after a transient failure should not
           # explode if the Release already exists.
           if gh release view "$STABLE_TAG" >/dev/null 2>&1; then
-            echo "Release ${STABLE_TAG} already exists; updating notes + ensuring --latest."
-            gh release edit "$STABLE_TAG" --notes-file "$BODY_FILE" --prerelease=false --latest
+            # Idempotent re-run after a transient failure (e.g., the draft
+            # was created but desktop-release.yml never promoted it). The
+            # combined PATCH (--draft=false + --prerelease=false + --latest)
+            # is empirically atomic: GitHub evaluates the make_latest
+            # constraint against the post-request state, so the draft→
+            # published flip and Latest stamp succeed in a single call.
+            # No-op on an already-published release.
+            echo "Release ${STABLE_TAG} already exists; updating notes + ensuring published + --latest."
+            gh release edit "$STABLE_TAG" --notes-file "$BODY_FILE" --draft=false --prerelease=false --latest
           else
+            # Create as draft so the release is invisible in the .atom feed
+            # until desktop-release.yml uploads latest-mac.yml AND promotes
+            # draft → published. --latest is deferred to the promote step
+            # because GitHub's API rejects make_latest=true on drafts. See
+            # packages/desktop/src/main/auto-updater.ts:336-356 for the
+            # channel-mirror invariant this protects.
             gh release create "$STABLE_TAG" \
+              --draft \
               --target "$BETA_SHA" \
               --title "$STABLE_TAG" \
-              --notes-file "$BODY_FILE" \
-              --latest
+              --notes-file "$BODY_FILE"
           fi
 
       - name: Trigger release.yml to publish stable to npm

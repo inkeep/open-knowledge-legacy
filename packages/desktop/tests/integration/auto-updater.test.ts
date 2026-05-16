@@ -1052,7 +1052,7 @@ describe('check-now → showCheckNowResult feedback dispatch', () => {
     });
   });
 
-  test('ERR_UPDATER_CHANNEL_FILE_NOT_FOUND routes to not-available (release-cut race window)', () => {
+  test('ERR_UPDATER_CHANNEL_FILE_NOT_FOUND routes to not-available (cascade-fallback path)', () => {
     const showCheckNowResult = mock(() => {});
     const { rig } = makeRig({ appVersion: '0.5.0-beta.21', showCheckNowResult });
     rig.ipc.invoke('ok:update:check-now');
