@@ -13,6 +13,7 @@ interface PreviewConfig {
   description: string;
   props?: Record<string, unknown>;
   children?: ReactNode;
+  render?: () => ReactNode;
 }
 
 const PREVIEW_CONFIG: Record<string, PreviewConfig> = {
@@ -44,6 +45,173 @@ const PREVIEW_CONFIG: Record<string, PreviewConfig> = {
   },
   Embed: {
     description: 'Embed an external page in an inline iframe (docs, demos, Figma, CodeSandbox).',
+    render: () => (
+      <div className="flex h-full w-full flex-col overflow-hidden rounded-md border border-border bg-background">
+        <div className="flex items-center gap-1.5 border-b border-border bg-muted/40 px-2 py-1.5">
+          <span className="size-1.5 rounded-full bg-muted-foreground/40" />
+          <span className="size-1.5 rounded-full bg-muted-foreground/40" />
+          <span className="size-1.5 rounded-full bg-muted-foreground/40" />
+          <span className="ml-1.5 flex-1 truncate rounded-sm bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            https://example.com/embed
+          </span>
+        </div>
+        <div className="flex flex-1 flex-col justify-center gap-1.5 px-3 py-2">
+          <span className="h-1.5 w-3/4 rounded-sm bg-muted-foreground/30" />
+          <span className="h-1.5 w-full rounded-sm bg-muted-foreground/20" />
+          <span className="h-1.5 w-5/6 rounded-sm bg-muted-foreground/20" />
+          <span className="h-1.5 w-2/3 rounded-sm bg-muted-foreground/20" />
+        </div>
+      </div>
+    ),
+  },
+  Pdf: {
+    description: 'Multi-page PDF viewer with toolbar controls (thumbnails, page nav, zoom).',
+    render: () => (
+      <div className="flex h-full w-full flex-col overflow-hidden rounded-md border border-border bg-background">
+        <div className="flex items-center gap-1 border-b border-border bg-muted/40 px-1.5 py-1">
+          {/* Thumbnails toggle (2x2 dots) */}
+          <svg viewBox="0 0 12 12" className="size-3 text-muted-foreground" aria-hidden="true">
+            <title>Thumbnails</title>
+            <rect x="1" y="1" width="4" height="4" fill="currentColor" rx="0.5" />
+            <rect x="7" y="1" width="4" height="4" fill="currentColor" rx="0.5" />
+            <rect x="1" y="7" width="4" height="4" fill="currentColor" rx="0.5" />
+            <rect x="7" y="7" width="4" height="4" fill="currentColor" rx="0.5" />
+          </svg>
+          <span className="ml-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+            <span className="rounded-sm bg-background px-1 py-0.5 font-mono">2</span>
+            <span>/ 12</span>
+          </span>
+          <span className="ml-auto flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
+            <span className="rounded-sm bg-background px-1 py-0.5">−</span>
+            <span>100%</span>
+            <span className="rounded-sm bg-background px-1 py-0.5">+</span>
+          </span>
+        </div>
+        <div className="flex flex-1 gap-1 p-1.5">
+          {/* Thumbnail strip */}
+          <div className="flex w-6 flex-col gap-0.5">
+            <span className="h-3 rounded-sm bg-muted-foreground/20" />
+            <span className="h-3 rounded-sm border border-foreground/60 bg-background" />
+            <span className="h-3 rounded-sm bg-muted-foreground/20" />
+          </div>
+          {/* Active page */}
+          <div className="flex flex-1 flex-col gap-1 rounded-sm bg-background p-1.5">
+            <span className="h-1.5 w-1/2 rounded-sm bg-foreground/50" />
+            <span className="h-1 w-full rounded-sm bg-muted-foreground/30" />
+            <span className="h-1 w-5/6 rounded-sm bg-muted-foreground/30" />
+            <span className="h-1 w-full rounded-sm bg-muted-foreground/30" />
+            <span className="h-1 w-2/3 rounded-sm bg-muted-foreground/30" />
+          </div>
+        </div>
+      </div>
+    ),
+  },
+  MermaidFence: {
+    description: 'Diagram from Mermaid source — flowchart, sequence, class, state, ER, gantt, pie.',
+    render: () => (
+      <svg
+        viewBox="0 0 200 120"
+        className="h-full w-full text-foreground"
+        aria-hidden="true"
+        preserveAspectRatio="xMidYMid meet"
+      >
+        <title>Mermaid flowchart preview</title>
+        <defs>
+          <marker
+            id="mermaid-preview-arrow"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="6"
+            markerHeight="6"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+          </marker>
+        </defs>
+        {/* Start (rounded) */}
+        <rect
+          x="14"
+          y="20"
+          width="56"
+          height="28"
+          rx="14"
+          fill="currentColor"
+          fillOpacity="0.1"
+          stroke="currentColor"
+          strokeOpacity="0.7"
+        />
+        <text x="42" y="38" textAnchor="middle" fontSize="10" fill="currentColor">
+          Start
+        </text>
+        {/* Decision (diamond) */}
+        <polygon
+          points="100,18 140,50 100,82 60,50"
+          fill="currentColor"
+          fillOpacity="0.1"
+          stroke="currentColor"
+          strokeOpacity="0.7"
+        />
+        <text x="100" y="54" textAnchor="middle" fontSize="10" fill="currentColor">
+          Ready?
+        </text>
+        {/* End (rounded) */}
+        <rect
+          x="130"
+          y="84"
+          width="56"
+          height="28"
+          rx="14"
+          fill="currentColor"
+          fillOpacity="0.1"
+          stroke="currentColor"
+          strokeOpacity="0.7"
+        />
+        <text x="158" y="102" textAnchor="middle" fontSize="10" fill="currentColor">
+          End
+        </text>
+        {/* Edges */}
+        <line
+          x1="70"
+          y1="34"
+          x2="80"
+          y2="40"
+          stroke="currentColor"
+          strokeOpacity="0.7"
+          strokeWidth="1.2"
+          markerEnd="url(#mermaid-preview-arrow)"
+        />
+        <line
+          x1="124"
+          y1="62"
+          x2="138"
+          y2="82"
+          stroke="currentColor"
+          strokeOpacity="0.7"
+          strokeWidth="1.2"
+          markerEnd="url(#mermaid-preview-arrow)"
+        />
+        <text x="138" y="74" fontSize="8" fill="currentColor" opacity="0.6">
+          yes
+        </text>
+      </svg>
+    ),
+  },
+  Tabs: {
+    description: 'Horizontal pill strip + active panel below; click a pill to switch panels.',
+    render: () => (
+      <div className="space-y-1.5">
+        <div className="flex gap-1 border-b border-border pb-1">
+          <span className="rounded-md bg-foreground/10 px-2 py-0.5 text-xs font-medium text-foreground">
+            Tab 1
+          </span>
+          <span className="rounded-md px-2 py-0.5 text-xs text-muted-foreground">Tab 2</span>
+        </div>
+        <p className="px-1 text-xs text-muted-foreground">
+          Active panel content for the selected tab shows here.
+        </p>
+      </div>
+    ),
   },
 };
 
@@ -164,6 +332,16 @@ function getCustomBlockComponentItems(): SlashCommandItem[] {
       aliases: ['file', 'attachment', 'download', 'upload', 'document', 'doc', 'docx', 'zip'],
       description: 'Attach a downloadable file (`.pdf` / `.docx` / `.zip` / …)',
       command: openFilePickerAndUpload,
+      preview: {
+        description: 'Notion-style inline row for a downloadable file. Drag-drop also works.',
+        render: () => (
+          <div className="flex w-full items-baseline gap-2 rounded-md px-2 py-1.5">
+            <FileUp className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="truncate font-medium text-foreground">quarterly-report.pdf</span>
+            <span className="shrink-0 text-xs text-muted-foreground">1.4 MB</span>
+          </div>
+        ),
+      },
     },
   ];
 }
@@ -174,12 +352,13 @@ export function getComponentItems(): SlashCommandItem[] {
   );
 
   const descriptorItems = descriptors.map((desc) => {
-    const previewConfig = PREVIEW_CONFIG[desc.name];
+    const config = PREVIEW_CONFIG[desc.name];
     const Component = desc.Component;
-    const preview: SlashCommandItem['preview'] = previewConfig
+    const preview: SlashCommandItem['preview'] = config
       ? {
-          description: previewConfig.description,
-          render: () => <Component {...previewConfig.props}>{previewConfig.children}</Component>,
+          description: config.description,
+          render:
+            config.render ?? (() => <Component {...config.props}>{config.children}</Component>),
         }
       : undefined;
 
@@ -229,6 +408,16 @@ export function getInlineComponentItems(): SlashCommandItem[] {
       category: 'content',
       aliases: ['#', 'hashtag', 'label'],
       description: 'Inline tag (`#tagname`) for cross-doc linking',
+      preview: {
+        description: 'Inline hashtag for cross-doc grouping.',
+        render: () => (
+          <p className="text-sm leading-7">
+            See{' '}
+            {/* biome-ignore lint/a11y/useValidAnchor: preview mockup of an <a className="tag"> — no real navigation target needed inside the slash menu's pointer-events-none preview frame */}
+            <a className="tag pointer-events-none">#design-docs</a> for the latest specs.
+          </p>
+        ),
+      },
       command: (editor: Editor) => {
         editor.chain().insertTag('').run();
       },
