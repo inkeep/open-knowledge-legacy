@@ -20,7 +20,7 @@ interface ToolResult {
     version: number;
     components: ComponentEntry[];
     notFound: string[];
-    _text?: string;
+    text?: string;
   };
   isError?: boolean;
 }

@@ -25,8 +25,8 @@ export function textResult(text: string, isError?: boolean) {
 }
 
 export function textPlusStructured<T>(text: string, structured: T, isError?: boolean) {
-  const structuredContent: { _text: string } & Record<string, unknown> = {
-    _text: text,
+  const structuredContent: { text: string } & Record<string, unknown> = {
+    text,
     ...(structured as unknown as Record<string, unknown>),
   };
   return {

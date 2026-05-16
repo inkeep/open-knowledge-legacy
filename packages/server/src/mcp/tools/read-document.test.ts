@@ -149,3 +149,50 @@ describe('read_document — previewUrl emission', () => {
     });
   });
 });
+
+describe('read_document — agent-visible body (PRD-6663)', () => {
+  test('surfaces full body to clients that filter underscore-prefixed keys', async () => {
+    await writeDoc('docs/article.md', '# Hello\n\nbody content here');
+
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({ path: 'docs/article.md' });
+
+    const visibleToModel: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(result.structuredContent ?? {})) {
+      if (!k.startsWith('_')) visibleToModel[k] = v;
+    }
+    const textKey = Object.entries(visibleToModel).find(
+      ([_k, v]) =>
+        typeof v === 'string' &&
+        (v as string).includes('Hello') &&
+        (v as string).includes('body content here'),
+    );
+    expect(textKey).toBeDefined();
+  });
+
+  test('agent-visible body covers description, path, and document content', async () => {
+    await writeDoc(
+      'docs/article.md',
+      '---\ntitle: Article Title\ndescription: Article description.\n---\n\n# Heading\n\nbody-marker-token\n',
+    );
+
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({ path: 'docs/article.md' });
+
+    const visibleEntries = Object.entries(result.structuredContent ?? {}).filter(
+      ([k]) => !k.startsWith('_'),
+    );
+    const visibleStrings = visibleEntries
+      .map(([_k, v]) => (typeof v === 'string' ? v : ''))
+      .filter(Boolean)
+      .join('\n');
+    expect(visibleStrings).toContain('Article Title');
+    expect(visibleStrings).toContain('Article description.');
+    expect(visibleStrings).toContain('docs/article.md');
+    expect(visibleStrings).toContain('body-marker-token');
+  });
+});
