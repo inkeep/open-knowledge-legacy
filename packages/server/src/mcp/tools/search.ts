@@ -10,6 +10,7 @@ import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './sh
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
+  outputSchemaWithText,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   textPlusStructured,
@@ -79,7 +80,7 @@ const SearchResultRowSchema = z.object({
   previewUrlSource: z.enum(PREVIEW_URL_SOURCES).optional(),
 });
 
-const OutputSchema = {
+const OutputSchema = outputSchemaWithText({
   cwd: z.string(),
   query: z.string(),
   intent: z.string(),
@@ -90,7 +91,7 @@ const OutputSchema = {
     baseUrl: z.string().nullable(),
     port: z.number().nullable(),
   }),
-} as const;
+});
 
 type SearchKind = 'page' | 'folder';
 

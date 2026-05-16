@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { z } from 'zod';
 
 import { type Config, ConfigSchema } from '../../config/schema.ts';
 import {
@@ -6,9 +7,11 @@ import {
   httpGet,
   httpPost,
   normalizeDocName,
+  outputSchemaWithText,
   parseRenameCollidingPairs,
   resolveProjectConfigContext,
   resolveProjectServerContext,
+  TEXT_CHANNEL_FIELD,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -91,6 +94,42 @@ describe('textPlusStructured', () => {
   test('empty structured object: still emits structuredContent.text', () => {
     const result = textPlusStructured('done', {});
     expect(result.structuredContent).toEqual({ text: 'done' });
+  });
+});
+
+describe('outputSchemaWithText — PRD-6655 / PRD-6656 schema-level mirror declaration', () => {
+  test('declares `text` alongside the caller-supplied fields without mutating them', () => {
+    const base = {
+      result: z.string(),
+      count: z.number(),
+    };
+    const augmented = outputSchemaWithText(base);
+    expect(Object.keys(augmented).sort()).toEqual(['count', 'result', 'text']);
+    expect(augmented.result).toBe(base.result);
+    expect(augmented.count).toBe(base.count);
+    expect(augmented.text).toBe(TEXT_CHANNEL_FIELD);
+  });
+
+  test('empty shape: `text` is the only field', () => {
+    const augmented = outputSchemaWithText({});
+    expect(Object.keys(augmented)).toEqual(['text']);
+    expect(augmented.text).toBe(TEXT_CHANNEL_FIELD);
+  });
+
+  test('caller-supplied `text` overrides the default schema declaration', () => {
+    const custom = z.literal('custom').describe('caller-specific');
+    const augmented = outputSchemaWithText({ text: custom });
+    expect(augmented.text).toBe(custom);
+    expect(augmented.text).not.toBe(TEXT_CHANNEL_FIELD);
+  });
+
+  test('`text` is a Zod optional string', () => {
+    const parsed = TEXT_CHANNEL_FIELD.safeParse('hello');
+    expect(parsed.success).toBe(true);
+    const undef = TEXT_CHANNEL_FIELD.safeParse(undefined);
+    expect(undef.success).toBe(true);
+    const num = TEXT_CHANNEL_FIELD.safeParse(42);
+    expect(num.success).toBe(false);
   });
 });
 

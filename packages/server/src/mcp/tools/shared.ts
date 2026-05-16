@@ -24,6 +24,22 @@ export function textResult(text: string, isError?: boolean) {
   };
 }
 
+export const TEXT_CHANNEL_FIELD = z
+  .string()
+  .optional()
+  .describe(
+    'Auto-duplicated body text. `textPlusStructured` mirrors the visible body here as a Claude Code / Claude Desktop client-quirk workaround (those clients hide `content[]` when `structuredContent` is present). Internal — programmatic consumers should prefer the `content[0].text` channel.',
+  );
+
+export function outputSchemaWithText<S extends z.ZodRawShape>(
+  shape: S,
+): Omit<{ text: typeof TEXT_CHANNEL_FIELD }, keyof S> & S {
+  return {
+    text: TEXT_CHANNEL_FIELD,
+    ...shape,
+  } as Omit<{ text: typeof TEXT_CHANNEL_FIELD }, keyof S> & S;
+}
+
 export function textPlusStructured<T>(text: string, structured: T, isError?: boolean) {
   const structuredContent: { text: string } & Record<string, unknown> = {
     text,

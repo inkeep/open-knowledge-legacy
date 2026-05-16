@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { buildDiscoverBody } from './discover-body.ts';
 import type { ConfigOrResolver, ServerInstance } from './shared.ts';
 import {
+  outputSchemaWithText,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectConfigContext,
   textPlusStructured,
@@ -34,9 +35,9 @@ const InputSchema = {
   cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
 } as const;
 
-const OutputSchema = {
+const OutputSchema = outputSchemaWithText({
   previewUrl: z.null(),
-} as const;
+});
 
 export function register(server: ServerInstance, deps: DiscoverDeps): void {
   server.registerTool(
