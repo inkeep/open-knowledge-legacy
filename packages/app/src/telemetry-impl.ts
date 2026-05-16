@@ -15,7 +15,7 @@ let installed = false;
 
 function collectorUrl(): string {
   const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
-  return env?.VITE_OTEL_COLLECTOR_URL ?? 'http://localhost:4318';
+  return env?.VITE_OTEL_COLLECTOR_URL ?? 'http://localhost:14318';
 }
 
 export function install(): void {

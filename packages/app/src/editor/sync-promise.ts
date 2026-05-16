@@ -1,6 +1,7 @@
 import type { HocuspocusProvider, onCloseParameters } from '@hocuspocus/provider';
 import { mark } from '@/lib/perf';
 import { readNumericOverride } from '@/lib/perf/env-override';
+import { emitColdMountChild, finalizeColdMountSpan } from '@/lib/perf/otel-spans';
 import { getMountId } from './mount-id-registry';
 
 export function getSyncTimeoutMs(): number {
@@ -100,6 +101,8 @@ export function __reapTimedOutEntries(now: number): number {
     const error = new SyncTimeoutError(docName, elapsed);
     detach(entry);
     entry.reject(error);
+    const reapMountId = getMountId(docName);
+    if (reapMountId !== undefined) finalizeColdMountSpan(reapMountId);
     reaped.push({ docName, elapsedMs: elapsed });
   }
   if (reaped.length > 0) {
@@ -200,8 +203,16 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
 
   if (provider.synced) {
     console.log(`[syncPromise] ${docName} resolved synchronously (warm provider)`);
-    mark('ok/sync/create', { docName, mountId: getMountId(docName), warm: true });
-    mark('ok/sync/resolve', { docName, mountId: getMountId(docName), elapsedMs: 0, warm: true });
+    const warmMountId = getMountId(docName);
+    mark('ok/sync/create', { docName, mountId: warmMountId, warm: true });
+    mark('ok/sync/resolve', { docName, mountId: warmMountId, elapsedMs: 0, warm: true });
+    mark.histogram(
+      'ok/sync/resolve-elapsed-ms',
+      warmMountId !== undefined
+        ? { docName, mountId: warmMountId, warm: true }
+        : { docName, warm: true },
+      0,
+    );
     const promise = Promise.resolve();
     cache.set(docName, makeSentinelEntry(promise, provider));
     return promise;
@@ -222,15 +233,32 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     entry.resolved = true;
     const elapsed = Date.now() - entry.createdAt;
     console.log(`[syncPromise] ${docName} resolved in ${elapsed}ms`);
+    const coldMountId = getMountId(docName);
     mark('ok/sync/resolve', {
       docName,
-      mountId: getMountId(docName),
+      mountId: coldMountId,
       elapsedMs: elapsed,
       warm: false,
     });
+    mark.histogram(
+      'ok/sync/resolve-elapsed-ms',
+      coldMountId !== undefined ? { docName, mountId: coldMountId } : { docName },
+      elapsed,
+    );
     detach(entry);
     if (!hasPendingEntries()) uninstallVisibilityHandler();
     entry.resolve();
+    if (coldMountId !== undefined) {
+      const nowMs = Date.now();
+      emitColdMountChild(
+        coldMountId,
+        'ok.sync-promise',
+        { 'doc.name': docName, elapsed_ms: elapsed },
+        entry.createdAt,
+        nowMs,
+      );
+      finalizeColdMountSpan(coldMountId, nowMs);
+    }
   };
 
   const onClose = (_data: onCloseParameters) => {
@@ -239,14 +267,16 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     entry.settled = true;
     const error = new PreSyncDisconnectError(docName);
     console.warn(`[syncPromise] ${docName} rejected: ${error.message}`);
+    const closeMountId = getMountId(docName);
     mark('ok/sync/reject', {
       docName,
-      mountId: getMountId(docName),
+      mountId: closeMountId,
       reason: 'pre-sync-disconnect',
     });
     detach(entry);
     if (!hasPendingEntries()) uninstallVisibilityHandler();
     entry.reject(error);
+    if (closeMountId !== undefined) finalizeColdMountSpan(closeMountId);
   };
 
   const timeoutHandle = setTimeout(() => {
@@ -256,15 +286,17 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     const elapsed = Date.now() - entry.createdAt;
     const error = new SyncTimeoutError(docName, elapsed);
     console.warn(`[syncPromise] ${docName} rejected: ${error.message}`);
+    const timeoutMountId = getMountId(docName);
     mark('ok/sync/reject', {
       docName,
-      mountId: getMountId(docName),
+      mountId: timeoutMountId,
       reason: 'timeout',
       elapsedMs: elapsed,
     });
     detach(entry);
     if (!hasPendingEntries()) uninstallVisibilityHandler();
     entry.reject(error);
+    if (timeoutMountId !== undefined) finalizeColdMountSpan(timeoutMountId);
   }, getSyncTimeoutMs());
 
   const entry: CacheEntry = {
@@ -360,6 +392,8 @@ export function rejectSyncPromise(docName: string, error: Error): boolean {
   detach(entry);
   if (!hasPendingEntries()) uninstallVisibilityHandler();
   entry.reject(error);
+  const rejectMountId = getMountId(docName);
+  if (rejectMountId !== undefined) finalizeColdMountSpan(rejectMountId);
   return true;
 }
 

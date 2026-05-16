@@ -8,6 +8,7 @@ import { getSchema } from '@tiptap/core';
 import * as Y from 'yjs';
 import { readNumericOverride } from '../lib/perf/env-override';
 import { mark } from '../lib/perf/mark';
+import { emitColdMountChild } from '../lib/perf/otel-spans';
 import {
   type ClientPersistenceProvider,
   captureStateVector,
@@ -19,6 +20,7 @@ import {
 import { appendTraceContextToCollabUrl } from './collab-otel';
 import { sharedExtensions } from './extensions/shared.ts';
 import { isSystemDoc } from './is-system-doc';
+import { getMountId } from './mount-id-registry';
 import { setupObservers } from './observers';
 import { BridgeSetupError, invalidateSyncPromise, rejectSyncPromise } from './sync-promise';
 
@@ -583,6 +585,8 @@ export class ProviderPool {
       return existing;
     }
 
+    const openStartMs = Date.now();
+
     if (this.entries.size >= this.maxSize) {
       this.evictLru();
     }
@@ -861,6 +865,17 @@ export class ProviderPool {
             }),
           );
         },
+      );
+    }
+
+    const openMountId = getMountId(docName);
+    if (openMountId !== undefined) {
+      emitColdMountChild(
+        openMountId,
+        'ok.provider-pool.open',
+        { 'doc.name': docName },
+        openStartMs,
+        Date.now(),
       );
     }
 

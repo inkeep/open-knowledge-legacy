@@ -3,6 +3,7 @@ import type { Editor } from '@tiptap/core';
 import type * as Y from 'yjs';
 import { mark } from '@/lib/perf';
 import { readNumericOverride } from '@/lib/perf/env-override';
+import { emitColdMountChild, finalizeColdMountSpan } from '@/lib/perf/otel-spans';
 import '@/lib/perf/scheduler-polyfill-shim';
 import {
   mountTiptapEditor,
@@ -179,6 +180,7 @@ export function mountTiptapEditorPromise(
     if (cache.size === 0) uninstallVisibilityHandler();
     mark('ok/mount/reject', { docName, mountId: entry.mountId, reason: 'aborted' });
     rejectFn(new MountAbortError(docName));
+    finalizeColdMountSpan(entry.mountId);
   });
 
   cache.set(docName, entry);
@@ -214,6 +216,7 @@ export function mountTiptapEditorPromise(
       reason: 'unhandled-body-throw',
     });
     rejectFn(wrapped);
+    finalizeColdMountSpan(entry.mountId);
   });
 
   return promise;
@@ -239,6 +242,7 @@ export function invalidateMountPromise(docName: string): void {
   cache.delete(docName);
   if (cache.size === 0) uninstallVisibilityHandler();
   mark('ok/mount/invalidate', { docName, mountId: entry.mountId });
+  finalizeColdMountSpan(entry.mountId);
   entry.controller.abort();
 }
 
@@ -325,6 +329,7 @@ async function runMountBody(params: MountBodyParams): Promise<void> {
       reason: 'construct-failed',
     });
     rejectFn(wrapped);
+    finalizeColdMountSpan(entry.mountId);
     return;
   }
   entry.preMountEditor = constructed.editor;
@@ -350,6 +355,7 @@ async function runMountBody(params: MountBodyParams): Promise<void> {
       reason: 'mount-failed',
     });
     rejectFn(wrapped);
+    finalizeColdMountSpan(entry.mountId);
     return;
   }
 
@@ -373,6 +379,7 @@ async function runMountBody(params: MountBodyParams): Promise<void> {
       reason: 'v2-register-failed',
     });
     rejectFn(wrapped);
+    finalizeColdMountSpan(entry.mountId);
     return;
   }
 
@@ -386,7 +393,17 @@ async function runMountBody(params: MountBodyParams): Promise<void> {
     mountId: entry.mountId,
     elapsedMs: elapsed,
   });
+  mark.histogram('ok/mount/resolve-elapsed-ms', { docName, mountId: entry.mountId }, elapsed);
   resolveFn(v2MissEntry);
+  const nowMs = Date.now();
+  emitColdMountChild(
+    entry.mountId,
+    'ok.mount-promise',
+    { 'doc.name': docName, elapsed_ms: elapsed },
+    entry.createdAt,
+    nowMs,
+  );
+  finalizeColdMountSpan(entry.mountId, nowMs);
 }
 
 export function __resetMountPromiseCache(): void {

@@ -154,6 +154,7 @@
       "devDependencies": {
         "@axe-core/playwright": "^4.11.1",
         "@hocuspocus/server": "4.0.0-rc.1",
+        "@opentelemetry/context-async-hooks": "^2.0.0",
         "@opentelemetry/sdk-trace-base": "^2.0.0",
         "@playwright/test": "^1.59.1",
         "@rolldown/plugin-babel": "^0.2.2",

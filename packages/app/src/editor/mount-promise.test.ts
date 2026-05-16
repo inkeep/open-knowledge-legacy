@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import type { Editor } from '@tiptap/core';
 import * as Y from 'yjs';
-import { getCollector } from '../lib/perf/collector';
+import { getCollector, getHistogramSnapshot } from '../lib/perf/collector';
+import { validatePerfMarkName } from '../lib/perf/mark';
+import {
+  __coldMountSpanCount,
+  __resetColdMountSpans,
+  emitColdMountChild,
+} from '../lib/perf/otel-spans';
 import { __getCacheSize, __resetCacheForTests, mountTiptapEditor } from './editor-cache';
 import {
   __mountPromiseCacheSize,
@@ -1276,5 +1282,177 @@ describe('unhandled-throw backstop — body must reject, never hang', () => {
     expect(postSettleMark).toBeDefined();
     expect(postSettleMark?.properties?.docName).toBe(h.docName);
     expect(postSettleMark?.properties?.message).toContain('synthetic HIT-path DOM failure');
+  });
+});
+
+describe('ok/mount/resolve-elapsed-ms histogram (cap-graduation sweep substrate)', () => {
+  beforeEach(() => {
+    getCollector()?.reset();
+  });
+
+  test('histogram bucket name passes validatePerfMarkName', () => {
+    expect(validatePerfMarkName('ok/mount/resolve-elapsed-ms')).toBe(true);
+  });
+
+  test('cache MISS resolve increments the histogram with the measured elapsedMs', async () => {
+    const h = makeHarness('doc-hist-miss');
+    await mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'hist-mid',
+      construct: h.construct,
+    });
+    const snap = getHistogramSnapshot('ok/mount/resolve-elapsed-ms');
+    expect(snap).toBeDefined();
+    expect(snap?.count).toBe(1);
+    expect(snap?.max).toBeGreaterThanOrEqual(0);
+    expect(snap?.max).toBeLessThan(10_000);
+  });
+
+  test('paired mark carries docName, mountId, durationMs', async () => {
+    const collector = getCollector();
+    if (!collector) return;
+    const beforeMarks = collector.marks.toArray().length;
+    const h = makeHarness('doc-hist-pair');
+    await mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'hist-pair-mid',
+      construct: h.construct,
+    });
+    const newMarks = collector.marks.toArray().slice(beforeMarks);
+    const histMarks = newMarks.filter(
+      (m) => m.name === 'ok/mount/resolve-elapsed-ms' && m.properties?.docName === 'doc-hist-pair',
+    );
+    expect(histMarks.length).toBe(1);
+    const props = histMarks[0]?.properties;
+    expect(props?.docName).toBe('doc-hist-pair');
+    expect(props?.mountId).toBe('hist-pair-mid');
+    expect(typeof props?.durationMs).toBe('number');
+  });
+
+  test('existing ok/mount/resolve mark is preserved alongside the histogram', async () => {
+    const collector = getCollector();
+    if (!collector) return;
+    const beforeMarks = collector.marks.toArray().length;
+    const h = makeHarness('doc-hist-coexist');
+    await mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'coexist-mid',
+      construct: h.construct,
+    });
+    const newMarks = collector.marks.toArray().slice(beforeMarks);
+    const resolveMarks = newMarks.filter(
+      (m) => m.name === 'ok/mount/resolve' && m.properties?.docName === 'doc-hist-coexist',
+    );
+    expect(resolveMarks.length).toBe(1);
+  });
+
+  test('V2 cache HIT path does NOT increment the histogram (resolve site is MISS-only)', async () => {
+    const h = makeHarness('doc-hist-hit');
+    const v2container = makeNode();
+    mountTiptapEditor({
+      docName: h.docName,
+      container: v2container as unknown as HTMLElement,
+      factory: (el) => {
+        (el as unknown as FakeNode).appendChild(h.editorDom);
+        return { editor: h.editor, ydoc: h.ydoc, ytext: h.ytext, provider: h.provider };
+      },
+    });
+    getCollector()?.reset();
+    await mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'hit-mid',
+      construct: h.construct,
+    });
+    const snap = getHistogramSnapshot('ok/mount/resolve-elapsed-ms');
+    expect(snap).toBeUndefined();
+  });
+});
+
+describe('cold-mount span finalization on reject paths', () => {
+  beforeEach(() => {
+    __resetColdMountSpans();
+  });
+
+  afterEach(() => {
+    __resetColdMountSpans();
+  });
+
+  test('controller.abort() (explicit cancel) finalizes the cold-mount span', async () => {
+    const h = makeHarness('reject-abort');
+    emitColdMountChild('reject-abort-mid', 'ok.provider-pool.open', {}, Date.now(), Date.now() + 1);
+    expect(__coldMountSpanCount()).toBe(1);
+
+    const promise = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'reject-abort-mid',
+      construct: h.construct,
+    });
+    const controller = getMountAbortController(h.docName);
+    controller?.abort();
+    await expect(promise).rejects.toBeInstanceOf(MountAbortError);
+    expect(__coldMountSpanCount()).toBe(0);
+  });
+
+  test('construct() throws → finalizes the cold-mount span', async () => {
+    emitColdMountChild(
+      'reject-construct-mid',
+      'ok.provider-pool.open',
+      {},
+      Date.now(),
+      Date.now() + 1,
+    );
+    expect(__coldMountSpanCount()).toBe(1);
+
+    const promise = mountTiptapEditorPromise({
+      docName: 'reject-construct',
+      mountId: 'reject-construct-mid',
+      construct: () => {
+        throw new Error('synthetic construct failure');
+      },
+    });
+    await expect(promise).rejects.toThrow('synthetic construct failure');
+    expect(__coldMountSpanCount()).toBe(0);
+  });
+
+  test('editor.mount() throws → finalizes the cold-mount span', async () => {
+    const h = makeHarness('reject-mount-fail');
+    h.spies.mountThrows = true;
+    emitColdMountChild(
+      'reject-mount-fail-mid',
+      'ok.provider-pool.open',
+      {},
+      Date.now(),
+      Date.now() + 1,
+    );
+    expect(__coldMountSpanCount()).toBe(1);
+
+    const promise = mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'reject-mount-fail-mid',
+      construct: h.construct,
+    });
+    await expect(promise).rejects.toThrow('synthetic mount failure');
+    expect(__coldMountSpanCount()).toBe(0);
+  });
+
+  test('invalidateMountPromise (silent teardown) finalizes the cold-mount span', async () => {
+    const h = makeHarness('invalidate-finalizes');
+    emitColdMountChild(
+      'invalidate-finalizes-mid',
+      'ok.provider-pool.open',
+      {},
+      Date.now(),
+      Date.now() + 1,
+    );
+    expect(__coldMountSpanCount()).toBe(1);
+
+    void mountTiptapEditorPromise({
+      docName: h.docName,
+      mountId: 'invalidate-finalizes-mid',
+      construct: h.construct,
+    });
+
+    invalidateMountPromise(h.docName);
+    expect(__coldMountSpanCount()).toBe(0);
   });
 });

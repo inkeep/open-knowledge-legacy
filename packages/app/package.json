@@ -29,6 +29,7 @@
     "test:a11y": "playwright test --config playwright.a11y.config.ts",
     "perf:profile": "bun run tests/perf/profile.ts",
     "sweep:cache-regime": "bun run tests/perf/profile.ts --scenario=sweep-cache-regime",
+    "sweep:convention-cap-graduation": "bun run tests/perf/profile.ts --scenario=sweep-convention-cap-graduation",
     "probe:tiptap-leak": "bun run tests/perf/probes/tiptap-destroy-leak.ts",
     "size": "turbo run build --filter=@inkeep/open-knowledge-app && size-limit"
   },
@@ -148,6 +149,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",
     "@hocuspocus/server": "4.0.0-rc.1",
+    "@opentelemetry/context-async-hooks": "^2.0.0",
     "@opentelemetry/sdk-trace-base": "^2.0.0",
     "@playwright/test": "^1.59.1",
     "@rolldown/plugin-babel": "^0.2.2",
