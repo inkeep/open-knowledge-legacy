@@ -31,13 +31,14 @@ const PROBE_DEBOUNCE_MS = 180;
 
 const GIT_BANNER_POLL_INTERVAL_MS = 5_000;
 
-type CascadeState =
+type SettledCascade =
   | { kind: 'idle' }
-  | { kind: 'pending' }
   | { kind: 'block-nested'; rootPath: string }
   | { kind: 'confirm-git'; gitRoot: string }
   | { kind: 'block-nonempty' }
   | { kind: 'free' };
+
+type ProbeLifecycle = 'idle' | 'in-flight';
 
 type RemoveGitState =
   | { kind: 'idle' }
@@ -103,7 +104,7 @@ export function computeCascade(input: {
   enclosingProject: OkFindEnclosingProjectRootResult | null;
   enclosingGit: OkFindEnclosingGitRootResult | null;
   targetState: OkFolderState | null;
-}): CascadeState {
+}): SettledCascade {
   const { parent, sanitizedName, enclosingProject, enclosingGit, targetState } = input;
   if (parent === '' || sanitizedName === '') return { kind: 'idle' };
   if (enclosingProject !== null) {
@@ -156,7 +157,8 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
   const [editorIds, setEditorIds] = useState<ReadonlySet<OkMcpWiringEditorId>>(
     () => new Set(ALL_EDITOR_IDS),
   );
-  const [cascade, setCascade] = useState<CascadeState>({ kind: 'idle' });
+  const [cascade, setCascade] = useState<SettledCascade>({ kind: 'idle' });
+  const [probeLifecycle, setProbeLifecycle] = useState<ProbeLifecycle>('idle');
   const [busy, setBusy] = useState(false);
   const [submitError, setSubmitError] = useState<CreateNewError | null>(null);
   const [removeGitState, setRemoveGitState] = useState<RemoveGitState>({ kind: 'idle' });
@@ -173,6 +175,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     firedBanners.current.clear();
     setSubmitError(null);
     setCascade({ kind: 'idle' });
+    setProbeLifecycle('idle');
     setBusy(false);
     setPicked('');
     setEditorIds(new Set(ALL_EDITOR_IDS));
@@ -208,17 +211,19 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
 
     if (picked === '') {
       setCascade({ kind: 'idle' });
+      setProbeLifecycle('idle');
       return;
     }
     const parent = dirnamePreview(picked);
     const sanitized = sanitizeFolderName(basenamePreview(picked));
     if (parent === '' || sanitized === '') {
       setCascade({ kind: 'idle' });
+      setProbeLifecycle('idle');
       return;
     }
     const target = joinPathPreview(parent, sanitized);
 
-    setCascade({ kind: 'pending' });
+    setProbeLifecycle('in-flight');
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
@@ -230,6 +235,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
       ])
         .then(([enclosingProject, enclosingGit, targetState]) => {
           if (ctrl.signal.aborted) return;
+          setProbeLifecycle('idle');
           setCascade(
             computeCascade({
               parent,
@@ -243,6 +249,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
         .catch((err) => {
           if (ctrl.signal.aborted) return;
           console.warn('[CreateProjectDialog] cascade probe failed:', err);
+          setProbeLifecycle('idle');
           setCascade({ kind: 'free' });
         });
     }, PROBE_DEBOUNCE_MS);
@@ -260,10 +267,16 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     return () => window.removeEventListener('focus', onFocus);
   }, [open]);
 
+  const probeLifecycleRef = useRef<ProbeLifecycle>('idle');
+  useEffect(() => {
+    probeLifecycleRef.current = probeLifecycle;
+  }, [probeLifecycle]);
+
   useEffect(() => {
     if (!open) return;
     if (cascade.kind !== 'confirm-git') return;
     const id = setInterval(() => {
+      if (probeLifecycleRef.current === 'in-flight') return;
       setProbeNonce((n) => n + 1);
     }, GIT_BANNER_POLL_INTERVAL_MS);
     return () => clearInterval(id);
@@ -307,6 +320,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     !busy &&
     picked !== '' &&
     sanitized !== '' &&
+    probeLifecycle === 'idle' &&
     (cascade.kind === 'free' || cascade.kind === 'confirm-git');
 
   function toggleEditor(id: OkMcpWiringEditorId) {
@@ -533,7 +547,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
 }
 
 interface CascadeBannerProps {
-  cascade: CascadeState;
+  cascade: SettledCascade;
   onOpenNested: (rootPath: string) => void;
   removeGitState: RemoveGitState;
   onRequestRemoveGit: (gitRoot: string) => void;
@@ -549,7 +563,7 @@ function CascadeBanner({
   onCancelRemoveGit,
   onConfirmRemoveGit,
 }: CascadeBannerProps) {
-  if (cascade.kind === 'idle' || cascade.kind === 'pending' || cascade.kind === 'free') {
+  if (cascade.kind === 'idle' || cascade.kind === 'free') {
     return null;
   }
   if (cascade.kind === 'block-nested') {

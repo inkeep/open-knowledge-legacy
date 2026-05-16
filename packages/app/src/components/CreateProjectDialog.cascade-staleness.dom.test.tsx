@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import type {
   OkDesktopBridge,
   OkFindEnclosingGitRootResult,
+  OkFindEnclosingProjectRootResult,
   OkFolderState,
 } from '@/lib/desktop-bridge-types';
 import { CreateProjectDialog } from './CreateProjectDialog';
@@ -45,6 +46,12 @@ interface ProgrammableBridgeStub {
   setEnclosingGitResult(result: OkFindEnclosingGitRootResult | null): void;
   setRemoveGitFolderImpl(impl: (gitRoot: string) => Promise<void>): void;
   setPickedPath(picked: string | null): void;
+  setFindEnclosingProjectRootImpl(
+    impl: (path: string) => Promise<OkFindEnclosingProjectRootResult | null>,
+  ): void;
+  setFindEnclosingGitRootImpl(
+    impl: (path: string) => Promise<OkFindEnclosingGitRootResult | null>,
+  ): void;
   readonly findGitCalls: ReadonlyArray<string>;
   readonly folderStateCalls: ReadonlyArray<string>;
   readonly removeGitCalls: ReadonlyArray<string>;
@@ -55,13 +62,21 @@ function makeStubBridge(
   initialGit: OkFindEnclosingGitRootResult | null,
   initialPicked: string | null,
 ): ProgrammableBridgeStub {
-  let currentGitResult: OkFindEnclosingGitRootResult | null = initialGit;
-  let currentPicked: string | null = initialPicked;
-  let removeGitImpl: (gitRoot: string) => Promise<void> = async () => undefined;
   const findGitCalls: string[] = [];
   const folderStateCalls: string[] = [];
   const removeGitCalls: string[] = [];
   const openFolderCalls: number[] = [];
+  let currentGitResult: OkFindEnclosingGitRootResult | null = initialGit;
+  let currentPicked: string | null = initialPicked;
+  let removeGitImpl: (gitRoot: string) => Promise<void> = async () => undefined;
+  let findEnclosingProjectImpl: (path: string) => Promise<OkFindEnclosingProjectRootResult | null> =
+    async () => null;
+  let findEnclosingGitImpl: (path: string) => Promise<OkFindEnclosingGitRootResult | null> = async (
+    path,
+  ) => {
+    findGitCalls.push(path);
+    return currentGitResult;
+  };
 
   const bridge = {
     fs: {
@@ -70,11 +85,8 @@ function makeStubBridge(
         folderStateCalls.push(path);
         return 'free';
       },
-      findEnclosingProjectRoot: async (_path: string) => null,
-      findEnclosingGitRoot: async (path: string) => {
-        findGitCalls.push(path);
-        return currentGitResult;
-      },
+      findEnclosingProjectRoot: (path: string) => findEnclosingProjectImpl(path),
+      findEnclosingGitRoot: (path: string) => findEnclosingGitImpl(path),
       removeGitFolder: async (gitRoot: string) => {
         removeGitCalls.push(gitRoot);
         return removeGitImpl(gitRoot);
@@ -103,6 +115,12 @@ function makeStubBridge(
     },
     setPickedPath: (picked) => {
       currentPicked = picked;
+    },
+    setFindEnclosingProjectRootImpl: (impl) => {
+      findEnclosingProjectImpl = impl;
+    },
+    setFindEnclosingGitRootImpl: (impl) => {
+      findEnclosingGitImpl = impl;
     },
     findGitCalls,
     folderStateCalls,
@@ -242,10 +260,18 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
     expect(screen.queryByTestId('create-banner-git-remove-confirm')).not.toBeNull();
     expect(stub.removeGitCalls.length).toBe(0);
 
+    const findGitCallCountBeforeRemove = stub.findGitCalls.length;
     fireEvent.click(screen.getByTestId('create-banner-git-remove-confirm-button'));
     await waitFor(
       () => {
         expect(stub.removeGitCalls).toEqual([FIRST_GIT_RESULT.gitRoot]);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+    await waitFor(
+      () => {
+        const delta = stub.findGitCalls.length - findGitCallCountBeforeRemove;
+        expect(delta).toBeGreaterThanOrEqual(1);
       },
       { timeout: ASYNC_TIMEOUT_MS },
     );
@@ -291,6 +317,7 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
       { timeout: ASYNC_TIMEOUT_MS },
     );
 
+    const findGitCallCountBeforeRemove1 = stub.findGitCalls.length;
     fireEvent.click(screen.getByTestId('create-banner-git-remove'));
     fireEvent.click(screen.getByTestId('create-banner-git-remove-confirm-button'));
     await waitFor(
@@ -301,8 +328,16 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
     );
     await waitFor(
       () => {
+        const delta = stub.findGitCalls.length - findGitCallCountBeforeRemove1;
+        expect(delta).toBeGreaterThanOrEqual(1);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+    await waitFor(
+      () => {
         const banner = screen.queryByTestId('create-banner-git-confirm');
         expect(banner?.textContent?.includes(HIGHER.gitRoot)).toBe(true);
+        expect(banner?.textContent?.includes(FIRST.gitRoot)).toBe(false);
       },
       { timeout: ASYNC_TIMEOUT_MS },
     );
@@ -310,11 +345,19 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
     expect(screen.queryByTestId('create-banner-git-remove-confirm')).toBeNull();
     expect(screen.queryByTestId('create-banner-git-remove')).not.toBeNull();
 
+    const findGitCallCountBeforeRemove2 = stub.findGitCalls.length;
     fireEvent.click(screen.getByTestId('create-banner-git-remove'));
     fireEvent.click(screen.getByTestId('create-banner-git-remove-confirm-button'));
     await waitFor(
       () => {
         expect(stub.removeGitCalls).toEqual([FIRST.gitRoot, HIGHER.gitRoot]);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+    await waitFor(
+      () => {
+        const delta = stub.findGitCalls.length - findGitCallCountBeforeRemove2;
+        expect(delta).toBeGreaterThanOrEqual(1);
       },
       { timeout: ASYNC_TIMEOUT_MS },
     );
@@ -392,5 +435,237 @@ describe('CreateProjectDialog cascade staleness (Tier-3 mount)', () => {
     );
     expect(screen.queryByTestId('create-banner-git-confirm')).not.toBeNull();
     expect(screen.queryByTestId('create-banner-git-remove')).not.toBeNull();
+  });
+
+  test('PRD-6649: banner DOM identity is stable across consecutive Browse re-picks of the same target (verdict unchanged)', async () => {
+    const stub = makeStubBridge(null, TARGET);
+    const nestedRoot = '/Users/test/existing-project';
+    stub.setFindEnclosingProjectRootImpl(async (_path) => ({ rootPath: nestedRoot }));
+
+    render(<CreateProjectDialog open={true} onOpenChange={() => {}} bridge={stub.bridge} />);
+
+    const browse = (await screen.findByTestId('create-browse', undefined, {
+      timeout: ASYNC_TIMEOUT_MS,
+    })) as HTMLButtonElement;
+    await waitFor(
+      () => {
+        expect(browse.disabled).toBe(false);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+
+    fireEvent.click(browse);
+    const initialBanner = await screen.findByTestId('create-banner-nested', undefined, {
+      timeout: ASYNC_TIMEOUT_MS,
+    });
+    const bannerParent = initialBanner.parentElement;
+    expect(bannerParent !== null).toBe(true);
+
+    let bannerWasRemoved = false;
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const removed of Array.from(m.removedNodes)) {
+          if (removed === initialBanner) {
+            bannerWasRemoved = true;
+          }
+        }
+      }
+    });
+    // biome-ignore lint/style/noNonNullAssertion: asserted above
+    observer.observe(bannerParent!, { childList: true, subtree: true });
+
+    const probesBeforeReBrowse = stub.findGitCalls.length;
+
+    fireEvent.click(browse);
+
+    await waitFor(
+      () => {
+        const delta = stub.findGitCalls.length - probesBeforeReBrowse;
+        expect(delta).toBeGreaterThanOrEqual(1);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+
+    await waitFor(
+      () => {
+        expect(screen.queryByTestId('create-banner-nested')).not.toBeNull();
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+
+    observer.disconnect();
+
+    expect(bannerWasRemoved).toBe(false);
+    expect(initialBanner.isConnected).toBe(true);
+    expect(screen.getByTestId('create-banner-nested') === initialBanner).toBe(true);
+  });
+
+  test('PRD-6649: canSubmit is gated by probeLifecycle: disabled while a probe is in-flight, re-enabled when settled', async () => {
+    const stub = makeStubBridge(null, TARGET);
+    render(<CreateProjectDialog open={true} onOpenChange={() => {}} bridge={stub.bridge} />);
+
+    const browse = (await screen.findByTestId('create-browse', undefined, {
+      timeout: ASYNC_TIMEOUT_MS,
+    })) as HTMLButtonElement;
+    await waitFor(
+      () => {
+        expect(browse.disabled).toBe(false);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+
+    fireEvent.click(browse);
+    const submitButton = screen.getByTestId('create-submit') as HTMLButtonElement;
+    await waitFor(
+      () => {
+        expect(submitButton.disabled).toBe(false);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+
+    let probeCallCount = 0;
+    let resolveDeferred: (value: OkFindEnclosingGitRootResult | null) => void = () => {};
+    stub.setFindEnclosingGitRootImpl((_path) => {
+      probeCallCount += 1;
+      return new Promise<OkFindEnclosingGitRootResult | null>((r) => {
+        resolveDeferred = r;
+      });
+    });
+
+    const probesBefore = probeCallCount;
+    fireEvent.click(browse);
+
+    await waitFor(
+      () => {
+        expect(probeCallCount).toBeGreaterThan(probesBefore);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+    await waitFor(
+      () => {
+        expect(submitButton.disabled).toBe(true);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+
+    resolveDeferred(null);
+    await waitFor(
+      () => {
+        expect(submitButton.disabled).toBe(false);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+  });
+
+  test('PRD-6649: 5 s polling skips probeNonce bump while a probe is in-flight (race-prevention gate)', async () => {
+    const stub = makeStubBridge(FIRST_GIT_RESULT, TARGET);
+
+    const setIntervalSpy = spyOn(globalThis, 'setInterval');
+
+    try {
+      render(<CreateProjectDialog open={true} onOpenChange={() => {}} bridge={stub.bridge} />);
+
+      const browse = (await screen.findByTestId('create-browse', undefined, {
+        timeout: ASYNC_TIMEOUT_MS,
+      })) as HTMLButtonElement;
+      await waitFor(
+        () => {
+          expect(browse.disabled).toBe(false);
+        },
+        { timeout: ASYNC_TIMEOUT_MS },
+      );
+
+      fireEvent.click(browse);
+      await waitFor(
+        () => {
+          expect(screen.queryByTestId('create-banner-git-confirm')).not.toBeNull();
+        },
+        { timeout: ASYNC_TIMEOUT_MS },
+      );
+
+      const pollingCalls = setIntervalSpy.mock.calls.filter((call) => call[1] === 5_000);
+      expect(pollingCalls.length).toBeGreaterThanOrEqual(1);
+      const pollingCallback = pollingCalls[pollingCalls.length - 1]?.[0] as
+        | (() => void)
+        | undefined;
+      expect(typeof pollingCallback).toBe('function');
+      if (typeof pollingCallback !== 'function') return;
+
+      let probeCallCount = 0;
+      let resolveDeferred: (value: OkFindEnclosingGitRootResult | null) => void = () => {};
+      stub.setFindEnclosingGitRootImpl((_path) => {
+        probeCallCount += 1;
+        return new Promise<OkFindEnclosingGitRootResult | null>((r) => {
+          resolveDeferred = r;
+        });
+      });
+
+      fireEvent.click(browse);
+      await waitFor(
+        () => {
+          expect(probeCallCount).toBeGreaterThanOrEqual(1);
+        },
+        { timeout: ASYNC_TIMEOUT_MS },
+      );
+      const probeCountWhileInFlight = probeCallCount;
+
+      pollingCallback();
+
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(probeCallCount).toBe(probeCountWhileInFlight);
+
+      resolveDeferred(FIRST_GIT_RESULT);
+
+      await waitFor(
+        () => {
+          expect(screen.queryByTestId('create-banner-git-confirm')).not.toBeNull();
+        },
+        { timeout: ASYNC_TIMEOUT_MS },
+      );
+
+      const probeCountBeforeIdleTick = probeCallCount;
+      pollingCallback();
+
+      await waitFor(
+        () => {
+          expect(probeCallCount).toBeGreaterThan(probeCountBeforeIdleTick);
+        },
+        { timeout: ASYNC_TIMEOUT_MS },
+      );
+
+      resolveDeferred(FIRST_GIT_RESULT);
+    } finally {
+      setIntervalSpy.mockRestore();
+    }
+  });
+
+  test('PRD-6649: probeLifecycle resets to idle on IPC-failure catch arm (canSubmit recovers after transient failure)', async () => {
+    const stub = makeStubBridge(null, TARGET);
+    stub.setFindEnclosingGitRootImpl(async (_path) => {
+      throw new Error('Simulated IPC failure');
+    });
+    render(<CreateProjectDialog open={true} onOpenChange={() => {}} bridge={stub.bridge} />);
+
+    const browse = (await screen.findByTestId('create-browse', undefined, {
+      timeout: ASYNC_TIMEOUT_MS,
+    })) as HTMLButtonElement;
+    await waitFor(
+      () => {
+        expect(browse.disabled).toBe(false);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
+
+    fireEvent.click(browse);
+
+    const submitButton = screen.getByTestId('create-submit') as HTMLButtonElement;
+
+    await waitFor(
+      () => {
+        expect(submitButton.disabled).toBe(false);
+      },
+      { timeout: ASYNC_TIMEOUT_MS },
+    );
   });
 });
