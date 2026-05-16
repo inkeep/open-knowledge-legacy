@@ -129,7 +129,6 @@ export function PageListProvider({ children }: { children: ReactNode }) {
 
   function refetch() {
     const requestId = ++latestRequestIdRef.current;
-    setLoading(true);
     void Promise.all([
       loadPages(),
       loadDocumentListSummary().catch((err) => {

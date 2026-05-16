@@ -11,11 +11,23 @@ interface PromptForFolderOpts {
   defaultPath?: string;
 }
 
+export function resolvePickedPathForIndex(raw: string, callIndex: number): string | null {
+  const sequence = raw.split('\x1f').filter((s) => s.length > 0);
+  if (sequence.length === 0) return null;
+  const idx = Math.min(callIndex, sequence.length - 1);
+  return sequence[idx] ?? null;
+}
+
+let testPickedPathCallIndex = 0;
+
 function readTestPickedPath(): string | null {
   if (process.env.OK_DESKTOP_E2E_SMOKE !== '1') return null;
-  const picked = process.env.OK_DESKTOP_TEST_PICKED_PATH;
-  if (typeof picked !== 'string' || picked.length === 0) return null;
-  return picked;
+  const raw = process.env.OK_DESKTOP_TEST_PICKED_PATH;
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  const resolved = resolvePickedPathForIndex(raw, testPickedPathCallIndex);
+  if (resolved === null) return null;
+  testPickedPathCallIndex += 1;
+  return resolved;
 }
 
 export async function promptForExistingFolder(
