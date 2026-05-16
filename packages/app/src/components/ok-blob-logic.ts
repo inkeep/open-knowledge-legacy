@@ -2,7 +2,7 @@ export type ClickLevel = 0 | 1 | 2 | 3;
 export type ActiveClickLevel = Exclude<ClickLevel, 0>;
 
 export const RAGE_WINDOW_MS = 600;
-export const IDLE_RESET_MS = 1700;
+export const IDLE_RESET_MS = 3100;
 const MAX_LEVEL: ActiveClickLevel = 3;
 
 export function nextClickLevel(
@@ -82,9 +82,9 @@ export const FIREWORK_LEVEL_CONFIG: Record<ClickLevel, FireworkLevelConfig> = {
     distanceVariance: 3,
     sizeMin: 0.45,
     sizeMax: 1.2,
-    maxDelay: 250,
-    durationMin: 620,
-    durationMax: 1400,
+    maxDelay: 500,
+    durationMin: 1100,
+    durationMax: 2400,
   },
 };
 

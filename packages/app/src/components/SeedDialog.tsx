@@ -339,7 +339,7 @@ function RootPicker({
             <FieldContent>
               <FieldTitle>Project root</FieldTitle>
               <FieldDescription className="text-1sm">
-                Scaffold the pack's folders directly under this project.
+                Scaffold directly under this project.
               </FieldDescription>
             </FieldContent>
             <RadioGroupItem value="project-root" id="seed-root-project-root" />
@@ -350,18 +350,19 @@ function RootPicker({
             <FieldContent>
               <FieldTitle>In a subfolder</FieldTitle>
               <FieldDescription className="nth-last-2:mt-0 text-1sm">
-                Created if missing. Reuses the folder if it already exists.
+                Created if missing; reused if it exists.
               </FieldDescription>
-              <Input
-                value={subfolder}
-                onChange={(e) => onSubfolderChange(e.target.value)}
-                onFocus={() => onChoiceChange('subfolder')}
-                placeholder={placeholder}
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                className="mt-1.5 font-mono text-xs bg-background"
-              />
+              {choice === 'subfolder' && (
+                <Input
+                  value={subfolder}
+                  onChange={(e) => onSubfolderChange(e.target.value)}
+                  placeholder={placeholder}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  className="mt-1.5 font-mono text-xs bg-background"
+                />
+              )}
             </FieldContent>
             <RadioGroupItem value="subfolder" id="seed-root-subfolder" />
           </Field>

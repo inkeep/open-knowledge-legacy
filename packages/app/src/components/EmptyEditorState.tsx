@@ -60,7 +60,7 @@ export function EmptyEditorState() {
 
   function handleSeedApplied() {
     clearTimeout(celebrateTimerRef.current);
-    celebrateTimerRef.current = setTimeout(() => setCelebrateSignal((prev) => prev + 1), 250);
+    celebrateTimerRef.current = setTimeout(() => setCelebrateSignal((prev) => prev + 1), 500);
     fetch('/api/documents')
       .then(async (res) => {
         const body = (await res.json().catch(() => null)) as unknown;
