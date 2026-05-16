@@ -1,15 +1,24 @@
 name: Desktop release
 
-# M3 per specs/2026-04-21-m3-electron-updater/SPEC.md §5 AC5 + D8 + A5.
+# Builds + signs + notarizes + publishes the macOS DMG/ZIP for an
+# Open Knowledge release. After upload, promotes the GitHub Release
+# from draft → published so it appears in the .atom feed.
 #
-# Fires on `release: published` — emitted by `.github/workflows/release.yml`'s
-# `gh release create` step, regardless of which token created the release
-# (GITHUB_TOKEN or an App token). F14 audit resolved OQ2: the
-# `release: published` trigger is more robust than `push.tags: ['v*']`
-# because it does not depend on App-token-vs-GITHUB_TOKEN push semantics.
-# It also eliminates the wait-for-release poll the tag-trigger variant
-# would have required — the Release already exists by the time this
-# workflow dispatches.
+# Triggers (2):
+#   - repository_dispatch (event_type: desktop-release) — primary cascade
+#     from release.yml (beta) and promote-stable.yml (stable). The
+#     upstream creates the GitHub Release as --draft (so it stays out
+#     of the .atom feed until the channel manifest is uploaded) and
+#     dispatches this workflow with client_payload.{release_tag, ref}.
+#     We do not use `release: published` for the cascade because the
+#     upstream gh release create runs as GITHUB_TOKEN, and GitHub
+#     suppresses workflow runs from GITHUB_TOKEN-authored release
+#     events. repository_dispatch is the documented exemption.
+#     See https://docs.github.com/en/actions/concepts/security/github_token.
+#   - workflow_dispatch — manual recovery path for re-uploading a DMG
+#     to an existing Release after a transient failure (e.g., a CI-only
+#     fix landed after the tag was cut). Builds from the chosen ref
+#     and uploads to the Release matching release_tag.
 #
 # What this workflow does: downloads the tagged ref, builds a signed +
 # notarized + stapled + fuse-verified Universal DMG + Universal ZIP,
@@ -17,57 +26,46 @@ name: Desktop release
 # channel-appropriate manifest (`latest-mac.yml` for stable releases,
 # `beta-mac.yml` for `*-beta.*` prereleases) to the GitHub Release
 # matching the tag. The channel is detected from the package version's
-# prerelease tag in a step below; both manifests are uploaded under the
-# `*-mac.yml` glob to the workflow audit artifact. The upload is
-# driven by `electron-builder --publish always` reading the same
+# prerelease tag in a step below. The upload is driven by
+# `electron-builder --publish always` reading the
 # `publish: [{ provider: github, owner: inkeep, repo: open-knowledge }]`
-# block from `packages/desktop/electron-builder.yml` that the ad-hoc
-# `desktop-build.yml` smoke uses; no separate `gh release upload` step.
+# block from `packages/desktop/electron-builder.yml`. After upload,
+# the Promote step flips draft → published (and re-stamps --latest for
+# the stable channel on the normal flow) via a single combined
+# gh release edit PATCH — empirically atomic; GitHub evaluates the
+# make_latest constraint against post-request state.
 #
-# Required secrets (identical shape to desktop-build.yml § § §):
+# Required secrets (identical shape to desktop-build.yml):
 #   CSC_LINK / CSC_KEY_PASSWORD
 #   APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID
 #     OR APPLE_API_KEY + APPLE_API_KEY_ID [+ APPLE_API_ISSUER]
 #   GITHUB_TOKEN (auto-provided, contents:write scope) — used as GH_TOKEN
 #     for electron-builder's GitHub publish.
 #
-# AC5 note: unsigned mode is explicitly REJECTED here. auto-update refuses
-# unsigned upgrades (Squirrel.Mac signature-verifies every update against
-# the installed app's cert), so publishing unsigned would silently break
-# real-world update cycles. Without CSC_LINK present, this workflow fails
-# loudly in the signmode-detection step rather than building an unpublishable
-# artifact.
-#
-# Known deferrals (post-creds, per SPEC §6 + AC15/AC16):
-#   - Real `v{X}` → `v{X+1}` silent upgrade on a fresh Mac
-#   - Kill-updater-mid-download failure smoke against real notary service
-# Both blocked on M2 FU-2 (Apple Developer Program creds) + M2 FU-1
-# (@napi-rs/keyring universal-merge SHA-parity fix). This workflow file
-# lints + parses at merge time; its execution path is gated on creds.
+# Unsigned mode is explicitly REJECTED here. auto-update refuses unsigned
+# upgrades (Squirrel.Mac signature-verifies every update against the
+# installed app's cert), so publishing unsigned would silently break
+# real-world update cycles. Without CSC_LINK present, this workflow
+# fails loudly in the signmode-detection step rather than building an
+# unpublishable artifact.
 
 on:
-  # Cascade trigger from release.yml (beta) and promote-stable.yml (stable).
-  # Both fire `repository_dispatch` event_type=`desktop-release` with
-  # client_payload.{release_tag, ref} after creating the GitHub Release.
-  # We can't rely on `release: published` for cascading because the
-  # upstream `gh release create` runs as GITHUB_TOKEN, and GitHub
-  # suppresses cascading workflow runs from GITHUB_TOKEN-authored
-  # events. `repository_dispatch` is the documented exemption.
+  # Primary cascade from release.yml (beta) and promote-stable.yml (stable).
+  # Both fire repository_dispatch event_type=desktop-release with
+  # client_payload.{release_tag, ref} after creating the GitHub Release
+  # as --draft. We cannot use `release: published` for this cascade
+  # because GitHub suppresses workflow runs from GITHUB_TOKEN-authored
+  # release events; repository_dispatch is the documented exemption.
   repository_dispatch:
     types: [desktop-release]
-  # Defense in depth: if a future release IS created via App-token /
-  # PAT (which would cascade properly), `release: published` will still
-  # fire and we'll build from the correct tag. The concurrency group
-  # below dedupes back-to-back triggers for the same tag.
-  release:
-    types: [published]
-  # Manual re-publish path: lets us upload a DMG to an existing Release when
-  # the original release-triggered run failed (e.g., a CI-only fix landed on
-  # `main` after the tag was cut). Builds from the chosen `ref` (typically
-  # `main` with the fix) and uploads to the Release matching `release_tag`.
-  # The dispatcher must ensure `packages/desktop/package.json#version` at the
-  # chosen ref matches `release_tag` (without the `v` prefix) — electron-builder
-  # picks the upload target from package.json, not from this input.
+  # Manual re-publish path: lets an operator upload a DMG to an existing
+  # Release when the original cascade-triggered run failed (e.g., a
+  # CI-only fix landed on `main` after the tag was cut). Builds from
+  # the chosen ref (typically `main` with the fix) and uploads to the
+  # Release matching release_tag. The dispatcher must ensure
+  # `packages/desktop/package.json#version` at the chosen ref matches
+  # release_tag (without the `v` prefix) — electron-builder picks the
+  # upload target from package.json, not from this input.
   workflow_dispatch:
     inputs:
       release_tag:
@@ -86,7 +84,7 @@ permissions:
 # Grouping on the release tag lets two back-to-back releases queue rather
 # than race.
 concurrency:
-  group: desktop-release-${{ github.event.client_payload.release_tag || github.event.release.tag_name || inputs.release_tag }}
+  group: desktop-release-${{ github.event.client_payload.release_tag || inputs.release_tag }}
   cancel-in-progress: false
 
 jobs:
@@ -102,9 +100,10 @@ jobs:
     # for cold caches and notary queue spikes.
     timeout-minutes: 45
     steps:
-      # On `release: published`, check out the tagged commit — `release.tag_name`
-      # is the exact commit the Release was cut from, so the bundled version
-      # + any CHANGELOG artifacts match the Release.
+      # On `repository_dispatch`, check out the ref supplied by the upstream
+      # workflow via `client_payload.ref` — that's the exact commit
+      # release.yml / promote-stable.yml resolved when cutting the tag, so
+      # the bundled version + any CHANGELOG artifacts match the Release.
       #
       # On `workflow_dispatch`, check out the workflow ref the user dispatched
       # against (typically `main` with a CI fix). The dispatcher is responsible
@@ -113,7 +112,7 @@ jobs:
       # package.json, not to `release_tag` directly).
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.event.client_payload.ref || github.event.release.tag_name || github.ref }}
+          ref: ${{ github.event.client_payload.ref || github.ref }}
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -183,13 +182,13 @@ jobs:
       - name: Detect channel from release tag
         id: channel
         env:
-          # release:published carries event.release.tag_name; the
+          # repository_dispatch carries client_payload.release_tag; the
           # workflow_dispatch fallback supplies inputs.release_tag.
-          RELEASE_TAG: ${{ github.event.client_payload.release_tag || github.event.release.tag_name || inputs.release_tag }}
+          RELEASE_TAG: ${{ github.event.client_payload.release_tag || inputs.release_tag }}
         run: |
           set -euo pipefail
           if [[ -z "${RELEASE_TAG:-}" ]]; then
-            echo "::error::No release tag available (neither github.event.release.tag_name nor inputs.release_tag is set). desktop-release.yml requires a tag to derive the version."
+            echo "::error::No release tag available (neither client_payload.release_tag nor inputs.release_tag is set). desktop-release.yml requires a tag to derive the version."
             exit 1
           fi
           # Strip leading `v` (electron-builder + npm want bare semver).
@@ -363,6 +362,70 @@ jobs:
             --config.publish.channel=${{ steps.channel.outputs.channel }} \
             --config.publish.releaseType=${{ steps.channel.outputs.release_type }}
 
+      # Closes the publish-window race: release.yml / promote-stable.yml
+      # create the GitHub Release as --draft so it stays out of the .atom
+      # feed until the channel manifest (beta-mac.yml / latest-mac.yml) is
+      # uploaded. This step flips the draft to published once the upload
+      # above has succeeded. Channel-mirror invariant: see
+      # packages/desktop/src/main/auto-updater.ts:336-356.
+      - name: Promote draft release to published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.client_payload.release_tag || inputs.release_tag }}
+          CHANNEL: ${{ steps.channel.outputs.channel }}
+        run: |
+          set -euo pipefail
+          # --latest is gated on the trigger event. On the cascade flow
+          # (repository_dispatch from release.yml / promote-stable.yml),
+          # this run is for the freshly-published stable, so re-stamping
+          # --latest is correct. On the manual recovery flow
+          # (workflow_dispatch), the operator may be re-running for an
+          # OLDER tag (e.g., re-uploading a DMG for v0.4.0 after a later
+          # v0.5.0 already became Latest). Unconditional --latest there
+          # silently steals the Latest badge from the newer release.
+          # Skip --latest on workflow_dispatch; the operator can
+          # `gh release edit ${RELEASE_TAG} --latest` manually if they
+          # want to re-claim the badge.
+          #
+          # Combined --draft=false [--latest] in one PATCH is empirically
+          # atomic — GitHub evaluates the make_latest constraint against
+          # the post-request state, so the draft→published flip and
+          # Latest stamp succeed in a single call. Beta channel never
+          # sets --latest.
+          if [[ "$CHANNEL" == "latest" && "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --latest
+            echo "Promoted ${RELEASE_TAG} to published (draft=false, latest=true; channel=${CHANNEL})."
+          elif [[ "$CHANNEL" == "latest" ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false
+            echo "Promoted ${RELEASE_TAG} to published (draft=false, latest=NOT re-stamped because event=workflow_dispatch; channel=${CHANNEL}). Operator: run 'gh release edit ${RELEASE_TAG} --latest' to re-claim Latest if intended."
+          else
+            gh release edit "$RELEASE_TAG" --draft=false
+            echo "Promoted ${RELEASE_TAG} to published (draft=false, latest=false; channel=${CHANNEL})."
+          fi
+
+      # Lightweight discoverability for stuck-draft state when the promote
+      # step (or the build/upload step before it) fails. NOT a substitute
+      # for the full paging-design observability deferred in the PR body —
+      # this is a zero-cost log marker that makes stuck drafts findable via
+      # GitHub Actions log search using the STUCK-DRAFT tag. Operators
+      # bisecting a missing release can grep workflow logs for the tag,
+      # then run the recovery command in the message.
+      - name: Warn on stuck draft
+        if: failure()
+        env:
+          RELEASE_TAG: ${{ github.event.client_payload.release_tag || inputs.release_tag }}
+          CHANNEL: ${{ steps.channel.outputs.channel }}
+        run: |
+          # Recovery command mirrors the Promote step's combined PATCH shape
+          # (--draft=false [--latest]) — empirically atomic per GitHub's
+          # post-state evaluation of make_latest.
+          if [[ "$CHANNEL" == "latest" ]]; then
+            RECOVERY="gh release edit ${RELEASE_TAG} --draft=false --latest"
+          else
+            RECOVERY="gh release edit ${RELEASE_TAG} --draft=false"
+          fi
+          echo "::warning::STUCK-DRAFT: Release ${RELEASE_TAG} may be stuck as draft (channel=${CHANNEL}). Recovery: ${RECOVERY}"
+
       # Defense-in-depth: even though electron-builder --publish always
       # does the upload, upload the artifacts to the workflow's run log
       # too for a 14-day audit trail. Downstream consumers can download
@@ -372,7 +435,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: open-knowledge-macos-release-${{ github.event.client_payload.release_tag || github.event.release.tag_name || inputs.release_tag }}
+          name: open-knowledge-macos-release-${{ github.event.client_payload.release_tag || inputs.release_tag }}
           path: |
             packages/desktop/dist-desktop/*.dmg
             packages/desktop/dist-desktop/*.dmg.blockmap
