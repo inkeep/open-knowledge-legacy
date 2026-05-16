@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import { getCollector } from '../lib/perf/collector';
+import { getCollector, getHistogramSnapshot } from '../lib/perf/collector';
+import { validatePerfMarkName } from '../lib/perf/mark';
+import {
+  __coldMountSpanCount,
+  __resetColdMountSpans,
+  emitColdMountChild,
+} from '../lib/perf/otel-spans';
 import { __resetMountIdRegistry, setMountId } from './mount-id-registry';
 import {
   __reapTimedOutEntries,
@@ -568,5 +574,182 @@ describe('mountId payload (US-006 / FR5 / AC13 — cross-namespace correlation)'
     for (const m of syncMarks) {
       expect(m.properties?.mountId).toBe('cold-sync-mount-id');
     }
+  });
+});
+
+describe('ok/sync/resolve-elapsed-ms histogram (cap-graduation sweep substrate)', () => {
+  beforeEach(() => {
+    getCollector()?.reset();
+  });
+
+  test('histogram bucket name passes validatePerfMarkName', () => {
+    expect(validatePerfMarkName('ok/sync/resolve-elapsed-ms')).toBe(true);
+  });
+
+  test('warm-path resolve increments the histogram with elapsedMs=0', async () => {
+    setMountId('h-warm', 'h-warm-mid');
+    const p = track(makeProvider('h-warm'));
+    p.synced = true;
+    await syncPromise('h-warm', p);
+    const snap = getHistogramSnapshot('ok/sync/resolve-elapsed-ms');
+    expect(snap).toBeDefined();
+    expect(snap?.count).toBe(1);
+  });
+
+  test('warm-path paired mark carries warm:true, durationMs:0, docName, mountId', async () => {
+    const collector = getCollector();
+    if (!collector) return;
+    setMountId('h-warm-pair', 'h-warm-pair-mid');
+    const p = track(makeProvider('h-warm-pair'));
+    p.synced = true;
+    await syncPromise('h-warm-pair', p);
+    const histMarks = collector.marks
+      .toArray()
+      .filter(
+        (m) => m.name === 'ok/sync/resolve-elapsed-ms' && m.properties?.docName === 'h-warm-pair',
+      );
+    expect(histMarks.length).toBe(1);
+    const props = histMarks[0]?.properties;
+    expect(props?.warm).toBe(true);
+    expect(props?.durationMs).toBe(0);
+    expect(props?.mountId).toBe('h-warm-pair-mid');
+  });
+
+  test('cold-path resolve increments the histogram with the measured elapsedMs', async () => {
+    setMountId('h-cold', 'h-cold-mid');
+    const p = track(makeProvider('h-cold'));
+    const promise = syncPromise('h-cold', p);
+    queueMicrotask(() => p.emit('synced', { state: true }));
+    await promise;
+    const snap = getHistogramSnapshot('ok/sync/resolve-elapsed-ms');
+    expect(snap).toBeDefined();
+    expect(snap?.count).toBe(1);
+    expect(snap?.max).toBeGreaterThanOrEqual(0);
+    expect(snap?.max).toBeLessThan(30_000);
+  });
+
+  test('cold-path paired mark carries docName + mountId (no warm flag)', async () => {
+    const collector = getCollector();
+    if (!collector) return;
+    setMountId('h-cold-pair', 'h-cold-pair-mid');
+    const p = track(makeProvider('h-cold-pair'));
+    const promise = syncPromise('h-cold-pair', p);
+    queueMicrotask(() => p.emit('synced', { state: true }));
+    await promise;
+    const histMarks = collector.marks
+      .toArray()
+      .filter(
+        (m) => m.name === 'ok/sync/resolve-elapsed-ms' && m.properties?.docName === 'h-cold-pair',
+      );
+    expect(histMarks.length).toBe(1);
+    const props = histMarks[0]?.properties;
+    expect(props?.docName).toBe('h-cold-pair');
+    expect(props?.mountId).toBe('h-cold-pair-mid');
+    expect(props?.warm).toBeUndefined();
+  });
+
+  test('existing ok/sync/resolve mark is preserved alongside the histogram', async () => {
+    const collector = getCollector();
+    if (!collector) return;
+    setMountId('h-coexist', 'h-coexist-mid');
+    const p = track(makeProvider('h-coexist'));
+    const promise = syncPromise('h-coexist', p);
+    queueMicrotask(() => p.emit('synced', { state: true }));
+    await promise;
+    const resolveMarks = collector.marks
+      .toArray()
+      .filter((m) => m.name === 'ok/sync/resolve' && m.properties?.docName === 'h-coexist');
+    expect(resolveMarks.length).toBe(1);
+  });
+});
+
+describe('cold-mount span finalization on reject paths', () => {
+  beforeEach(() => {
+    __resetColdMountSpans();
+  });
+
+  afterEach(() => {
+    __resetColdMountSpans();
+  });
+
+  test('onClose pre-sync-disconnect path finalizes the cold-mount span', async () => {
+    setMountId('reject-close', 'reject-close-mid');
+    emitColdMountChild('reject-close-mid', 'ok.provider-pool.open', {}, Date.now(), Date.now() + 1);
+    expect(__coldMountSpanCount()).toBe(1);
+
+    const p = track(makeProvider('reject-close'));
+    const promise = syncPromise('reject-close', p);
+    queueMicrotask(() => {
+      p.emit('close', { event: { code: 1006, reason: 'test', wasClean: false } });
+    });
+    await expect(promise).rejects.toBeInstanceOf(PreSyncDisconnectError);
+    expect(__coldMountSpanCount()).toBe(0);
+  });
+
+  test('setTimeout-fired timeout path finalizes the cold-mount span', async () => {
+    setMountId('reject-timeout', 'reject-timeout-mid');
+    emitColdMountChild(
+      'reject-timeout-mid',
+      'ok.provider-pool.open',
+      {},
+      Date.now(),
+      Date.now() + 1,
+    );
+    expect(__coldMountSpanCount()).toBe(1);
+
+    const p = track(makeProvider('reject-timeout'));
+    const origSetTimeout = globalThis.setTimeout;
+    let capturedTimer: (() => void) | null = null;
+    // @ts-expect-error — intentional test override for the 30s timer
+    globalThis.setTimeout = ((fn: () => void, ms: number) => {
+      if (ms === getSyncTimeoutMs()) {
+        capturedTimer = fn;
+        return { __dummy: true } as unknown as ReturnType<typeof origSetTimeout>;
+      }
+      return origSetTimeout(fn, ms);
+    }) as typeof globalThis.setTimeout;
+
+    try {
+      const promise = syncPromise('reject-timeout', p);
+      capturedTimer?.();
+      await expect(promise).rejects.toBeInstanceOf(SyncTimeoutError);
+      expect(__coldMountSpanCount()).toBe(0);
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+    }
+  });
+
+  test('__reapTimedOutEntries visibility-restore path finalizes the cold-mount span', async () => {
+    setMountId('reject-reap', 'reject-reap-mid');
+    emitColdMountChild('reject-reap-mid', 'ok.provider-pool.open', {}, Date.now(), Date.now() + 1);
+    expect(__coldMountSpanCount()).toBe(1);
+
+    const p = track(makeProvider('reject-reap'));
+    const promise = syncPromise('reject-reap', p);
+    const settled = promise.catch((e: unknown) => e);
+    __reapTimedOutEntries(Date.now() + getSyncTimeoutMs() + 1_000);
+    const result = await settled;
+    expect(result).toBeInstanceOf(SyncTimeoutError);
+    expect(__coldMountSpanCount()).toBe(0);
+  });
+
+  test('rejectSyncPromise (BridgeSetupError surface) finalizes the cold-mount span', async () => {
+    setMountId('reject-explicit', 'reject-explicit-mid');
+    emitColdMountChild(
+      'reject-explicit-mid',
+      'ok.provider-pool.open',
+      {},
+      Date.now(),
+      Date.now() + 1,
+    );
+    expect(__coldMountSpanCount()).toBe(1);
+
+    const p = track(makeProvider('reject-explicit'));
+    const promise = syncPromise('reject-explicit', p);
+    const settled = promise.catch((e: unknown) => e);
+    rejectSyncPromise('reject-explicit', new BridgeSetupError('reject-explicit', 'test cause'));
+    const result = await settled;
+    expect(result).toBeInstanceOf(BridgeSetupError);
+    expect(__coldMountSpanCount()).toBe(0);
   });
 });

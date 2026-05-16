@@ -110,6 +110,7 @@ import {
 } from './shadow-repo.ts';
 import { assertCompatibleStateManifest } from './state-manifest.ts';
 import { SyncEngine } from './sync-engine.ts';
+import { createSyncHandshakeSpanExtension } from './sync-handshake-span-extension.ts';
 import { TagIndex } from './tag-index.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 import { cleanupOrphanUploadTempfiles } from './upload-streaming.ts';
@@ -594,6 +595,8 @@ export function createServer(options: ServerOptions): ServerInstance {
         resolveSize,
       }),
     );
+
+    hocuspocus.configuration.extensions.push(createSyncHandshakeSpanExtension());
   } catch (err) {
     releaseServerLock(lockDir);
     throw err;

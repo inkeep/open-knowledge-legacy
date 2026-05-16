@@ -272,3 +272,26 @@ describe('isotonicSmooth (PAV)', () => {
     expect(isotonicSmooth([], 'decreasing')).toEqual([]);
   });
 });
+
+describe('findKnee — bimodal CDF input (US-010)', () => {
+  test('returns an inflection point on a bimodal CDF', () => {
+    const samples = [
+      ...Array.from({ length: 50 }, (_, i) => 25 + i * 0.2), // 25..35ms
+      ...Array.from({ length: 50 }, (_, i) => 245 + i * 0.2), // 245..255ms
+    ];
+    const sorted = [...samples].sort((a, b) => a - b);
+    const cdf = sorted.map((x, i) => ({ x, y: (i + 1) / sorted.length }));
+    const knee = findKnee(cdf, { direction: 'increasing' });
+    expect(Number.isFinite(knee.x)).toBe(true);
+    expect(knee.x).toBeGreaterThan(0);
+    expect(knee.x).toBeLessThanOrEqual(255);
+    expect(knee.x).toBeGreaterThanOrEqual(25);
+  });
+
+  test('handles a uniform distribution by returning LOW confidence', () => {
+    const samples = Array.from({ length: 100 }, (_, i) => i + 1);
+    const cdf = samples.map((x, i) => ({ x, y: (i + 1) / samples.length }));
+    const knee = findKnee(cdf, { direction: 'increasing' });
+    expect(knee.confidence).toBe('LOW');
+  });
+});
