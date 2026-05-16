@@ -5,7 +5,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 import type { ConfigOrResolver, ServerInstance } from './shared.ts';
-import { ROUTED_CWD_DESCRIPTION, textPlusStructured } from './shared.ts';
+import { outputSchemaWithText, ROUTED_CWD_DESCRIPTION, textPlusStructured } from './shared.ts';
 
 const ID_CARDINALITY_CAP = 32;
 
@@ -58,13 +58,13 @@ const ComponentEntrySchema = z.object({
   params: z.array(ParamSchema),
 });
 
-const OutputSchema = {
+const OutputSchema = outputSchemaWithText({
   version: z.literal(1).describe('Schema version stamp — bump for breaking shape changes.'),
   components: z
     .array(ComponentEntrySchema)
     .describe('Full per-entry details for ids that matched.'),
   notFound: z.array(z.string()).describe('Ids that did not match any canonical descriptor.'),
-} as const;
+});
 
 export function register(server: ServerInstance, _deps: GetComponentsDeps): void {
   server.registerTool(

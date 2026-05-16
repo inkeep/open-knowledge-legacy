@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ConfigOrResolver, ServerInstance } from './shared.ts';
 import {
+  outputSchemaWithText,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectConfigContext,
   textPlusStructured,
@@ -35,7 +36,7 @@ const InputSchema = {
   cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
 } as const;
 
-const OutputSchema = {
+const OutputSchema = outputSchemaWithText({
   value: z.unknown().describe('Resolved config value at the requested path (or full config).'),
   exists: z
     .boolean()
@@ -48,7 +49,7 @@ const OutputSchema = {
     .array(z.string())
     .optional()
     .describe('Echo of the requested dotted path (empty when reading the full config).'),
-} as const;
+});
 
 function readConfigPath(value: unknown, path: readonly string[]): unknown {
   let cur: unknown = value;

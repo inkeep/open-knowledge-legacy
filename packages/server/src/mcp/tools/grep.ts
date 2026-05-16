@@ -14,6 +14,7 @@ import {
 } from './preview-url.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
+  outputSchemaWithText,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   textPlusStructured,
@@ -237,7 +238,7 @@ const GrepResultRowSchema = z.object({
   previewUrlSource: z.enum(PREVIEW_URL_SOURCES).optional(),
 });
 
-const OutputSchema = {
+const OutputSchema = outputSchemaWithText({
   cwd: z.string(),
   query: z.string(),
   matchCount: z.number().int(),
@@ -248,7 +249,7 @@ const OutputSchema = {
     baseUrl: z.string().nullable(),
     port: z.number().nullable(),
   }),
-} as const;
+});
 
 export function register(server: ServerInstance, deps: GrepDeps): void {
   server.registerTool(

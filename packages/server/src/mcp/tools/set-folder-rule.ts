@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { applyNestedFolderRulesUpsert } from '../../content/folder-rule-write.ts';
 import type { ConfigOrResolver, ServerInstance } from './shared.ts';
 import {
+  outputSchemaWithText,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectConfigContext,
   textPlusStructured,
@@ -98,9 +99,9 @@ const ErrorOutputSchema = z.object({
   partiallyApplied: z.array(AppliedEntrySchema).optional(),
 });
 
-const OutputSchema = {
+const OutputSchema = outputSchemaWithText({
   result: z.union([SuccessOutputSchema, ErrorOutputSchema]),
-} as const;
+});
 
 export function register(server: ServerInstance, deps: SetFolderRuleDeps): void {
   server.registerTool(
