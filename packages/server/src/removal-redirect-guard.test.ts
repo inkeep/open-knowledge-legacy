@@ -109,7 +109,7 @@ describe('runRemovalRedirectGuard', () => {
     expect(getMetrics().authDocDeletedCount).toBe(0);
   });
 
-  test('cache-claim authority: stale renamed entry + present file → redirect (in-flight window)', async () => {
+  test('cache-claim authority: stale renamed entry + present file → redirect (failed-rename rollback)', async () => {
     writeFileSync(join(harness.contentDir, 'foo.md'), '# foo (in flight)');
     harness.cache.setRenamed('foo', 'bar');
 

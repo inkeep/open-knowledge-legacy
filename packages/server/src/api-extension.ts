@@ -1530,8 +1530,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               }
             }
 
-            const liveContents = await captureAndCloseDocuments([...renameMap.keys()]);
-
             const rootSourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
             const rootDestinationPath = resolveContentEntryPath(contentDir, kind, toPath);
             const renamedWithGit = await renameTrackedPathInGit(
@@ -1546,6 +1544,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             if (kind === 'folder') {
               renameFolderIndexEntries(fromPath, toPath);
             }
+
+            const liveContents = await captureAndCloseDocuments([...renameMap.keys()]);
 
             if (
               process.env.NODE_ENV === 'test' &&
