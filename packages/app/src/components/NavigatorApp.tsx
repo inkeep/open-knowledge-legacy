@@ -5,6 +5,7 @@ import { useThemeBridge } from '@/hooks/use-theme-bridge';
 import { useUpdateChannel } from '@/hooks/use-update-channel';
 import type {
   OkDesktopBridge,
+  OkLocalOpAuthStatusResponse,
   OkProjectEntryPoint,
   RecentProjectEntry,
 } from '@/lib/desktop-bridge-types';
@@ -12,6 +13,7 @@ import {
   resolveErrorMessage,
   runWithErrorStatePure as runWithErrorStatePureBase,
 } from '@/lib/error-state';
+import { createCloneController } from '@/lib/share/clone-controller';
 import { ipcAuthQueryTransport } from '@/lib/transports/auth-query-transport';
 import { ipcAuthTransport } from '@/lib/transports/auth-transport';
 import { ipcCloneTransport } from '@/lib/transports/clone-transport';
@@ -24,6 +26,7 @@ import { CreateProjectDialog } from './CreateProjectDialog';
 import { GithubIcon } from './icons/github';
 import { OkIcon } from './icons/ok';
 import { McpConsentDialog } from './McpConsentDialog';
+import { ShareReceiveDialog } from './ShareReceiveDialog';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 
@@ -51,6 +54,9 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
+  const [shareSignInResolver, setShareSignInResolver] = useState<
+    ((status: OkLocalOpAuthStatusResponse | null) => void) | null
+  >(null);
   const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
   const { channel } = useUpdateChannel();
@@ -229,15 +235,29 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
         open={authModalOpen}
         onOpenChange={(next) => {
           setAuthModalOpen(next);
-          if (!next) setReturnToCloneAfterAuth(false);
+          if (!next) {
+            setReturnToCloneAfterAuth(false);
+            if (shareSignInResolver) {
+              shareSignInResolver(null);
+              setShareSignInResolver(null);
+            }
+          }
         }}
         transport={ipcAuthTransport(bridge)}
         identityPrompt={authInitialStep === 'identity'}
-        onSuccess={() => {
+        onSuccess={(result) => {
           setAuthModalOpen(false);
           if (returnToCloneAfterAuth) {
             setReturnToCloneAfterAuth(false);
             setCloneDialogOpen(true);
+          }
+          if (shareSignInResolver) {
+            shareSignInResolver({
+              authenticated: true,
+              host: 'github.com',
+              login: result.login,
+            });
+            setShareSignInResolver(null);
           }
         }}
       />
@@ -259,6 +279,27 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
             'Failed to open cloned project.',
           );
         }}
+      />
+
+      {/* Share-receive dialog. Self-gates on the shared
+          shareReceiveStore — renders nothing until main fires
+          `ok:share:received`. Q1 hits silently dispatch project.open;
+          misses surface the Q2 picker with auth pre-flight + a
+          streamlined clone (folder picker → progress toast → done) via
+          the shared cloneController. IPC transports for the Navigator
+          window (no backing API server). */}
+      <ShareReceiveDialog
+        bridge={bridge}
+        cloneController={createCloneController({
+          bridge,
+          authQueryTransport: ipcAuthQueryTransport(bridge),
+          cloneTransport: ipcCloneTransport(bridge),
+          openSignIn: () =>
+            new Promise<OkLocalOpAuthStatusResponse | null>((resolve) => {
+              setShareSignInResolver(() => resolve);
+              setAuthModalOpen(true);
+            }),
+        })}
       />
     </div>
   );

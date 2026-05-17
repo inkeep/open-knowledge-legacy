@@ -8,7 +8,7 @@ const AASA_MANIFEST = {
     details: [
       {
         appIDs: [`${APPLE_TEAM_ID}.${APP_BUNDLE_ID}`],
-        components: [{ '/': '/*', comment: 'Match all paths' }],
+        components: [{ '/': '/d/*', comment: 'Share splash routes' }],
       },
     ],
   },

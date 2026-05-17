@@ -6,6 +6,7 @@ interface RecentProject {
   name: string;
   lastOpenedAt: string;
   missing?: boolean;
+  gitRemoteUrl?: string;
 }
 
 interface ProjectSessionState {
@@ -113,13 +114,25 @@ function parseProjectSessions(raw: unknown): Record<string, ProjectSessionState>
   return sessions;
 }
 
-export function addRecentProject(state: AppState, projectPath: string, name: string): AppState {
+export function addRecentProject(
+  state: AppState,
+  projectPath: string,
+  name: string,
+  gitRemoteUrl?: string,
+): AppState {
   const now = new Date().toISOString();
+  const prior = state.recentProjects.find((p) => p.path === projectPath);
   const filtered = state.recentProjects.filter((p) => p.path !== projectPath);
-  const updated: RecentProject[] = [
-    { path: projectPath, name, lastOpenedAt: now },
-    ...filtered,
-  ].slice(0, RECENT_CAP);
+  const resolvedRemoteUrl = gitRemoteUrl ?? prior?.gitRemoteUrl;
+  const entry: RecentProject = {
+    path: projectPath,
+    name,
+    lastOpenedAt: now,
+  };
+  if (resolvedRemoteUrl !== undefined) {
+    entry.gitRemoteUrl = resolvedRemoteUrl;
+  }
+  const updated: RecentProject[] = [entry, ...filtered].slice(0, RECENT_CAP);
   return { ...state, recentProjects: updated, lastOpenedProject: projectPath };
 }
 
@@ -253,11 +266,15 @@ export function parseAppState(raw: unknown): AppState | null {
       typeof item.name === 'string' &&
       typeof item.lastOpenedAt === 'string'
     ) {
-      recentProjects.push({
+      const entry: RecentProject = {
         path: item.path,
         name: item.name,
         lastOpenedAt: item.lastOpenedAt,
-      });
+      };
+      if (typeof item.gitRemoteUrl === 'string' && item.gitRemoteUrl.length > 0) {
+        entry.gitRemoteUrl = item.gitRemoteUrl;
+      }
+      recentProjects.push(entry);
     }
   }
   const lastOpenedProject =

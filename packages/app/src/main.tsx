@@ -22,6 +22,7 @@ import {
   installColdMountInstrumentation,
   shouldInstallColdMountInstrumentation,
 } from '@/lib/perf/cold-mount-instrumentation';
+import { installShareReceivedListener } from '@/lib/share/receive-store';
 import { installUpdateNoticesBridge } from '@/lib/update-notices-store';
 import { App } from './App';
 import '@fontsource-variable/inter';
@@ -57,6 +58,10 @@ if (typeof window !== 'undefined') {
 
 if (typeof window !== 'undefined') {
   installOnboardingToastListener({ bridge: window.okDesktop });
+}
+
+if (typeof window !== 'undefined') {
+  installShareReceivedListener({ bridge: window.okDesktop });
 }
 
 const queryClient = new QueryClient({

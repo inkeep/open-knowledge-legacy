@@ -176,6 +176,103 @@ describe('state-store (recent projects + LRU)', () => {
   });
 });
 
+describe('state-store (gitRemoteUrl field on RecentProject)', () => {
+  test('addRecentProject persists the optional gitRemoteUrl when provided', () => {
+    const next = addRecentProject(
+      emptyState(),
+      '/tmp/p1',
+      'p1',
+      'https://github.com/inkeep/open-knowledge.git',
+    );
+    expect(next.recentProjects[0]?.gitRemoteUrl).toBe(
+      'https://github.com/inkeep/open-knowledge.git',
+    );
+  });
+
+  test('addRecentProject without gitRemoteUrl leaves the field undefined', () => {
+    const next = addRecentProject(emptyState(), '/tmp/p1', 'p1');
+    expect(next.recentProjects[0]).not.toHaveProperty('gitRemoteUrl');
+  });
+
+  test('addRecentProject preserves a previously persisted gitRemoteUrl on re-open without a fresh value', () => {
+    let s = addRecentProject(
+      emptyState(),
+      '/tmp/p1',
+      'p1',
+      'https://github.com/inkeep/open-knowledge.git',
+    );
+    s = addRecentProject(s, '/tmp/p1', 'p1');
+    expect(s.recentProjects[0]?.gitRemoteUrl).toBe('https://github.com/inkeep/open-knowledge.git');
+  });
+
+  test('addRecentProject updates gitRemoteUrl when a fresh value is supplied', () => {
+    let s = addRecentProject(emptyState(), '/tmp/p1', 'p1', 'https://github.com/old/owner.git');
+    s = addRecentProject(s, '/tmp/p1', 'p1', 'https://github.com/new/owner.git');
+    expect(s.recentProjects[0]?.gitRemoteUrl).toBe('https://github.com/new/owner.git');
+  });
+
+  test('parseAppState loads a recents entry that omits gitRemoteUrl (legacy/upgrade path)', () => {
+    const raw = {
+      recentProjects: [
+        { path: '/tmp/legacy', name: 'legacy', lastOpenedAt: '2026-04-20T00:00:00Z' },
+      ],
+      lastOpenedProject: '/tmp/legacy',
+    };
+    const parsed = parseAppState(raw);
+    expect(parsed?.recentProjects.length).toBe(1);
+    expect(parsed?.recentProjects[0]?.gitRemoteUrl).toBeUndefined();
+  });
+
+  test('parseAppState round-trips a recents entry with gitRemoteUrl', () => {
+    const state = addRecentProject(
+      emptyState(),
+      '/tmp/p1',
+      'p1',
+      'https://github.com/inkeep/open-knowledge.git',
+    );
+    const reparsed = parseAppState(JSON.parse(JSON.stringify(state)));
+    expect(reparsed?.recentProjects[0]?.gitRemoteUrl).toBe(
+      'https://github.com/inkeep/open-knowledge.git',
+    );
+  });
+
+  test('parseAppState drops a non-string gitRemoteUrl (defensive coercion)', () => {
+    const raw = {
+      recentProjects: [
+        {
+          path: '/tmp/p1',
+          name: 'p1',
+          lastOpenedAt: '2026-04-20T00:00:00Z',
+          gitRemoteUrl: 42,
+        },
+      ],
+      lastOpenedProject: '/tmp/p1',
+    };
+    const parsed = parseAppState(raw);
+    expect(parsed?.recentProjects[0]?.gitRemoteUrl).toBeUndefined();
+  });
+
+  test('parseAppState drops an empty-string gitRemoteUrl', () => {
+    const raw = {
+      recentProjects: [
+        {
+          path: '/tmp/p1',
+          name: 'p1',
+          lastOpenedAt: '2026-04-20T00:00:00Z',
+          gitRemoteUrl: '',
+        },
+      ],
+      lastOpenedProject: '/tmp/p1',
+    };
+    const parsed = parseAppState(raw);
+    expect(parsed?.recentProjects[0]?.gitRemoteUrl).toBeUndefined();
+  });
+
+  test('schemaVersion stays at 1 after introducing the additive field', () => {
+    expect(emptyState().schemaVersion).toBe(1);
+  });
+});
+
 describe('saveAppStateToDir (atomic write via tmp + rename)', () => {
   test('writes tmp first, then renames to canonical — real fs round-trip', () => {
     const userDataDir = mkdtempSync(join(tmpdir(), 'ok-state-atomic-'));

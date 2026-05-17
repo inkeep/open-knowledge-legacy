@@ -215,6 +215,7 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         onWhatsNew: () => () => {},
         onUpdateStuckHint: () => () => {},
         onDeepLink: () => () => {},
+        onShareReceived: () => () => {},
         setThemeSource: async (): Promise<{ ok: true }> => ({ ok: true }),
         signalThemeApplied: (): void => {},
         dialog: {
@@ -304,6 +305,9 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
           },
           authStatus: async () => ({ authenticated: false as const, host: 'github.com' }),
           authRepos: async () => ({ ok: true as const, host: 'github.com', repos: [] }),
+        },
+        share: {
+          validateLocalFolder: async () => ({ kind: 'not-git' as const }),
         },
         platform: 'darwin' as const,
         appVersion: 'test-0.0.0',

@@ -71,6 +71,7 @@ interface CloneDialogProps {
   transport?: CloneTransport;
   authQueryTransport?: AuthQueryTransport;
   pickParentFolder?: () => Promise<string | null>;
+  initialUrl?: string;
 }
 
 export function CloneDialog({
@@ -81,6 +82,7 @@ export function CloneDialog({
   transport,
   authQueryTransport,
   pickParentFolder,
+  initialUrl,
 }: CloneDialogProps) {
   const resolvedTransport = transport ?? httpCloneTransport();
   const resolvedAuthQuery = authQueryTransport ?? httpAuthQueryTransport();
@@ -133,6 +135,15 @@ export function CloneDialog({
       cancelled = true;
     };
   }, [isSignedIn, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!initialUrl) return;
+    setUrlInput(initialUrl);
+    if (usePicker) return;
+    const name = extractRepoName(initialUrl);
+    if (name) setLocalPath(`~/Documents/${name}`);
+  }, [open, initialUrl, usePicker]);
 
   function handleUrlChange(value: string) {
     setUrlInput(value);

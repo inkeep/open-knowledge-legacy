@@ -23,13 +23,29 @@ export interface RecentProject {
   name: string;
   lastOpenedAt: string;
   missing?: boolean;
+  gitRemoteUrl?: string;
 }
 
 interface ProjectOpenRequest {
   path: string;
   target: 'new-window';
   entryPoint: EntryPoint;
+  pendingDeepLinkDoc?: string;
 }
+
+interface ShareValidateFolderRequest {
+  readonly folderPath: string;
+  readonly owner: string;
+  readonly repo: string;
+}
+
+type ShareValidateFolderResult =
+  | { readonly kind: 'ok'; readonly gitRemoteUrl: string }
+  | { readonly kind: 'not-git' }
+  | { readonly kind: 'no-origin' }
+  | { readonly kind: 'wrong-repo'; readonly actualOwner: string; readonly actualRepo: string }
+  | { readonly kind: 'non-github' }
+  | { readonly kind: 'symlink-escape' };
 
 interface ProjectSessionState {
   openTabs: string[];
@@ -217,6 +233,10 @@ export interface RequestChannels {
   'ok:project:set-session-state': { args: [state: ProjectSessionState]; result: undefined };
   'ok:project:open': { args: [request: ProjectOpenRequest]; result: undefined };
   'ok:project:close': { args: []; result: undefined };
+  'ok:share:validate-folder': {
+    args: [request: ShareValidateFolderRequest];
+    result: ShareValidateFolderResult;
+  };
   'ok:project:create-new': {
     args: [args: { parent: string; name: string; editors: readonly McpWiringEditorId[] }];
     result: undefined;

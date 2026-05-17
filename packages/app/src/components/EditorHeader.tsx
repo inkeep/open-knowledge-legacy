@@ -1,4 +1,5 @@
 import { Save } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
@@ -12,7 +13,9 @@ import { EditorTabs } from './EditorTabs';
 import { HelpPopover } from './HelpPopover';
 import { OpenInAgentMenu } from './handoff/OpenInAgentMenu';
 import { buildHandoffInput } from './handoff/useHandoffDispatch';
+import { PublishToGitHubDialog } from './PublishToGitHubDialog';
 import { SettingsButton } from './SettingsButton';
+import { ShareButton } from './ShareButton';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -34,6 +37,7 @@ export function EditorHeader({
   const { activeDocName } = useDocumentContext();
   const { state: sidebarState } = useSidebar();
   const workspace = useWorkspace();
+  const [publishOpen, setPublishOpen] = useState(false);
   const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
 
   const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
@@ -101,6 +105,8 @@ export function EditorHeader({
           </Tooltip>
         )}
         {activeDocName && <OpenInAgentMenu input={handoffInput} />}
+        <ShareButton onClickWhenNoRemote={() => setPublishOpen(true)} />
+        <PublishToGitHubDialog open={publishOpen} onOpenChange={setPublishOpen} />
         <SyncStatusBadge
           onSignIn={onSignIn}
           onSetIdentity={onSetIdentity}

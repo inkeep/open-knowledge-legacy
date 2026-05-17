@@ -176,6 +176,7 @@ async function installDelayedDesktopSessionBridge(
         onWhatsNew: () => unsubscribe,
         onUpdateStuckHint: () => unsubscribe,
         onDeepLink: () => unsubscribe,
+        onShareReceived: () => unsubscribe,
         dialog: {
           openFolder: async () => null,
         },

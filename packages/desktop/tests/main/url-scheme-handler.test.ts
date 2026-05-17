@@ -1,11 +1,23 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { encodeShareUrl } from '@inkeep/open-knowledge-core';
+import type { ShareDeepLinkPayload } from '../../src/main/url-scheme.ts';
 import { registerProtocolHandler } from '../../src/main/url-scheme.ts';
 
-type AppEvent = 'open-url' | 'second-instance' | 'before-quit';
+type AppEvent = 'open-url' | 'second-instance' | 'before-quit' | 'continue-activity';
 type OpenUrlListener = (event: { preventDefault: () => void }, url: string) => void;
 type SecondInstanceListener = (event: unknown, argv: readonly string[]) => void;
 type BeforeQuitListener = () => void;
-type AppListener = OpenUrlListener | SecondInstanceListener | BeforeQuitListener;
+type ContinueActivityListener = (
+  event: { preventDefault: () => void },
+  type: string,
+  userInfo: unknown,
+  details?: { webpageURL?: string },
+) => void;
+type AppListener =
+  | OpenUrlListener
+  | SecondInstanceListener
+  | BeforeQuitListener
+  | ContinueActivityListener;
 
 interface FakeApp {
   on: ReturnType<typeof mock>;
@@ -16,6 +28,11 @@ interface FakeApp {
   fireOpenUrl: (url: string) => void;
   fireSecondInstance: (argv: readonly string[]) => void;
   fireBeforeQuit: () => void;
+  fireContinueActivity: (
+    type: string,
+    userInfo: unknown,
+    details?: { webpageURL?: string },
+  ) => { preventDefault: ReturnType<typeof mock> };
   resolveReady: () => void;
 }
 
@@ -50,6 +67,13 @@ function makeFakeApp(opts?: { isPackaged?: boolean }): FakeApp {
       const cb = listeners.get('before-quit') as BeforeQuitListener | undefined;
       if (!cb) throw new Error('before-quit listener not registered');
       cb();
+    },
+    fireContinueActivity: (type, userInfo, details) => {
+      const cb = listeners.get('continue-activity') as ContinueActivityListener | undefined;
+      if (!cb) throw new Error('continue-activity listener not registered');
+      const event = { preventDefault: mock(() => {}) };
+      cb(event, type, userInfo, details);
+      return event;
     },
     resolveReady: () => {
       if (!resolveReadyFn) throw new Error('whenReady not awaited yet');
@@ -325,6 +349,8 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     tickTimer(env);
     await flushPromises();
     expect(env.openProject).toHaveBeenCalledWith('/tmp/p', { pendingDeepLinkDoc: 'a.md' });
+    expect(env.timers.length).toBe(0);
+    expect(env.openProject).toHaveBeenCalledTimes(1);
   });
 
   test('silent-drops malformed URLs with a single warn log line', async () => {
@@ -531,5 +557,546 @@ describe('registerProtocolHandler — cold-start process.argv scan', () => {
     await flushPromises();
 
     expect(env.openProject).not.toHaveBeenCalled();
+  });
+});
+
+describe('registerProtocolHandler — share-flow routing', () => {
+  test('warm path: routes ok-kind share to focused window via sendShareDeepLink', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+    const getFocusedWindow = mock(() => focusedWin as FakeWindowHandle | null);
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const encoded = encodeShareUrl('https://github.com/inkeep/playbooks/blob/main/x.md');
+    env.app.fireOpenUrl(`https://openknowledge.ai/d/${encoded}`);
+    await flushPromises();
+
+    expect(getFocusedWindow).toHaveBeenCalled();
+    expect(sendShareDeepLink).toHaveBeenCalledTimes(1);
+    expect(sendShareDeepLink).toHaveBeenCalledWith(focusedWin, {
+      kind: 'ok',
+      owner: 'inkeep',
+      repo: 'playbooks',
+      branch: 'main',
+      path: 'x.md',
+      blobUrl: 'https://github.com/inkeep/playbooks/blob/main/x.md',
+    });
+    expect(env.openProject).not.toHaveBeenCalled();
+    expect(env.sendDeepLink).not.toHaveBeenCalled();
+  });
+
+  test('routes custom-scheme share URLs (openknowledge://share?url=...)', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const blobUrl = 'https://github.com/inkeep/playbooks/blob/main/x.md';
+    env.app.fireOpenUrl(`openknowledge://share?url=${encodeURIComponent(blobUrl)}`);
+    await flushPromises();
+
+    expect(sendShareDeepLink).toHaveBeenCalledTimes(1);
+    expect(sendShareDeepLink).toHaveBeenCalledWith(focusedWin, {
+      kind: 'ok',
+      owner: 'inkeep',
+      repo: 'playbooks',
+      branch: 'main',
+      path: 'x.md',
+      blobUrl,
+    });
+  });
+
+  test('falls back to getAnyReadyWindow when getFocusedWindow returns null', async () => {
+    const env = makeEnv();
+    const readyWin: FakeWindowHandle = { id: 'fallback' };
+    env.readyWindow = readyWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => null,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const encoded = encodeShareUrl('https://github.com/o/r/blob/main/x.md');
+    env.app.fireOpenUrl(`https://openknowledge.ai/d/${encoded}`);
+    await flushPromises();
+
+    expect(sendShareDeepLink).toHaveBeenCalledTimes(1);
+    expect(sendShareDeepLink.mock.calls[0]?.[0]).toBe(readyWin);
+  });
+
+  test('dispatches unsupported-version payload + logs [receive] action=url-parse', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const warnLog: Array<{ obj: object; msg: string }> = [];
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+      log: { warn: (obj, msg) => warnLog.push({ obj, msg }) },
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const blobBytes = new TextEncoder().encode('https://github.com/o/r/blob/main/x.md');
+    const v2 = new Uint8Array(blobBytes.length + 1);
+    v2[0] = 0x02;
+    v2.set(blobBytes, 1);
+    let raw = '';
+    for (const b of v2) raw += String.fromCharCode(b);
+    const encoded = btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    env.app.fireOpenUrl(`https://openknowledge.ai/d/${encoded}`);
+    await flushPromises();
+
+    expect(sendShareDeepLink).toHaveBeenCalledWith(focusedWin, { kind: 'unsupported-version' });
+    expect(
+      warnLog.some(
+        (entry) =>
+          entry.msg.includes('[receive] action=url-parse') &&
+          (entry.obj as { result?: string }).result === 'unsupported-version',
+      ),
+    ).toBe(true);
+  });
+
+  test('dispatches invalid payload + logs [receive] for corrupt base64', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const warnLog: Array<{ obj: object; msg: string }> = [];
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+      log: { warn: (obj, msg) => warnLog.push({ obj, msg }) },
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    env.app.fireOpenUrl('https://openknowledge.ai/d/!!!not-base64!!!');
+    await flushPromises();
+
+    expect(sendShareDeepLink).toHaveBeenCalledWith(focusedWin, { kind: 'invalid' });
+    expect(
+      warnLog.some(
+        (entry) =>
+          entry.msg.includes('[receive] action=url-parse') &&
+          (entry.obj as { result?: string }).result === 'invalid',
+      ),
+    ).toBe(true);
+  });
+
+  test('share URL with no window available surfaces warn + no dispatch', async () => {
+    const env = makeEnv();
+    env.readyWindow = { id: 'ready' };
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+    const warnLog: Array<{ obj: object; msg: string }> = [];
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: mock(() => null),
+      sendShareDeepLink,
+      getFocusedWindow: () => null,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+      log: { warn: (obj, msg) => warnLog.push({ obj, msg }) },
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const encoded = encodeShareUrl('https://github.com/o/r/blob/main/x.md');
+    env.app.fireOpenUrl(`https://openknowledge.ai/d/${encoded}`);
+    await flushPromises();
+
+    expect(sendShareDeepLink).not.toHaveBeenCalled();
+    expect(warnLog.some((e) => e.msg.includes('no target window'))).toBe(true);
+  });
+
+  test('open-action URLs continue routing through the legacy path (regression check)', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.existingWindows.set('/tmp/p', focusedWin);
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    env.app.fireOpenUrl('openknowledge://open?project=/tmp/p&doc=a.md');
+    await flushPromises();
+
+    expect(env.sendDeepLink).toHaveBeenCalledWith(focusedWin, { doc: 'a.md' });
+    expect(sendShareDeepLink).not.toHaveBeenCalled();
+  });
+});
+
+describe('registerProtocolHandler — continue-activity Handoff path', () => {
+  test('routes Universal Link to share dispatch via enqueueOrRoute', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const encoded = encodeShareUrl('https://github.com/inkeep/playbooks/blob/main/x.md');
+    const url = `https://openknowledge.ai/d/${encoded}`;
+    const event = env.app.fireContinueActivity('NSUserActivityTypeBrowsingWeb', null, {
+      webpageURL: url,
+    });
+    await flushPromises();
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(sendShareDeepLink).toHaveBeenCalledTimes(1);
+    expect(sendShareDeepLink).toHaveBeenCalledWith(focusedWin, {
+      kind: 'ok',
+      owner: 'inkeep',
+      repo: 'playbooks',
+      branch: 'main',
+      path: 'x.md',
+      blobUrl: 'https://github.com/inkeep/playbooks/blob/main/x.md',
+    });
+  });
+
+  test('accepts www.openknowledge.ai host (dual-host AASA discipline)', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const encoded = encodeShareUrl('https://github.com/o/r/blob/main/x.md');
+    env.app.fireContinueActivity('NSUserActivityTypeBrowsingWeb', null, {
+      webpageURL: `https://www.openknowledge.ai/d/${encoded}`,
+    });
+    await flushPromises();
+
+    expect(sendShareDeepLink).toHaveBeenCalledTimes(1);
+  });
+
+  test('reads webpageURL from userInfo as a fallback when details is undefined', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const encoded = encodeShareUrl('https://github.com/o/r/blob/main/x.md');
+    env.app.fireContinueActivity(
+      'NSUserActivityTypeBrowsingWeb',
+      { webpageURL: `https://openknowledge.ai/d/${encoded}` },
+      undefined,
+    );
+    await flushPromises();
+
+    expect(sendShareDeepLink).toHaveBeenCalledTimes(1);
+  });
+
+  test('ignores non-NSUserActivityTypeBrowsingWeb activity types silently', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+    const warnLog: Array<{ obj: object; msg: string }> = [];
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+      log: { warn: (obj, msg) => warnLog.push({ obj, msg }) },
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const event = env.app.fireContinueActivity(
+      'com.example.unrelated.activity',
+      { webpageURL: 'https://openknowledge.ai/d/x' },
+      { webpageURL: 'https://openknowledge.ai/d/x' },
+    );
+    await flushPromises();
+
+    expect(sendShareDeepLink).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(warnLog.some((e) => e.msg.includes('continue-activity-received'))).toBe(false);
+  });
+
+  test('ignores activities whose webpageURL is on a non-AASA host', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+    const warnLog: Array<{ obj: object; msg: string }> = [];
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+      log: { warn: (obj, msg) => warnLog.push({ obj, msg }) },
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const event = env.app.fireContinueActivity('NSUserActivityTypeBrowsingWeb', null, {
+      webpageURL: 'https://attacker.example.com/d/payload',
+    });
+    await flushPromises();
+
+    expect(sendShareDeepLink).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(warnLog.some((e) => e.msg.includes('continue-activity-received'))).toBe(false);
+  });
+
+  test('ignores activities with no webpageURL on either details or userInfo', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const event = env.app.fireContinueActivity('NSUserActivityTypeBrowsingWeb', null, undefined);
+    await flushPromises();
+
+    expect(sendShareDeepLink).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  test('ignores activities whose webpageURL is not a parseable URL', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const event = env.app.fireContinueActivity('NSUserActivityTypeBrowsingWeb', null, {
+      webpageURL: 'not a url',
+    });
+    await flushPromises();
+
+    expect(sendShareDeepLink).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  test('emits [receive] action=continue-activity-received log with type + url-host', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+    const warnLog: Array<{ obj: object; msg: string }> = [];
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+      log: { warn: (obj, msg) => warnLog.push({ obj, msg }) },
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    const encoded = encodeShareUrl('https://github.com/o/r/blob/main/x.md');
+    env.app.fireContinueActivity('NSUserActivityTypeBrowsingWeb', null, {
+      webpageURL: `https://openknowledge.ai/d/${encoded}`,
+    });
+    await flushPromises();
+
+    const entry = warnLog.find((e) => e.msg.includes('continue-activity-received'));
+    expect(entry).toBeDefined();
+    expect(entry?.obj).toMatchObject({
+      type: 'NSUserActivityTypeBrowsingWeb',
+      urlHost: 'openknowledge.ai',
+    });
+  });
+
+  test('queue-then-flush: activity received before whenReady is drained after', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+
+    const encoded = encodeShareUrl('https://github.com/o/r/blob/main/x.md');
+    env.app.fireContinueActivity('NSUserActivityTypeBrowsingWeb', null, {
+      webpageURL: `https://openknowledge.ai/d/${encoded}`,
+    });
+    expect(sendShareDeepLink).not.toHaveBeenCalled();
+
+    env.app.resolveReady();
+    await flushPromises();
+
+    expect(sendShareDeepLink).toHaveBeenCalledTimes(1);
+  });
+
+  test('existing open-url + share-flow paths still route correctly after adding continue-activity', async () => {
+    const env = makeEnv();
+    const focusedWin: FakeWindowHandle = { id: 'focused' };
+    env.existingWindows.set('/tmp/p', focusedWin);
+    env.readyWindow = focusedWin;
+    const sendShareDeepLink = mock((_win: FakeWindowHandle, _payload: ShareDeepLinkPayload) => {});
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      sendShareDeepLink,
+      getFocusedWindow: () => focusedWin,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    env.app.fireOpenUrl('openknowledge://open?project=/tmp/p&doc=a.md');
+    await flushPromises();
+    expect(env.sendDeepLink).toHaveBeenCalledWith(focusedWin, { doc: 'a.md' });
+
+    const blobUrl = 'https://github.com/o/r/blob/main/x.md';
+    env.app.fireOpenUrl(`openknowledge://share?url=${encodeURIComponent(blobUrl)}`);
+    await flushPromises();
+    expect(sendShareDeepLink).toHaveBeenCalledTimes(1);
   });
 });
