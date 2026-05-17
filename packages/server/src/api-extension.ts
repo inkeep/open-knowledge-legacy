@@ -57,6 +57,7 @@ import {
   DocumentListSuccessSchema,
   DocumentReadSuccessSchema,
   EmptyRequestSchema,
+  encodeShareUrl,
   FolderConfigGetSuccessSchema,
   FolderConfigPutRequestSchema,
   FolderConfigPutSuccessSchema,
@@ -110,6 +111,12 @@ import {
   SeedListPacksSuccessSchema,
   SeedPlanSuccessSchema,
   ServerInfoSuccessSchema,
+  ShareConstructUrlRequestSchema,
+  ShareConstructUrlResponseSchema,
+  SharePublishNameCheckResponseSchema,
+  SharePublishOwnersResponseSchema,
+  SharePublishRequestSchema,
+  SharePublishResponseSchema,
   SkillInstallStateSuccessSchema,
   SuggestLinksSuccessSchema,
   SYSTEM_DOC_NAME,
@@ -193,6 +200,35 @@ import {
 } from './page-identity.ts';
 import type { RecentlyRemovedDocs } from './recently-removed-docs.ts';
 import { readServerLock } from './server-lock.ts';
+import {
+  buildGitHubBlobUrl,
+  emitShareConstructUrlLog,
+  isValidShareDocPath,
+  SHARE_BASE_URL,
+  SHARE_CONSTRUCT_URL_HANDLER_TAG,
+} from './share/construct-url.ts';
+import {
+  branchExistsOnOrigin,
+  readGitHeadBranch,
+  readOriginGitHubRepo,
+} from './share/git-context.ts';
+import {
+  emitSharePublishLog,
+  isValidShareOwnerName,
+  isValidShareRepoName,
+  parseNameCheckEvent,
+  parseOwnersEvent,
+  parsePublishEvent,
+  pickTerminalJsonLine,
+  redactShareSubprocessStderr,
+  SHARE_PUBLISH_HANDLER_TAG,
+  SHARE_PUBLISH_KEY,
+  SHARE_PUBLISH_NAME_CHECK_HANDLER_TAG,
+  SHARE_PUBLISH_NAME_CHECK_KEY,
+  SHARE_PUBLISH_OWNERS_HANDLER_TAG,
+  SHARE_PUBLISH_OWNERS_KEY,
+  SHARE_PUBLISH_TIMEOUT_MS,
+} from './share/publish.ts';
 import { buildAndOpenSkill } from './skill-install.ts';
 import { readSkillInstallStateSnapshot } from './skill-state.ts';
 import { handleSpawnCursor } from './spawn-cursor-api.ts';
@@ -7533,6 +7569,338 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  const handleShareConstructUrl = withValidation(
+    ShareConstructUrlRequestSchema,
+    async (_req, res, body) => {
+      try {
+        if (!projectDir) {
+          emitShareConstructUrlLog('no-remote');
+          successResponse(
+            res,
+            200,
+            ShareConstructUrlResponseSchema,
+            { ok: false, error: 'no-remote' },
+            { handler: SHARE_CONSTRUCT_URL_HANDLER_TAG },
+          );
+          return;
+        }
+        if (!isValidShareDocPath(body.docPath)) {
+          emitShareConstructUrlLog('invalid-path');
+          successResponse(
+            res,
+            200,
+            ShareConstructUrlResponseSchema,
+            { ok: false, error: 'invalid-path' },
+            { handler: SHARE_CONSTRUCT_URL_HANDLER_TAG },
+          );
+          return;
+        }
+        const branch = readGitHeadBranch(projectDir);
+        if (branch === null) {
+          const originPeek = readOriginGitHubRepo(projectDir);
+          if (originPeek.kind === 'no-remote') {
+            emitShareConstructUrlLog('no-remote');
+            successResponse(
+              res,
+              200,
+              ShareConstructUrlResponseSchema,
+              { ok: false, error: 'no-remote' },
+              { handler: SHARE_CONSTRUCT_URL_HANDLER_TAG },
+            );
+            return;
+          }
+          emitShareConstructUrlLog('detached-head');
+          successResponse(
+            res,
+            200,
+            ShareConstructUrlResponseSchema,
+            { ok: false, error: 'detached-head' },
+            { handler: SHARE_CONSTRUCT_URL_HANDLER_TAG },
+          );
+          return;
+        }
+        const origin = readOriginGitHubRepo(projectDir);
+        if (origin.kind === 'no-remote') {
+          emitShareConstructUrlLog('no-remote');
+          successResponse(
+            res,
+            200,
+            ShareConstructUrlResponseSchema,
+            { ok: false, error: 'no-remote' },
+            { handler: SHARE_CONSTRUCT_URL_HANDLER_TAG },
+          );
+          return;
+        }
+        if (origin.kind === 'non-github') {
+          emitShareConstructUrlLog('non-github-remote');
+          successResponse(
+            res,
+            200,
+            ShareConstructUrlResponseSchema,
+            { ok: false, error: 'non-github-remote' },
+            { handler: SHARE_CONSTRUCT_URL_HANDLER_TAG },
+          );
+          return;
+        }
+        const branchExists = branchExistsOnOrigin(projectDir, branch);
+        if (!branchExists) {
+          emitShareConstructUrlLog('branch-not-on-origin', false);
+          successResponse(
+            res,
+            200,
+            ShareConstructUrlResponseSchema,
+            { ok: false, error: 'branch-not-on-origin', branch },
+            { handler: SHARE_CONSTRUCT_URL_HANDLER_TAG },
+          );
+          return;
+        }
+        const blobUrl = buildGitHubBlobUrl(origin.owner, origin.repo, branch, body.docPath);
+        const shareUrl = `${SHARE_BASE_URL}${encodeShareUrl(blobUrl)}`;
+        emitShareConstructUrlLog('ok', true);
+        successResponse(
+          res,
+          200,
+          ShareConstructUrlResponseSchema,
+          { ok: true, shareUrl, blobUrl, branch },
+          { handler: SHARE_CONSTRUCT_URL_HANDLER_TAG },
+        );
+      } catch (err) {
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: SHARE_CONSTRUCT_URL_HANDLER_TAG,
+          cause: err,
+        });
+      }
+    },
+    {
+      handler: SHARE_CONSTRUCT_URL_HANDLER_TAG,
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: SHARE_CONSTRUCT_URL_HANDLER_TAG }),
+    },
+  );
+
+  async function spawnShareSubprocess(
+    args: readonly string[],
+  ): Promise<{ stdout: string; code: number | null }> {
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const spawnArgs = [...baseArgs, ...args];
+    return await new Promise<{ stdout: string; code: number | null }>((resolveSpawn, reject) => {
+      const child = spawn(cmd, spawnArgs, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env },
+      });
+      let timedOut = false;
+      const killTimer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+      }, SHARE_PUBLISH_TIMEOUT_MS);
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+      child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+      child.on('close', (code) => {
+        clearTimeout(killTimer);
+        if (timedOut) {
+          reject(new Error(`share subprocess timed out after ${SHARE_PUBLISH_TIMEOUT_MS}ms`));
+          return;
+        }
+        const stdout = Buffer.concat(stdoutChunks).toString('utf-8');
+        if (code !== 0) {
+          const stderr = Buffer.concat(stderrChunks).toString('utf-8');
+          const redacted = redactShareSubprocessStderr(stderr).slice(0, 500);
+          console.warn(`[share] subprocess exited code=${code} stderr=${redacted}`);
+        }
+        resolveSpawn({ stdout, code });
+      });
+      child.on('error', (err) => {
+        clearTimeout(killTimer);
+        reject(err);
+      });
+    });
+  }
+
+  const handleSharePublishOwners = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
+      if (!localOpGuard.tryAcquire(SHARE_PUBLISH_OWNERS_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'A share owners operation is already in progress.',
+          { handler: SHARE_PUBLISH_OWNERS_HANDLER_TAG, extraHeaders: { 'Retry-After': '5' } },
+        );
+        return;
+      }
+      try {
+        const { stdout } = await spawnShareSubprocess(['share', 'owners', '--json']);
+        const event = pickTerminalJsonLine(stdout);
+        const body = parseOwnersEvent(event);
+        emitSharePublishLog(
+          'owners-list',
+          body.ok ? 'ok' : body.error,
+          body.ok ? { count: body.owners.length } : undefined,
+        );
+        successResponse(res, 200, SharePublishOwnersResponseSchema, body, {
+          handler: SHARE_PUBLISH_OWNERS_HANDLER_TAG,
+        });
+      } catch (err) {
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: SHARE_PUBLISH_OWNERS_HANDLER_TAG,
+          cause: err,
+        });
+      } finally {
+        localOpGuard.release(SHARE_PUBLISH_OWNERS_KEY);
+      }
+    },
+    {
+      handler: SHARE_PUBLISH_OWNERS_HANDLER_TAG,
+      method: 'GET',
+      skipBodyParse: true,
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: SHARE_PUBLISH_OWNERS_HANDLER_TAG }),
+    },
+  );
+
+  const handleSharePublishNameCheck = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const owner = url.searchParams.get('owner') ?? '';
+      const name = url.searchParams.get('name') ?? '';
+      if (!isValidShareOwnerName(owner) || !isValidShareRepoName(name)) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:invalid-request',
+          'owner and name query params must be valid GitHub identifiers.',
+          { handler: SHARE_PUBLISH_NAME_CHECK_HANDLER_TAG },
+        );
+        return;
+      }
+      if (!localOpGuard.tryAcquire(SHARE_PUBLISH_NAME_CHECK_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'A share name-check operation is already in progress.',
+          { handler: SHARE_PUBLISH_NAME_CHECK_HANDLER_TAG, extraHeaders: { 'Retry-After': '5' } },
+        );
+        return;
+      }
+      try {
+        const { stdout } = await spawnShareSubprocess([
+          'share',
+          'name-check',
+          '--owner',
+          owner,
+          '--name',
+          name,
+          '--json',
+        ]);
+        const event = pickTerminalJsonLine(stdout);
+        const body = parseNameCheckEvent(event);
+        emitSharePublishLog(
+          'name-check',
+          body.ok ? 'ok' : body.error,
+          body.ok ? { available: body.available } : undefined,
+        );
+        successResponse(res, 200, SharePublishNameCheckResponseSchema, body, {
+          handler: SHARE_PUBLISH_NAME_CHECK_HANDLER_TAG,
+        });
+      } catch (err) {
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: SHARE_PUBLISH_NAME_CHECK_HANDLER_TAG,
+          cause: err,
+        });
+      } finally {
+        localOpGuard.release(SHARE_PUBLISH_NAME_CHECK_KEY);
+      }
+    },
+    {
+      handler: SHARE_PUBLISH_NAME_CHECK_HANDLER_TAG,
+      method: 'GET',
+      skipBodyParse: true,
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: SHARE_PUBLISH_NAME_CHECK_HANDLER_TAG }),
+    },
+  );
+
+  const handleSharePublish = withValidation(
+    SharePublishRequestSchema,
+    async (_req, res, body) => {
+      if (!projectDir) {
+        emitSharePublishLog('publish-create', 'no-project');
+        successResponse(
+          res,
+          200,
+          SharePublishResponseSchema,
+          { ok: false, error: 'no-project' },
+          { handler: SHARE_PUBLISH_HANDLER_TAG },
+        );
+        return;
+      }
+      if (!isValidShareOwnerName(body.owner) || !isValidShareRepoName(body.name)) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:invalid-request',
+          'owner and name must be valid GitHub identifiers.',
+          { handler: SHARE_PUBLISH_HANDLER_TAG },
+        );
+        return;
+      }
+      if (!localOpGuard.tryAcquire(SHARE_PUBLISH_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'A share publish operation is already in progress.',
+          { handler: SHARE_PUBLISH_HANDLER_TAG, extraHeaders: { 'Retry-After': '5' } },
+        );
+        return;
+      }
+      try {
+        const args = [
+          'share',
+          'publish',
+          '--owner',
+          body.owner,
+          '--name',
+          body.name,
+          '--visibility',
+          body.visibility,
+          '--project-dir',
+          projectDir,
+          '--json',
+        ];
+        if (body.description !== undefined && body.description.length > 0) {
+          args.push('--description', body.description);
+        }
+        const { stdout } = await spawnShareSubprocess(args);
+        const event = pickTerminalJsonLine(stdout);
+        const responseBody = parsePublishEvent(event);
+        emitSharePublishLog('publish-create', responseBody.ok ? 'ok' : responseBody.error);
+        successResponse(res, 200, SharePublishResponseSchema, responseBody, {
+          handler: SHARE_PUBLISH_HANDLER_TAG,
+        });
+      } catch (err) {
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: SHARE_PUBLISH_HANDLER_TAG,
+          cause: err,
+        });
+      } finally {
+        localOpGuard.release(SHARE_PUBLISH_KEY);
+      }
+    },
+    {
+      handler: SHARE_PUBLISH_HANDLER_TAG,
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: SHARE_PUBLISH_HANDLER_TAG }),
+    },
+  );
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/asset': handleAsset,
     '/api/document': handleDocumentRead,
@@ -7570,6 +7938,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/metrics/parse-health': handleMetricsParseHealth,
     '/api/metrics/agent-presence': handleMetricsAgentPresence,
     '/api/server-info': handleServerInfo,
+    '/api/share/construct-url': handleShareConstructUrl,
+    '/api/share/publish/owners': handleSharePublishOwners,
+    '/api/share/publish/name-check': handleSharePublishNameCheck,
+    '/api/share/publish': handleSharePublish,
     '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,

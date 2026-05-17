@@ -8,6 +8,7 @@ import type {
   OkMcpWiringShowPayload,
   OkMenuAction,
   OkOnboardingShowPayload,
+  OkShareReceivedPayload,
   OkThemeSource,
   OkUpdateDownloadedInfo,
   OkUpdateStuckHintInfo,
@@ -197,6 +198,13 @@ const bridge: OkDesktopBridge = {
     return () => ipcRenderer.removeListener('ok:deep-link', listener);
   },
 
+  onShareReceived(cb: (payload: OkShareReceivedPayload) => void) {
+    const listener = (_event: IpcRendererEvent, payload: OkShareReceivedPayload) => cb(payload);
+    // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
+    ipcRenderer.on('ok:share:received', listener);
+    return () => ipcRenderer.removeListener('ok:share:received', listener);
+  },
+
   setThemeSource: (source: OkThemeSource) => invoke('ok:theme:set-source', { source }),
 
   signalThemeApplied: (opts?: { reducedTransparency?: boolean }) => {
@@ -341,6 +349,10 @@ const bridge: OkDesktopBridge = {
     },
     authStatus: (request) => invoke('ok:local-op:auth:status', request),
     authRepos: (request) => invoke('ok:local-op:auth:repos', request),
+  },
+
+  share: {
+    validateLocalFolder: (args) => invoke('ok:share:validate-folder', args),
   },
 
   platform: process.platform as 'darwin' | 'win32' | 'linux',

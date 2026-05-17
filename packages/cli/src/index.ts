@@ -18,6 +18,16 @@ export { type LoadConfigResult, loadConfig } from './config/loader.ts';
 export { initContent } from './content/init.ts';
 export { type PreviewResult, previewContent } from './content/preview.ts';
 export {
+  type ExpectedShareRepo,
+  type ShareFolderValidationResult,
+  validateLocalFolderForShare,
+} from './github/folder-validator.ts';
+export {
+  type ParsedGitHubBlobUrl,
+  parseGitHubBlobUrl,
+  parseGitUrl,
+} from './github/url.ts';
+export {
   type ResolveProjectRootOptions,
   type ResolveProjectRootResult,
   resolveProjectRoot,

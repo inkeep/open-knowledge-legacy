@@ -3,6 +3,7 @@ import type {
   OkLocalOpAuthEvent,
   OkLocalOpCloneEvent,
   OkMenuAction,
+  OkShareReceivedPayload,
 } from './bridge-contract.ts';
 import type { McpWiringEditorDetection, OnboardingShowPayload } from './ipc-channels.ts';
 
@@ -14,6 +15,7 @@ export interface EventChannels {
   'ok:update:whats-new': { payload: { version: string; releaseUrl: string } };
   'ok:update:stuck-hint': { payload: { downloadUrl: string } };
   'ok:deep-link': { payload: { doc: string } };
+  'ok:share:received': { payload: OkShareReceivedPayload };
   'ok:mcp-wiring:show': {
     payload: { detectedEditors: readonly McpWiringEditorDetection[] };
   };

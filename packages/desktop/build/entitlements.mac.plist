@@ -12,5 +12,10 @@
     <true/>
     <key>com.apple.security.files.bookmarks.app-scope</key>
     <true/>
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+        <string>applinks:openknowledge.ai</string>
+        <string>applinks:www.openknowledge.ai</string>
+    </array>
 </dict>
 </plist>

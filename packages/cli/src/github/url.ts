@@ -5,6 +5,13 @@ interface ParsedGitUrl {
   name: string;
 }
 
+export interface ParsedGitHubBlobUrl {
+  owner: string;
+  repo: string;
+  branch: string;
+  path: string;
+}
+
 function stripPort(hostname: string): string {
   return hostname.replace(/:\d+$/, '');
 }
@@ -51,4 +58,40 @@ export function parseGitUrl(input: string): ParsedGitUrl | null {
   }
 
   return null;
+}
+
+export function parseGitHubBlobUrl(input: string): ParsedGitHubBlobUrl | null {
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    return null;
+  }
+
+  if (url.hostname !== 'github.com' && url.hostname !== 'www.github.com') {
+    return null;
+  }
+
+  const rawSegments = url.pathname.split('/').filter((s) => s.length > 0);
+
+  if (rawSegments.length < 5) return null;
+  if (rawSegments[2] !== 'blob') return null;
+
+  let owner: string;
+  let repo: string;
+  let branch: string;
+  let pathParts: string[];
+  try {
+    owner = decodeURIComponent(rawSegments[0]);
+    repo = decodeURIComponent(rawSegments[1]);
+    branch = decodeURIComponent(rawSegments[3]);
+    pathParts = rawSegments.slice(4).map((s) => decodeURIComponent(s));
+  } catch {
+    return null;
+  }
+
+  if (!owner || !repo || !branch || pathParts.length === 0) return null;
+  if (pathParts.some((p) => p.length === 0)) return null;
+
+  return { owner, repo, branch, path: pathParts.join('/') };
 }

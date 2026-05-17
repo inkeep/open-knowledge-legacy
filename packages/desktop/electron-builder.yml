@@ -115,6 +115,39 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # Developer-ID provisioning profile that grants the
+  # `com.apple.developer.associated-domains` entitlement at codesign time.
+  # Apple-Silicon-only Developer-ID build (NOT Mac App Store), so the profile
+  # lives at the top-level `mac.provisioningProfile` key (not `mac.mas.*`).
+  # The profile binary is committed at `build/embedded.provisionprofile`
+  # (12,497 bytes, CMS-signed) — Developer-ID provisioning profiles are NOT
+  # secrets per Apple convention (every signed Electron app on macOS commits
+  # one — VS Code, Zed, Notion all follow the same pattern).
+  #
+  # Profile metadata (verify via `security cms -D -i build/embedded.provisionprofile | plutil -p -`):
+  #   AppIDName: Open Knowledge
+  #   TeamIdentifier: 6NZGSG335T
+  #   application-identifier: 6NZGSG335T.com.inkeep.open-knowledge
+  #   com.apple.developer.associated-domains: *  (wildcard — accepts any
+  #     applinks: declaration in the binary's entitlements plist)
+  #   ExpirationDate: 2044-05-10
+  #   ProvisionsAllDevices: true
+  #
+  # Without this profile, codesign rejects the embedded
+  # `com.apple.developer.associated-domains` entitlement at notarize time
+  # ("not authorized to use restricted entitlement").
+  provisioningProfile: build/embedded.provisionprofile
+  # `NSUserActivityTypes` declares which Handoff/Universal Link activity
+  # types the app handles. Without this key in Info.plist, macOS silently
+  # drops `continue-activity` events for inbound Universal Link clicks even
+  # when the entitlement + AASA file are in place — `LSOpenURLsWithRole
+  # error -10810` is the symptom in console.app.
+  # `NSUserActivityTypeBrowsingWeb` is Apple's reserved type for tapped-URL
+  # Handoff (the only flow this app uses). Adding new types here requires a
+  # provisioning-profile re-issue, so keep the list minimal.
+  extendInfo:
+    NSUserActivityTypes:
+      - NSUserActivityTypeBrowsingWeb
   # Notarization is invoked from `scripts/afterSign.mjs` per spec §8.9 (custom
   # afterSign pipeline) — NOT electron-builder's built-in notarize. Setting
   # `mac.notarize: true` would double-notarize. The afterSign script gates on
@@ -133,6 +166,14 @@ dmg:
   # electron-builder or dmg-builder: confirm the null-identity short-circuit
   # is still present in `dmg-builder/out/dmg.js:signDmg()`.
   sign: true
+  # Stable, version-less asset name so the share-splash `releases/latest/
+  # download/...` URL resolves across releases. electron-builder's default
+  # (`${productName}-${version}-${arch}.${ext}`) embeds the version in the
+  # filename, which makes `latest/download/Open-Knowledge.dmg` 404 — the
+  # actual asset is `Open-Knowledge-0.4.1-arm64.dmg`. The arch suffix stays
+  # because we only ship arm64 today; an x64 / universal build would need
+  # a parallel artifactName + a splash decision rule.
+  artifactName: ${productName}-${arch}.${ext}
 
 # Flip fuses (D17 LOCKED, spec §8.9) on the packed .app before code signing.
 afterPack: scripts/afterPack.mjs

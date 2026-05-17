@@ -16,6 +16,7 @@ import {
   type ProjectAiIntegrationsResult,
   previewContent,
   readExistingMcpEntry,
+  validateLocalFolderForShare,
   writeProjectAiIntegrations,
   writeUserMcpConfigs,
 } from '@inkeep/open-knowledge';
@@ -85,6 +86,7 @@ import {
   runDriverBootSmoke,
 } from './driver-boot-smoke.ts';
 import { discoverProject, validateFolderPick } from './folder-admission.ts';
+import { readCanonicalGitHubRemoteUrl } from './git-remote.ts';
 import { handleBuildAndOpen, handleDetectClaudeDesktop } from './ipc/install-skill.ts';
 import {
   createLocalOpState,
@@ -633,7 +635,8 @@ async function openProject(
   }
 
   tryCloseNavigator(navigatorWindow, { projectPath });
-  appState = addRecentProject(appState, resolvedProjectDir, ctx.projectName);
+  const gitRemoteUrl = readCanonicalGitHubRemoteUrl(resolvedProjectDir) ?? undefined;
+  appState = addRecentProject(appState, resolvedProjectDir, ctx.projectName, gitRemoteUrl);
   saveAppState(appState);
   refreshApplicationMenu();
 }
@@ -1181,8 +1184,28 @@ function registerIpcHandlers() {
         `ok:project:open rejected: invalid entryPoint '${String(request.entryPoint)}'`,
       );
     }
-    await openProjectOrFallbackToNavigator(request.path, request.entryPoint);
+    if (request.pendingDeepLinkDoc !== undefined && wm) {
+      const existing = wm.focusWindowForProject(request.path) as
+        | (BrowserWindowLike & { webContents: BrowserWindowLike['webContents'] })
+        | null;
+      if (existing) {
+        sendToRenderer(existing.webContents, 'ok:deep-link', { doc: request.pendingDeepLinkDoc });
+        return undefined;
+      }
+    }
+    await openProjectOrFallbackToNavigator(
+      request.path,
+      request.entryPoint,
+      request.pendingDeepLinkDoc,
+    );
     return undefined;
+  });
+
+  handle('ok:share:validate-folder', async (_event, request) => {
+    return validateLocalFolderForShare(request.folderPath, {
+      owner: request.owner,
+      repo: request.repo,
+    });
   });
 
   handle('ok:project:close', async (event) => {
@@ -1504,6 +1527,14 @@ function bootPrimaryInstance(): void {
     sendDeepLink: (win, payload) => {
       const w = win as BrowserWindowLike;
       sendToRenderer(w.webContents, 'ok:deep-link', payload);
+    },
+    sendShareDeepLink: (win, payload) => {
+      const w = win as BrowserWindowLike;
+      sendToRenderer(w.webContents, 'ok:share:received', payload);
+    },
+    getFocusedWindow: () => {
+      const focused = BrowserWindow.getFocusedWindow();
+      return focused ? (focused as unknown as object) : null;
     },
     getAnyReadyWindow: () => {
       const first = BrowserWindow.getAllWindows()[0];

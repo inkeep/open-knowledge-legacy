@@ -25,6 +25,7 @@ import { psCommand } from './commands/ps.ts';
 import { pullCommand } from './commands/pull.ts';
 import { pushCommand } from './commands/push.ts';
 import { seedCommand } from './commands/seed.ts';
+import { shareCommand } from './commands/share/index.ts';
 import { runStartCommand, startCommand } from './commands/start.ts';
 import { statusCommand } from './commands/status.ts';
 import { stopCommand } from './commands/stop.ts';
@@ -101,5 +102,7 @@ program.addCommand(cloneCommand(() => resolvedConfig));
 program.addCommand(syncCommand(() => resolvedConfig));
 program.addCommand(pushCommand(() => resolvedConfig));
 program.addCommand(pullCommand(() => resolvedConfig));
+
+program.addCommand(shareCommand());
 
 await program.parseAsync(process.argv, { from: 'node' });

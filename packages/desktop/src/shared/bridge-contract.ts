@@ -90,6 +90,7 @@ interface RecentProjectEntry {
   name: string;
   lastOpenedAt: string;
   missing?: boolean;
+  gitRemoteUrl?: string;
 }
 
 interface ProjectSessionState {
@@ -254,6 +255,26 @@ export type OkLocalOpAuthReposResponse =
   | { ok: true; host: string; repos: OkLocalOpRepoEntry[] }
   | { ok: false; error: string };
 
+export type OkShareReceivedPayload =
+  | {
+      readonly kind: 'ok';
+      readonly owner: string;
+      readonly repo: string;
+      readonly branch: string;
+      readonly path: string;
+      readonly blobUrl: string;
+    }
+  | { readonly kind: 'unsupported-version' }
+  | { readonly kind: 'invalid' };
+
+export type ShareFolderValidationResult =
+  | { readonly kind: 'ok'; readonly gitRemoteUrl: string }
+  | { readonly kind: 'not-git' }
+  | { readonly kind: 'no-origin' }
+  | { readonly kind: 'wrong-repo'; readonly actualOwner: string; readonly actualRepo: string }
+  | { readonly kind: 'non-github' }
+  | { readonly kind: 'symlink-escape' };
+
 export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
 
@@ -263,6 +284,7 @@ export interface OkDesktopBridge {
   onWhatsNew(cb: (info: OkWhatsNewInfo) => void): OkUnsubscribe;
   onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void): OkUnsubscribe;
   onDeepLink(cb: (evt: { doc: string }) => void): OkUnsubscribe;
+  onShareReceived(cb: (payload: OkShareReceivedPayload) => void): OkUnsubscribe;
 
   setThemeSource(source: OkThemeSource): Promise<{ ok: true }>;
 
@@ -323,7 +345,12 @@ export interface OkDesktopBridge {
     removeRecent(path: string): Promise<void>;
     getSessionState(): Promise<ProjectSessionState>;
     setSessionState(state: ProjectSessionState): Promise<void>;
-    open(request: { path: string; target: 'new-window'; entryPoint: EntryPoint }): Promise<void>;
+    open(request: {
+      path: string;
+      target: 'new-window';
+      entryPoint: EntryPoint;
+      pendingDeepLinkDoc?: string;
+    }): Promise<void>;
     createNew(args: {
       parent: string;
       name: string;
@@ -427,6 +454,14 @@ export interface OkDesktopBridge {
     };
     authStatus(request?: { host?: string }): Promise<OkLocalOpAuthStatusResponse>;
     authRepos(request?: { host?: string }): Promise<OkLocalOpAuthReposResponse>;
+  };
+
+  share: {
+    validateLocalFolder(args: {
+      folderPath: string;
+      owner: string;
+      repo: string;
+    }): Promise<ShareFolderValidationResult>;
   };
 
   readonly platform: 'darwin' | 'win32' | 'linux';

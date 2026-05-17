@@ -1,5 +1,6 @@
 import { mediaKindForSidebarAssetExtension } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
+import { AuthModal } from '@/components/AuthModal';
 import { CommandPalette } from '@/components/CommandPalette';
 import { ConnectingBanner } from '@/components/ConnectingBanner';
 import { EditorPane } from '@/components/EditorPane';
@@ -13,6 +14,10 @@ import {
   resolveNavigationTarget,
 } from '@/components/navigation-targets';
 import { PageListProvider, usePageList } from '@/components/PageListContext';
+import {
+  type ShareReceiveCloneController,
+  ShareReceiveDialog,
+} from '@/components/ShareReceiveDialog';
 import { SystemDocSubscriber } from '@/components/SystemDocSubscriber';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import {
@@ -21,8 +26,12 @@ import {
   useDocumentTransition,
 } from '@/editor/DocumentContext';
 import { ConfigProvider } from '@/lib/config-provider';
+import type { OkLocalOpAuthStatusResponse } from '@/lib/desktop-bridge-types';
 import { assetPathFromHash, docNameFromHash } from '@/lib/doc-hash';
 import { mark, ProfilerBoundary } from '@/lib/perf';
+import { createCloneController } from '@/lib/share/clone-controller';
+import { httpAuthQueryTransport } from '@/lib/transports/auth-query-transport';
+import { httpCloneTransport } from '@/lib/transports/clone-transport';
 import { isSettingsShortcut, SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 
 const INSTALL_DIALOG_HASH = '#install-claude-desktop';
@@ -219,6 +228,24 @@ export function App() {
   const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [signInResolver, setSignInResolver] = useState<
+    ((status: OkLocalOpAuthStatusResponse | null) => void) | null
+  >(null);
+
+  const shareCloneController: ShareReceiveCloneController | null = desktopBridge
+    ? createCloneController({
+        bridge: desktopBridge,
+        authQueryTransport: httpAuthQueryTransport(),
+        cloneTransport: httpCloneTransport(),
+        openSignIn: () =>
+          new Promise<OkLocalOpAuthStatusResponse | null>((resolve) => {
+            setSignInResolver(() => resolve);
+            setAuthModalOpen(true);
+          }),
+      })
+    : null;
+
   return (
     <ProfilerBoundary name="app">
       <DocumentProvider>
@@ -235,6 +262,34 @@ export function App() {
                 main fires `ok:mcp-wiring:show`. Mounted identically in
                 NavigatorApp. */}
             <McpConsentDialog />
+            {/* Share-receive dialog. Editor-shell mount handles Q1 silent
+                dispatch, Q2 local-folder picker, AND Q3 clone via the
+                streamlined controller flow (auth pre-flight → folder
+                picker → clone with progress toast). Self-gates on the
+                shared shareReceiveStore. AuthModal below handles the
+                sign-in link the dialog renders when unauthed. */}
+            {desktopBridge && shareCloneController ? (
+              <ShareReceiveDialog bridge={desktopBridge} cloneController={shareCloneController} />
+            ) : null}
+            {desktopBridge ? (
+              <AuthModal
+                open={authModalOpen}
+                onOpenChange={(open) => {
+                  if (open) return; // Only react to close.
+                  setAuthModalOpen(false);
+                  signInResolver?.(null);
+                  setSignInResolver(null);
+                }}
+                onSuccess={(result) => {
+                  signInResolver?.({
+                    authenticated: true,
+                    host: 'github.com',
+                    login: result.login,
+                  });
+                  setSignInResolver(null);
+                }}
+              />
+            ) : null}
             <CommandPalette
               bridge={desktopBridge}
               open={commandPaletteOpen}

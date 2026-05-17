@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGitUrl } from './url.ts';
+import { parseGitHubBlobUrl, parseGitUrl } from './url.ts';
 
 describe('parseGitUrl', () => {
   describe('https:// URLs', () => {
@@ -285,6 +285,121 @@ describe('parseGitUrl', () => {
 
     test('ftp:// protocol returns null', () => {
       expect(parseGitUrl('ftp://github.com/owner/repo')).toBeNull();
+    });
+  });
+});
+
+describe('parseGitHubBlobUrl', () => {
+  test('happy path: simple branch + top-level file', () => {
+    const result = parseGitHubBlobUrl(
+      'https://github.com/inkeep/open-knowledge/blob/main/README.md',
+    );
+    expect(result).toEqual({
+      owner: 'inkeep',
+      repo: 'open-knowledge',
+      branch: 'main',
+      path: 'README.md',
+    });
+  });
+
+  test('happy path: nested doc path', () => {
+    const result = parseGitHubBlobUrl(
+      'https://github.com/inkeep/open-knowledge/blob/feat-x/docs/sub/page.md',
+    );
+    expect(result).toEqual({
+      owner: 'inkeep',
+      repo: 'open-knowledge',
+      branch: 'feat-x',
+      path: 'docs/sub/page.md',
+    });
+  });
+
+  test('happy path: branch containing slash (percent-encoded)', () => {
+    const result = parseGitHubBlobUrl(
+      'https://github.com/inkeep/open-knowledge/blob/feat%2Ffoo/docs/page.md',
+    );
+    expect(result).toEqual({
+      owner: 'inkeep',
+      repo: 'open-knowledge',
+      branch: 'feat/foo',
+      path: 'docs/page.md',
+    });
+  });
+
+  test('happy path: percent-encoded path segments round-trip', () => {
+    const result = parseGitHubBlobUrl(
+      'https://github.com/owner/repo/blob/main/docs/Q4%20OKRs%20%E2%80%94%20Marketing.md',
+    );
+    expect(result).toEqual({
+      owner: 'owner',
+      repo: 'repo',
+      branch: 'main',
+      path: 'docs/Q4 OKRs — Marketing.md',
+    });
+  });
+
+  test('happy path: ignores query string and fragment', () => {
+    const result = parseGitHubBlobUrl(
+      'https://github.com/owner/repo/blob/main/README.md?ref=campaign#L5',
+    );
+    expect(result).toEqual({
+      owner: 'owner',
+      repo: 'repo',
+      branch: 'main',
+      path: 'README.md',
+    });
+  });
+
+  test('accepts www.github.com host', () => {
+    const result = parseGitHubBlobUrl('https://www.github.com/owner/repo/blob/main/README.md');
+    expect(result).toEqual({
+      owner: 'owner',
+      repo: 'repo',
+      branch: 'main',
+      path: 'README.md',
+    });
+  });
+
+  test('non-github host returns null', () => {
+    expect(parseGitHubBlobUrl('https://gitlab.com/owner/repo/blob/main/README.md')).toBeNull();
+  });
+
+  test('subdomain spoofing returns null', () => {
+    expect(
+      parseGitHubBlobUrl('https://github.com.evil.example/owner/repo/blob/main/README.md'),
+    ).toBeNull();
+  });
+
+  test('malformed path (no /blob/ segment) returns null', () => {
+    expect(parseGitHubBlobUrl('https://github.com/owner/repo/tree/main/README.md')).toBeNull();
+  });
+
+  test('missing branch (path ends after /blob/) returns null', () => {
+    expect(parseGitHubBlobUrl('https://github.com/owner/repo/blob/')).toBeNull();
+  });
+
+  test('missing doc path (only branch present) returns null', () => {
+    expect(parseGitHubBlobUrl('https://github.com/owner/repo/blob/main')).toBeNull();
+  });
+
+  test('missing doc path (trailing slash after branch) returns null', () => {
+    expect(parseGitHubBlobUrl('https://github.com/owner/repo/blob/main/')).toBeNull();
+  });
+
+  test('not a URL returns null', () => {
+    expect(parseGitHubBlobUrl('not-a-url')).toBeNull();
+  });
+
+  test('empty string returns null', () => {
+    expect(parseGitHubBlobUrl('')).toBeNull();
+  });
+
+  test('parseGitUrl regex is unaffected (sanity)', () => {
+    expect(parseGitUrl('https://github.com/owner/repo')).toEqual({
+      protocol: 'https',
+      hostname: 'github.com',
+      owner: 'owner',
+      name: 'repo',
     });
   });
 });
