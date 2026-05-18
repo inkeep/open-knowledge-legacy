@@ -221,6 +221,36 @@ describe('bootServer — runtime state lives at projectDir, not contentDir', () 
   });
 });
 
+describe('bootServer — idle-shutdown runs full destroy', () => {
+  test('after idle-shutdown fires with zero WS clients, httpServer is no longer listening', async () => {
+    const projectDir = mkdtempSync(resolve(tmpDir, 'idle-full-destroy-'));
+    await execFileAsync('git', ['init', '--initial-branch=main', projectDir]);
+    seedOkScaffold(projectDir);
+
+    const booted = await bootServer({
+      config: TEST_CONFIG,
+      contentDir: projectDir,
+      port: 0,
+      quiet: true,
+      gitEnabled: false,
+      idleShutdownMs: 50,
+      attachUiSibling: false,
+    });
+
+    try {
+      expect(booted.httpServer.listening).toBe(true);
+
+      const deadline = Date.now() + 3_000;
+      while (booted.httpServer.listening && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(booted.httpServer.listening).toBe(false);
+    } finally {
+      await booted.destroy();
+    }
+  });
+});
+
 describe('bootServer — ok.boot OTel span attributes', () => {
   let exporter: InMemorySpanExporter | null = null;
   let provider: BasicTracerProvider | null = null;

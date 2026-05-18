@@ -91,4 +91,6 @@ test('closing spawning editor leaves sibling editor connected; idle-shutdown fir
     await wait(25);
   }
   expect(existsSync(lockPath)).toBe(false);
+
+  expect(server.httpServer.listening).toBe(false);
 });
