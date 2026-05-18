@@ -21,7 +21,7 @@ export const DocumentListEntrySchema = z
     targetPath: z.string().nullable().default(null),
     path: z.string().min(1).optional(),
     assetExt: z.string().min(1).optional(),
-    mediaKind: z.enum(['image', 'video']).nullable().optional(),
+    mediaKind: z.enum(['image', 'video', 'audio', 'pdf']).nullable().optional(),
     referencedBy: z.array(z.string().min(1)).optional(),
   })
   .loose()
