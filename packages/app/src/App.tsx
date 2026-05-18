@@ -186,6 +186,32 @@ function SettingsShortcutHandler() {
   return null;
 }
 
+function ActiveTargetBridgePush() {
+  const { activeTarget } = useDocumentContext();
+  const bridge = typeof window !== 'undefined' ? (window.okDesktop ?? null) : null;
+
+  const kind =
+    activeTarget?.kind === 'doc' || activeTarget?.kind === 'folder' ? activeTarget.kind : null;
+  const identifier =
+    activeTarget?.kind === 'doc'
+      ? activeTarget.docName
+      : activeTarget?.kind === 'folder'
+        ? activeTarget.folderPath
+        : null;
+
+  useEffect(() => {
+    if (!bridge) return;
+    if (kind === null) {
+      bridge.editor.notifyActiveTargetChanged({ kind: null });
+      return;
+    }
+    if (identifier === null) return;
+    bridge.editor.notifyActiveTargetChanged({ kind, identifier });
+  }, [bridge, kind, identifier]);
+
+  return null;
+}
+
 function NewItemShortcutHandler() {
   const { activeDocName, activeTarget } = useDocumentContext();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -254,6 +280,7 @@ export function App() {
           <PageListProvider>
             <SystemDocSubscriber />
             <NavigationHandler />
+            <ActiveTargetBridgePush />
             <NewItemShortcutHandler />
             <SettingsShortcutHandler />
             <InstallInClaudeDesktopTrigger />

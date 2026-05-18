@@ -143,6 +143,8 @@ describe('M1 smoke', () => {
       'shell.revealAsset', // 2026-04-23 FR-A6 (asset-click dispatcher)
       'shell.showAssetMenu', // 2026-04-23 FR-A8 (right-click context menu)
       'shell.showItemInFolder', // 2026-04-27 file-tree reveal-in-finder
+      'shell.trashItem', // 2026-05-16 sidebar Trash flow (FR8 / D24 Option B)
+      'shell.openInTerminal', // 2026-05-16 sidebar Open in Terminal (FR11 / D26)
     ] as const;
     const REQUIRED_FS_MEMBERS = [
       'fs.defaultProjectsRoot',

@@ -192,6 +192,18 @@ interface DialogOpenFolderOpts {
   readonly defaultPath?: string;
 }
 
+export type EditorActiveTargetSnapshot =
+  | { readonly kind: 'doc'; readonly identifier: string }
+  | { readonly kind: 'folder'; readonly identifier: string }
+  | { readonly kind: null };
+
+export interface EditorViewMenuStateSnapshot {
+  readonly showHiddenFiles: boolean;
+  readonly showAllFiles: boolean;
+  readonly canExpandAll: boolean;
+  readonly canCollapseAll: boolean;
+}
+
 export interface RequestChannels {
   'ok:dialog:open-folder': {
     args: [opts?: DialogOpenFolderOpts];
@@ -224,6 +236,22 @@ export interface RequestChannels {
       },
     ];
     result: undefined;
+  };
+  'ok:shell:trash-item': {
+    args: [absPath: string];
+    result:
+      | { ok: true }
+      | {
+          ok: false;
+          reason: 'not-found' | 'permission-denied' | 'system-error' | 'path-escape';
+          detail?: string;
+        };
+  };
+  'ok:shell:open-in-terminal': {
+    args: [dirAbsPath: string];
+    result:
+      | { ok: true }
+      | { ok: false; reason: 'not-found' | 'spawn-error' | 'timeout' | 'path-escape' };
   };
   'ok:clipboard:write-text': { args: [text: string]; result: undefined };
   'ok:project:get-info': { args: []; result: OkDesktopConfig };
@@ -350,5 +378,14 @@ export interface RequestChannels {
   'ok:local-op:auth:repos': {
     args: [request?: { host?: string }];
     result: OkLocalOpAuthReposResponse;
+  };
+
+  'ok:editor:active-target-changed': {
+    args: [target: EditorActiveTargetSnapshot];
+    result: undefined;
+  };
+  'ok:editor:view-menu-state-changed': {
+    args: [state: EditorViewMenuStateSnapshot];
+    result: undefined;
   };
 }

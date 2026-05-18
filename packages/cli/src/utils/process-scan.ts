@@ -193,12 +193,7 @@ export async function discoverLockDirs(): Promise<string[]> {
   const candidateDirs = new Set<string>();
 
   const addLockDirsForCwd = (cwd: string): void => {
-    for (const lockDir of [
-      join(cwd, '.ok', 'local'),
-      join(cwd, '.ok'),
-      join(cwd, '.open-knowledge'),
-      join(cwd, '.openknowledge'),
-    ]) {
+    for (const lockDir of [join(cwd, '.ok', 'local'), join(cwd, '.ok')]) {
       if (
         existsSync(lockDir) &&
         (existsSync(join(lockDir, 'server.lock')) || existsSync(join(lockDir, 'ui.lock')))

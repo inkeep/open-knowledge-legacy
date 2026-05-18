@@ -26,3 +26,11 @@ Ask the agent:
 > List all the docs in this project.
 
 The agent should call `list_documents` and respond with your knowledge base. If it still doesn't see the tool after approval, restart Cursor so it picks up the new MCP entry.
+
+## Open with AI
+
+From the editor, **Open with AI ▸ Cursor** dispatches the current file, folder, or project to Cursor. Three entry points: the editor header's sparkle icon, the sidebar's right-click menu (file / folder / empty space), and the macOS **File → Open with AI** menu.
+
+Cursor uses a two-step handoff — Open Knowledge spawns `cursor <projectDir>` to open the workspace first, then fires the `cursor://` URL with a short prompt asking Cursor to open the target in Open Knowledge's web preview. The agent then grounds the rest of the conversation through MCP. See [Editor → Open with AI](/docs/features/editor#open-with-ai) for the full UX.
+
+Cursor's spawn step requires the local Electron app — the row is hidden in the web build, where there's no process-spawn API.

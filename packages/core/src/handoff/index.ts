@@ -1,7 +1,11 @@
 export { buildClaudeUrl } from './claude-url.ts';
 export { buildCodexUrl } from './codex-url.ts';
 export { buildCursorUrl } from './cursor-url.ts';
-export { composeProjectPrompt, composePrompt } from './prompt-composer.ts';
+export {
+  composeEmptySpacePrompt,
+  composeFilePrompt,
+  composeFolderPrompt,
+} from './prompt-composer.ts';
 export type {
   DocContext,
   HandoffFailureReason,

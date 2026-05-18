@@ -1,4 +1,4 @@
-import { composePrompt, type TargetData } from '@inkeep/open-knowledge-core';
+import { composeFilePrompt, type TargetData } from '@inkeep/open-knowledge-core';
 import { ExternalLink, Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
@@ -41,7 +41,10 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
   };
 
   const triggerDisabled = input === null;
-  const prompt = input !== null && input.docContext !== null ? composePrompt(input.docContext) : '';
+  const prompt =
+    input !== null && input.docContext !== null
+      ? composeFilePrompt(input.docContext.relativePath)
+      : '';
 
   const handleSelect = (target: TargetData): void => {
     if (input === null) return;
@@ -67,7 +70,7 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="Edit with AI"
+              aria-label="Open with AI"
               disabled={triggerDisabled}
               className="text-muted-foreground"
               data-testid="open-in-agent-trigger"
@@ -76,11 +79,11 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
             </Button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent>Edit with AI</TooltipContent>
+        <TooltipContent>Open with AI</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="end" className="min-w-[220px]" data-testid="open-in-agent-menu">
         <DropdownMenuLabel className="font-mono font-normal tracking-wide uppercase text-muted-foreground text-xs">
-          Open in
+          Open with AI
         </DropdownMenuLabel>
         {installedTargets.map((target) => {
           const installState = states[target.id];

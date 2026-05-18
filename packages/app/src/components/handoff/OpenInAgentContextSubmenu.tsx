@@ -1,5 +1,5 @@
 import {
-  composePrompt,
+  composeFilePrompt,
   type HandoffOutcome,
   type HandoffTarget,
   type InstallState,
@@ -39,10 +39,17 @@ interface OpenInAgentContextSubmenuProps {
     target: HandoffTarget,
     input: HandoffDispatchInput,
   ) => Promise<HandoffOutcome>;
+  /** Whether to render the "Open in claude.ai →" web-fallback row when Claude
+   *  is not installed. Defaults to `true` (file-row surface — the cloud URL
+   *  carries the per-file prompt). Folder + empty-space mounts pass `false`:
+   *  the claude.ai URL has no `folder=` companion param, so the cloud agent
+   *  would receive a prompt with no project grounding. Hiding the row beats
+   *  rendering a degraded path. */
+  readonly webFallbackVisible?: boolean;
 }
 
 export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps): ReactNode {
-  const { input, installStates, dispatch } = props;
+  const { input, installStates, dispatch, webFallbackVisible = true } = props;
   const inputMissing = input === null;
   const hint = contextRowHint(inputMissing);
 
@@ -52,7 +59,10 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
 
   const claudeInstalled = installStates['claude-code']?.installed === true;
 
-  const prompt = input !== null && input.docContext !== null ? composePrompt(input.docContext) : '';
+  const prompt =
+    input !== null && input.docContext !== null
+      ? composeFilePrompt(input.docContext.relativePath)
+      : '';
 
   const handleClaudeWebFallback = (): void => {
     if (input === null) return;
@@ -63,14 +73,14 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
         <Sparkles aria-hidden="true" />
-        Open in
+        Open with AI
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent>
         {installedTargets.map((target) => {
           const enabled = !inputMissing;
           const accessibleLabel = hint
-            ? `Open in ${target.displayName}, ${hint}`
-            : `Open in ${target.displayName}`;
+            ? `Open with AI ${target.displayName}, ${hint}`
+            : `Open with AI ${target.displayName}`;
           return (
             <DropdownMenuItem
               key={target.id}
@@ -92,7 +102,7 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
             </DropdownMenuItem>
           );
         })}
-        {!claudeInstalled ? (
+        {webFallbackVisible && !claudeInstalled ? (
           <DropdownMenuItem
             onSelect={handleClaudeWebFallback}
             disabled={inputMissing}

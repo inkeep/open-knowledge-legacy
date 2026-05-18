@@ -53,10 +53,7 @@ describe("'ok:shell:open-external' routes v0 schemes through the allowlist", () 
       'Claude Cowork',
       'claude://cowork/new?q=test&folder=%2FUsers%2Fx%2Fproject&file=%2FUsers%2Fx%2Fdoc.md',
     ],
-    [
-      'Claude Code',
-      'claude://code/new?q=test&folder=%2FUsers%2Fx%2Fproject&file=%2FUsers%2Fx%2Fdoc.md',
-    ],
+    ['Claude', 'claude://code/new?q=test&folder=%2FUsers%2Fx%2Fproject&file=%2FUsers%2Fx%2Fdoc.md'],
     ['Codex', 'codex://new?prompt=test&path=%2FUsers%2Fx%2Fproject'],
     [
       'Cursor',

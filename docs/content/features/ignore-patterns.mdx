@@ -9,7 +9,7 @@ Open Knowledge indexes the markdown in your project so it can power the file tre
 
 Right-click any file in the sidebar and pick **Hide this file**. The file disappears from the tree immediately.
 
-Right-click a folder and pick **Hide files in this folder** to hide every file inside it.
+Right-click a folder and pick **Hide folder** to hide every file inside it.
 
 The hidden item is now ignored everywhere — search, agent context, and the document list returned by MCP tools. To bring it back, remove the matching row from Settings.
 
@@ -83,6 +83,16 @@ If Open Knowledge can't reload your ignore files (rare — usually a filesystem 
 
 The negation is an Open Knowledge behavior — `git` itself only reads `.gitignore`, so an `!` line in `.okignore` does not change what git tracks.
 
+## Temporarily surfacing hidden files
+
+The sidebar's right-click menu and the macOS **View** menu carry two project-local visibility toggles for when you need to see hidden content without permanently editing `.okignore`:
+
+- **Show Hidden Files** stops the client from hiding paths that start with `.` (recovers allowed dotfiles like `brain/.archived/note.md`). Server-side `.gitignore` / `.okignore` filters still apply.
+- **Show all files** bypasses every filter — both client and server — and surfaces every file on disk under the content directory. Useful for one-off triage; flip it back off once you've found what you needed.
+
+Both settings persist per-project per-machine. See [Editor → Show Hidden Files / Show all files](/docs/features/editor#show-hidden-files--show-all-files) for the full UX.
+
 ## See also
 
 - [Configuration reference](/docs/reference/configuration) — the project config schema and `content.dir`.
+- [Editor → Hiding files and folders](/docs/features/editor#hiding-files-and-folders) — right-click flow.

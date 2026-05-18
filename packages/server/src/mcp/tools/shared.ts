@@ -28,7 +28,7 @@ export const TEXT_CHANNEL_FIELD = z
   .string()
   .optional()
   .describe(
-    'Auto-duplicated body text. `textPlusStructured` mirrors the visible body here as a Claude Code / Claude Desktop client-quirk workaround (those clients hide `content[]` when `structuredContent` is present). Internal — programmatic consumers should prefer the `content[0].text` channel.',
+    'Auto-duplicated body text. `textPlusStructured` mirrors the visible body here as a Claude / Claude Desktop client-quirk workaround (those clients hide `content[]` when `structuredContent` is present). Internal — programmatic consumers should prefer the `content[0].text` channel.',
   );
 
 export function outputSchemaWithText<S extends z.ZodRawShape>(

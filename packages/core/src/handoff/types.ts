@@ -2,23 +2,19 @@ export type HandoffTarget = 'claude-cowork' | 'claude-code' | 'codex' | 'cursor'
 
 export interface HandoffPayload {
   readonly target: HandoffTarget;
+  /** Absolute path to the OK project root (OS-native separator) for file
+   *  scope; the folder absolute path for folder scope; the project root for
+   *  project scope. Threaded into the URL as `folder=` (Claude family) /
+   *  `path=` (Codex) / `workspace=<basename>` (Cursor). */
   readonly projectDir: string;
-  /** Absolute path to the current doc (OS-native separator).
-   *  `''` ⇒ project-scoped handoff (URL builders emit prompt + folder).
-   *  non-`''` ⇒ doc-scoped handoff (URL builders emit a cwd-only URL per
-   *  precedent #25 — no `file=` attach, no prompt prefill; the agent grounds
-   *  via OK MCP). The docPath bytes are NOT threaded into the URL. */
+  /** Absolute path to the current doc (OS-native separator), or `''` when no
+   *  doc is selected (folder / project scope). Not threaded into the URL by
+   *  the per-target builders — they emit the same shape for any `docPath`
+   *  value because the prompt scope is determined by `prompt`. Carried for
+   *  callers / telemetry that need the field after dispatch. */
   readonly docPath: string;
-  /** OK-composed prompt; stays under a 1 KB hard cap.
-   *  Project-scoped: `composeProjectPrompt()` — threaded into the URL.
-   *  Doc-scoped: `composePrompt(docContext)` — discarded by the native URL
-   *  builders (precedent #25 — cwd-only). The same `composePrompt` output IS
-   *  still live on the Claude web-fallback path (`OpenInAgentMenu` and
-   *  `OpenInAgentContextSubmenu` → `dispatchClaudeWebFallback` →
-   *  `buildClaudeAiWebUrl`), which is consumed by a different code path that
-   *  does NOT read `HandoffPayload.prompt`. The field's dead-computation status
-   *  is limited to the dispatch path; the prompt-composition function itself
-   *  stays live.
+  /** OK-composed directive prompt; stays under a 1 KB hard cap.
+   *  Threaded into the URL via the per-target prompt query param.
    *  `''` is honored defensively (URL builders skip the prompt query param)
    *  but no production caller emits it. */
   readonly prompt: string;

@@ -44,7 +44,7 @@ describe('KNOWN_TARGETS', () => {
   test('displayNames match SPEC §7.2 (PQ4 DIRECTED)', () => {
     const byId = new Map(KNOWN_TARGETS.map((t) => [t.id, t.displayName]));
     expect(byId.get('claude-cowork')).toBe('Claude Cowork');
-    expect(byId.get('claude-code')).toBe('Claude Code');
+    expect(byId.get('claude-code')).toBe('Claude');
     expect(byId.get('codex')).toBe('Codex');
     expect(byId.get('cursor')).toBe('Cursor');
   });

@@ -482,7 +482,7 @@ test.describe('FileTree right-click → Hide this file/folder (US-013)', () => {
     await expect(row).toHaveValue(`/${docName}.md`);
   });
 
-  test('"Hide files in this folder" appends an anchored folder pattern', async ({ page, api }) => {
+  test('"Hide folder" appends an anchored folder pattern', async ({ page, api }) => {
     const stamp = Date.now();
     const folder = `drafts-${stamp}`;
     await api.seedDocs([
@@ -499,7 +499,7 @@ test.describe('FileTree right-click → Hide this file/folder (US-013)', () => {
 
     const hideItem = page.getByTestId('file-tree-menu-hide');
     await expect(hideItem).toBeVisible({ timeout: 5_000 });
-    await expect(hideItem).toContainText('Hide files in this folder');
+    await expect(hideItem).toContainText('Hide folder');
     await hideItem.click();
 
     await expect(page.getByRole('treeitem', { name: /note-a\.md/ })).toBeHidden({

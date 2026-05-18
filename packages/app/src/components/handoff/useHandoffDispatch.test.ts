@@ -56,7 +56,7 @@ function buildDeps(
       target === 'claude-cowork'
         ? 'Claude Cowork'
         : target === 'claude-code'
-          ? 'Claude Code'
+          ? 'Claude'
           : target === 'codex'
             ? 'Codex'
             : 'Cursor',
@@ -117,7 +117,7 @@ describe('getDisplayNameDefault — KNOWN_TARGETS lookup', () => {
   test('maps each v0 target id to its SPEC §7.2 display name', async () => {
     const { getDisplayNameDefault } = await import('./useHandoffDispatch');
     expect(getDisplayNameDefault('claude-cowork')).toBe('Claude Cowork');
-    expect(getDisplayNameDefault('claude-code')).toBe('Claude Code');
+    expect(getDisplayNameDefault('claude-code')).toBe('Claude');
     expect(getDisplayNameDefault('codex')).toBe('Codex');
     expect(getDisplayNameDefault('cursor')).toBe('Cursor');
   });
@@ -165,7 +165,7 @@ describe('runHandoffDispatch — success path', () => {
     });
   });
 
-  test('passes a fully-formed HandoffPayload (target + paths + composePrompt) to dispatchHandoff', async () => {
+  test('passes a fully-formed HandoffPayload (target + paths + FR14 file prompt) to dispatchHandoff', async () => {
     const { runHandoffDispatch } = await import('./useHandoffDispatch');
     const deps = buildDeps();
     const input = sampleInput({
@@ -186,7 +186,7 @@ describe('runHandoffDispatch — success path', () => {
       '/tmp/demo-project/specs/2026-04-21-open-in-agent-desktop/SPEC.md',
     );
     expect(payload.prompt).toBe(
-      'Open Knowledge doc: specs/2026-04-21-open-in-agent-desktop/SPEC.md. Use the open-knowledge MCP tool for backlinks and related context.',
+      'Can you open `specs/2026-04-21-open-in-agent-desktop/SPEC.md` in web view with open knowledge editor.',
     );
   });
 
@@ -205,9 +205,9 @@ describe('runHandoffDispatch — success path', () => {
     });
   });
 
-  test('project-scoped (docContext: null) emits composeProjectPrompt() + empty docPath to dispatchHandoff', async () => {
+  test('project-scoped (docContext: null, no folderRelativePath) emits FR14 empty-space prompt + empty docPath', async () => {
     const { runHandoffDispatch } = await import('./useHandoffDispatch');
-    const { composeProjectPrompt } = await import('@inkeep/open-knowledge-core');
+    const { composeEmptySpacePrompt } = await import('@inkeep/open-knowledge-core');
     const deps = buildDeps();
     const input: HandoffDispatchInput = {
       docContext: null,
@@ -224,7 +224,35 @@ describe('runHandoffDispatch — success path', () => {
     expect(payload.target).toBe('codex');
     expect(payload.projectDir).toBe('/Users/sarah/proj');
     expect(payload.docPath).toBe('');
-    expect(payload.prompt).toBe(composeProjectPrompt());
+    expect(payload.prompt).toBe(composeEmptySpacePrompt());
+    expect(payload.prompt).toBe(
+      "Let's work on this project using Open Knowledge. Open the OK editor in web view.",
+    );
+  });
+
+  test('folder-scoped (docContext: null, folderRelativePath set) emits FR14 folder prompt', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const { composeFolderPrompt } = await import('@inkeep/open-knowledge-core');
+    const deps = buildDeps();
+    const input: HandoffDispatchInput = {
+      docContext: null,
+      folderRelativePath: 'specs/2026-05-16-sidebar-context-menus',
+      projectDir: '/Users/sarah/proj/specs/2026-05-16-sidebar-context-menus',
+      docPath: '',
+    };
+
+    await runHandoffDispatch('codex', input, deps);
+
+    const [payload] = (deps.dispatchHandoff as ReturnType<typeof mock>).mock.calls[0] as [
+      HandoffPayload,
+    ];
+    expect(payload.target).toBe('codex');
+    expect(payload.projectDir).toBe('/Users/sarah/proj/specs/2026-05-16-sidebar-context-menus');
+    expect(payload.docPath).toBe('');
+    expect(payload.prompt).toBe(composeFolderPrompt('specs/2026-05-16-sidebar-context-menus'));
+    expect(payload.prompt).toBe(
+      "Let's work on `specs/2026-05-16-sidebar-context-menus` folder using Open Knowledge. Open the OK editor in web view.",
+    );
   });
 });
 
@@ -565,5 +593,144 @@ describe('buildProjectScopedHandoffInput — empty-state cards helper', () => {
     expect(input?.projectDir).toBe('C:\\Users\\sarah\\proj');
     expect(input?.docPath).toBe('');
     expect(input?.docContext).toBeNull();
+  });
+});
+
+describe('buildFolderHandoffInput — folder-scoped helper (D23 / FR4 / FR14)', () => {
+  test('null workspace returns null (submenu renders disabled while resolving)', async () => {
+    const { buildFolderHandoffInput } = await import('./useHandoffDispatch');
+    expect(
+      buildFolderHandoffInput({
+        folderAbsPath: '/Users/sarah/proj/notes',
+        folderRelativePath: 'notes',
+        workspace: null,
+      }),
+    ).toBeNull();
+  });
+
+  test('empty folderAbsPath returns null (parity with workspace-null disabled state)', async () => {
+    const { buildFolderHandoffInput } = await import('./useHandoffDispatch');
+    expect(
+      buildFolderHandoffInput({
+        folderAbsPath: '',
+        folderRelativePath: 'notes',
+        workspace: { contentDir: '/Users/sarah/proj', pathSeparator: '/' },
+      }),
+    ).toBeNull();
+  });
+
+  test('empty folderRelativePath returns null (renderer-bug short-circuit)', async () => {
+    const { buildFolderHandoffInput } = await import('./useHandoffDispatch');
+    expect(
+      buildFolderHandoffInput({
+        folderAbsPath: '/Users/sarah/proj/notes',
+        folderRelativePath: '',
+        workspace: { contentDir: '/Users/sarah/proj', pathSeparator: '/' },
+      }),
+    ).toBeNull();
+  });
+
+  test('POSIX: returns docContext: null + folderRelativePath + folder abs path as projectDir', async () => {
+    const { buildFolderHandoffInput } = await import('./useHandoffDispatch');
+    const input = buildFolderHandoffInput({
+      folderAbsPath: '/Users/sarah/proj/specs/foo',
+      folderRelativePath: 'specs/foo',
+      workspace: { contentDir: '/Users/sarah/proj', pathSeparator: '/' },
+    });
+    expect(input).toEqual({
+      docContext: null,
+      folderRelativePath: 'specs/foo',
+      projectDir: '/Users/sarah/proj/specs/foo',
+      docPath: '',
+    });
+  });
+
+  test('Windows: projectDir carries native backslash path verbatim; folderRelativePath stays POSIX', async () => {
+    const { buildFolderHandoffInput } = await import('./useHandoffDispatch');
+    const input = buildFolderHandoffInput({
+      folderAbsPath: 'C:\\Users\\sarah\\proj\\specs\\foo',
+      folderRelativePath: 'specs/foo',
+      workspace: { contentDir: 'C:\\Users\\sarah\\proj', pathSeparator: '\\' },
+    });
+    expect(input?.projectDir).toBe('C:\\Users\\sarah\\proj\\specs\\foo');
+    expect(input?.folderRelativePath).toBe('specs/foo');
+    expect(input?.docPath).toBe('');
+    expect(input?.docContext).toBeNull();
+  });
+
+  test('sibling shape parity with buildProjectScopedHandoffInput: same field set minus folderRelativePath', async () => {
+    const { buildFolderHandoffInput, buildProjectScopedHandoffInput } = await import(
+      './useHandoffDispatch'
+    );
+    const workspace = { contentDir: '/Users/sarah/proj', pathSeparator: '/' as const };
+    const project = buildProjectScopedHandoffInput({ workspace });
+    const folder = buildFolderHandoffInput({
+      folderAbsPath: '/Users/sarah/proj/notes',
+      folderRelativePath: 'notes',
+      workspace,
+    });
+    expect(project?.docContext).toBeNull();
+    expect(folder?.docContext).toBeNull();
+    expect(project?.docPath).toBe('');
+    expect(folder?.docPath).toBe('');
+    expect(project?.folderRelativePath).toBeUndefined();
+    expect(folder?.folderRelativePath).toBe('notes');
+    expect(project?.projectDir).toBe('/Users/sarah/proj');
+    expect(folder?.projectDir).toBe('/Users/sarah/proj/notes');
+  });
+});
+
+describe('selectScopedPrompt — FR14 template selection (US-005)', () => {
+  test('file scope (docContext set) returns composeFilePrompt(relativePath)', async () => {
+    const { selectScopedPrompt } = await import('./useHandoffDispatch');
+    const { composeFilePrompt } = await import('@inkeep/open-knowledge-core');
+    const out = selectScopedPrompt({
+      docContext: { relativePath: 'notes/today.md' },
+      projectDir: '/proj',
+      docPath: '/proj/notes/today.md',
+    });
+    expect(out).toBe(composeFilePrompt('notes/today.md'));
+    expect(out).toBe('Can you open `notes/today.md` in web view with open knowledge editor.');
+  });
+
+  test('folder scope (docContext null + folderRelativePath set) returns composeFolderPrompt', async () => {
+    const { selectScopedPrompt } = await import('./useHandoffDispatch');
+    const { composeFolderPrompt } = await import('@inkeep/open-knowledge-core');
+    const out = selectScopedPrompt({
+      docContext: null,
+      folderRelativePath: 'notes',
+      projectDir: '/proj/notes',
+      docPath: '',
+    });
+    expect(out).toBe(composeFolderPrompt('notes'));
+    expect(out).toBe(
+      "Let's work on `notes` folder using Open Knowledge. Open the OK editor in web view.",
+    );
+  });
+
+  test('empty-space scope (both null/absent) returns composeEmptySpacePrompt', async () => {
+    const { selectScopedPrompt } = await import('./useHandoffDispatch');
+    const { composeEmptySpacePrompt } = await import('@inkeep/open-knowledge-core');
+    const out = selectScopedPrompt({
+      docContext: null,
+      projectDir: '/proj',
+      docPath: '',
+    });
+    expect(out).toBe(composeEmptySpacePrompt());
+    expect(out).toBe(
+      "Let's work on this project using Open Knowledge. Open the OK editor in web view.",
+    );
+  });
+
+  test('precedence: docContext beats folderRelativePath when both are set (defensive ordering)', async () => {
+    const { selectScopedPrompt } = await import('./useHandoffDispatch');
+    const { composeFilePrompt } = await import('@inkeep/open-knowledge-core');
+    const out = selectScopedPrompt({
+      docContext: { relativePath: 'a.md' },
+      folderRelativePath: 'folder',
+      projectDir: '/proj',
+      docPath: '/proj/a.md',
+    });
+    expect(out).toBe(composeFilePrompt('a.md'));
   });
 });

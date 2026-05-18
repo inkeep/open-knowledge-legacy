@@ -146,10 +146,10 @@ describe('buildMenuTemplate', () => {
     expect(openNavigator).toHaveBeenCalledTimes(1);
   });
 
-  test('Switch Project preserves Cmd+Shift+N accelerator (muscle-memory contract)', () => {
+  test('Switch Project rebound to Cmd+Shift+P (FR19 / D39 — Cmd+Shift+N now owns New Folder)', () => {
     const template = buildMenuTemplate(makeDeps());
     const switchProject = findByLabel(template, 'Switch Project…');
-    expect(switchProject?.accelerator).toBe('CmdOrCtrl+Shift+N');
+    expect(switchProject?.accelerator).toBe('CmdOrCtrl+Shift+P');
   });
 
   test('"New Project…" label no longer appears in any submenu', () => {
@@ -434,5 +434,258 @@ describe('buildMenuTemplate', () => {
     const isOtherBranch = hasClose && !hasZoom;
     expect(isMacBranch || isOtherBranch).toBe(true);
     expect(roles).toContain('minimize');
+  });
+});
+
+describe('buildMenuTemplate — File menu state-aware items (US-020 / FR16 + FR19)', () => {
+  test('New File renders with Cmd+N accelerator (FR19 — was unbound today)', () => {
+    const template = buildMenuTemplate(makeDeps({ onNewFile: mock(() => {}) }));
+    const newFile = findByLabel(template, 'New File');
+    expect(newFile).toBeDefined();
+    expect(newFile?.accelerator).toBe('CmdOrCtrl+N');
+  });
+
+  test('New Folder renders with Cmd+Shift+N accelerator (FR19 — rebound from Switch Project)', () => {
+    const template = buildMenuTemplate(makeDeps({ onNewFolder: mock(() => {}) }));
+    const newFolder = findByLabel(template, 'New Folder');
+    expect(newFolder).toBeDefined();
+    expect(newFolder?.accelerator).toBe('CmdOrCtrl+Shift+N');
+  });
+
+  test('Move to Trash renders with Cmd+Delete accelerator (FR19 — matches Finder + VSCode)', () => {
+    const template = buildMenuTemplate(makeDeps({ onMoveToTrash: mock(() => {}) }));
+    const moveToTrash = findByLabel(template, 'Move to Trash');
+    expect(moveToTrash).toBeDefined();
+    expect(moveToTrash?.accelerator).toBe('CmdOrCtrl+Delete');
+  });
+
+  test('Rename + Move to Trash DISABLED in project scope (activeTarget.kind = null)', () => {
+    const template = buildMenuTemplate(
+      makeDeps({
+        activeTarget: { kind: null },
+        onRename: mock(() => {}),
+        onMoveToTrash: mock(() => {}),
+      }),
+    );
+    expect(findByLabel(template, 'Rename')?.enabled).toBe(false);
+    expect(findByLabel(template, 'Move to Trash')?.enabled).toBe(false);
+  });
+
+  test('Rename + Move to Trash ENABLED in doc scope (activeTarget.kind = "doc")', () => {
+    const template = buildMenuTemplate(
+      makeDeps({
+        activeTarget: { kind: 'doc', identifier: 'notes/today' },
+        onRename: mock(() => {}),
+        onMoveToTrash: mock(() => {}),
+      }),
+    );
+    expect(findByLabel(template, 'Rename')?.enabled).toBe(true);
+    expect(findByLabel(template, 'Move to Trash')?.enabled).toBe(true);
+  });
+
+  test('Rename + Move to Trash ENABLED in folder scope (activeTarget.kind = "folder")', () => {
+    const template = buildMenuTemplate(
+      makeDeps({
+        activeTarget: { kind: 'folder', identifier: 'specs/2026' },
+        onRename: mock(() => {}),
+        onMoveToTrash: mock(() => {}),
+      }),
+    );
+    expect(findByLabel(template, 'Rename')?.enabled).toBe(true);
+    expect(findByLabel(template, 'Move to Trash')?.enabled).toBe(true);
+  });
+
+  test('Rename DISABLED when activeTarget is undefined (deps missing — unit-test default)', () => {
+    const template = buildMenuTemplate(makeDeps({ onRename: mock(() => {}) }));
+    expect(findByLabel(template, 'Rename')?.enabled).toBe(false);
+  });
+
+  test('Creation cluster + Reveal/Terminal/Send-to-AI/CopyPath always ENABLED when deps provided', () => {
+    const template = buildMenuTemplate(
+      makeDeps({
+        activeTarget: { kind: null },
+        onNewFile: mock(() => {}),
+        onNewFolder: mock(() => {}),
+        onNewFromTemplate: mock(() => {}),
+        onRevealInFinder: mock(() => {}),
+        onOpenInTerminal: mock(() => {}),
+        onSendToAi: mock(() => {}),
+        onCopyFullPath: mock(() => {}),
+        onCopyRelativePath: mock(() => {}),
+      }),
+    );
+    expect(findByLabel(template, 'New File')?.enabled).toBe(true);
+    expect(findByLabel(template, 'New Folder')?.enabled).toBe(true);
+    expect(findByLabel(template, 'New from Template…')?.enabled).toBe(true);
+    expect(findByLabel(template, 'Reveal in Finder')?.enabled).toBe(true);
+    expect(findByLabel(template, 'Open in Terminal')?.enabled).toBe(true);
+    expect(findByLabel(template, 'Open with AI')?.enabled).toBe(true);
+    expect(findByLabel(template, 'Copy Path')?.enabled).toBe(true);
+  });
+
+  test('Items DISABLED when their handler dep is undefined (unit-test default = unwired)', () => {
+    const template = buildMenuTemplate(makeDeps());
+    expect(findByLabel(template, 'New File')?.enabled).toBe(false);
+    expect(findByLabel(template, 'New Folder')?.enabled).toBe(false);
+    expect(findByLabel(template, 'New from Template…')?.enabled).toBe(false);
+    expect(findByLabel(template, 'Reveal in Finder')?.enabled).toBe(false);
+    expect(findByLabel(template, 'Open in Terminal')?.enabled).toBe(false);
+    expect(findByLabel(template, 'Open with AI')?.enabled).toBe(false);
+    expect(findByLabel(template, 'Copy Path')?.enabled).toBe(false);
+  });
+
+  test('Copy Path submenu renders Full Path + Relative Path (FR9 parity with sidebar)', () => {
+    const template = buildMenuTemplate(
+      makeDeps({
+        onCopyFullPath: mock(() => {}),
+        onCopyRelativePath: mock(() => {}),
+      }),
+    );
+    const copyPath = findByLabel(template, 'Copy Path');
+    expect(copyPath).toBeDefined();
+    const sub = copyPath?.submenu as MenuItemConstructorOptions[] | undefined;
+    expect(sub?.[0]?.label).toBe('Full Path');
+    expect(sub?.[1]?.label).toBe('Relative Path');
+  });
+
+  test('click handlers dispatch to deps (e.g. New File → onNewFile)', () => {
+    const onNewFile = mock(() => {});
+    const onMoveToTrash = mock(() => {});
+    const onCopyFullPath = mock(() => {});
+    const template = buildMenuTemplate(
+      makeDeps({
+        activeTarget: { kind: 'doc', identifier: 'a' },
+        onNewFile,
+        onMoveToTrash,
+        onCopyFullPath,
+      }),
+    );
+    (findByLabel(template, 'New File')?.click as (() => void) | undefined)?.();
+    expect(onNewFile).toHaveBeenCalledTimes(1);
+    (findByLabel(template, 'Move to Trash')?.click as (() => void) | undefined)?.();
+    expect(onMoveToTrash).toHaveBeenCalledTimes(1);
+    (findByLabel(template, 'Full Path')?.click as (() => void) | undefined)?.();
+    expect(onCopyFullPath).toHaveBeenCalledTimes(1);
+  });
+
+  test('Hide this file / Hide folder do NOT appear in File menu (D37 trim — stays sidebar-only)', () => {
+    const template = buildMenuTemplate(
+      makeDeps({
+        activeTarget: { kind: 'doc', identifier: 'a' },
+      }),
+    );
+    expect(findByLabel(template, 'Hide this file')).toBeUndefined();
+    expect(findByLabel(template, 'Hide folder')).toBeUndefined();
+  });
+});
+
+describe('buildMenuTemplate — View menu visibility toggles + tree-scoped expand/collapse', () => {
+  test('Show Hidden Files renders as a checkbox-type item', () => {
+    const template = buildMenuTemplate(
+      makeDeps({ onToggleShowHiddenFiles: mock(() => {}), showHiddenFilesChecked: false }),
+    );
+    const item = findByLabel(template, 'Show Hidden Files');
+    expect(item).toBeDefined();
+    expect(item?.type).toBe('checkbox');
+    expect(item?.checked).toBe(false);
+    expect(item?.enabled).toBe(true);
+  });
+
+  test('Show Hidden Files binds Cmd+Shift+. accelerator (Finder convention)', () => {
+    const template = buildMenuTemplate(
+      makeDeps({ onToggleShowHiddenFiles: mock(() => {}), showHiddenFilesChecked: false }),
+    );
+    expect(findByLabel(template, 'Show Hidden Files')?.accelerator).toBe('CmdOrCtrl+Shift+.');
+  });
+
+  test('Show All Files renders as a checkbox-type item with checked state from deps', () => {
+    const template = buildMenuTemplate(
+      makeDeps({ onToggleShowAllFiles: mock(() => {}), showAllFilesChecked: true }),
+    );
+    const item = findByLabel(template, 'Show All Files');
+    expect(item?.type).toBe('checkbox');
+    expect(item?.checked).toBe(true);
+  });
+
+  test('Show Hidden Files DISABLED when toggle handler missing (unit-test default)', () => {
+    const template = buildMenuTemplate(makeDeps());
+    expect(findByLabel(template, 'Show Hidden Files')?.enabled).toBe(false);
+    expect(findByLabel(template, 'Show All Files')?.enabled).toBe(false);
+  });
+
+  test('Expand All / Collapse All render with visible=true by default', () => {
+    const template = buildMenuTemplate(
+      makeDeps({ onExpandAll: mock(() => {}), onCollapseAll: mock(() => {}) }),
+    );
+    expect(findByLabel(template, 'Expand All')?.visible).toBe(true);
+    expect(findByLabel(template, 'Collapse All')?.visible).toBe(true);
+  });
+
+  test('Expand All HIDDEN when canExpandAll === false (smart-hide per D15)', () => {
+    const template = buildMenuTemplate(
+      makeDeps({ onExpandAll: mock(() => {}), canExpandAll: false }),
+    );
+    expect(findByLabel(template, 'Expand All')?.visible).toBe(false);
+  });
+
+  test('Collapse All HIDDEN when canCollapseAll === false', () => {
+    const template = buildMenuTemplate(
+      makeDeps({ onCollapseAll: mock(() => {}), canCollapseAll: false }),
+    );
+    expect(findByLabel(template, 'Collapse All')?.visible).toBe(false);
+  });
+
+  test('View menu click handlers dispatch to deps', () => {
+    const onToggleShowHiddenFiles = mock(() => {});
+    const onToggleShowAllFiles = mock(() => {});
+    const onExpandAll = mock(() => {});
+    const onCollapseAll = mock(() => {});
+    const template = buildMenuTemplate(
+      makeDeps({
+        onToggleShowHiddenFiles,
+        onToggleShowAllFiles,
+        onExpandAll,
+        onCollapseAll,
+      }),
+    );
+    (findByLabel(template, 'Show Hidden Files')?.click as (() => void) | undefined)?.();
+    expect(onToggleShowHiddenFiles).toHaveBeenCalledTimes(1);
+    (findByLabel(template, 'Show All Files')?.click as (() => void) | undefined)?.();
+    expect(onToggleShowAllFiles).toHaveBeenCalledTimes(1);
+    (findByLabel(template, 'Expand All')?.click as (() => void) | undefined)?.();
+    expect(onExpandAll).toHaveBeenCalledTimes(1);
+    (findByLabel(template, 'Collapse All')?.click as (() => void) | undefined)?.();
+    expect(onCollapseAll).toHaveBeenCalledTimes(1);
+  });
+
+  test("View menu retains today's Zoom + Fullscreen items (regression guard)", () => {
+    const template = buildMenuTemplate(makeDeps());
+    const view = findByLabel(template, 'View');
+    expect(view).toBeDefined();
+    const sub = view?.submenu as MenuItemConstructorOptions[] | undefined;
+    const roles = sub?.map((i) => i.role).filter(Boolean) ?? [];
+    expect(roles).toContain('resetZoom');
+    expect(roles).toContain('zoomIn');
+    expect(roles).toContain('zoomOut');
+    expect(roles).toContain('togglefullscreen');
+  });
+
+  test('New View menu items appear BEFORE Zoom items (FR17 / D38 placement)', () => {
+    const template = buildMenuTemplate(
+      makeDeps({
+        onToggleShowHiddenFiles: mock(() => {}),
+        onExpandAll: mock(() => {}),
+      }),
+    );
+    const view = findByLabel(template, 'View');
+    const sub = view?.submenu as MenuItemConstructorOptions[] | undefined;
+    expect(sub).toBeDefined();
+    const labels = sub?.map((i) => i.label ?? `[role:${i.role ?? 'sep'}]`) ?? [];
+    const showHiddenFilesIdx = labels.indexOf('Show Hidden Files');
+    const expandAllIdx = labels.indexOf('Expand All');
+    const resetZoomIdx = labels.indexOf('[role:resetZoom]');
+    expect(showHiddenFilesIdx).toBeGreaterThan(-1);
+    expect(resetZoomIdx).toBeGreaterThan(showHiddenFilesIdx);
+    expect(resetZoomIdx).toBeGreaterThan(expandAllIdx);
   });
 });

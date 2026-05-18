@@ -420,9 +420,10 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
     handoffInput !== null &&
     (trimmedDeferredQuery === '' ||
       VISIBLE_TARGETS.some((target) =>
-        matchesCommandQuery(`Open in ${target.displayName}`, deferredQuery, [
+        matchesCommandQuery(`Open with AI ${target.displayName}`, deferredQuery, [
           target.id,
           'agent handoff',
+          'open in',
         ]),
       ));
   const tagListItems =
@@ -651,11 +652,12 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
           ) : null}
 
           {showAgentGroup ? (
-            <CommandGroup heading="Open in agent">
+            <CommandGroup heading="Open with AI">
               {VISIBLE_TARGETS.filter((target) =>
-                matchesCommandQuery(`Open in ${target.displayName}`, deferredQuery, [
+                matchesCommandQuery(`Open with AI ${target.displayName}`, deferredQuery, [
                   target.id,
                   'agent handoff',
+                  'open in',
                 ]),
               ).map((target) => {
                 const installState = installStates[target.id];
@@ -667,13 +669,13 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                       ? 'Not installed'
                       : null;
                 const accessibleLabel = hint
-                  ? `Open in ${target.displayName}, ${hint}`
-                  : `Open in ${target.displayName}`;
+                  ? `Open with AI ${target.displayName}, ${hint}`
+                  : `Open with AI ${target.displayName}`;
 
                 return (
                   <CommandItem
                     key={target.id}
-                    value={`open in ${target.displayName} ${target.id} agent`}
+                    value={`send to ai ${target.displayName} ${target.id} agent open in`}
                     disabled={!enabled}
                     onSelect={() => {
                       if (!enabled || !handoffInput) return;
@@ -683,7 +685,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                     data-testid={`command-palette-open-in-${target.id}`}
                     aria-label={accessibleLabel}
                   >
-                    <span className="flex-1">Open in {target.displayName}</span>
+                    <span className="flex-1">Open with AI {target.displayName}</span>
                     {hint ? (
                       <span aria-hidden="true" className="ml-auto text-muted-foreground text-xs">
                         {hint}

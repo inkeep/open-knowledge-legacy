@@ -96,7 +96,7 @@ export async function runInstallSkill(
 export function installSkillCommand(): Command {
   return new Command('install-skill')
     .description(
-      'Build openknowledge.skill and open the Claude Desktop App so you can upload it for Claude Chat & Cowork. Not needed for Claude Code — `ok init` covers that separately.',
+      'Build openknowledge.skill and open the Claude Desktop App so you can upload it for Claude Chat & Cowork. Not needed for Claude — `ok init` covers that separately.',
     )
     .option('--out <path>', 'Custom output path (default: ~/Downloads/openknowledge.skill)')
     .option('--no-open', 'Build the file but skip the OS file-association handoff')

@@ -42,4 +42,7 @@ export interface EventChannels {
   'ok:local-op:clone:event': {
     payload: { streamId: string; event: OkLocalOpCloneEvent };
   };
+
+  'ok:sidebar:expand-all': { payload: undefined };
+  'ok:sidebar:collapse-all': { payload: undefined };
 }

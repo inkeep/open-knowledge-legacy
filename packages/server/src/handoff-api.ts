@@ -78,6 +78,34 @@ export function createInstalledAgentsProbe(deps: InstalledAgentsProbeDeps): {
   return { probeAll, probeWithCache };
 }
 
+export function isLocalWebHost(req: IncomingMessage): boolean {
+  const hostHeader = req.headers.host;
+  if (typeof hostHeader === 'string' && hostHeader.length > 0) {
+    try {
+      const { hostname } = new URL(`http://${hostHeader}/`);
+      return isLoopbackHostname(hostname);
+    } catch {}
+  }
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && origin.length > 0) {
+    try {
+      return isLoopbackHostname(new URL(origin).hostname);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
+}
+
 export async function handleInstalledAgents(
   req: IncomingMessage,
   res: ServerResponse,
@@ -91,7 +119,12 @@ export async function handleInstalledAgents(
     return;
   }
   try {
-    const result = await probeAll();
+    const result = isLocalWebHost(req)
+      ? await probeAll()
+      : (Object.fromEntries(INSTALLED_AGENTS_SCHEMES.map((s) => [s, true] as const)) as Record<
+          InstalledAgentScheme,
+          boolean
+        >);
     successResponse(res, 200, InstalledAgentsSuccessSchema, result, {
       handler: 'installed-agents',
     });

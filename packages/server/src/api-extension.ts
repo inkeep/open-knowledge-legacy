@@ -16,7 +16,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
@@ -69,6 +69,7 @@ import {
   HistoryVersionSuccessSchema,
   HubsSuccessSchema,
   INLINE_RENDERABLE_EXTENSIONS,
+  type InlineAssetMediaKind,
   InstallSkillRequestSchema,
   InstallSkillSuccessSchema,
   LinkGraphSuccessSchema,
@@ -87,6 +88,7 @@ import {
   MetricsAgentPresenceSuccessSchema,
   MetricsParseHealthSuccessSchema,
   MetricsReconciliationSuccessSchema,
+  mediaKindForSidebarAssetExtension,
   OrphansSuccessSchema,
   PageHeadingsSuccessSchema,
   PagesSuccessSchema,
@@ -139,6 +141,8 @@ import {
   TestRescanBacklinksSuccessSchema,
   TestRescanFilesSuccessSchema,
   TestResetSuccessSchema,
+  TrashCleanupRequestSchema,
+  TrashCleanupSuccessSchema,
   UploadAssetSuccessSchema,
   UploadRequestSchema,
   type WorkspaceSearchCorpus,
@@ -291,7 +295,13 @@ import {
   updateFileIndex,
   upsertFolderIndexEntry as upsertFolderIndexEntryInIndex,
 } from './file-watcher.ts';
-import { tracedMkdirSync, tracedRenameSync, tracedWriteFileSync } from './fs-traced.ts';
+import {
+  classifyFsPath,
+  normalizeFsPath,
+  tracedMkdirSync,
+  tracedRenameSync,
+  tracedWriteFileSync,
+} from './fs-traced.ts';
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
@@ -707,6 +717,147 @@ export function safeSubdir(baseDir: string, subdir: string): string {
     throw new Error(`Invalid directory: ${subdir}`);
   }
   return resolved;
+}
+
+function synthesizeShowAllAssetExt(name: string): string {
+  const ext = extname(name);
+  if (ext) return ext.slice(1).toLowerCase();
+  if (name.startsWith('.') && name.length > 1) return name.slice(1).toLowerCase();
+  return 'file';
+}
+
+interface WalkShowAllOpts {
+  contentDir: string;
+  contentFilter: ContentFilter;
+  dirFilter: string | null;
+  documents: DocumentListEntry[];
+  getDocExtension: (docName: string) => string;
+}
+
+async function walkContentDirForShowAll(opts: WalkShowAllOpts): Promise<void> {
+  const { contentDir, contentFilter, dirFilter, documents, getDocExtension } = opts;
+
+  const passesDirFilter = (rel: string): boolean => {
+    if (!dirFilter) return true;
+    return rel === dirFilter || rel.startsWith(`${dirFilter}/`);
+  };
+
+  let contentDirCanonical: string;
+  try {
+    contentDirCanonical = await realpath(contentDir);
+  } catch {
+    contentDirCanonical = contentDir;
+  }
+  const isInsideContentDir = (resolved: string): boolean => {
+    if (resolved === contentDirCanonical) return true;
+    return resolved.startsWith(`${contentDirCanonical}/`);
+  };
+
+  async function walk(absDir: string, relDir: string): Promise<void> {
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = await readdir(absDir, { withFileTypes: true });
+    } catch (err) {
+      console.warn(`[document-list][showAll] readdir failed for ${absDir}:`, err);
+      return;
+    }
+
+    for (const entry of entries) {
+      const relPath = relDir ? `${relDir}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        if (contentFilter.isDirExcluded(relPath, { bypassFilters: true })) continue;
+
+        const dirAbsRaw = `${absDir}/${entry.name}`;
+        let dirCanonical: string;
+        try {
+          dirCanonical = await realpath(dirAbsRaw);
+        } catch (err) {
+          console.warn(`[document-list][showAll] realpath failed for ${dirAbsRaw}:`, err);
+          continue;
+        }
+        if (!isInsideContentDir(dirCanonical)) {
+          console.warn(
+            `[document-list][showAll] refusing symlink-escape ${dirAbsRaw} -> ${dirCanonical}`,
+          );
+          continue;
+        }
+
+        if (passesDirFilter(relPath)) {
+          let folderStat: import('node:fs').Stats | null = null;
+          try {
+            folderStat = await stat(dirAbsRaw);
+          } catch (err) {
+            console.warn(`[document-list][showAll] stat failed for ${dirAbsRaw}:`, err);
+          }
+          documents.push({
+            kind: 'folder',
+            path: relPath,
+            size: 0,
+            modified: folderStat ? folderStat.mtime.toISOString() : '',
+            docExt: '.md',
+            isSymlink: false,
+            canonicalDocName: null,
+            targetPath: null,
+          });
+        }
+
+        await walk(dirAbsRaw, relPath);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+      if (contentFilter.isExcluded(relPath, { bypassFilters: true })) continue;
+      if (!passesDirFilter(relPath)) continue;
+
+      let fileStat: import('node:fs').Stats | null = null;
+      try {
+        fileStat = await stat(`${absDir}/${entry.name}`);
+      } catch (err) {
+        console.warn(`[document-list][showAll] stat failed for ${absDir}/${entry.name}:`, err);
+        continue;
+      }
+
+      if (isSupportedDocFile(entry.name)) {
+        const docName = relPath.replace(/\.(md|mdx)$/i, '');
+        const docExt = getDocExtension(docName);
+        documents.push({
+          kind: 'document',
+          docName,
+          docExt,
+          size: fileStat.size,
+          modified: fileStat.mtime.toISOString(),
+          isSymlink: false,
+          canonicalDocName: null,
+          targetPath: null,
+        });
+        continue;
+      }
+
+      const assetExt = synthesizeShowAllAssetExt(entry.name);
+      const mediaKind: InlineAssetMediaKind | null = ASSET_EXTENSIONS.has(assetExt)
+        ? mediaKindForSidebarAssetExtension(assetExt)
+        : null;
+      documents.push({
+        kind: 'asset',
+        docName: relPath,
+        docExt: assetExt,
+        path: relPath,
+        assetExt,
+        mediaKind,
+        referencedBy: [],
+        size: fileStat.size,
+        modified: fileStat.mtime.toISOString(),
+        isSymlink: false,
+        canonicalDocName: null,
+        targetPath: null,
+      });
+    }
+  }
+
+  const startAbs = dirFilter ? `${contentDir}/${dirFilter}` : contentDir;
+  const startRel = dirFilter ?? '';
+  await walk(startAbs, startRel);
 }
 
 type ContentEntryKind = 'file' | 'folder';
@@ -2131,6 +2282,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
         const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
         const dir = url.searchParams.get('dir');
+        const showAll = url.searchParams.get('showAll') === 'true';
 
         if (dir) {
           try {
@@ -2147,6 +2299,40 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             );
             return;
           }
+        }
+
+        if (showAll && contentFilter) {
+          const documents: DocumentListEntry[] = [];
+          try {
+            await walkContentDirForShowAll({
+              contentDir,
+              contentFilter,
+              dirFilter: dir,
+              documents,
+              getDocExtension,
+            });
+            documents.sort((a, b) => {
+              const aPath = a.kind === 'folder' ? (a.path ?? '') : (a.docName ?? a.path ?? '');
+              const bPath = b.kind === 'folder' ? (b.path ?? '') : (b.docName ?? b.path ?? '');
+              return aPath.localeCompare(bPath);
+            });
+            successResponse(
+              res,
+              200,
+              DocumentListSuccessSchema,
+              { documents },
+              { handler: 'document-list' },
+            );
+          } catch (e) {
+            errorResponse(
+              res,
+              500,
+              'urn:ok:error:internal-server-error',
+              'Failed to list documents (showAll mode).',
+              { handler: 'document-list', cause: e },
+            );
+          }
+          return;
         }
 
         const index = getFileIndex();
@@ -5076,6 +5262,140 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     { handler: 'delete-path', method: 'POST' },
   );
 
+  const handleTrashCleanup = withValidation(
+    TrashCleanupRequestSchema,
+    async (_req, res, body) => {
+      return withSpan(
+        'ok.fs.trash_cleanup',
+        {
+          attributes: {
+            'ok.cleanup.kind': body.kind,
+            'ok.cleanup.path': normalizeFsPath(body.path),
+            'ok.cleanup.path.role': classifyFsPath(body.path),
+          },
+        },
+        async () => {
+          try {
+            const bodyObj = body as unknown as Record<string, unknown>;
+            const actor = extractActorIdentity(bodyObj, getPrincipal);
+            if (actor.kind === 'invalid-summary') {
+              errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Summary must be a string.', {
+                handler: 'trash-cleanup',
+              });
+              return;
+            }
+            const { kind, path } = body;
+            if (!isValidRelativeContentPath(path)) {
+              errorResponse(
+                res,
+                400,
+                'urn:ok:error:invalid-request',
+                'path must be a relative content path.',
+                { handler: 'trash-cleanup' },
+              );
+              return;
+            }
+            const isReservedFolder =
+              kind === 'folder' &&
+              (path === '__system__' ||
+                path === '__config__' ||
+                path === '__user__' ||
+                path === '__local__' ||
+                path.startsWith('__system__/') ||
+                path.startsWith('__config__/') ||
+                path.startsWith('__user__/') ||
+                path.startsWith('__local__/'));
+            if ((kind === 'file' && (isSystemDoc(path) || isConfigDoc(path))) || isReservedFolder) {
+              errorResponse(
+                res,
+                400,
+                'urn:ok:error:reserved-doc-name',
+                `'${path}' is a reserved document name.`,
+                { handler: 'trash-cleanup' },
+              );
+              return;
+            }
+
+            const initialIndex = getFileIndex();
+            const deletedDocNames =
+              kind === 'file'
+                ? initialIndex.has(path)
+                  ? [path]
+                  : []
+                : listAffectedDocNames(initialIndex, kind, path);
+
+            if (deletedDocNames.length === 0) {
+              successResponse(
+                res,
+                200,
+                TrashCleanupSuccessSchema,
+                { deletedDocNames: [] },
+                { handler: 'trash-cleanup' },
+              );
+              return;
+            }
+
+            await captureAndCloseDocuments(deletedDocNames);
+
+            if (recentlyRemovedDocs) {
+              for (const docName of deletedDocNames) {
+                if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
+                recentlyRemovedDocs.setDeleted(docName);
+                console.info(
+                  JSON.stringify({
+                    event: 'recently-removed-docs-populate',
+                    docName,
+                    kind: 'deleted',
+                    source: 'handleTrashCleanup',
+                  }),
+                );
+              }
+            }
+
+            const fileIndex = getFileIndex();
+            if (fileIndex instanceof Map) {
+              for (const docName of deletedDocNames) {
+                updateFileIndex(
+                  {
+                    kind: 'delete',
+                    path: resolve(contentDir, `${docName}${getDocExtension(docName)}`),
+                    docName,
+                  },
+                  fileIndex as Map<string, FileIndexEntry>,
+                );
+              }
+            }
+            if (kind === 'folder') {
+              removeFolderIndexEntries(path);
+            }
+
+            signalChannel?.('files');
+
+            successResponse(
+              res,
+              200,
+              TrashCleanupSuccessSchema,
+              { deletedDocNames },
+              { handler: 'trash-cleanup' },
+            );
+          } catch (e) {
+            errorResponse(
+              res,
+              500,
+              'urn:ok:error:internal-server-error',
+              'Failed to clean up after trash.',
+              {
+                handler: 'trash-cleanup',
+                cause: e,
+              },
+            );
+          }
+        },
+      );
+    },
+    { handler: 'trash-cleanup', method: 'POST' },
+  );
+
   const handlePages = withValidation(
     EmptyRequestSchema,
     async (_req, res) => {
@@ -7923,6 +8243,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/create-folder': handleCreateFolder,
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
+    '/api/trash/cleanup': handleTrashCleanup,
     '/api/upload': handleUploadAsset,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
@@ -7982,6 +8303,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/create-folder',
     '/api/rename-path',
     '/api/delete-path',
+    '/api/trash/cleanup',
     '/api/agent-write',
     '/api/agent-write-md',
     '/api/agent-patch',

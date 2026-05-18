@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { buildClaudeUrl } from './claude-url.ts';
-import { composeProjectPrompt } from './prompt-composer.ts';
+import { composeEmptySpacePrompt } from './prompt-composer.ts';
 import type { HandoffPayload } from './types.ts';
 
 function payload(overrides: Partial<HandoffPayload> = {}): HandoffPayload {
@@ -13,15 +13,15 @@ function payload(overrides: Partial<HandoffPayload> = {}): HandoffPayload {
   };
 }
 
-test('buildClaudeUrl emits cwd-only claude://cowork/new?folder=... for doc-scoped cowork', () => {
+test('buildClaudeUrl threads prompt for doc-scoped cowork as q=<prompt>&folder=<projectDir>', () => {
   expect(buildClaudeUrl({ mode: 'cowork' }, payload())).toBe(
-    'claude://cowork/new?folder=%2FUsers%2Fwho%2Fproj',
+    'claude://cowork/new?q=open%20this&folder=%2FUsers%2Fwho%2Fproj',
   );
 });
 
-test('buildClaudeUrl emits cwd-only claude://code/new?folder=... for doc-scoped code', () => {
+test('buildClaudeUrl threads prompt for doc-scoped code as q=<prompt>&folder=<projectDir>', () => {
   expect(buildClaudeUrl({ mode: 'code' }, payload({ target: 'claude-code' }))).toBe(
-    'claude://code/new?folder=%2FUsers%2Fwho%2Fproj',
+    'claude://code/new?q=open%20this&folder=%2FUsers%2Fwho%2Fproj',
   );
 });
 
@@ -35,29 +35,28 @@ test('buildClaudeUrl single-encodes literal % in projectDir (cowork)', () => {
   );
   expect(url).toContain('folder=%2FUsers%2Fwho%2FMy%20%25Project');
   expect(url).not.toContain('file=');
-  expect(url).not.toContain('q=');
 });
 
-test('buildClaudeUrl doc-scoped omits file= even when docPath contains em-dash (code)', () => {
+test('buildClaudeUrl precedent #25: docPath bytes never leak into URL (em-dash, code)', () => {
   const url = buildClaudeUrl(
     { mode: 'code' },
     payload({
       target: 'claude-code',
       docPath: '/Users/who/proj/café — notes.md',
+      prompt: 'simple prompt',
     }),
   );
   expect(url).not.toContain('file=');
-  expect(url).not.toContain('q=');
   expect(url).not.toContain('%E2%80%94');
 });
 
-test('buildClaudeUrl doc-scoped omits file= even when docPath contains unicode (cowork)', () => {
+test('buildClaudeUrl precedent #25: docPath bytes never leak into URL (unicode, cowork)', () => {
   const url = buildClaudeUrl(
     { mode: 'cowork' },
-    payload({ docPath: '/Users/who/proj/café-notes.md' }),
+    payload({ docPath: '/Users/who/proj/café-notes.md', prompt: 'simple prompt' }),
   );
   expect(url).not.toContain('file=');
-  expect(url).not.toContain('q=');
+  expect(url).not.toContain('caf%C3%A9');
 });
 
 test('buildClaudeUrl single-encodes space in projectDir (code)', () => {
@@ -71,7 +70,6 @@ test('buildClaudeUrl single-encodes space in projectDir (code)', () => {
   );
   expect(url).toContain('folder=%2FUsers%2Fwho%2FMy%20Project');
   expect(url).not.toContain('file=');
-  expect(url).not.toContain('q=');
 });
 
 test('buildClaudeUrl single-encodes literal & in projectDir (cowork) — DC8.5', () => {
@@ -80,24 +78,24 @@ test('buildClaudeUrl single-encodes literal & in projectDir (cowork) — DC8.5',
     payload({
       projectDir: '/Users/who/A & B',
       docPath: '/Users/who/A & B/doc.md',
+      prompt: 'hi',
     }),
   );
   expect(url).toContain('folder=%2FUsers%2Fwho%2FA%20%26%20B');
   expect(url).not.toContain('file=');
-  expect(url).not.toContain('q=');
-  expect(url.split('&').length - 1).toBe(0);
+  expect(url.split('&').length - 1).toBe(1);
 });
 
-test('buildClaudeUrl doc-scoped omits file= even when docPath contains # (code) — DC8.5', () => {
+test('buildClaudeUrl precedent #25: docPath bytes never leak into URL (# in docPath, code) — DC8.5', () => {
   const url = buildClaudeUrl(
     { mode: 'code' },
     payload({
       target: 'claude-code',
       docPath: '/Users/who/proj/notes#1.md',
+      prompt: 'simple prompt',
     }),
   );
   expect(url).not.toContain('file=');
-  expect(url).not.toContain('q=');
   expect(url.includes('#')).toBe(false);
 });
 
@@ -111,10 +109,16 @@ test('buildClaudeUrl single-encodes Windows backslash projectDir (cowork) — DC
   );
   expect(url).toContain('folder=C%3A%5CUsers%5Cwho%5Cproj');
   expect(url).not.toContain('file=');
-  expect(url).not.toContain('q=');
 });
 
-test('buildClaudeUrl empty-prompt + empty docPath drops q and file, keeps folder', () => {
+test('buildClaudeUrl empty-prompt defensive fallback drops q=, keeps folder (doc-scoped)', () => {
+  const url = buildClaudeUrl({ mode: 'cowork' }, payload({ prompt: '' }));
+  expect(url).toBe('claude://cowork/new?folder=%2FUsers%2Fwho%2Fproj');
+  expect(url).not.toContain('q=');
+  expect(url).not.toContain('file=');
+});
+
+test('buildClaudeUrl empty-prompt defensive fallback drops q=, keeps folder (project-scoped)', () => {
   const url = buildClaudeUrl({ mode: 'cowork' }, payload({ prompt: '', docPath: '' }));
   expect(url).toBe('claude://cowork/new?folder=%2FUsers%2Fwho%2Fproj');
   expect(url).not.toContain('q=');
@@ -129,8 +133,8 @@ test('buildClaudeUrl empty-prompt fallback applies to code mode as well', () => 
   expect(url).toBe('claude://code/new?folder=%2FUsers%2Fwho%2Fproj');
 });
 
-test('buildClaudeUrl project-scoped (composeProjectPrompt + empty docPath) emits q + folder, no file', () => {
-  const prompt = composeProjectPrompt();
+test('buildClaudeUrl project-scoped (composeEmptySpacePrompt + empty docPath) emits q + folder, no file', () => {
+  const prompt = composeEmptySpacePrompt();
   const url = buildClaudeUrl({ mode: 'cowork' }, payload({ prompt, docPath: '' }));
   expect(url).toBe(
     `claude://cowork/new?q=${encodeURIComponent(prompt)}&folder=%2FUsers%2Fwho%2Fproj`,
@@ -138,7 +142,7 @@ test('buildClaudeUrl project-scoped (composeProjectPrompt + empty docPath) emits
   expect(url).not.toContain('file=');
 });
 
-test('INVARIANT: doc-scoped buildClaudeUrl never emits q= or file=, across input variations', () => {
+test('INVARIANT: buildClaudeUrl threads prompt through ALL scopes; precedent #25 = no file=', () => {
   const cases: ReadonlyArray<{
     projectDir: string;
     docPath: string;
@@ -167,7 +171,6 @@ test('INVARIANT: doc-scoped buildClaudeUrl never emits q= or file=, across input
       prompt: 'x',
     },
     { projectDir: '/Users/a/proj', docPath: '/Users/a/proj/notes#1.md', prompt: 'x' },
-    { projectDir: '/Users/a/proj', docPath: '/Users/a/proj/log.md', prompt: '' },
   ];
   for (const c of cases) {
     for (const mode of ['cowork', 'code'] as const) {
@@ -177,7 +180,31 @@ test('INVARIANT: doc-scoped buildClaudeUrl never emits q= or file=, across input
         { target, projectDir: c.projectDir, docPath: c.docPath, prompt: c.prompt },
       );
       expect(url).not.toContain('file=');
+      expect(url).toContain('q=');
+      expect(url).toContain('folder=');
+    }
+  }
+});
+
+test('INVARIANT: buildClaudeUrl empty-prompt fallback drops q= across input variations', () => {
+  const cases: ReadonlyArray<{
+    projectDir: string;
+    docPath: string;
+  }> = [
+    { projectDir: '/Users/a/proj', docPath: '/Users/a/proj/a.md' },
+    { projectDir: '/Users/a/proj', docPath: '' },
+    { projectDir: '/Users/a/A & B', docPath: '' },
+    { projectDir: 'C:\\Users\\a\\proj', docPath: 'C:\\Users\\a\\proj\\d.md' },
+  ];
+  for (const c of cases) {
+    for (const mode of ['cowork', 'code'] as const) {
+      const target: HandoffPayload['target'] = mode === 'cowork' ? 'claude-cowork' : 'claude-code';
+      const url = buildClaudeUrl(
+        { mode },
+        { target, projectDir: c.projectDir, docPath: c.docPath, prompt: '' },
+      );
       expect(url).not.toContain('q=');
+      expect(url).not.toContain('file=');
       expect(url).toContain('folder=');
     }
   }

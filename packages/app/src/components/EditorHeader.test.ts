@@ -67,3 +67,61 @@ describe('EditorHeader source-level guards — chrome-row retrofit', () => {
     expect(SRC).toMatch(/border-b|shadow-\[inset_0_-1px_0_var\(--border\)\]/);
   });
 });
+
+describe('EditorHeader — sparkle icon 3-scope dispatch (US-011 source-level)', () => {
+  test('imports all three handoff input helpers — file, folder, project scopes', () => {
+    expect(SRC).toContain('buildHandoffInput');
+    expect(SRC).toContain('buildFolderHandoffInput');
+    expect(SRC).toContain('buildProjectScopedHandoffInput');
+  });
+
+  test('imports joinWorkspacePath for folder-abs-path derivation', () => {
+    expect(SRC).toMatch(/joinWorkspacePath/);
+    expect(SRC).toMatch(/from\s+['"]@\/lib\/workspace-paths['"]/);
+  });
+
+  test('destructures activeTarget alongside activeDocName from useDocumentContext', () => {
+    expect(SRC).toMatch(
+      /const\s*\{\s*activeDocName\s*,\s*activeTarget\s*\}\s*=\s*useDocumentContext\(\)/,
+    );
+  });
+
+  test('handoffInput is built via an IIFE that switches on activeTarget shape', () => {
+    expect(SRC).toMatch(
+      /const\s+handoffInput\s*:\s*HandoffDispatchInput\s*\|\s*null\s*=\s*\(\(\)\s*=>/,
+    );
+  });
+
+  test('null activeTarget routes to buildProjectScopedHandoffInput (project scope)', () => {
+    expect(SRC).toMatch(
+      /if\s*\(\s*activeTarget\s*===\s*null\s*\)[\s\S]{0,80}buildProjectScopedHandoffInput/,
+    );
+  });
+
+  test('folder kind routes to buildFolderHandoffInput with folderAbsPath + folderRelativePath', () => {
+    expect(SRC).toMatch(
+      /activeTarget\.kind\s*===\s*['"]folder['"][\s\S]*?buildFolderHandoffInput\s*\(\s*\{[\s\S]*?folderAbsPath[\s\S]*?folderRelativePath:\s*activeTarget\.folderPath/,
+    );
+  });
+
+  test('folder scope short-circuits to null when workspace is not yet resolved', () => {
+    expect(SRC).toMatch(
+      /activeTarget\.kind\s*===\s*['"]folder['"][\s\S]*?if\s*\(\s*!workspace\s*\)\s*return\s+null/,
+    );
+  });
+
+  test('fallback (doc / folder-index / missing / asset) routes to buildHandoffInput', () => {
+    expect(SRC).toMatch(/return\s+buildHandoffInput\s*\(\s*\{\s*docName:\s*activeDocName/);
+  });
+
+  test('OpenInAgentMenu renders UNCONDITIONALLY — the activeDocName gate is removed', () => {
+    expect(SRC).not.toMatch(/activeDocName\s*&&\s*<OpenInAgentMenu/);
+    expect(SRC).toMatch(/<OpenInAgentMenu\s+input=\{handoffInput\}\s*\/>/);
+  });
+
+  test('Save button retains its activeDocName gate (checkpoint is doc-scoped)', () => {
+    expect(SRC).toMatch(
+      /activeDocName\s*&&\s*\(\s*<Tooltip>[\s\S]*?aria-label="Checkpoint version"/,
+    );
+  });
+});

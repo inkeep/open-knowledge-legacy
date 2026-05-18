@@ -610,7 +610,7 @@ describe('runInit', () => {
 
       expect(result.legacyProjectConfigs).toEqual(
         expect.arrayContaining([
-          { editorId: 'claude', label: 'Claude Code', path: join(testDir, '.mcp.json') },
+          { editorId: 'claude', label: 'Claude', path: join(testDir, '.mcp.json') },
           { editorId: 'cursor', label: 'Cursor', path: join(testDir, '.cursor', 'mcp.json') },
         ]),
       );
@@ -633,7 +633,7 @@ describe('runInit', () => {
       const result = await runInitForTest({ editors: ['claude', 'cursor'] });
       const output = formatInitResult(result, testDir);
 
-      const claudeIndex = output.indexOf('Claude Code');
+      const claudeIndex = output.indexOf('Claude');
       const launchJsonIndex = output.indexOf('launch.json');
       const legacyIndex = output.indexOf('Project MCP configs found:');
 
@@ -1059,7 +1059,7 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
     });
 
-    it('scope=project writes only project-level config for Claude Code', async () => {
+    it('scope=project writes only project-level config for Claude', async () => {
       const result = await runInitForTest({ editors: ['claude'], scope: 'project' });
       expect(result.editors).toHaveLength(1);
       expect(result.editors[0].editorId).toBe('claude');
@@ -1146,7 +1146,7 @@ describe('runInit', () => {
     it('scope=project shows "(project)" label in output', async () => {
       const result = await runInitForTest({ editors: ['claude'], scope: 'project' });
       const output = formatInitResult(result, testDir);
-      expect(output).toContain('Claude Code (project)');
+      expect(output).toContain('Claude (project)');
       expect(output).toContain('Project-local skills:');
       expect(output).toContain('.claude/skills/open-knowledge/SKILL.md');
     });
@@ -1164,7 +1164,7 @@ describe('runInit', () => {
       const output = formatInitResult(result, testDir);
       const nextStepsLine = output.split('\n').find((l) => l.includes('Open your editor'));
       expect(nextStepsLine).toBeDefined();
-      const matches = nextStepsLine?.match(/Claude Code/g);
+      const matches = nextStepsLine?.match(/Claude/g);
       expect(matches).toHaveLength(1);
     });
 

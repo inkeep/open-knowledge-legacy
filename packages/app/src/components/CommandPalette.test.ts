@@ -173,7 +173,7 @@ describe('Settings entry (US-010 / FR-1 / D54 — source-level guards)', () => {
   test('Settings sits inside the "Project" CommandGroup', () => {
     const settingsIdx = src.indexOf('command-palette-settings');
     const projectGroupIdx = src.indexOf('heading="Project"');
-    const agentGroupIdx = src.indexOf('heading="Open in agent"');
+    const agentGroupIdx = src.indexOf('heading="Open with AI"');
     expect(projectGroupIdx).toBeLessThan(settingsIdx);
     if (agentGroupIdx >= 0) {
       expect(agentGroupIdx).toBeLessThan(projectGroupIdx);

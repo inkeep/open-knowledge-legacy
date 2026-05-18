@@ -903,4 +903,104 @@ describe('ContentFilter', () => {
       expect(filter.isExcluded('script.ts')).toBe(true);
     });
   });
+
+  describe('bypassFilters mode (Show All Files — FR6 / D12)', () => {
+    test('admits .gitignored files', () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'secrets/\n*.log\n');
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isExcluded('secrets/api-key.md')).toBe(true);
+      expect(filter.isExcluded('debug.log')).toBe(true);
+
+      expect(filter.isExcluded('secrets/api-key.md', { bypassFilters: true })).toBe(false);
+      expect(filter.isExcluded('debug.log', { bypassFilters: true })).toBe(false);
+    });
+
+    test('admits .okignored files', () => {
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n');
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isExcluded('drafts/wip.md')).toBe(true);
+      expect(filter.isExcluded('drafts/wip.md', { bypassFilters: true })).toBe(false);
+    });
+
+    test('admits files inside BUILTIN_SKIP_DIRS (.git, .ok, node_modules, dist, etc.)', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isExcluded('.git/objects/foo.md')).toBe(true);
+      expect(filter.isExcluded('.ok/templates/daily.md')).toBe(true);
+      expect(filter.isExcluded('node_modules/pkg/README.md')).toBe(true);
+      expect(filter.isExcluded('apps/web/dist/index.md')).toBe(true);
+
+      expect(filter.isExcluded('.git/objects/foo.md', { bypassFilters: true })).toBe(false);
+      expect(filter.isExcluded('.ok/templates/daily.md', { bypassFilters: true })).toBe(false);
+      expect(filter.isExcluded('node_modules/pkg/README.md', { bypassFilters: true })).toBe(false);
+      expect(filter.isExcluded('apps/web/dist/index.md', { bypassFilters: true })).toBe(false);
+    });
+
+    test('admits non-md/non-asset extensions (.ts, .py, .sh, .yaml)', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isExcluded('src/index.ts')).toBe(true);
+      expect(filter.isExcluded('scripts/build.sh')).toBe(true);
+      expect(filter.isExcluded('analysis.py')).toBe(true);
+      expect(filter.isExcluded('config.yaml')).toBe(true);
+
+      expect(filter.isExcluded('src/index.ts', { bypassFilters: true })).toBe(false);
+      expect(filter.isExcluded('scripts/build.sh', { bypassFilters: true })).toBe(false);
+      expect(filter.isExcluded('analysis.py', { bypassFilters: true })).toBe(false);
+      expect(filter.isExcluded('config.yaml', { bypassFilters: true })).toBe(false);
+    });
+
+    test('STOP rule preserved — reserved system + config doc names stay hidden in bypass mode', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isExcluded('__system__.md', { bypassFilters: true })).toBe(true);
+      expect(filter.isExcluded('__config__/project.md', { bypassFilters: true })).toBe(true);
+      expect(filter.isExcluded('__config__/project.mdx', { bypassFilters: true })).toBe(true);
+      expect(filter.isExcluded('__config__/okignore.md', { bypassFilters: true })).toBe(true);
+      expect(filter.isExcluded('__user__/config.yml.md', { bypassFilters: true })).toBe(true);
+      expect(filter.isExcluded('__local__/project.md', { bypassFilters: true })).toBe(true);
+    });
+
+    test('isDirExcluded admits BUILTIN_SKIP_DIRS + gitignored dirs in bypass mode', () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'drafts/\n');
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isDirExcluded('node_modules')).toBe(true);
+      expect(filter.isDirExcluded('.git')).toBe(true);
+      expect(filter.isDirExcluded('.ok/templates')).toBe(true);
+      expect(filter.isDirExcluded('drafts')).toBe(true);
+
+      expect(filter.isDirExcluded('node_modules', { bypassFilters: true })).toBe(false);
+      expect(filter.isDirExcluded('.git', { bypassFilters: true })).toBe(false);
+      expect(filter.isDirExcluded('.ok/templates', { bypassFilters: true })).toBe(false);
+      expect(filter.isDirExcluded('drafts', { bypassFilters: true })).toBe(false);
+    });
+
+    test('isPathIgnored preserves STOP rule in bypass mode', () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'private/\n');
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isPathIgnored('private/secret.md')).toBe(true);
+      expect(filter.isPathIgnored('docs/readme.md')).toBe(false);
+      expect(filter.isPathIgnored('__system__.md')).toBe(true);
+
+      expect(filter.isPathIgnored('private/secret.md', { bypassFilters: true })).toBe(false);
+      expect(filter.isPathIgnored('__system__.md', { bypassFilters: true })).toBe(true);
+      expect(filter.isPathIgnored('__config__/project.md', { bypassFilters: true })).toBe(true);
+    });
+
+    test('default behavior (no opts) byte-equivalent to opts.bypassFilters === false', () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'dist/\n');
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      const paths = ['dist/out.md', 'docs/guide.md', '__system__.md', 'script.ts'];
+      for (const p of paths) {
+        expect(filter.isExcluded(p)).toBe(filter.isExcluded(p, { bypassFilters: false }));
+        expect(filter.isDirExcluded(p)).toBe(filter.isDirExcluded(p, { bypassFilters: false }));
+        expect(filter.isPathIgnored(p)).toBe(filter.isPathIgnored(p, { bypassFilters: false }));
+      }
+    });
+  });
 });

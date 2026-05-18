@@ -7,6 +7,7 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 
@@ -16,6 +17,9 @@ interface DeleteConfirmationProps {
   onDelete: () => Promise<void> | void;
   customTitle?: string;
   customDescription?: string;
+  customDetail?: string;
+  customConfirmLabel?: string;
+  customConfirmLabelBusy?: string;
   children?: ReactNode;
 }
 
@@ -25,29 +29,41 @@ export function DeleteConfirmationDialog({
   onDelete,
   customTitle,
   customDescription,
+  customDetail,
+  customConfirmLabel,
+  customConfirmLabelBusy,
   children,
 }: DeleteConfirmationProps) {
+  const confirmLabel = customConfirmLabel ?? 'Delete';
+  const confirmLabelBusy = customConfirmLabelBusy ?? customConfirmLabel ?? 'Deleting';
   return (
     <DialogContent>
-      <DialogTitle>{customTitle ?? `Delete ${itemName}`}</DialogTitle>
-      <DialogDescription className="whitespace-pre-wrap">
-        {customDescription ??
-          `Are you sure you want to delete ${itemName}? This action cannot be undone.`}
-      </DialogDescription>
+      <DialogHeader>
+        <DialogTitle>{customTitle ?? `Delete ${itemName}`}</DialogTitle>
+        <DialogDescription className="whitespace-pre-wrap">
+          {customDescription ??
+            `Are you sure you want to delete ${itemName}? This action cannot be undone.`}
+        </DialogDescription>
+        {customDetail ? (
+          <p className="text-muted-foreground text-xs" data-testid="delete-confirmation-detail">
+            {customDetail}
+          </p>
+        ) : null}
+      </DialogHeader>
       {children ? <DialogBody>{children}</DialogBody> : null}
       <DialogFooter>
         <DialogClose asChild>
-          <Button variant="outline" disabled={isSubmitting}>
+          <Button variant="outline" className="font-mono uppercase" disabled={isSubmitting}>
             Cancel
           </Button>
         </DialogClose>
         <Button variant="destructive" onClick={onDelete} disabled={isSubmitting}>
           {isSubmitting ? (
             <>
-              <Loader2 className="size-4 animate-spin" /> Deleting
+              <Loader2 className="size-4 animate-spin" /> {confirmLabelBusy}
             </>
           ) : (
-            'Delete'
+            confirmLabel
           )}
         </Button>
       </DialogFooter>

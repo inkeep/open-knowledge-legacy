@@ -30,6 +30,7 @@ const REQUIRED_HANDLERS = [
   'handleCreateFolder',
   'handleRenamePath',
   'handleDeletePath',
+  'handleTrashCleanup',
   'handleUploadAsset',
 ];
 

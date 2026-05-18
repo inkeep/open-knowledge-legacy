@@ -189,6 +189,16 @@ async function installDelayedDesktopSessionBridge(
           revealAsset: async () => ({ ok: false, reason: 'not-found' }),
           showAssetMenu: async () => {},
           showItemInFolder: async () => {},
+          trashItem: async () => ({ ok: true as const }),
+          openInTerminal: async () => ({ ok: true as const }),
+        },
+        editor: {
+          notifyActiveTargetChanged: () => {},
+          notifyViewMenuStateChanged: () => {},
+        },
+        sidebar: {
+          expandAll: () => unsubscribe,
+          collapseAll: () => unsubscribe,
         },
         clipboard: { writeText: async () => {} },
         project: {

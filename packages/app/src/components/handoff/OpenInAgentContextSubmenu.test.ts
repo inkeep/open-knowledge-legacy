@@ -36,3 +36,17 @@ describe('source-level guards', () => {
     expect(SRC).toMatch(/!claudeInstalled\s*\?/);
   });
 });
+
+describe('webFallbackVisible prop (D25 — folder/empty-space hide the claude.ai row)', () => {
+  test('prop is declared optional on the props interface', () => {
+    expect(SRC).toMatch(/readonly webFallbackVisible\?:\s*boolean;/);
+  });
+
+  test("defaults to true so the file-surface caller keeps today's behavior", () => {
+    expect(SRC).toMatch(/webFallbackVisible\s*=\s*true\s*\}\s*=\s*props/);
+  });
+
+  test('the web-fallback row is gated on BOTH webFallbackVisible AND !claudeInstalled', () => {
+    expect(SRC).toMatch(/webFallbackVisible\s*&&\s*!claudeInstalled\s*\?/);
+  });
+});

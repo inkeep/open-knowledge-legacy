@@ -46,7 +46,7 @@ OAuth is a protocol that...
 
   const agent: WriterIdentity = {
     id: 'agent-claude-code-7x',
-    name: 'Claude Code (Tim)',
+    name: 'Claude (Tim)',
     email: 'agent@ok.test',
   };
   const human: WriterIdentity = {
