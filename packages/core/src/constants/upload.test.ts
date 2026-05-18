@@ -3,6 +3,7 @@ import {
   AUDIO_EXTENSIONS,
   FILE_ATTACHMENT_EXTENSIONS,
   IMAGE_EXTENSIONS,
+  mediaKindForSidebarAssetExtension,
   VIDEO_EXTENSIONS,
   WIKI_EMBED_EXTENSIONS,
 } from './upload.ts';
@@ -66,5 +67,49 @@ describe('upload extension sets', () => {
       expect(VIDEO_EXTENSIONS.has(ext)).toBe(false);
       expect(AUDIO_EXTENSIONS.has(ext)).toBe(false);
     }
+  });
+});
+
+describe('mediaKindForSidebarAssetExtension', () => {
+  test.each([
+    ['png', 'image'],
+    ['jpg', 'image'],
+    ['jpeg', 'image'],
+    ['gif', 'image'],
+    ['webp', 'image'],
+    ['avif', 'image'],
+    ['mp4', 'video'],
+    ['webm', 'video'],
+    ['mov', 'video'],
+    ['m4v', 'video'],
+    ['mp3', 'audio'],
+    ['wav', 'audio'],
+    ['ogg', 'audio'],
+    ['m4a', 'audio'],
+    ['flac', 'audio'],
+    ['aac', 'audio'],
+    ['opus', 'audio'],
+    ['pdf', 'pdf'],
+  ] as const)('classifies %s → %s', (ext, expected) => {
+    expect(mediaKindForSidebarAssetExtension(ext)).toBe(expected);
+  });
+
+  test.each([
+    'csv',
+    'docx',
+    'json',
+    'zip',
+    'mkv', // in INLINE_RENDERABLE_EXTENSIONS but excluded from sidebar video set
+    'svg', // intentionally excluded from sidebar image set (XSS posture)
+    'tiff',
+  ])('returns null for non-sidebar-renderable extension %s', (ext) => {
+    expect(mediaKindForSidebarAssetExtension(ext)).toBeNull();
+  });
+
+  test('normalizes leading dot + case', () => {
+    expect(mediaKindForSidebarAssetExtension('.MP3')).toBe('audio');
+    expect(mediaKindForSidebarAssetExtension('.PDF')).toBe('pdf');
+    expect(mediaKindForSidebarAssetExtension('.PnG')).toBe('image');
+    expect(mediaKindForSidebarAssetExtension('PDF')).toBe('pdf');
   });
 });

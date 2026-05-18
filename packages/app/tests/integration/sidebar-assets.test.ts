@@ -87,7 +87,7 @@ describe('/api/documents sidebar asset rows', () => {
       kind: 'asset',
       docName: 'docs/media/spec.pdf',
       assetExt: '.pdf',
-      mediaKind: null,
+      mediaKind: 'pdf',
       referencedBy: ['docs/guide'],
     });
 
@@ -105,7 +105,7 @@ describe('/api/documents sidebar asset rows', () => {
       kind: 'asset',
       docName: 'docs/media/wiki-file.pdf',
       assetExt: '.pdf',
-      mediaKind: null,
+      mediaKind: 'pdf',
       referencedBy: ['docs/guide'],
     });
 

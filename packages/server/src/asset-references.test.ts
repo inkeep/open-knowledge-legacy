@@ -203,7 +203,7 @@ describe('asset reference extraction', () => {
         kind: 'asset',
         path: 'docs/paper.pdf',
         assetExt: '.pdf',
-        mediaKind: null,
+        mediaKind: 'pdf',
         referencedBy: ['docs/second'],
       });
       expect(assets.find((asset) => asset.path === 'docs/data.csv')).toMatchObject({

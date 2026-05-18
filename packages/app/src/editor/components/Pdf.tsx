@@ -7,6 +7,14 @@ interface PdfProps {
   src?: string;
   title?: string;
   anchor?: string;
+  /** When `true`, the viewer fills its parent container's height instead of
+   * the default fixed `DEFAULT_HEIGHT_PX`. Used by route-level surfaces
+   * (`AssetPreview` for `#/__asset__/<path>.pdf`) where the host gives the
+   * viewer the full editor pane to work with; inline `<Pdf>` inside a
+   * markdown doc keeps the fixed-height behavior so it sits among other
+   * blocks. Explicit `height=N` in `anchor` still wins — the contract is
+   * "fill the host unless the author pinned a height." */
+  fillContainer?: boolean;
 }
 
 const DEFAULT_HEIGHT_PX = 600;
@@ -73,7 +81,12 @@ function isRenderingCancelledError(err: unknown): boolean {
 
 export function Pdf(props: PdfProps) {
   const { height: anchorHeight, viewerFragment } = parsePdfAnchor(props.anchor);
-  const heightPx = anchorHeight ?? DEFAULT_HEIGHT_PX;
+  const heightStyle: string =
+    anchorHeight !== null
+      ? `${anchorHeight}px`
+      : props.fillContainer
+        ? '100%'
+        : `${DEFAULT_HEIGHT_PX}px`;
 
   const targetPage = parseTargetPage(viewerFragment);
 
@@ -338,7 +351,7 @@ export function Pdf(props: PdfProps) {
   };
 
   return (
-    <div className="ok-pdf" style={{ height: `${heightPx}px` }}>
+    <div className="ok-pdf" style={{ height: heightStyle }}>
       <div className="ok-pdf-toolbar" contentEditable={false}>
         <button
           type="button"

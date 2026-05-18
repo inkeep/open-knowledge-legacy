@@ -126,16 +126,51 @@ describe('DocumentListEntrySchema', () => {
     expect(
       DocumentListEntrySchema.safeParse({
         kind: 'asset',
-        docName: 'media/spec.pdf',
-        docExt: '.pdf',
+        docName: 'media/data.csv',
+        docExt: '.csv',
         size: 2048,
         modified: '2026-04-30T00:00:00Z',
         isSymlink: false,
         canonicalDocName: null,
         targetPath: null,
-        path: 'media/spec.pdf',
-        assetExt: '.pdf',
+        path: 'media/data.csv',
+        assetExt: '.csv',
         mediaKind: null,
+        referencedBy: ['guide'],
+      }).success,
+    ).toBe(true);
+  });
+
+  test('parses asset entries with mediaKind: pdf and audio (sidebar-renderable)', () => {
+    expect(
+      DocumentListEntrySchema.safeParse({
+        kind: 'asset',
+        docName: 'media/paper.pdf',
+        docExt: '.pdf',
+        size: 4096,
+        modified: '2026-04-30T00:00:00Z',
+        isSymlink: false,
+        canonicalDocName: null,
+        targetPath: null,
+        path: 'media/paper.pdf',
+        assetExt: '.pdf',
+        mediaKind: 'pdf',
+        referencedBy: ['guide'],
+      }).success,
+    ).toBe(true);
+    expect(
+      DocumentListEntrySchema.safeParse({
+        kind: 'asset',
+        docName: 'media/song.mp3',
+        docExt: '.mp3',
+        size: 8192,
+        modified: '2026-04-30T00:00:00Z',
+        isSymlink: false,
+        canonicalDocName: null,
+        targetPath: null,
+        path: 'media/song.mp3',
+        assetExt: '.mp3',
+        mediaKind: 'audio',
         referencedBy: ['guide'],
       }).success,
     ).toBe(true);

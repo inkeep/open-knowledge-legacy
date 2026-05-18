@@ -258,10 +258,12 @@ export const WIKI_EMBED_EXTENSIONS: ReadonlySet<string> = new Set([
   'mobi',
 ]);
 
-export type InlineAssetMediaKind = 'image' | 'video';
+export type InlineAssetMediaKind = 'image' | 'video' | 'audio' | 'pdf';
 
-const SIDEBAR_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg'] as const;
-const SIDEBAR_VIDEO_EXTENSIONS = ['mp4'] as const;
+const SIDEBAR_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'] as const;
+const SIDEBAR_VIDEO_EXTENSIONS = ['mp4', 'webm', 'mov', 'm4v'] as const;
+const SIDEBAR_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'opus'] as const;
+const SIDEBAR_PDF_EXTENSIONS = ['pdf'] as const;
 
 function assertSubset(
   name: string,
@@ -277,6 +279,8 @@ function assertSubset(
 
 assertSubset('SIDEBAR_IMAGE_ASSET_EXTENSIONS', SIDEBAR_IMAGE_EXTENSIONS, IMAGE_EXTENSIONS);
 assertSubset('SIDEBAR_VIDEO_ASSET_EXTENSIONS', SIDEBAR_VIDEO_EXTENSIONS, VIDEO_EXTENSIONS);
+assertSubset('SIDEBAR_AUDIO_ASSET_EXTENSIONS', SIDEBAR_AUDIO_EXTENSIONS, AUDIO_EXTENSIONS);
+assertSubset('SIDEBAR_PDF_ASSET_EXTENSIONS', SIDEBAR_PDF_EXTENSIONS, PDF_EXTENSIONS);
 assertSubset('FILE_ATTACHMENT_EXTENSIONS', [...FILE_ATTACHMENT_EXTENSIONS], WIKI_EMBED_EXTENSIONS);
 
 export const SIDEBAR_IMAGE_ASSET_EXTENSIONS: ReadonlySet<string> = new Set(
@@ -285,9 +289,15 @@ export const SIDEBAR_IMAGE_ASSET_EXTENSIONS: ReadonlySet<string> = new Set(
 export const SIDEBAR_VIDEO_ASSET_EXTENSIONS: ReadonlySet<string> = new Set(
   SIDEBAR_VIDEO_EXTENSIONS,
 );
+export const SIDEBAR_AUDIO_ASSET_EXTENSIONS: ReadonlySet<string> = new Set(
+  SIDEBAR_AUDIO_EXTENSIONS,
+);
+export const SIDEBAR_PDF_ASSET_EXTENSIONS: ReadonlySet<string> = new Set(SIDEBAR_PDF_EXTENSIONS);
 export const SIDEBAR_RENDERABLE_ASSET_EXTENSIONS: ReadonlySet<string> = new Set([
   ...SIDEBAR_IMAGE_EXTENSIONS,
   ...SIDEBAR_VIDEO_EXTENSIONS,
+  ...SIDEBAR_AUDIO_EXTENSIONS,
+  ...SIDEBAR_PDF_EXTENSIONS,
 ]);
 
 assertSubset(
@@ -300,5 +310,7 @@ export function mediaKindForSidebarAssetExtension(ext: string): InlineAssetMedia
   const normalized = ext.toLowerCase().replace(/^\./, '');
   if (SIDEBAR_IMAGE_ASSET_EXTENSIONS.has(normalized)) return 'image';
   if (SIDEBAR_VIDEO_ASSET_EXTENSIONS.has(normalized)) return 'video';
+  if (SIDEBAR_AUDIO_ASSET_EXTENSIONS.has(normalized)) return 'audio';
+  if (SIDEBAR_PDF_ASSET_EXTENSIONS.has(normalized)) return 'pdf';
   return null;
 }
