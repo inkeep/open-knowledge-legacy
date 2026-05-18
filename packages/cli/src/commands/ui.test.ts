@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import {
   createServer as createHttpServer,
@@ -539,6 +539,32 @@ describe('startUiServer', () => {
 
     handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
     const { status, headers } = await get(handle.port, '/photo.png');
+    expect(status).toBe(200);
+    expect(headers.get('content-disposition')).toBe('inline');
+    expect(headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  test('SPA-bundle assets under /assets/ serve from dist/ (regression: woff2 fonts)', async () => {
+    const distAssets = resolve(import.meta.dirname, '../../../app/dist/assets');
+    if (!existsSync(distAssets)) return; // No built app — skip in CI without `bun run build`.
+    const fontFile = readdirSync(distAssets).find((name) => name.endsWith('.woff2'));
+    if (!fontFile) return; // Build emitted no fonts — nothing to assert.
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { status, headers } = await get(handle.port, `/assets/${fontFile}`);
+    expect(status).toBe(200);
+    expect(headers.get('content-disposition')).toBeNull();
+  });
+
+  test('SPA-bundle /assets/ falls through to content middleware when sirv misses', async () => {
+    const fs = await import('node:fs');
+    const assetsDir = resolve(tmpDir, 'assets');
+    mkdirSync(assetsDir, { recursive: true });
+    fs.writeFileSync(resolve(tmpDir, 'doc.md'), '# seed', 'utf-8');
+    fs.writeFileSync(resolve(assetsDir, 'user-upload.png'), 'fake-png', 'binary');
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { status, headers } = await get(handle.port, '/assets/user-upload.png');
     expect(status).toBe(200);
     expect(headers.get('content-disposition')).toBe('inline');
     expect(headers.get('x-content-type-options')).toBe('nosniff');

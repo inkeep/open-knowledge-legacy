@@ -150,6 +150,17 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
       return;
     }
 
+    if (staticHandler && url?.startsWith('/assets/')) {
+      staticHandler(req, res, () => {
+        if (assetServeMiddleware) {
+          assetServeMiddleware(req, res, () => notFound(res, url));
+        } else {
+          notFound(res, url);
+        }
+      });
+      return;
+    }
+
     if (assetServeMiddleware) {
       assetServeMiddleware(req, res, () => {
         if (staticHandler) {
