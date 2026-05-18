@@ -15,7 +15,7 @@ import {
 } from '@opentelemetry/sdk-metrics';
 import { __resetRenameTelemetryForTesting, createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
-import { clearContributors } from './contributor-tracker.ts';
+import { swapContributors } from './contributor-tracker.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { resetMetrics } from './metrics.ts';
 
@@ -94,7 +94,7 @@ afterAll(async () => {
 let tmpDir: string;
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'ok-rename-telem-'));
-  clearContributors();
+  swapContributors();
   resetMetrics();
   exporter.reset();
 });

@@ -4,6 +4,9 @@ export default defineConfig({
   categories: {
     correctness: 'off',
   },
+  options: {
+    typeAware: true,
+  },
   jsPlugins: ['oxlint-plugin-eslint'],
   rules: {
     'unicorn/no-useless-fallback-in-spread': 'error',
@@ -23,4 +26,12 @@ export default defineConfig({
       },
     ],
   },
+  overrides: [
+    {
+      files: ['**/*.{ts,tsx}'],
+      rules: {
+        'typescript/no-deprecated': 'error',
+      },
+    },
+  ],
 });

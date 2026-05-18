@@ -8,7 +8,7 @@ import simpleGit from 'simple-git';
 import * as Y from 'yjs';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
-import { clearContributors } from './contributor-tracker.ts';
+import { swapContributors } from './contributor-tracker.ts';
 import {
   appendRenameLogEntry,
   createEmptyIndex,
@@ -71,12 +71,12 @@ let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'ok-rollback-rename-'));
-  clearContributors();
+  swapContributors();
   resetRenameLogIndexCache();
 });
 
 afterEach(() => {
-  clearContributors();
+  swapContributors();
   resetRenameLogIndexCache();
   rmSync(tmpDir, { recursive: true, force: true });
 });

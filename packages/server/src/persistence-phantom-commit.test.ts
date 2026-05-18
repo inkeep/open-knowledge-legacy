@@ -27,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import simpleGit from 'simple-git';
 import * as Y from 'yjs';
-import { clearContributors, contributorCount } from './contributor-tracker.ts';
+import { contributorCount, swapContributors } from './contributor-tracker.ts';
 import { createServer } from './server-factory.ts';
 
 async function waitForContributorCount(
@@ -85,11 +85,11 @@ describe('onStoreDocument phantom-principal-commit regression (PR #295)', () => 
 
   beforeEach(async () => {
     fixture = await setupFixture();
-    clearContributors();
+    swapContributors();
   });
 
   afterEach(() => {
-    clearContributors();
+    swapContributors();
     fixture.cleanup();
   });
 

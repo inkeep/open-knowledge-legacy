@@ -25,8 +25,12 @@ interface RegisteredTool {
 function createCapturingServer() {
   const registrations: RegisteredTool[] = [];
   const server = {
-    tool(name: string, description: string, _schema: unknown, handler: RegisteredTool['handler']) {
-      registrations.push({ name, description, handler });
+    registerTool(
+      name: string,
+      config: { description?: string },
+      handler: RegisteredTool['handler'],
+    ) {
+      registrations.push({ name, description: config.description ?? '', handler });
     },
   } as unknown as ServerInstance;
   return { server, registrations };

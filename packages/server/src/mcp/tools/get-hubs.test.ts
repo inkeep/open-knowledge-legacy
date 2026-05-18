@@ -61,7 +61,7 @@ afterEach(async () => {
 function registerTool(): ToolHandler {
   let captured: ToolHandler | null = null;
   const server = {
-    tool(_name: string, _description: string, _schema: unknown, handler: ToolHandler) {
+    registerTool(_name: string, _config: unknown, handler: ToolHandler) {
       captured = handler;
     },
   } as unknown as ServerInstance;

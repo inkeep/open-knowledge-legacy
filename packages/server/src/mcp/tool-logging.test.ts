@@ -136,4 +136,59 @@ describe('tool logging wrapper', () => {
     expect(finish.tool).toBe('get_preview_url');
     expect(finish.result.previewUrl).toBeNull();
   });
+
+  test('createLoggedServer wraps handlers during registerTool registration', async () => {
+    const logger = new McpLogger('mcp');
+    let capturedHandler: ((...args: unknown[]) => unknown) | undefined;
+    const fakeServer = {
+      tool: () => 'legacy-registered',
+      registerTool: (name: string, config: unknown, handler: (...args: unknown[]) => unknown) => {
+        expect(name).toBe('read_document');
+        expect(config).toEqual({
+          description: 'desc',
+          inputSchema: { docName: 'string' },
+        });
+        capturedHandler = handler;
+        return 'registered-tool';
+      },
+    };
+
+    const wrapped = createLoggedServer(fakeServer as never, { logger });
+    const originalHandler = async () =>
+      textPlusStructured('ok', { previewUrl: null, documents: ['a', 'b'] });
+
+    expect(
+      (
+        wrapped as unknown as {
+          registerTool: (
+            name: string,
+            config: unknown,
+            handler: (...args: unknown[]) => unknown,
+          ) => unknown;
+        }
+      ).registerTool(
+        'read_document',
+        { description: 'desc', inputSchema: { docName: 'string' } },
+        originalHandler,
+      ),
+    ).toBe('registered-tool');
+    expect(capturedHandler).toBeDefined();
+    expect(capturedHandler).not.toBe(originalHandler);
+
+    const wrappedHandler = capturedHandler;
+    if (!wrappedHandler) {
+      throw new Error('Expected wrapped registerTool handler to be captured');
+    }
+
+    await wrappedHandler(
+      { docName: 'notes/test' },
+      { requestId: 'req-789', signal: new AbortController().signal },
+    );
+
+    const finish = JSON.parse(stderrLines[1] ?? '');
+    expect(finish.tool).toBe('read_document');
+    expect(finish.requestId).toBe('req-789');
+    expect(finish.result.previewUrl).toBeNull();
+    expect(finish.result.documentsCount).toBe(2);
+  });
 });

@@ -472,21 +472,23 @@ export async function buildExecResult(
 }
 
 export function register(server: ServerInstance, deps: ExecDeps): void {
-  server.tool(
+  server.registerTool(
     'exec',
-    DESCRIPTION,
     {
-      command: z
-        .string()
-        .describe(
-          'Read-only bash command (allowlist: cat, ls, grep, find, head, tail, wc, sort, uniq, cut; pipes OK)',
-        ),
-      cwd: z
-        .string()
-        .optional()
-        .describe(
-          'Absolute host path to run the command from. Defaults only when the MCP client advertises exactly one root; otherwise pass `cwd` explicitly.',
-        ),
+      description: DESCRIPTION,
+      inputSchema: {
+        command: z
+          .string()
+          .describe(
+            'Read-only bash command (allowlist: cat, ls, grep, find, head, tail, wc, sort, uniq, cut; pipes OK)',
+          ),
+        cwd: z
+          .string()
+          .optional()
+          .describe(
+            'Absolute host path to run the command from. Defaults only when the MCP client advertises exactly one root; otherwise pass `cwd` explicitly.',
+          ),
+      },
     },
     async (args: { command: string; cwd?: string }) => {
       try {

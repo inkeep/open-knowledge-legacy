@@ -114,7 +114,7 @@ const cmLru: string[] = [];
 let activityMountList: ReadonlySet<string> = new Set();
 
 function tryCreateParkingNode(): HTMLElement | null {
-  if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
+  if (typeof document === 'undefined') {
     return null;
   }
   const el = document.createElement('div');

@@ -30,12 +30,14 @@ interface GetBacklinksDeps extends PreviewUrlDeps {
 }
 
 export function register(server: ServerInstance, deps: GetBacklinksDeps): void {
-  server.tool(
+  server.registerTool(
     'get_backlinks',
-    DESCRIPTION,
     {
-      docName: z.string().describe('Target page docName'),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        docName: z.string().describe('Target page docName'),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { docName: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(

@@ -243,16 +243,14 @@ export function createLoggedServer(
 ): ServerInstance {
   if (!opts.logger) return server;
 
-  const originalTool = (server as unknown as { tool: (...args: unknown[]) => unknown }).tool.bind(
-    server,
-  );
+  const originalTool = (server as unknown as { tool: AnyToolHandler }).tool.bind(server);
   const rawRegisterTool = (server as unknown as { registerTool?: (...args: unknown[]) => unknown })
     .registerTool;
   const originalRegisterTool =
     typeof rawRegisterTool === 'function' ? rawRegisterTool.bind(server) : undefined;
   const wrapped = Object.create(server) as ServerInstance;
 
-  (wrapped as unknown as { tool: typeof server.tool }).tool = ((...toolArgs: unknown[]) => {
+  (wrapped as unknown as { tool: AnyToolHandler }).tool = ((...toolArgs: unknown[]) => {
     const name = String(toolArgs[0]);
     const handler = toolArgs.at(-1);
     if (typeof handler !== 'function') {
@@ -265,7 +263,7 @@ export function createLoggedServer(
       opts,
     );
     return originalTool(...nextArgs);
-  }) as unknown as typeof server.tool;
+  }) as AnyToolHandler;
 
   if (originalRegisterTool) {
     (wrapped as unknown as { registerTool: typeof server.registerTool }).registerTool = ((

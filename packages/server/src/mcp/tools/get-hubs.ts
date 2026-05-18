@@ -28,12 +28,14 @@ interface GetHubsDeps extends PreviewUrlDeps {
 }
 
 export function register(server: ServerInstance, deps: GetHubsDeps): void {
-  server.tool(
+  server.registerTool(
     'get_hubs',
-    DESCRIPTION,
     {
-      limit: z.number().int().positive().optional().describe('Maximum number of hubs to return'),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        limit: z.number().int().positive().optional().describe('Maximum number of hubs to return'),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { limit?: number; cwd?: string }) => {
       const context = await resolveProjectServerContext(

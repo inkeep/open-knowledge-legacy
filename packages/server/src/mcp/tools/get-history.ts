@@ -33,29 +33,34 @@ export interface GetHistoryDeps {
 }
 
 export function register(server: ServerInstance, deps: GetHistoryDeps): void {
-  server.tool(
+  server.registerTool(
     'get_history',
-    DESCRIPTION,
     {
-      docName: z.string().describe('Document name to query history for'),
-      branch: z.string().optional().describe('Branch name (default: current branch)'),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(200)
-        .optional()
-        .describe('Maximum entries to return (default 50, max 200)'),
-      offset: z
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .describe('Number of entries to skip for pagination (default 0)'),
-      type: z.enum(['checkpoint', 'upstream', 'wip']).optional().describe('Filter by entry type'),
-      author: z.string().optional().describe('Filter to entries by this author name or email'),
-      excludeAuthor: z.string().optional().describe('Exclude entries by this author name or email'),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        docName: z.string().describe('Document name to query history for'),
+        branch: z.string().optional().describe('Branch name (default: current branch)'),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe('Maximum entries to return (default 50, max 200)'),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Number of entries to skip for pagination (default 0)'),
+        type: z.enum(['checkpoint', 'upstream', 'wip']).optional().describe('Filter by entry type'),
+        author: z.string().optional().describe('Filter to entries by this author name or email'),
+        excludeAuthor: z
+          .string()
+          .optional()
+          .describe('Exclude entries by this author name or email'),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: {
       docName: string;

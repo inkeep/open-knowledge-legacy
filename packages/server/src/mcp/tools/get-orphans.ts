@@ -29,15 +29,17 @@ interface GetOrphansDeps extends PreviewUrlDeps {
 }
 
 export function register(server: ServerInstance, deps: GetOrphansDeps): void {
-  server.tool(
+  server.registerTool(
     'get_orphans',
-    DESCRIPTION,
     {
-      mode: z
-        .enum(ORPHAN_MODES)
-        .optional()
-        .describe('Filter which type of graph disconnection to surface'),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        mode: z
+          .enum(ORPHAN_MODES)
+          .optional()
+          .describe('Filter which type of graph disconnection to surface'),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { mode?: OrphanMode; cwd?: string }) => {
       const context = await resolveProjectServerContext(

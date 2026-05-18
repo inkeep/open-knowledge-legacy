@@ -62,7 +62,7 @@ describe('get_dead_links MCP tool', () => {
 
     const registrations: Array<{ name: string; handler: ToolHandler }> = [];
     const fakeServer = {
-      tool(name: string, _description: string, _schema: unknown, handler: ToolHandler) {
+      registerTool(name: string, _config: unknown, handler: ToolHandler) {
         registrations.push({ name, handler });
       },
     } as unknown as ServerInstance;
@@ -89,7 +89,7 @@ describe('get_dead_links MCP tool', () => {
   test('returns the Hocuspocus unavailable error when no server URL is available', async () => {
     const registrations: Array<{ name: string; handler: ToolHandler }> = [];
     const fakeServer = {
-      tool(name: string, _description: string, _schema: unknown, handler: ToolHandler) {
+      registerTool(name: string, _config: unknown, handler: ToolHandler) {
         registrations.push({ name, handler });
       },
     } as unknown as ServerInstance;
@@ -124,7 +124,7 @@ describe('get_dead_links MCP tool', () => {
 
     const registrations: Array<{ name: string; handler: ToolHandler }> = [];
     const fakeServer = {
-      tool(name: string, _description: string, _schema: unknown, handler: ToolHandler) {
+      registerTool(name: string, _config: unknown, handler: ToolHandler) {
         registrations.push({ name, handler });
       },
     } as unknown as ServerInstance;
@@ -167,7 +167,7 @@ describe('get_dead_links MCP tool', () => {
 
     const registrations: Array<{ name: string; handler: ToolHandler }> = [];
     const fakeServer = {
-      tool(name: string, _description: string, _schema: unknown, handler: ToolHandler) {
+      registerTool(name: string, _config: unknown, handler: ToolHandler) {
         registrations.push({ name, handler });
       },
     } as unknown as ServerInstance;

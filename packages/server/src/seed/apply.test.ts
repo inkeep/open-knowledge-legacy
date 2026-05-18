@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applySeed } from './apply.ts';
 import { planSeed } from './plan.ts';
-import { LOG_MD_TEMPLATE, STARTER_FOLDERS, STARTER_TEMPLATES } from './starter.ts';
+import { STARTER_PACKS } from './starter.ts';
+
+const KNOWLEDGE_BASE_PACK = STARTER_PACKS['knowledge-base'];
+const STARTER_FOLDERS = KNOWLEDGE_BASE_PACK.folders;
+const STARTER_TEMPLATES = KNOWLEDGE_BASE_PACK.templates;
+const LOG_MD_TEMPLATE = KNOWLEDGE_BASE_PACK.rootFiles?.['log.md'];
+if (!LOG_MD_TEMPLATE) throw new Error('knowledge-base pack is missing log.md');
 
 describe('applySeed — nested .ok/ era', () => {
   let projectDir: string;

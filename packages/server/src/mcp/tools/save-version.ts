@@ -24,11 +24,13 @@ export function register(
   resolveCwd: (explicit?: string) => Promise<string>,
   identityRef?: { current: AgentIdentity },
 ): void {
-  server.tool(
+  server.registerTool(
     'save_version',
-    DESCRIPTION,
     {
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { cwd?: string } = {}) => {
       const context = await resolveProjectServerContext(resolveCwd, config, serverUrl, args.cwd);

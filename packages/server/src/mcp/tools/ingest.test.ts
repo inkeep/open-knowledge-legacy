@@ -16,10 +16,9 @@ interface ToolResult {
 function captureTool() {
   let captured: ((args: { source: string; cwd?: string }) => Promise<ToolResult>) | undefined;
   const server = {
-    tool(
+    registerTool(
       _name: string,
-      _description: string,
-      _schema: Record<string, unknown>,
+      _config: unknown,
       handler: (args: { source: string; cwd?: string }) => Promise<ToolResult>,
     ) {
       captured = handler;

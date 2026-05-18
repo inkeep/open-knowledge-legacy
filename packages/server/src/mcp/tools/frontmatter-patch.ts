@@ -43,22 +43,24 @@ const PatchValueSchema = z
   .describe('Property value (string|number|boolean|string[]) — `null` deletes the key');
 
 export function register(server: ServerInstance, deps: FrontmatterPatchDeps): void {
-  server.tool(
+  server.registerTool(
     'frontmatter_patch',
-    DESCRIPTION,
     {
-      docName: z.string().describe('Document name'),
-      patch: z
-        .record(z.string(), PatchValueSchema)
-        .describe('JSON Merge Patch — `{key: value}` sets, `{key: null}` deletes'),
-      types: z
-        .record(z.string(), z.enum(FRONTMATTER_TYPES))
-        .optional()
-        .describe(
-          'Currently ignored (shape-validated for forward-compat but not persisted). Type is inferred from value shape on read. Will become a real per-key widget-type override (text|number|boolean|date|list) once persistence lands.',
-        ),
-      summary: summaryArgSchema,
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        docName: z.string().describe('Document name'),
+        patch: z
+          .record(z.string(), PatchValueSchema)
+          .describe('JSON Merge Patch — `{key: value}` sets, `{key: null}` deletes'),
+        types: z
+          .record(z.string(), z.enum(FRONTMATTER_TYPES))
+          .optional()
+          .describe(
+            'Currently ignored (shape-validated for forward-compat but not persisted). Type is inferred from value shape on read. Will become a real per-key widget-type override (text|number|boolean|date|list) once persistence lands.',
+          ),
+        summary: summaryArgSchema,
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: {
       docName: string;

@@ -30,12 +30,14 @@ interface GetForwardLinksDeps extends PreviewUrlDeps {
 }
 
 export function register(server: ServerInstance, deps: GetForwardLinksDeps): void {
-  server.tool(
+  server.registerTool(
     'get_forward_links',
-    DESCRIPTION,
     {
-      docName: z.string().describe('Source page docName'),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        docName: z.string().describe('Source page docName'),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { docName: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(

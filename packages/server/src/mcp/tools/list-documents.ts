@@ -37,20 +37,22 @@ interface ListDocumentsDeps extends PreviewUrlDeps {
 }
 
 export function register(server: ServerInstance, deps: ListDocumentsDeps): void {
-  server.tool(
+  server.registerTool(
     'list_documents',
-    DESCRIPTION,
     {
-      dir: z.string().optional().describe('Optional directory to filter documents'),
-      depth: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe(
-          'Subfolder enrichment depth (find -maxdepth semantics). Default 1. Only meaningful when `dir` is also set.',
-        ),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        dir: z.string().optional().describe('Optional directory to filter documents'),
+        depth: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe(
+            'Subfolder enrichment depth (find -maxdepth semantics). Default 1. Only meaningful when `dir` is also set.',
+          ),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { dir?: string; depth?: number; cwd?: string }) => {
       const context = await resolveProjectServerContext(

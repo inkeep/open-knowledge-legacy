@@ -8,7 +8,7 @@ import { Hocuspocus } from '@hocuspocus/server';
 import simpleGit from 'simple-git';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
-import { clearContributors, recordContributor } from './contributor-tracker.ts';
+import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import { initShadowRepo, type ShadowRef } from './shadow-repo.ts';
 
 interface CapturedResponse {
@@ -170,7 +170,7 @@ describe('save-version graceful availability (US-021, D45)', () => {
     const hocuspocus = new Hocuspocus({ quiet: true });
     const sessionManager = new AgentSessionManager(hocuspocus);
 
-    clearContributors();
+    swapContributors();
     recordContributor('doc.md', 'agent-a4f2', 'Claude (a4f2)', 'claude-code');
     recordContributor('doc.md', 'agent-9d2e', 'Cursor (9d2e)', 'cursor');
     recordContributor('doc.md', 'principal-test-123', 'Alice', 'principal-test-123');
@@ -213,7 +213,7 @@ describe('save-version graceful availability (US-021, D45)', () => {
       const headAuthor = (await git.raw(['log', '-1', '--pretty=%an <%ae>'])).trim();
       expect(headAuthor).toBe('Alice <alice@example.com>');
     } finally {
-      clearContributors();
+      swapContributors();
       await sessionManager.closeAll();
     }
   });

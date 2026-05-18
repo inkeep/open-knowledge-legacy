@@ -28,12 +28,7 @@ interface RegisteredTool {
 function createFakeServer() {
   let registeredTool: RegisteredTool | undefined;
   const server = {
-    tool(
-      name: string,
-      _description: string,
-      _schema: Record<string, unknown>,
-      handler: RegisteredTool['handler'],
-    ) {
+    registerTool(name: string, _config: unknown, handler: RegisteredTool['handler']) {
       registeredTool = { name, handler };
     },
   } as unknown as ServerInstance;

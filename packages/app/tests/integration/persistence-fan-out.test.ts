@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   applyExternalChange,
-  clearContributors,
   createServer,
   FILE_SYSTEM_WRITER,
   initShadowRepo,
   recordContributor,
   shadowGit,
+  swapContributors,
 } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
 
@@ -18,11 +18,11 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'ok-fanout-int-'));
-    clearContributors();
+    swapContributors();
   });
 
   afterEach(() => {
-    clearContributors();
+    swapContributors();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

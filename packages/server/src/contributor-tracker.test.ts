@@ -1,17 +1,17 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { parseContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import {
-  clearContributors,
   contributorCount,
-  formatContributors,
+  __formatContributorsForTests as formatContributorsForTest,
   formatContributorsFrom,
   recordContributor,
+  __resetContributorsForTests as resetContributorsForTest,
   restoreContributors,
   swapContributors,
 } from './contributor-tracker.ts';
 
 beforeEach(() => {
-  clearContributors();
+  resetContributorsForTest();
 });
 
 describe('recordContributor', () => {
@@ -24,7 +24,7 @@ describe('recordContributor', () => {
     recordContributor('a.md', 'agent-claude-1', 'Claude');
     recordContributor('b.md', 'agent-claude-1', 'Claude');
     expect(contributorCount()).toBe(1);
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('"a.md"');
     expect(output).toContain('"b.md"');
   });
@@ -38,45 +38,45 @@ describe('recordContributor', () => {
   test('deduplicates the same doc for the same agent', () => {
     recordContributor('a.md', 'agent-alice', 'Alice');
     recordContributor('a.md', 'agent-alice', 'Alice');
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect((output.match(/a\.md/g) ?? []).length).toBe(1);
   });
 
   test('includes colorSeed in formatted output', () => {
     recordContributor('doc.md', 'agent-alice', 'Alice', 'alice-custom-seed');
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('"colorSeed":"alice-custom-seed"');
   });
 
   test('colorSeed defaults to displayName when not provided', () => {
     recordContributor('doc.md', 'agent-alice', 'Alice');
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('"colorSeed":"Alice"');
   });
 });
 
 describe('formatContributors / formatContributorsFrom', () => {
   test('returns empty string when no contributors', () => {
-    expect(formatContributors()).toBe('');
+    expect(formatContributorsForTest()).toBe('');
   });
 
   test('returns newline-prefixed lines when contributors exist', () => {
     recordContributor('doc.md', 'agent-claude-1', 'Claude');
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output.startsWith('\n')).toBe(true);
     expect(output).toContain('ok-contributors:');
   });
 
   test('includes v:1 version field', () => {
     recordContributor('doc.md', 'agent-claude-1', 'Claude');
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('"v":1');
   });
 
   test('round-trips through parseContributors', () => {
     recordContributor('notes.md', 'agent-claude-1', 'Claude');
     recordContributor('docs.md', 'agent-cursor-abc', 'Cursor');
-    const body = `WIP auto-save 2026-01-01T00:00:00.000Z${formatContributors()}`;
+    const body = `WIP auto-save 2026-01-01T00:00:00.000Z${formatContributorsForTest()}`;
     const parsed = parseContributors(body);
     expect(parsed).toHaveLength(2);
     const ids = parsed.map((c) => c.id).sort();
@@ -85,7 +85,7 @@ describe('formatContributors / formatContributorsFrom', () => {
 
   test('colorSeed round-trips through parseContributors', () => {
     recordContributor('doc.md', 'agent-alice', 'Alice', 'my-seed');
-    const body = formatContributors();
+    const body = formatContributorsForTest();
     const parsed = parseContributors(body);
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.colorSeed).toBe('my-seed');
@@ -123,7 +123,7 @@ describe('swapContributors + restoreContributors (swap-and-drain pattern)', () =
     recordContributor('b.md', 'agent-bob', 'Bob');
     restoreContributors(snapshot);
     expect(contributorCount()).toBe(2);
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('agent-alice');
     expect(output).toContain('agent-bob');
   });
@@ -133,7 +133,7 @@ describe('swapContributors + restoreContributors (swap-and-drain pattern)', () =
     const snapshot = swapContributors();
     recordContributor('b.md', 'agent-alice', 'Alice'); // same agent, new doc
     restoreContributors(snapshot);
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('"a.md"');
     expect(output).toContain('"b.md"');
     const lines = output.split('\n').filter((l) => l.includes('agent-alice'));
@@ -152,33 +152,33 @@ describe('swapContributors + restoreContributors (swap-and-drain pattern)', () =
     const snapshot = swapContributors();
     recordContributor('b.md', 'agent-bob', 'Bob');
     expect(contributorCount()).toBe(1);
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('agent-bob');
     expect(output).not.toContain('agent-alice');
     void snapshot; // explicitly unused
   });
 });
 
-describe('clearContributors', () => {
+describe('__resetContributorsForTests', () => {
   test('clears all accumulated contributors', () => {
     recordContributor('a.md', 'agent-alice', 'Alice');
     recordContributor('b.md', 'agent-bob', 'Bob');
-    clearContributors();
+    resetContributorsForTest();
     expect(contributorCount()).toBe(0);
-    expect(formatContributors()).toBe('');
+    expect(formatContributorsForTest()).toBe('');
   });
 });
 
 describe('recordContributor (summary) — D23 flat array', () => {
   test('undefined summary → no summaries field in output (byte-identical to legacy)', () => {
     recordContributor('doc.md', 'agent-claude-1', 'Claude');
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).not.toContain('summaries');
   });
 
   test('empty-string summary → no summaries field in output', () => {
     recordContributor('doc.md', 'agent-claude-1', 'Claude', undefined, undefined, undefined, '');
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).not.toContain('summaries');
   });
 
@@ -192,7 +192,7 @@ describe('recordContributor (summary) — D23 flat array', () => {
       undefined,
       'Fixed typo',
     );
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('"summaries":["Fixed typo"]');
   });
 
@@ -224,7 +224,7 @@ describe('recordContributor (summary) — D23 flat array', () => {
       undefined,
       'Third',
     );
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('"summaries":["First","Second","Third"]');
   });
 
@@ -239,7 +239,7 @@ describe('recordContributor (summary) — D23 flat array', () => {
       'Cleaned up',
     );
     recordContributor('b.md', 'agent-bob', 'Bob');
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     const lines = output.split('\n').filter((l) => l.startsWith('ok-contributors:'));
     expect(lines).toHaveLength(2);
     const aliceLine = lines.find((l) => l.includes('agent-alice'));
@@ -259,7 +259,7 @@ describe('recordContributor (summary) — D23 flat array', () => {
       'Added example',
     );
     recordContributor('a.md', 'agent-alice', 'Alice', 'seed', undefined, undefined, 'Fixed typo');
-    const body = `WIP auto-save 2026-01-01T00:00:00.000Z${formatContributors()}`;
+    const body = `WIP auto-save 2026-01-01T00:00:00.000Z${formatContributorsForTest()}`;
     const parsed = parseContributors(body);
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.summaries).toEqual(['Added example', 'Fixed typo']);
@@ -267,7 +267,7 @@ describe('recordContributor (summary) — D23 flat array', () => {
 
   test('legacy-shape (no summaries) round-trips with summaries undefined', () => {
     recordContributor('a.md', 'agent-alice', 'Alice');
-    const body = formatContributors();
+    const body = formatContributorsForTest();
     const parsed = parseContributors(body);
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.summaries).toBeUndefined();
@@ -279,7 +279,7 @@ describe('restoreContributors preserves summaries (D16 failure recovery)', () =>
     recordContributor('a.md', 'agent-alice', 'Alice', undefined, undefined, undefined, 'First');
     const snapshot = swapContributors();
     restoreContributors(snapshot);
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('"summaries":["First"]');
   });
 
@@ -305,7 +305,7 @@ describe('restoreContributors preserves summaries (D16 failure recovery)', () =>
     const snapshot = swapContributors();
     recordContributor('a.md', 'agent-alice', 'Alice', undefined, undefined, undefined, 'Live-1');
     restoreContributors(snapshot);
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('"summaries":["Snapshot-1","Snapshot-2","Live-1"]');
   });
 
@@ -314,7 +314,7 @@ describe('restoreContributors preserves summaries (D16 failure recovery)', () =>
     const snapshot = swapContributors();
     recordContributor('a.md', 'agent-alice', 'Alice', undefined, undefined, undefined, 'Same');
     restoreContributors(snapshot);
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('"summaries":["Same","Same"]');
   });
 
@@ -332,7 +332,7 @@ describe('restoreContributors preserves summaries (D16 failure recovery)', () =>
     expect(contributorCount()).toBe(0);
     restoreContributors(snapshot);
     expect(contributorCount()).toBe(1);
-    const output = formatContributors();
+    const output = formatContributorsForTest();
     expect(output).toContain('"summaries":["Only in snapshot"]');
   });
 });

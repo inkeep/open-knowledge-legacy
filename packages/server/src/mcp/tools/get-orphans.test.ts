@@ -79,13 +79,17 @@ function makeDeps(serverUrl: string | undefined) {
 function registerTool(serverUrl: string | undefined): RegisteredTool {
   let captured: RegisteredTool | null = null;
   const server = {
-    tool(
+    registerTool(
       name: string,
-      description: string,
-      schema: Record<string, unknown>,
+      config: { description?: string; inputSchema?: Record<string, unknown> },
       handler: RegisteredTool['handler'],
     ) {
-      captured = { name, description, schema, handler };
+      captured = {
+        name,
+        description: config.description ?? '',
+        schema: config.inputSchema ?? {},
+        handler,
+      };
     },
   } as unknown as ServerInstance;
 

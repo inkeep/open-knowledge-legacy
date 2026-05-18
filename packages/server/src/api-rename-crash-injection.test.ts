@@ -7,7 +7,7 @@ import { Readable } from 'node:stream';
 import simpleGit from 'simple-git';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
-import { clearContributors } from './contributor-tracker.ts';
+import { swapContributors } from './contributor-tracker.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { recoverPendingManagedRename } from './managed-rename-journal.ts';
 import { loadRenameLogIndex, resetRenameLogIndexCache, sweepLazyPopOrphans } from './rename-log.ts';
@@ -84,13 +84,13 @@ beforeEach(async () => {
   const shadow = await initShadowRepo(projectDir);
   shadowRef = { current: shadow };
 
-  clearContributors();
+  swapContributors();
   resetRenameLogIndexCache();
 });
 
 afterEach(() => {
   delete process.env.OK_TEST_RENAME_FAULT;
-  clearContributors();
+  swapContributors();
   resetRenameLogIndexCache();
   rmSync(tmpDir, { recursive: true, force: true });
 });

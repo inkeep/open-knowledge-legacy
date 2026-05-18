@@ -17,7 +17,10 @@ import { setImmediate } from 'node:timers/promises';
 import type { Principal } from '@inkeep/open-knowledge-core';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
-import { clearContributors, formatContributors } from './contributor-tracker.ts';
+import {
+  __formatContributorsForTests as formatContributorsForTest,
+  __resetContributorsForTests as resetContributorsForTest,
+} from './contributor-tracker.ts';
 import { _resetDocExtensionsForTests } from './doc-extensions.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
@@ -137,7 +140,7 @@ let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'ok-rename-rollback-summary-'));
-  clearContributors();
+  resetContributorsForTest();
   resetMetrics();
   _resetDocExtensionsForTests();
 });
@@ -157,7 +160,7 @@ describe('handleRenamePath (kind: file) — agentId-guarded attribution', () => 
     });
 
     expect(response.status).toBe(200);
-    expect(formatContributors()).toBe('');
+    expect(formatContributorsForTest()).toBe('');
     expect(getMetrics().agentWriteCalls).toBe(0);
     expect(getMetrics().summariesProvided).toBe(0);
     const parsed = JSON.parse(response.body);
@@ -177,7 +180,7 @@ describe('handleRenamePath (kind: file) — agentId-guarded attribution', () => 
     });
 
     expect(response.status).toBe(200);
-    const body = formatContributors();
+    const body = formatContributorsForTest();
     const lines = body.split('\n').filter((l) => l.startsWith('ok-contributors:'));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('"docs":["renamed-notes"]');
@@ -203,8 +206,10 @@ describe('handleRenamePath (kind: file) — agentId-guarded attribution', () => 
     });
 
     expect(response.status).toBe(200);
-    expect(formatContributors()).toContain('"summaries":["Aligned naming with module layout"]');
-    expect(formatContributors().match(/ok-contributors:/g)?.length ?? 0).toBe(1);
+    expect(formatContributorsForTest()).toContain(
+      '"summaries":["Aligned naming with module layout"]',
+    );
+    expect(formatContributorsForTest().match(/ok-contributors:/g)?.length ?? 0).toBe(1);
   });
 
   test('with agentId, wrong-type summary → 400, no rename side-effects, no counters', async () => {
@@ -224,7 +229,7 @@ describe('handleRenamePath (kind: file) — agentId-guarded attribution', () => 
     expect(typeof summaryErr.title).toBe('string');
     expect(readFileSync(join(tmpDir, 'src.md'), 'utf-8')).toBe('# Src\n');
     expect(getMetrics().agentWriteCalls).toBe(0);
-    expect(formatContributors()).toBe('');
+    expect(formatContributorsForTest()).toBe('');
   });
 
   test('with agentId + >80-char summary → truncated + truncatedFrom in response', async () => {
@@ -280,7 +285,7 @@ describe('handleRenamePath (kind: file) — agentId-guarded attribution', () => 
     expect(summaryErr.type).toBe('urn:ok:error:invalid-request');
     expect(typeof summaryErr.title).toBe('string');
     expect(readFileSync(join(tmpDir, 'src.md'), 'utf-8')).toBe('# Src\n');
-    expect(formatContributors()).toBe('');
+    expect(formatContributorsForTest()).toBe('');
     expect(getMetrics().agentWriteCalls).toBe(0);
   });
 });
@@ -292,7 +297,7 @@ describe('handleRollback — agentId-guarded attribution (regression gate)', () 
       commitSha: 'a'.repeat(40),
     });
     expect(response.status).toBe(503);
-    expect(formatContributors()).toBe('');
+    expect(formatContributorsForTest()).toBe('');
     expect(getMetrics().agentWriteCalls).toBe(0);
     expect(getMetrics().summariesProvided).toBe(0);
   });
@@ -305,7 +310,7 @@ describe('handleRollback — agentId-guarded attribution (regression gate)', () 
       summary: 42,
     });
     expect(response.status).toBe(400);
-    expect(formatContributors()).toBe('');
+    expect(formatContributorsForTest()).toBe('');
     expect(getMetrics().agentWriteCalls).toBe(0);
   });
 });
@@ -463,7 +468,7 @@ describe('handleRenamePath — actor identity routing', () => {
     );
 
     expect(response.status).toBe(200);
-    const body = formatContributors();
+    const body = formatContributorsForTest();
     const lines = body.split('\n').filter((l) => l.startsWith('ok-contributors:'));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain(`"id":"${fixturePrincipal.id}"`);
@@ -480,7 +485,7 @@ describe('handleRenamePath — actor identity routing', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(formatContributors()).toBe('');
+    expect(formatContributorsForTest()).toBe('');
   });
 
   test('agent file rename + principal loaded → agent contributor (agent wins)', async () => {
@@ -502,7 +507,7 @@ describe('handleRenamePath — actor identity routing', () => {
     );
 
     expect(response.status).toBe(200);
-    const body = formatContributors();
+    const body = formatContributorsForTest();
     const lines = body.split('\n').filter((l) => l.startsWith('ok-contributors:'));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('"id":"agent-claude-1"');
@@ -568,7 +573,7 @@ describe('handleRenamePath — actor identity routing', () => {
     });
 
     expect(response.status).toBe(200);
-    const body = formatContributors();
+    const body = formatContributorsForTest();
     expect(body).toContain('"summaries":["Renamed notes → renamed-notes"]');
   });
 
@@ -586,7 +591,7 @@ describe('handleRenamePath — actor identity routing', () => {
     );
 
     expect(response.status).toBe(200);
-    const body = formatContributors();
+    const body = formatContributorsForTest();
     const lines = body.split('\n').filter((l) => l.startsWith('ok-contributors:'));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('"docs":["renamed-notes"]');
@@ -662,7 +667,7 @@ describe('handleRenamePath — folder rename via consolidated endpoint', () => {
       );
 
       expect(response.status).toBe(200);
-      const body = formatContributors();
+      const body = formatContributorsForTest();
       expect(body).toContain(`"id":"${fixturePrincipal.id}"`);
       expect(body).toContain('essays/auth');
       expect(body).toContain('essays/login');
