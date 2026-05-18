@@ -322,8 +322,17 @@ const bridge: OkDesktopBridge = {
               readonly gitRoot: string;
               readonly pickedPath: string;
             }
-          | { readonly kind: 'mcp-repaired'; readonly editors: readonly string[] }
-          | { readonly kind: 'mcp-repair-failed'; readonly failedEditors: readonly string[] },
+          | {
+              readonly kind: 'startup-reclaim';
+              readonly mcp:
+                | { readonly status: 'none' }
+                | { readonly status: 'repaired'; readonly editors: readonly string[] }
+                | { readonly status: 'failed'; readonly editors: readonly string[] };
+              readonly path:
+                | { readonly status: 'none' }
+                | { readonly status: 'installed'; readonly summary: string }
+                | { readonly status: 'failed'; readonly summary: string };
+            },
       ) => void,
     ) {
       const listener = (
@@ -335,8 +344,17 @@ const bridge: OkDesktopBridge = {
               readonly gitRoot: string;
               readonly pickedPath: string;
             }
-          | { readonly kind: 'mcp-repaired'; readonly editors: readonly string[] }
-          | { readonly kind: 'mcp-repair-failed'; readonly failedEditors: readonly string[] },
+          | {
+              readonly kind: 'startup-reclaim';
+              readonly mcp:
+                | { readonly status: 'none' }
+                | { readonly status: 'repaired'; readonly editors: readonly string[] }
+                | { readonly status: 'failed'; readonly editors: readonly string[] };
+              readonly path:
+                | { readonly status: 'none' }
+                | { readonly status: 'installed'; readonly summary: string }
+                | { readonly status: 'failed'; readonly summary: string };
+            },
       ) => cb(payload);
       // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
       ipcRenderer.on('ok:onboarding:toast', listener);

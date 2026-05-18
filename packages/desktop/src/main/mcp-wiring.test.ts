@@ -2,11 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { ALL_EDITOR_IDS, EDITOR_TARGETS } from '@inkeep/open-knowledge';
 import {
   checkAndRepairMcpWiringOnStartup,
-  type ForceComputeTarget,
   formatPartialFailureMessage,
   type IpcMainEventLike,
   type IpcMainLike,
-  isPublishedCanonical,
   type McpStatusMarker,
   type McpWiringCliSurface,
   type McpWiringFsOps,
@@ -304,88 +302,6 @@ describe('resolveCliPath — hybrid symlink-or-bundle resolution', () => {
     const EACCES: NodeJS.ErrnoException = Object.assign(new Error('EACCES'), { code: 'EACCES' });
     const fs = stubFsForResolve({ symlinkPresent: true, readlinkResult: EACCES });
     expect(resolveCliPath(INSTALLED_EXE, fs)).toBe(INSTALLED_BUNDLE_WRAPPER);
-  });
-});
-
-describe('isPublishedCanonical — exact canonical-shape predicate', () => {
-  const claude = EDITOR_TARGETS.claude;
-
-  test('Fixture A — canonical published npx shape → true (Claude)', () => {
-    const existing: Record<string, unknown> = {
-      command: 'npx',
-      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
-    };
-    expect(isPublishedCanonical(existing, claude)).toBe(true);
-  });
-
-  test('Fixture C — canonical + user-augmented env → true', () => {
-    const existing: Record<string, unknown> = {
-      command: 'npx',
-      args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'],
-      env: { OK_LOG_LEVEL: 'debug' },
-    };
-    expect(isPublishedCanonical(existing, claude)).toBe(true);
-  });
-
-  test('legacy bare-name variant → false (foreign-customized; left alone)', () => {
-    const existing: Record<string, unknown> = {
-      command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
-    };
-    expect(isPublishedCanonical(existing, claude)).toBe(false);
-  });
-
-  test('prior cliPath shape (bundle-absolute) → false (foreign-customized; left alone)', () => {
-    const existing: Record<string, unknown> = {
-      command: '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh',
-      args: ['mcp'],
-    };
-    expect(isPublishedCanonical(existing, claude)).toBe(false);
-  });
-
-  test('prior cliPath shape (symlink /usr/local/bin/ok) → false (foreign-customized)', () => {
-    const existing: Record<string, unknown> = {
-      command: '/usr/local/bin/ok',
-      args: ['mcp'],
-    };
-    expect(isPublishedCanonical(existing, claude)).toBe(false);
-  });
-
-  test('Entry with non-string command → false', () => {
-    const existing: Record<string, unknown> = { command: 42, args: ['mcp'] };
-    expect(isPublishedCanonical(existing, claude)).toBe(false);
-  });
-
-  test('Entry with non-array args → false', () => {
-    const existing: Record<string, unknown> = { command: 'npx', args: 'mcp' };
-    expect(isPublishedCanonical(existing, claude)).toBe(false);
-  });
-
-  test('Empty shape → false (no command match)', () => {
-    const existing: Record<string, unknown> = {};
-    expect(isPublishedCanonical(existing, claude)).toBe(false);
-  });
-
-  test('Accepts any structurally-compatible target (interface assignability)', () => {
-    const minimalTarget: ForceComputeTarget = {
-      isCompatible(existing, _cwd, options) {
-        if (options?.mode !== 'published') return false;
-        return (
-          existing.command === 'npx' &&
-          Array.isArray(existing.args) &&
-          existing.args.length === 2 &&
-          existing.args[0] === '@inkeep/open-knowledge' &&
-          existing.args[1] === 'mcp'
-        );
-      },
-    };
-    expect(
-      isPublishedCanonical(
-        { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
-        minimalTarget,
-      ),
-    ).toBe(true);
-    expect(isPublishedCanonical({ command: 'custom', args: ['foo'] }, minimalTarget)).toBe(false);
   });
 });
 
@@ -773,7 +689,7 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
       const claude = payload.detectedEditors.find((d) => d.id === 'claude');
       const cursor = payload.detectedEditors.find((d) => d.id === 'cursor');
       expect(claude?.willReplace).toBe(true);
-      expect(cursor?.willReplace).toBe(false);
+      expect(cursor?.willReplace).toBe(true);
     } finally {
       handle.destroy();
     }
@@ -997,7 +913,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
     }
   });
 
-  test('confirm with foreign customization → editor is excluded from the write call + emits mcp-wiring-skip-customized event', async () => {
+  test('confirm with foreign customization → editor is reclaimed under desktop-owned namespace', async () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     const { cli, writeCalls } = createCliSurface({
@@ -1019,12 +935,10 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
     try {
       await ipcMain.bindSender();
       await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['cursor'] });
-      expect(
-        events.some((e) => e.event === 'mcp-wiring-skip-customized' && e.editor === 'cursor'),
-      ).toBe(true);
-      for (const call of writeCalls) {
-        expect(call.editors).not.toContain('cursor');
-      }
+      expect(events.some((e) => e.event === 'mcp-wiring-skip-customized')).toBe(false);
+      expect(writeCalls).toEqual([
+        { editors: ['cursor'], cliPath: INSTALLED_BUNDLE_WRAPPER, home: '/Users/andrew' },
+      ]);
     } finally {
       handle.destroy();
     }
@@ -1787,8 +1701,8 @@ describe('runMcpWiringOnFirstLaunch — detection try/catch', () => {
   });
 });
 
-describe('checkAndRepairMcpWiringOnStartup — prior-consent namespace reclaim', () => {
-  test('skips users who have not previously consented', async () => {
+describe('checkAndRepairMcpWiringOnStartup — namespace reclaim', () => {
+  test('no marker still scans all editors and no-ops when no namespace token exists', async () => {
     const { fs } = createVirtualFs();
     const { cli, writeCalls } = createCliSurface();
     const result = await checkAndRepairMcpWiringOnStartup({
@@ -1800,11 +1714,14 @@ describe('checkAndRepairMcpWiringOnStartup — prior-consent namespace reclaim',
       cli,
       fs,
     });
-    expect(result).toEqual({ status: 'skipped', reason: 'no-marker' });
+    expect(result).toEqual({
+      status: 'ok',
+      checkedEditors: ['claude', 'claude-desktop', 'cursor', 'codex'],
+    });
     expect(writeCalls).toHaveLength(0);
   });
 
-  test('repairs missing Claude entry after configured:true consent without rewriting marker', async () => {
+  test('does not create missing Claude entry after configured:true consent and does not rewrite marker', async () => {
     const { fs, files } = createVirtualFs();
     const home = '/Users/andrew';
     writeMcpStatusMarker(
@@ -1832,11 +1749,14 @@ describe('checkAndRepairMcpWiringOnStartup — prior-consent namespace reclaim',
       logger,
     });
 
-    expect(result).toEqual({ status: 'repaired', repairedEditors: ['claude'] });
-    expect(writeCalls).toEqual([{ editors: ['claude'], cliPath: INSTALLED_BUNDLE_WRAPPER, home }]);
+    expect(result).toEqual({
+      status: 'ok',
+      checkedEditors: ['claude', 'claude-desktop', 'cursor', 'codex'],
+    });
+    expect(writeCalls).toEqual([]);
     expect(files.get(mcpStatusMarkerPath(home))).toBe(before);
-    expect(events.some((e) => e.event === 'mcp-wiring-repair-missing-after-consent')).toBe(true);
-    expect(events.some((e) => e.event === 'mcp-wiring-repair-repaired')).toBe(true);
+    expect(events.some((e) => e.event === 'mcp-wiring-repair-no-token')).toBe(true);
+    expect(events.some((e) => e.event === 'mcp-wiring-repair-repaired')).toBe(false);
   });
 
   test('reclaims existing open-knowledge entry regardless of custom wrapper shape after consent', async () => {
@@ -1935,11 +1855,14 @@ describe('checkAndRepairMcpWiringOnStartup — prior-consent namespace reclaim',
       fs,
     });
 
-    expect(result).toEqual({ status: 'ok', checkedEditors: ['claude'] });
+    expect(result).toEqual({
+      status: 'ok',
+      checkedEditors: ['claude', 'claude-desktop', 'cursor', 'codex'],
+    });
     expect(writeCalls).toHaveLength(0);
   });
 
-  test('skips users with configured:false marker (consent boundary)', async () => {
+  test('configured:false marker no longer gates namespace reclaim', async () => {
     const { fs } = createVirtualFs();
     const home = '/Users/andrew';
     writeMcpStatusMarker(home, { configured: false, skippedAt: '2026-05-12T00:00:00.000Z' }, fs);
@@ -1955,7 +1878,10 @@ describe('checkAndRepairMcpWiringOnStartup — prior-consent namespace reclaim',
       fs,
     });
 
-    expect(result).toEqual({ status: 'skipped', reason: 'not-consented' });
+    expect(result).toEqual({
+      status: 'ok',
+      checkedEditors: ['claude', 'claude-desktop', 'cursor', 'codex'],
+    });
     expect(writeCalls).toHaveLength(0);
   });
 
@@ -1973,7 +1899,9 @@ describe('checkAndRepairMcpWiringOnStartup — prior-consent namespace reclaim',
       fs,
     );
     const { cli, writeCalls } = createCliSurface({
-      existingEntries: { claude: null },
+      existingEntries: {
+        claude: { command: 'npx', args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'] },
+      },
       writeResult: () => [
         {
           editorId: 'claude',
@@ -2017,7 +1945,9 @@ describe('checkAndRepairMcpWiringOnStartup — prior-consent namespace reclaim',
       fs,
     );
     const { cli } = createCliSurface({
-      existingEntries: { claude: null },
+      existingEntries: {
+        claude: { command: 'npx', args: ['-y', '@inkeep/open-knowledge@latest', 'mcp'] },
+      },
       writeResult: () => {
         throw new Error('disk write failed');
       },

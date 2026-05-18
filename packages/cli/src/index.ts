@@ -9,7 +9,10 @@ export {
 export {
   detectInstalledEditors,
   type EditorMcpResult,
+  LAUNCH_CONFIG_NAME,
+  type LaunchJsonResult,
   readExistingMcpEntry,
+  scaffoldLaunchJson,
   type UserMcpConfigsOptions,
   writeEditorMcpConfig,
   writeUserMcpConfigs,

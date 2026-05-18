@@ -127,7 +127,10 @@ function McpConsentDialogForm({ payload, store, toast }: McpConsentDialogFormPro
         <DialogHeader>
           <DialogTitle>Add Open Knowledge to your AI tools</DialogTitle>
           <DialogDescription>
-            Connect Open Knowledge to your AI tools so they can read and write your notes.
+            Open Knowledge will manage the <code>open-knowledge</code> MCP server name, the{' '}
+            <code>open-knowledge-ui</code> launch config, and <code>ok</code> /{' '}
+            <code>open-knowledge</code> on PATH, including OK-owned symlinks in writable non-system
+            PATH directories. If you use a custom wrapper, register it under a different name.
           </DialogDescription>
         </DialogHeader>
 

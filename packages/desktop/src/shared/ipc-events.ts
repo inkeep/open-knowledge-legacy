@@ -32,8 +32,17 @@ export interface EventChannels {
            * toast so the user can see what got promoted to what. */
           readonly pickedPath: string;
         }
-      | { readonly kind: 'mcp-repaired'; readonly editors: readonly string[] }
-      | { readonly kind: 'mcp-repair-failed'; readonly failedEditors: readonly string[] };
+      | {
+          readonly kind: 'startup-reclaim';
+          readonly mcp:
+            | { readonly status: 'none' }
+            | { readonly status: 'repaired'; readonly editors: readonly string[] }
+            | { readonly status: 'failed'; readonly editors: readonly string[] };
+          readonly path:
+            | { readonly status: 'none' }
+            | { readonly status: 'installed'; readonly summary: string }
+            | { readonly status: 'failed'; readonly summary: string };
+        };
   };
 
   'ok:local-op:auth:event': {

@@ -144,15 +144,6 @@ export function resolveCliPath(executablePath: string, fs: McpWiringFsOps = defa
   }
 }
 
-export type ForceComputeTarget = Pick<EditorMcpTarget, 'isCompatible'>;
-
-export function isPublishedCanonical(
-  existing: Record<string, unknown>,
-  target: ForceComputeTarget,
-): boolean {
-  return target.isCompatible(existing, '', { mode: 'published' });
-}
-
 export function formatPartialFailureMessage(
   failures: ReadonlyArray<{ editorId: string; error?: string }>,
   totalCount: number,
@@ -230,6 +221,7 @@ interface RunMcpWiringOpts {
   ipcMain: IpcMainLike;
   cli: McpWiringCliSurface;
   forceEnv?: string | null | undefined;
+  reclaimDisableEnv?: string | null | undefined;
   forceShow?: boolean;
   fs?: McpWiringFsOps;
   now?: () => Date;
@@ -257,23 +249,19 @@ export function checkAndRepairMcpWiringOnStartup(
     platform,
     cli,
     forceEnv,
+    reclaimDisableEnv,
     fs,
     logger = DEFAULT_LOGGER,
   } = opts;
+  if (reclaimDisableEnv === '1')
+    return Promise.resolve({ status: 'skipped', reason: 'reclaim-disabled' });
   if (platform !== 'darwin') return Promise.resolve({ status: 'skipped', reason: 'platform' });
   if (!isPackaged && forceEnv !== '1')
     return Promise.resolve({ status: 'skipped', reason: 'dev-mode' });
   if (!/\.app\/Contents\/MacOS\/[^/]+$/.test(executablePath)) {
     return Promise.resolve({ status: 'skipped', reason: 'bad-executable-path' });
   }
-  const marker = readMcpStatusMarker(home, fs);
-  if (marker === null) return Promise.resolve({ status: 'skipped', reason: 'no-marker' });
-  if (marker.configured !== true)
-    return Promise.resolve({ status: 'skipped', reason: 'not-consented' });
-
-  const selectedEditors = marker.editors.filter((id): id is McpWiringEditorId =>
-    cli.allEditorIds.includes(id as McpWiringEditorId),
-  );
+  const selectedEditors = [...cli.allEditorIds];
   logger.event({ event: 'mcp-wiring-repair-check-started', editors: selectedEditors });
   if (selectedEditors.length === 0) return Promise.resolve({ status: 'ok', checkedEditors: [] });
 
@@ -293,12 +281,15 @@ export function checkAndRepairMcpWiringOnStartup(
       logger.event({ event: 'mcp-wiring-repair-healthy-current', editor });
       continue;
     }
+    if (existing === null) {
+      logger.event({ event: 'mcp-wiring-repair-no-token', editor });
+      continue;
+    }
     logger.event({
-      event:
-        existing === null
-          ? 'mcp-wiring-repair-missing-after-consent'
-          : 'mcp-wiring-repair-reclaim-existing',
+      event: 'mcp-wiring-repair-reclaim-existing',
       editor,
+      priorCommand: typeof existing.command === 'string' ? existing.command.slice(0, 200) : null,
+      priorArgs: Array.isArray(existing.args) ? existing.args.slice(0, 10) : null,
     });
     editorsToRepair.push(editor);
   }
@@ -351,6 +342,7 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     ipcMain,
     cli,
     forceEnv,
+    reclaimDisableEnv,
     forceShow = false,
     fs,
     now,
@@ -358,6 +350,11 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
   } = opts;
   const nowDate = (): Date => (now ? now() : new Date());
   const inertHandle: RunMcpWiringHandle = { destroy() {}, armed: false };
+
+  if (reclaimDisableEnv === '1') {
+    logger.info('skip — OK_RECLAIM_DISABLE is set');
+    return inertHandle;
+  }
 
   if (platform !== 'darwin') {
     logger.info('skip — platform is not darwin', { platform });
@@ -397,7 +394,7 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
       try {
         const existing = cli.readExistingMcpEntry(id, home);
         if (existing !== null) {
-          willReplace = isPublishedCanonical(existing, target);
+          willReplace = true;
         }
       } catch (err) {
         logger.info('willReplace probe failed for editor', {
@@ -449,24 +446,7 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
 
     const cliPath = resolveCliPath(executablePath, fs);
 
-    const editorsToWrite: McpWiringEditorId[] = [];
-    for (const editor of selectedEditors) {
-      const target = cli.editorTargets[editor];
-      if (!target) continue;
-      const existing = cli.readExistingMcpEntry(editor, home);
-      if (existing === null) {
-        editorsToWrite.push(editor);
-        continue;
-      }
-      if (isPublishedCanonical(existing, target)) {
-        editorsToWrite.push(editor);
-      } else {
-        logger.event({
-          event: 'mcp-wiring-skip-customized',
-          editor,
-        });
-      }
-    }
+    const editorsToWrite = selectedEditors;
 
     let results: Awaited<ReturnType<McpWiringCliSurface['writeUserMcpConfigs']>>;
     try {

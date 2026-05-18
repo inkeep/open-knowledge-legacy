@@ -267,21 +267,29 @@ export function scaffoldLaunchJson(
     port: number;
     autoPort: true;
   } =
-    installOptions.mode === 'dev'
+    installOptions.cliPath !== undefined
       ? {
           name: LAUNCH_CONFIG_NAME,
-          runtimeExecutable: 'node',
-          runtimeArgs: [resolveDevCliDistPath(), 'ui'],
+          runtimeExecutable: installOptions.cliPath,
+          runtimeArgs: ['ui'],
           port: LAUNCH_JSON_PORT,
           autoPort: true,
         }
-      : {
-          name: LAUNCH_CONFIG_NAME,
-          runtimeExecutable: 'npx',
-          runtimeArgs: [...LAUNCH_JSON_CANONICAL_ARGS],
-          port: LAUNCH_JSON_PORT,
-          autoPort: true,
-        };
+      : installOptions.mode === 'dev'
+        ? {
+            name: LAUNCH_CONFIG_NAME,
+            runtimeExecutable: 'node',
+            runtimeArgs: [resolveDevCliDistPath(), 'ui'],
+            port: LAUNCH_JSON_PORT,
+            autoPort: true,
+          }
+        : {
+            name: LAUNCH_CONFIG_NAME,
+            runtimeExecutable: 'npx',
+            runtimeArgs: [...LAUNCH_JSON_CANONICAL_ARGS],
+            port: LAUNCH_JSON_PORT,
+            autoPort: true,
+          };
 
   try {
     assertProjectPathSafe(configPath, cwd);
