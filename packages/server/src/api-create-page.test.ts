@@ -7,7 +7,7 @@ import { Readable } from 'node:stream';
 import type { Principal } from '@inkeep/open-knowledge-core';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
-import { clearContributors, contributorCount, hasContributor } from './contributor-tracker.ts';
+import { contributorCount, hasContributor, swapContributors } from './contributor-tracker.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 
 function makeReq(method: string, body: unknown): IncomingMessage {
@@ -75,7 +75,7 @@ function setupTmpDir(): string {
 }
 
 beforeEach(() => {
-  clearContributors();
+  swapContributors();
 });
 
 afterEach(() => {

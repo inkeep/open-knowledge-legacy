@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import simpleGit from 'simple-git';
 import {
-  clearContributors,
   formatContributorsFrom,
   recordContributor,
   swapContributors,
@@ -29,7 +28,7 @@ async function bootstrap(): Promise<string> {
 }
 
 beforeEach(() => {
-  clearContributors();
+  swapContributors();
 });
 
 afterEach(() => {

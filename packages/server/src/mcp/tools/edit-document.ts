@@ -42,23 +42,25 @@ interface EditDocumentDeps {
 }
 
 export function register(server: ServerInstance, deps: EditDocumentDeps): void {
-  server.tool(
+  server.registerTool(
     'edit_document',
-    DESCRIPTION,
     {
-      docName: z.string().describe('Document name to edit'),
-      find: z.string().describe('Text to find (exact match)'),
-      replace: z.string().describe('Replacement text'),
-      offset: z
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .describe(
-          'Exact occurrence to patch, as a JavaScript string offset in the current markdown',
-        ),
-      summary: summaryArgSchema,
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        docName: z.string().describe('Document name to edit'),
+        find: z.string().describe('Text to find (exact match)'),
+        replace: z.string().describe('Replacement text'),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe(
+            'Exact occurrence to patch, as a JavaScript string offset in the current markdown',
+          ),
+        summary: summaryArgSchema,
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: {
       docName: string;

@@ -7,7 +7,7 @@ import { Readable } from 'node:stream';
 import simpleGit from 'simple-git';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
-import { clearContributors, recordContributor, swapContributors } from './contributor-tracker.ts';
+import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { loadRenameLogIndex, type RenameLogEntry, resetRenameLogIndexCache } from './rename-log.ts';
 import { initShadowRepo, type ShadowRef } from './shadow-repo.ts';
@@ -83,12 +83,12 @@ beforeEach(async () => {
   const shadow = await initShadowRepo(projectDir);
   shadowRef = { current: shadow };
 
-  clearContributors();
+  swapContributors();
   resetRenameLogIndexCache();
 });
 
 afterEach(() => {
-  clearContributors();
+  swapContributors();
   resetRenameLogIndexCache();
   rmSync(tmpDir, { recursive: true, force: true });
 });

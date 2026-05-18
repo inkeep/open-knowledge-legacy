@@ -346,7 +346,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     }
   }
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function onSubmit(e: React.SyntheticEvent<HTMLFormElement, SubmitEvent>) {
     e.preventDefault();
     if (!canSubmit) return;
     setBusy(true);

@@ -156,18 +156,20 @@ export async function buildReadResult(
 }
 
 export function register(server: ServerInstance, deps: ReadDocumentDeps): void {
-  server.tool(
+  server.registerTool(
     'read_document',
-    DESCRIPTION,
     {
-      path: z.string().describe('Project-root-relative path to the file'),
-      since: z.string().optional().describe('Reserved; currently unused (§15 Future Work)'),
-      cwd: z
-        .string()
-        .optional()
-        .describe(
-          'Absolute host path to resolve `path` against. Defaults only when the MCP client advertises exactly one root; otherwise pass `cwd` explicitly.',
-        ),
+      description: DESCRIPTION,
+      inputSchema: {
+        path: z.string().describe('Project-root-relative path to the file'),
+        since: z.string().optional().describe('Reserved; currently unused (§15 Future Work)'),
+        cwd: z
+          .string()
+          .optional()
+          .describe(
+            'Absolute host path to resolve `path` against. Defaults only when the MCP client advertises exactly one root; otherwise pass `cwd` explicitly.',
+          ),
+      },
     },
     async (args: { path: string; since?: string; cwd?: string }) => {
       try {

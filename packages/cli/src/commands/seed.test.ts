@@ -3,9 +3,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { STARTER_FOLDERS } from '@inkeep/open-knowledge-server';
+import { STARTER_PACKS } from '@inkeep/open-knowledge-server';
 import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 import { runSeed } from './seed.ts';
+
+const STARTER_FOLDERS = STARTER_PACKS['knowledge-base'].folders;
 
 let testDir: string;
 

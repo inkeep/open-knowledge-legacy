@@ -48,27 +48,29 @@ interface WriteDocumentDeps {
 }
 
 export function register(server: ServerInstance, deps: WriteDocumentDeps): void {
-  server.tool(
+  server.registerTool(
     'write_document',
-    DESCRIPTION,
     {
-      docName: z.string().describe('Document name to write to'),
-      markdown: z
-        .string()
-        .optional()
-        .describe(
-          'Markdown content to write. Optional when `template` is set — the template body is used.',
-        ),
-      template: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Template name resolved against parent folder's templates_available (leaf → root walk-up; closest-wins on collision). See list_documents({ dir, depth: 1 }) to inspect the menu.",
-        ),
-      position: z.enum(['append', 'prepend', 'replace']).describe('Where to insert the content'),
-      summary: summaryArgSchema,
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        docName: z.string().describe('Document name to write to'),
+        markdown: z
+          .string()
+          .optional()
+          .describe(
+            'Markdown content to write. Optional when `template` is set — the template body is used.',
+          ),
+        template: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Template name resolved against parent folder's templates_available (leaf → root walk-up; closest-wins on collision). See list_documents({ dir, depth: 1 }) to inspect the menu.",
+          ),
+        position: z.enum(['append', 'prepend', 'replace']).describe('Where to insert the content'),
+        summary: summaryArgSchema,
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: {
       docName: string;

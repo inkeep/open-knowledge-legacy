@@ -374,12 +374,14 @@ export const DESCRIPTION = [
 ].join('\n');
 
 export function register(server: ServerInstance, deps: WorkflowToolDeps): void {
-  server.tool(
+  server.registerTool(
     'research',
-    DESCRIPTION,
     {
-      topic: z.string().describe('The topic, question, or anchor URL to research'),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        topic: z.string().describe('The topic, question, or anchor URL to research'),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     buildWorkflowHandler('research', deps, 'topic', buildBody),
   );

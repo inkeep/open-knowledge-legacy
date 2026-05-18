@@ -96,16 +96,18 @@ export interface RenameFolderDeps {
 }
 
 export function register(server: ServerInstance, deps: RenameFolderDeps): void {
-  server.tool(
+  server.registerTool(
     'rename_folder',
-    DESCRIPTION,
     {
-      fromFolder: z.string().describe('Current folder path (relative, no trailing slash)'),
-      toFolder: z.string().describe('New folder path (relative, no trailing slash)'),
-      summary: summaryArgSchema.describe(
-        'Optional one-line user-outcome description (≤80 chars). Applied to every affected-doc contributor entry.',
-      ),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        fromFolder: z.string().describe('Current folder path (relative, no trailing slash)'),
+        toFolder: z.string().describe('New folder path (relative, no trailing slash)'),
+        summary: summaryArgSchema.describe(
+          'Optional one-line user-outcome description (≤80 chars). Applied to every affected-doc contributor entry.',
+        ),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { fromFolder: string; toFolder: string; summary?: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(

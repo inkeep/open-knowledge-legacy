@@ -4,8 +4,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { planSeed } from './plan.ts';
-import { STARTER_FOLDERS } from './starter.ts';
+import { STARTER_PACKS } from './starter.ts';
 import { SeedPrerequisiteError, SeedRootDirError } from './types.ts';
+
+const STARTER_FOLDERS = STARTER_PACKS['knowledge-base'].folders;
 
 describe('planSeed — nested .ok/ era', () => {
   let projectDir: string;

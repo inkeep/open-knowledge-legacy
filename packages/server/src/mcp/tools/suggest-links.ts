@@ -28,12 +28,14 @@ export interface SuggestLinksDeps {
 }
 
 export function register(server: ServerInstance, deps: SuggestLinksDeps): void {
-  server.tool(
+  server.registerTool(
     'suggest_links',
-    DESCRIPTION,
     {
-      docName: z.string().describe('Target page docName'),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        docName: z.string().describe('Target page docName'),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { docName: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(

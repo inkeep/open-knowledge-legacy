@@ -38,20 +38,22 @@ export interface RollbackToVersionDeps {
 }
 
 export function register(server: ServerInstance, deps: RollbackToVersionDeps): void {
-  server.tool(
+  server.registerTool(
     'rollback_to_version',
-    DESCRIPTION,
     {
-      docName: z.string().describe('Document name to restore'),
-      commitSha: z
-        .string()
-        .length(40)
-        .regex(/^[0-9a-f]+$/i)
-        .describe('40-character commit SHA from the shadow repo timeline'),
-      summary: summaryArgSchema.describe(
-        'Optional one-line user-outcome description (≤80 chars). Defaults to "Restored to <sha-short>" when omitted. Appears as a bullet in the timeline.',
-      ),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        docName: z.string().describe('Document name to restore'),
+        commitSha: z
+          .string()
+          .length(40)
+          .regex(/^[0-9a-f]+$/i)
+          .describe('40-character commit SHA from the shadow repo timeline'),
+        summary: summaryArgSchema.describe(
+          'Optional one-line user-outcome description (≤80 chars). Defaults to "Restored to <sha-short>" when omitted. Appears as a bullet in the timeline.',
+        ),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { docName: string; commitSha: string; summary?: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(

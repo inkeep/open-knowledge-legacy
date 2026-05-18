@@ -169,12 +169,14 @@ export const DESCRIPTION = [
 ].join('\n');
 
 export function register(server: ServerInstance, deps: WorkflowToolDeps): void {
-  server.tool(
+  server.registerTool(
     'consolidate',
-    DESCRIPTION,
     {
-      topic: z.string().describe('The topic to consolidate into a canonical article'),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        topic: z.string().describe('The topic to consolidate into a canonical article'),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     buildWorkflowHandler('consolidate', deps, 'topic', buildBody),
   );

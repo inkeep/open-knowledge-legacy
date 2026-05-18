@@ -59,12 +59,14 @@ function parseDeletedDocNames(value: unknown): string[] {
 }
 
 export function register(server: ServerInstance, deps: DeleteDocumentDeps): void {
-  server.tool(
+  server.registerTool(
     'delete_document',
-    DESCRIPTION,
     {
-      docName: z.string().describe('Document name to delete'),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        docName: z.string().describe('Document name to delete'),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { docName: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(

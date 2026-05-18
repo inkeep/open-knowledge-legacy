@@ -119,6 +119,17 @@ export function formatContributorsFrom(snapshot: Map<string, ContributorEntry>):
   return lines.join('\n');
 }
 
+export function __resetContributorsForTests(): void {
+  swapContributors();
+}
+
+export function __formatContributorsForTests(): string {
+  const snapshot = swapContributors();
+  const formatted = formatContributorsFrom(snapshot);
+  restoreContributors(snapshot);
+  return formatted;
+}
+
 export function formatContributors(): string {
   return formatContributorsFrom(pendingContributors);
 }

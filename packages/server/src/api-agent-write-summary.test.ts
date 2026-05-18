@@ -7,7 +7,10 @@ import { Readable } from 'node:stream';
 import { Hocuspocus } from '@hocuspocus/server';
 import { AgentSessionManager, applyAgentMarkdownWrite } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
-import { clearContributors, formatContributors } from './contributor-tracker.ts';
+import {
+  __formatContributorsForTests as formatContributorsForTest,
+  __resetContributorsForTests as resetContributorsForTest,
+} from './contributor-tracker.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
 
 interface CapturedResponse {
@@ -73,7 +76,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
     mkdirSync(contentDir, { recursive: true });
     hocuspocus = new Hocuspocus({ quiet: true });
     sessionManager = new AgentSessionManager(hocuspocus);
-    clearContributors();
+    resetContributorsForTest();
     resetMetrics();
   });
 
@@ -105,7 +108,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       expect(m.agentWriteCalls).toBe(1);
       expect(m.summariesProvided).toBe(0);
       expect(m.summariesTruncated).toBe(0);
-      expect(formatContributors()).not.toContain('summaries');
+      expect(formatContributorsForTest()).not.toContain('summaries');
     });
 
     test('summary present and short → included in response without truncatedFrom', async () => {
@@ -130,7 +133,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       const m = getMetrics();
       expect(m.summariesProvided).toBe(1);
       expect(m.summariesTruncated).toBe(0);
-      expect(formatContributors()).toContain('"summaries":["Fixed token-refresh race"]');
+      expect(formatContributorsForTest()).toContain('"summaries":["Fixed token-refresh race"]');
     });
 
     test('summary exactly 80 chars → no truncation', async () => {
@@ -200,7 +203,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       const m = getMetrics();
       expect(m.agentWriteCalls).toBe(0);
       expect(m.summariesProvided).toBe(0);
-      expect(formatContributors()).toBe('');
+      expect(formatContributorsForTest()).toBe('');
     });
 
     test('summary empty string → treated as absent', async () => {
@@ -268,7 +271,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       const m = getMetrics();
       expect(m.summariesProvided).toBe(0);
       expect(m.summariesTruncated).toBe(0);
-      expect(formatContributors()).not.toContain('"summaries"');
+      expect(formatContributorsForTest()).not.toContain('"summaries"');
     });
 
     test('summary as JSON array → 400 (invalid, not auto-joined)', async () => {
@@ -293,7 +296,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       const m = getMetrics();
       expect(m.agentWriteCalls).toBe(0);
       expect(m.summariesProvided).toBe(0);
-      expect(formatContributors()).toBe('');
+      expect(formatContributorsForTest()).toBe('');
     });
 
     test('multiple writes coalesce summaries into a single contributor entry', async () => {
@@ -307,7 +310,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
           summary: s,
         });
       }
-      expect(formatContributors()).toContain('"summaries":["First","Second","Third"]');
+      expect(formatContributorsForTest()).toContain('"summaries":["First","Second","Third"]');
       expect(getMetrics().agentWriteCalls).toBe(3);
       expect(getMetrics().summariesProvided).toBe(3);
     });
@@ -347,7 +350,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       const m = getMetrics();
       expect(m.agentWriteCalls).toBe(0);
       expect(m.summariesProvided).toBe(0);
-      expect(formatContributors()).toBe('');
+      expect(formatContributorsForTest()).toBe('');
     });
 
     test('successful patch with summary records it and responds with truncatedFrom when truncated', async () => {

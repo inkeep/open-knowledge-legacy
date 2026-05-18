@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
-import { clearContributors } from '@inkeep/open-knowledge-server';
+import { swapContributors } from '@inkeep/open-knowledge-server';
 import type { TestServer } from './test-harness';
 import { agentWriteMd, createTestServer } from './test-harness';
 
@@ -106,7 +106,7 @@ describe('Keepalive-WS close cleanup (US-011)', () => {
       expect(focusMap[`agent-soak-${i}`]).toBeUndefined();
     }
 
-    clearContributors();
+    swapContributors();
   }, 30_000);
 
   test('keepalive close without connectionId is a no-op for session cleanup', async () => {

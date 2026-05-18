@@ -34,15 +34,17 @@ interface GetDeadLinksDeps extends PreviewUrlDeps {
 }
 
 export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
-  server.tool(
+  server.registerTool(
     'get_dead_links',
-    DESCRIPTION,
     {
-      sourceDocNames: z
-        .array(z.string())
-        .optional()
-        .describe('Referring source docs to narrow the audit with OR semantics'),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        sourceDocNames: z
+          .array(z.string())
+          .optional()
+          .describe('Referring source docs to narrow the audit with OR semantics'),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { sourceDocNames?: string[]; cwd?: string }) => {
       const context = await resolveProjectServerContext(

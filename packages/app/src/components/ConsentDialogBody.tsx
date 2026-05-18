@@ -152,7 +152,7 @@ function ConsentDialogForm({ payload, store, toast }: ConsentDialogFormProps) {
     }
   }
 
-  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+  function onSubmit(e: React.SyntheticEvent<HTMLFormElement, SubmitEvent>) {
     e.preventDefault();
     if (startDisabled) return;
     void onConfirm();

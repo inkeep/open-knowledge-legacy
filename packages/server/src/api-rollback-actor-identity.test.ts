@@ -11,8 +11,8 @@ import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import {
   type ContributorEntry,
-  clearContributors,
-  formatContributors,
+  __formatContributorsForTests as formatContributorsForTest,
+  __resetContributorsForTests as resetContributorsForTest,
 } from './contributor-tracker.ts';
 import { commitWip, initShadowRepo, type ShadowRef, type WriterIdentity } from './shadow-repo.ts';
 
@@ -170,11 +170,11 @@ let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'ok-rollback-actor-'));
-  clearContributors();
+  resetContributorsForTest();
 });
 
 afterEach(() => {
-  clearContributors();
+  resetContributorsForTest();
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -188,7 +188,7 @@ describe('handleRollback — actor identity routing (D22-A, FR7b, D-A10)', () =>
     );
     expect(response.status).toBe(200);
 
-    const formatted = formatContributors();
+    const formatted = formatContributorsForTest();
     const entries = parseContributorLines(formatted);
     expect(entries).toHaveLength(1);
     expect(entries[0].writerId).toBe(fixturePrincipal.id);
@@ -204,7 +204,7 @@ describe('handleRollback — actor identity routing (D22-A, FR7b, D-A10)', () =>
       () => null,
     );
     expect(response.status).toBe(200);
-    expect(formatContributors()).toBe('');
+    expect(formatContributorsForTest()).toBe('');
   });
 
   test('body.agentId set + principal loaded → records agent contributor with actor.principalId', async () => {
@@ -222,7 +222,7 @@ describe('handleRollback — actor identity routing (D22-A, FR7b, D-A10)', () =>
     );
     expect(response.status).toBe(200);
 
-    const formatted = formatContributors();
+    const formatted = formatContributorsForTest();
     const entries = parseContributorLines(formatted);
     expect(entries).toHaveLength(1);
     expect(entries[0].writerId).toBe('agent-claude-1');
@@ -242,7 +242,7 @@ describe('handleRollback — actor identity routing (D22-A, FR7b, D-A10)', () =>
     );
     expect(response.status).toBe(200);
 
-    const formatted = formatContributors();
+    const formatted = formatContributorsForTest();
     const entries = parseContributorLines(formatted);
     expect(entries).toHaveLength(1);
     const expectedSummary = `Restored to ${h.priorSha.slice(0, 8)}`;
@@ -258,7 +258,7 @@ describe('handleRollback — actor identity routing (D22-A, FR7b, D-A10)', () =>
     );
     expect(response.status).toBe(200);
 
-    const formatted = formatContributors();
+    const formatted = formatContributorsForTest();
     const entries = parseContributorLines(formatted);
     expect(entries).toHaveLength(1);
     expect(entries[0].summaries).toEqual([]);
@@ -273,7 +273,7 @@ describe('handleRollback — actor identity routing (D22-A, FR7b, D-A10)', () =>
     );
     expect(response.status).toBe(200);
 
-    const formatted = formatContributors();
+    const formatted = formatContributorsForTest();
     const entries = parseContributorLines(formatted);
     expect(entries).toHaveLength(1);
     expect(entries[0].writerId).toBe(fixturePrincipal.id);
@@ -290,6 +290,6 @@ describe('handleRollback — actor identity routing (D22-A, FR7b, D-A10)', () =>
     const parsed = JSON.parse(response.body) as Record<string, unknown>;
     expect(parsed.type).toBe('urn:ok:error:invalid-request');
     expect(typeof parsed.title).toBe('string');
-    expect(formatContributors()).toBe('');
+    expect(formatContributorsForTest()).toBe('');
   });
 });

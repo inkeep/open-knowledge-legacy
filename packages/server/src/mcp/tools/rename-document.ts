@@ -99,16 +99,18 @@ export interface RenameDocumentDeps {
 }
 
 export function register(server: ServerInstance, deps: RenameDocumentDeps): void {
-  server.tool(
+  server.registerTool(
     'rename_document',
-    DESCRIPTION,
     {
-      docName: z.string().describe('Current document name'),
-      newDocName: z.string().describe('New document name'),
-      summary: summaryArgSchema.describe(
-        'Optional one-line user-outcome description (≤80 chars). Defaults to "Renamed X → Y" when omitted. Appears as a bullet in the timeline.',
-      ),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        docName: z.string().describe('Current document name'),
+        newDocName: z.string().describe('New document name'),
+        summary: summaryArgSchema.describe(
+          'Optional one-line user-outcome description (≤80 chars). Defaults to "Renamed X → Y" when omitted. Appears as a bullet in the timeline.',
+        ),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     async (args: { docName: string; newDocName: string; summary?: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(

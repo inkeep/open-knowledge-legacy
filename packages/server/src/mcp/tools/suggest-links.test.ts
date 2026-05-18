@@ -36,13 +36,17 @@ function createFakeServer() {
   let registeredTool: RegisteredTool | undefined;
 
   const server = {
-    tool(
+    registerTool(
       name: string,
-      description: string,
-      schema: Record<string, unknown>,
+      config: { description?: string; inputSchema?: Record<string, unknown> },
       handler: (args: { docName: string }) => Promise<ToolResult>,
     ) {
-      registeredTool = { name, description, schema, handler };
+      registeredTool = {
+        name,
+        description: config.description ?? '',
+        schema: config.inputSchema ?? {},
+        handler,
+      };
     },
   } as unknown as ServerInstance;
 

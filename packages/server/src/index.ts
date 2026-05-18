@@ -81,7 +81,10 @@ export {
   clearContributors,
   contributorCount,
   formatContributors,
+  formatContributorsFrom,
   recordContributor,
+  restoreContributors,
+  swapContributors,
 } from './contributor-tracker.ts';
 export {
   type DetectClaudeDesktopOptions,

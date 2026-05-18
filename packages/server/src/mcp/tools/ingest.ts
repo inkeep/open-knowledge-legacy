@@ -108,12 +108,14 @@ export const DESCRIPTION = [
 ].join('\n');
 
 export function register(server: ServerInstance, deps: WorkflowToolDeps): void {
-  server.tool(
+  server.registerTool(
     'ingest',
-    DESCRIPTION,
     {
-      source: z.string().describe('URL, file path, or identifier of the source to ingest'),
-      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      description: DESCRIPTION,
+      inputSchema: {
+        source: z.string().describe('URL, file path, or identifier of the source to ingest'),
+        cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+      },
     },
     buildWorkflowHandler('ingest', deps, 'source', buildBody),
   );

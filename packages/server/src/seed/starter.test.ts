@@ -1,14 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildStarterFolderFrontmatterYaml,
-  LOG_MD_TEMPLATE,
   listStarterPacks,
   STARTER_FOLDER_FRONTMATTER_FILENAME,
-  STARTER_FOLDERS,
   STARTER_PACK_IDS,
   STARTER_PACKS,
-  STARTER_TEMPLATES,
 } from './starter.ts';
+
+const KNOWLEDGE_BASE_PACK = STARTER_PACKS['knowledge-base'];
+const STARTER_FOLDERS = KNOWLEDGE_BASE_PACK.folders;
+const STARTER_TEMPLATES = KNOWLEDGE_BASE_PACK.templates;
+const LOG_MD_TEMPLATE = KNOWLEDGE_BASE_PACK.rootFiles?.['log.md'];
+if (!LOG_MD_TEMPLATE) throw new Error('knowledge-base pack is missing log.md');
 
 describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
   test('ships exactly three starter folders in Karpathy-layer order', () => {

@@ -40,17 +40,21 @@ function createCaptureServer() {
     /** Raw Zod schema object captured at register() time — exposed so
      *  transport-safety tests can exercise the real Zod runtime guard
      *  rather than a passthrough. */
-    schema: Record<string, z.ZodTypeAny>;
+    schema: Record<string, z.ZodType>;
     handler: Handler;
   }> = [];
   const server = {
-    tool(
+    registerTool(
       name: string,
-      description: string,
-      schema: Record<string, z.ZodTypeAny>,
+      config: { description?: string; inputSchema?: Record<string, z.ZodType> },
       handler: Handler,
     ) {
-      tools.push({ name, description, schema, handler });
+      tools.push({
+        name,
+        description: config.description ?? '',
+        schema: config.inputSchema ?? {},
+        handler,
+      });
     },
   } as unknown as ServerInstance;
   return {
@@ -58,7 +62,7 @@ function createCaptureServer() {
     getTool(name: string): {
       name: string;
       description: string;
-      schema: Record<string, z.ZodTypeAny>;
+      schema: Record<string, z.ZodType>;
       handler: Handler;
     } {
       const t = tools.find((x) => x.name === name);

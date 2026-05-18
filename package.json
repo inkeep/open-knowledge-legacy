@@ -60,6 +60,7 @@
     "lint-staged": "^16.4.0",
     "oxlint": "^1.63.0",
     "oxlint-plugin-eslint": "^1.63.0",
+    "oxlint-tsgolint": "^0.22.1",
     "turbo": "^2.7.0"
   },
   "patchedDependencies": {

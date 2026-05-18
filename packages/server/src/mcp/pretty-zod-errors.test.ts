@@ -13,14 +13,16 @@ function buildServerWithWriteDocLikeTool(): {
   tool: RegisteredTool;
 } {
   const server = new McpServer({ name: 'pretty-zod-errors-test', version: '0.0.0' });
-  server.tool(
+  server.registerTool(
     'write_document',
-    'test tool with the same shape as the production write_document',
     {
-      docName: z.string().describe('Document name to write to'),
-      markdown: z.string().optional(),
-      position: z.enum(['append', 'prepend', 'replace']).describe('Where to insert the content'),
-      summary: z.string().max(200).optional(),
+      description: 'test tool with the same shape as the production write_document',
+      inputSchema: {
+        docName: z.string().describe('Document name to write to'),
+        markdown: z.string().optional(),
+        position: z.enum(['append', 'prepend', 'replace']).describe('Where to insert the content'),
+        summary: z.string().max(200).optional(),
+      },
     },
     async () => ({ content: [{ type: 'text', text: 'ok' }] }),
   );
@@ -125,7 +127,7 @@ describe('installPrettyZodErrors — PRD-6659', () => {
 
   test('tool without inputSchema passes through to the SDK default path', async () => {
     const server = new McpServer({ name: 'pretty-zod-errors-test', version: '0.0.0' });
-    server.tool('no_schema_tool', 'no schema', async () => ({
+    server.registerTool('no_schema_tool', { description: 'no schema' }, async () => ({
       content: [{ type: 'text', text: 'ok' }],
     }));
     installPrettyZodErrors(server);
@@ -139,12 +141,14 @@ describe('installPrettyZodErrors — PRD-6659', () => {
 
   test('idempotent: calling installPrettyZodErrors twice does not double-wrap', async () => {
     const server = new McpServer({ name: 'pretty-zod-errors-test', version: '0.0.0' });
-    server.tool(
+    server.registerTool(
       'write_document',
-      'description',
       {
-        docName: z.string(),
-        position: z.enum(['append', 'prepend', 'replace']),
+        description: 'description',
+        inputSchema: {
+          docName: z.string(),
+          position: z.enum(['append', 'prepend', 'replace']),
+        },
       },
       async () => ({ content: [{ type: 'text', text: 'ok' }] }),
     );
