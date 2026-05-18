@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { getFindReplaceState } from '../find-replace/tiptap-find-replace-extension';
 
 interface TableAction {
   name: string;
@@ -85,6 +86,7 @@ const tableActions: TableAction[] = [
 ];
 
 function shouldShowTableControls({ editor }: { editor: Editor }): boolean {
+  if (getFindReplaceState(editor.state).query) return false;
   return editor.isActive('table');
 }
 
@@ -117,6 +119,7 @@ export function TableControlsMenu({ editor }: { editor: Editor }) {
   return (
     <BubbleMenu
       editor={editor}
+      data-testid="table-controls-menu"
       shouldShow={shouldShowTableControls}
       updateDelay={100}
       className="flex items-center gap-0.5 rounded-lg border bg-background p-1 shadow-md"

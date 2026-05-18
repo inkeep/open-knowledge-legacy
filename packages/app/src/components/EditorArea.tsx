@@ -14,6 +14,7 @@ import { PropertyProvider, useProperties } from '@/components/PropertyContext';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
+import { FindReplaceController } from '@/editor/find-replace/FindReplaceController';
 import { mountPromiseHasResolved } from '@/editor/mount-promise';
 import { syncPromiseHasResolved } from '@/editor/sync-promise';
 import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
@@ -269,6 +270,7 @@ function EditorAreaInner({
             }}
             onRecycle={recycleDocument}
           />
+          <FindReplaceController activeDocName={activeDocName} isSourceMode={isSourceMode} />
           {/* Nav-pending skeleton overlay. Rendered when the urgent
             `activeDocName` (shell state — driving sidebar highlight +
             header title) has moved past `deferredActiveDocName` (editor

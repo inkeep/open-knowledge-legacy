@@ -320,7 +320,6 @@ const TiptapEditorChrome: FC<TiptapEditorChromeProps> = ({
   }, [editor, provider]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
     const docName = provider.configuration.name;
     if (!docName) return;
     registerEditor(docName, editor);
