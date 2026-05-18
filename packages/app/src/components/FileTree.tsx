@@ -72,15 +72,22 @@ import {
   treePathSignature,
   treePathToAppPath,
 } from '@/components/file-tree-adapter';
+import {
+  applyExtensionBadges,
+  FILE_TREE_EXT_BADGE_CSS,
+} from '@/components/file-tree-extension-badge';
 import { buildOkignorePatternFromTarget } from '@/components/file-tree-okignore';
 import {
   applyDeleteToDocuments,
   applyRenameToDocuments,
   type FileTreeTarget,
+  planRenameCleanupCalls,
   type RenamedDocMapping,
   type RenamedFolderMapping,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
+import { applyRenameChip, FILE_TREE_RENAME_CHIP_CSS } from '@/components/file-tree-rename-chip';
+import { validateAndCoerceRenameDestination } from '@/components/file-tree-rename-validation';
 import {
   resolveFileTreeSelection,
   resolveFileTreeSelectionAction,
@@ -200,11 +207,7 @@ const FILE_TREE_DECORATION_SPRITE_SHEET = `<svg data-icon-sprite aria-hidden="tr
   ${createLucideSpriteSymbol(AGENT_DECORATION_ICON_ID, botIcon)}
 </svg>`;
 
-const FILE_TREE_UNSAFE_CSS = `
-  [data-item-selected='true'] [data-icon-token='markdown'] {
-    color: var(--trees-selected-fg);
-  }
-`;
+const FILE_TREE_UNSAFE_CSS = `${FILE_TREE_EXT_BADGE_CSS}\n${FILE_TREE_RENAME_CHIP_CSS}`;
 
 function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
   return {
@@ -869,6 +872,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     closeTabs,
     closeDocument,
     closeAndClearForRename,
+    getPoolActiveDocName,
     isNewTabActive,
     openTarget,
     prewarm,
@@ -1369,12 +1373,8 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       ? remapPathForFolderRenames(currentActiveFolderPath, renamedFolders)
       : null;
 
-    await Promise.all(
-      renamed.flatMap((entry) => [
-        closeAndClearForRename(entry.fromDocName),
-        closeAndClearForRename(entry.toDocName),
-      ]),
-    );
+    const cleanupDocNames = planRenameCleanupCalls(renamed, getPoolActiveDocName());
+    await Promise.all(cleanupDocNames.map((docName) => closeAndClearForRename(docName)));
     for (const entry of renamed) {
       addPage(entry.toDocName);
     }
@@ -1400,7 +1400,6 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
   async function handleTreeRename(event: FileTreeRenameEvent) {
     const sourceTreePath = normalizeTreePathForKind(event.sourcePath, event.isFolder);
-    const destinationTreePath = normalizeTreePathForKind(event.destinationPath, event.isFolder);
 
     setBusyPath(sourceTreePath);
     setError(null);
@@ -1408,11 +1407,34 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     try {
       if (!event.isFolder && isAssetTreePath(sourceTreePath)) {
         toast.error('Assets cannot be renamed from the sidebar');
-        resetModelToDocuments();
+        queueMicrotask(() => {
+          resetModelToDocuments();
+        });
         clearPendingCreate();
         setBusyPath(null);
         return;
       }
+
+      const validation = validateAndCoerceRenameDestination(
+        event.sourcePath,
+        event.destinationPath,
+        event.isFolder,
+      );
+      if (validation.kind === 'block') {
+        toast.error(
+          'File extensions are managed automatically - please rename without changing the extension',
+        );
+        queueMicrotask(() => {
+          resetModelToDocuments();
+        });
+        clearPendingCreate();
+        setBusyPath(null);
+        return;
+      }
+      const destinationTreePath = normalizeTreePathForKind(
+        validation.destinationPath,
+        event.isFolder,
+      );
 
       const payload = event.isFolder
         ? {
@@ -1455,18 +1477,28 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       const success = parseSuccessOrWarn(RenamePathSuccessSchema, parsed.body, 'rename-path', {
         renamed: [],
       });
-      await applyRenamedDocuments(
-        success.renamed,
-        event.isFolder
-          ? [
-              {
-                fromPath: treeDirectoryPathToFolderPath(sourceTreePath),
-                toPath: treeDirectoryPathToFolderPath(destinationTreePath),
-              },
-            ]
-          : [],
-        activeBeforeRename,
-      );
+      try {
+        await applyRenamedDocuments(
+          success.renamed,
+          event.isFolder
+            ? [
+                {
+                  fromPath: treeDirectoryPathToFolderPath(sourceTreePath),
+                  toPath: treeDirectoryPathToFolderPath(destinationTreePath),
+                },
+              ]
+            : [],
+          activeBeforeRename,
+        );
+      } catch (reconcileErr) {
+        console.warn('[FileTree] post-rename reconciliation failed', {
+          err: reconcileErr,
+          sourceTreePath,
+          destinationTreePath,
+          renamedCount: success.renamed.length,
+        });
+        toast.error('Rename succeeded but the sidebar may be out of date — refresh to resync');
+      }
       clearPendingCreate();
       setBusyPath(null);
     } catch (err) {
@@ -1554,7 +1586,16 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         }
       }
 
-      await applyRenamedDocuments(renamed, renamedFolders, activeBeforeRename);
+      try {
+        await applyRenamedDocuments(renamed, renamedFolders, activeBeforeRename);
+      } catch (reconcileErr) {
+        console.warn('[FileTree] post-move reconciliation failed', {
+          err: reconcileErr,
+          operationCount: operations.length,
+          renamedCount: renamed.length,
+        });
+        toast.error('Move succeeded but the sidebar may be out of date — refresh to resync');
+      }
       setBusyPath(null);
     } catch (err) {
       console.warn('[FileTree] move failed:', err);
@@ -1830,6 +1871,39 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       childList: true,
       attributes: true,
       attributeFilter: ['data-item-path', 'data-item-context-hover'],
+    });
+    return () => observer.disconnect();
+  }, [loading, documents.length]);
+
+  useEffect(() => {
+    if (loading || documents.length === 0) return;
+    const shadow = fileTreeHostRef.current?.querySelector(FILE_TREE_TAG_NAME)?.shadowRoot;
+    if (!shadow) return;
+    const apply = () => applyExtensionBadges(shadow);
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(shadow, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['data-item-path'],
+    });
+    return () => observer.disconnect();
+  }, [loading, documents.length]);
+
+  useEffect(() => {
+    if (loading || documents.length === 0) return;
+    const shadow = fileTreeHostRef.current?.querySelector(FILE_TREE_TAG_NAME)?.shadowRoot;
+    if (!shadow) return;
+    const apply = () => applyRenameChip(shadow);
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(shadow, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['data-item-path'],
     });
     return () => observer.disconnect();
   }, [loading, documents.length]);

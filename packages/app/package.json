@@ -51,7 +51,7 @@
     {
       "name": "main CSS (gzipped)",
       "path": "dist/assets/index-*.css",
-      "limit": "46 kB",
+      "limit": "47 kB",
       "gzip": true,
       "running": false
     }

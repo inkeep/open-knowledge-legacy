@@ -24,6 +24,7 @@ import { subscribePoolEviction } from './editor-cache';
 import {
   addOpenTab,
   addPinnedTab,
+  applyDragPinMutation,
   assetTabId,
   createEditorTabSessionState,
   docNameForTabId,
@@ -44,6 +45,7 @@ import {
   readLocalTabSessionState,
   reconcileVisibleTabOrder,
   remapOpenTabs,
+  remapVisibleTabsForRename,
   removeOpenTab,
   removePinnedTab,
   sameTabTarget,
@@ -89,6 +91,7 @@ interface DocumentContextValue {
   pinTab: (tabId: string) => void;
   unpinTab: (tabId: string) => void;
   activateTab: (tabId: string) => void;
+  reorderTabs: (newOrder: readonly string[], draggedTabId: string) => void;
   newTabIds: ReadonlyArray<string>;
   activeNewTabId: string | null;
   isNewTabActive: boolean;
@@ -106,6 +109,7 @@ interface DocumentContextValue {
     renamedFolders?: readonly { fromPath: string; toPath: string }[],
   ) => void;
   closeAndClearForRename: (docName: string) => Promise<void>;
+  getPoolActiveDocName: () => string | null;
   recycleDocument: (docName: string) => void;
   prewarm: (docName: string) => string | null;
   systemProvider: HocuspocusProvider | null;
@@ -202,6 +206,18 @@ function readInitialLocalTabs(): string[] {
 
 function readInitialLocalPinnedTabIds(): string[] {
   return readInitialLocalTabSession().pinnedTabIds;
+}
+
+function readInitialLocalActiveTabId(): string | null {
+  if (typeof window === 'undefined') return null;
+  if (window.location.hash.length > 0) return null;
+  const session = readInitialLocalTabSession();
+  return (
+    session.activeTabId ??
+    (session.activeDocName ? docTabId(session.activeDocName) : null) ??
+    session.openTabs[0] ??
+    null
+  );
 }
 
 function hashFromTabId(tabId: string): string {
@@ -309,14 +325,14 @@ function takeSnapshot(p: ProviderPool): Snapshot {
 export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [activeTarget, setActiveTarget] = useState<ResolvedNavigationTarget | null>(null);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [activeTabId, setActiveTabId] = useState<string | null>(readInitialLocalActiveTabId);
   const [openTabs, setOpenTabs] = useState<string[]>(readInitialLocalTabs);
   const [pinnedTabIds, setPinnedTabIds] = useState(readInitialLocalPinnedTabIds);
   const [newTabIds, setNewTabIds] = useState<string[]>([]);
   const [visibleTabIds, setVisibleTabIds] = useState<string[]>(openTabs);
   const [activeNewTabId, setActiveNewTabId] = useState<string | null>(null);
   const [tabSessionLoaded, setTabSessionLoaded] = useState(false);
-  const activeTabIdRef = useRef<string | null>(null);
+  const activeTabIdRef = useRef<string | null>(activeTabId);
   const openTabsRef = useRef<string[]>(openTabs);
   const pinnedTabIdsRef = useRef(pinnedTabIds);
   const activeNewTabIdRef = useRef<string | null>(activeNewTabId);
@@ -601,6 +617,9 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
             ),
             nextOpenTabs,
           );
+          visibleTabIdsRef.current = remapVisibleTabsForRename(visibleTabIdsRef.current, [
+            { fromDocName, toDocName },
+          ]);
           commitTabsFromPoolCallback(nextOpenTabs, nextPinnedTabIds);
           setActiveTarget((current) => {
             if (!current) return current;
@@ -791,19 +810,25 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       const entry = p.open(docName);
       if (!entry) return;
       consumePrewarmClick(docName, entry.poolEventId);
-      const replacementDocTabId = replacingBlankTab
-        ? nextAvailableDocTabId(openTabsRef.current, docName)
+      const existingDocTabId = replacingBlankTab
+        ? findOpenTabTarget(openTabsRef.current, docTabId(docName))
         : null;
+      const replacementDocTabId =
+        replacingBlankTab && !existingDocTabId
+          ? nextAvailableDocTabId(openTabsRef.current, docName)
+          : null;
       const opened = replacingBlankTab
-        ? {
-            activeTabId: replacementDocTabId ?? docTabId(docName),
-            tabs: addOpenTab(
-              openTabsRef.current,
-              replacementDocTabId ?? docTabId(docName),
-              MAX_POOL,
-              pinnedTabIdsRef.current,
-            ),
-          }
+        ? existingDocTabId
+          ? { activeTabId: existingDocTabId, tabs: openTabsRef.current }
+          : {
+              activeTabId: replacementDocTabId ?? docTabId(docName),
+              tabs: addOpenTab(
+                openTabsRef.current,
+                replacementDocTabId ?? docTabId(docName),
+                MAX_POOL,
+                pinnedTabIdsRef.current,
+              ),
+            }
         : openDocTab(openTabsRef.current, docName, {
             behavior,
             currentTabId: currentActiveTabId,
@@ -975,6 +1000,56 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       setActiveTarget({ kind: 'folder', target: tab.folderPath, folderPath: tab.folderPath });
       const nextHash = hashFromFolderPath(tab.folderPath);
       if (window.location.hash !== nextHash) window.location.hash = nextHash;
+    },
+    reorderTabs: (newOrder: readonly string[], draggedTabId: string) => {
+      const openTabsSet = new Set(openTabsRef.current);
+      const newTabIdsSet = new Set(newTabIdsRef.current);
+      const seen = new Set<string>();
+      const nextOpenTabs: string[] = [];
+      const nextNewTabIds: string[] = [];
+      const seedVisibleTabIds: string[] = [];
+      for (const tabId of newOrder) {
+        if (seen.has(tabId)) continue;
+        if (openTabsSet.has(tabId)) {
+          nextOpenTabs.push(tabId);
+          seedVisibleTabIds.push(tabId);
+          seen.add(tabId);
+        } else if (newTabIdsSet.has(tabId)) {
+          nextNewTabIds.push(tabId);
+          seedVisibleTabIds.push(tabId);
+          seen.add(tabId);
+        }
+      }
+      for (const tabId of openTabsRef.current) {
+        if (!seen.has(tabId)) {
+          nextOpenTabs.push(tabId);
+          seedVisibleTabIds.push(tabId);
+          seen.add(tabId);
+        }
+      }
+      for (const tabId of newTabIdsRef.current) {
+        if (!seen.has(tabId)) {
+          nextNewTabIds.push(tabId);
+          seedVisibleTabIds.push(tabId);
+          seen.add(tabId);
+        }
+      }
+      const sameOpenOrder = sameTabIds(openTabsRef.current, nextOpenTabs);
+      const sameNewOrder = sameTabIds(newTabIdsRef.current, nextNewTabIds);
+      const sameVisibleOrder = sameTabIds(visibleTabIdsRef.current, seedVisibleTabIds);
+      if (sameOpenOrder && sameNewOrder && sameVisibleOrder) return;
+      markTabSessionMutated();
+      visibleTabIdsRef.current = seedVisibleTabIds;
+      if (!sameNewOrder) {
+        newTabIdsRef.current = nextNewTabIds;
+        setNewTabIds((current) => (sameTabIds(current, nextNewTabIds) ? current : nextNewTabIds));
+      }
+      const nextPinnedTabIds = applyDragPinMutation(
+        nextOpenTabs,
+        pinnedTabIdsRef.current,
+        draggedTabId,
+      );
+      commitTabState(nextOpenTabs, nextPinnedTabIds);
     },
     newTabIds,
     activeNewTabId,
@@ -1181,6 +1256,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
           if (docName) p.open(docName);
         }
       }
+      visibleTabIdsRef.current = remapVisibleTabsForRename(
+        visibleTabIdsRef.current,
+        renamed,
+        renamedFolders,
+      );
       commitTabState(next, nextPinnedTabIds);
       const currentActiveTabId = activeTabIdRef.current;
       if (currentActiveTabId) {
@@ -1203,6 +1283,10 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
         if (!current) return current;
         return docNameForNavigationTarget(current) === docName ? null : current;
       });
+    },
+    getPoolActiveDocName: () => {
+      if (collabUrl === null) return null;
+      return getPool(collabUrl).getActiveDocName();
     },
     recycleDocument: (docName: string) => {
       if (collabUrl === null) return;

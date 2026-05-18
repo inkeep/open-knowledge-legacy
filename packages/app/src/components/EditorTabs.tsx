@@ -1,10 +1,38 @@
+import {
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  horizontalListSortingStrategy,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { RenamePathSuccessSchema } from '@inkeep/open-knowledge-core';
 import { PinIcon, PlusIcon, XIcon } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState, type WheelEvent } from 'react';
+import {
+  type CSSProperties,
+  type HTMLAttributes,
+  type ReactNode,
+  type Ref,
+  useEffect,
+  useRef,
+  useState,
+  type WheelEvent,
+} from 'react';
+import { toast } from 'sonner';
 import {
   buildRenamedNodePath,
   isValidNodeName,
   normalizeRenameValue,
+  planRenameCleanupCalls,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
 import { Button } from '@/components/ui/button';
@@ -27,6 +55,7 @@ import {
   filterClosableTabIds,
   parseEditorTabId,
   tabIdForNavigationTarget,
+  tabParts,
 } from '@/editor/editor-tabs';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged } from '@/lib/documents-events';
@@ -58,22 +87,6 @@ function tabCloseButtonClass(isActive: boolean): string {
   );
 }
 
-function tabParts(
-  docName: string,
-  docExt: string,
-): { baseName: string; extension: string; label: string; prefix: string } {
-  const slash = docName.lastIndexOf('/');
-  const baseName = slash < 0 ? docName : docName.slice(slash + 1);
-  const label = `${baseName}${docExt}`;
-  if (slash < 0) return { baseName, extension: docExt, label, prefix: '' };
-  return {
-    baseName,
-    extension: docExt,
-    label,
-    prefix: `${docName.slice(0, slash)}/`,
-  };
-}
-
 function tabDomIdPart(docName: string): string {
   return docName.replace(/[^A-Za-z0-9_-]/g, '-');
 }
@@ -101,6 +114,38 @@ function stripRenameExtensionSuffix(value: string, docExt: string): string {
     (ext) => value.length > ext.length && lowerValue.endsWith(ext.toLowerCase()),
   );
   return extension ? value.slice(0, -extension.length) : value;
+}
+
+function SortableTab({
+  tabId,
+  disabled,
+  ref: outerRef,
+  style: outerStyle,
+  ...rest
+}: {
+  tabId: string;
+  disabled?: boolean;
+  ref?: Ref<HTMLDivElement>;
+} & HTMLAttributes<HTMLDivElement>) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: tabId,
+    disabled,
+  });
+  const style: CSSProperties = {
+    ...outerStyle,
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : outerStyle?.opacity,
+    zIndex: isDragging ? 1 : outerStyle?.zIndex,
+  };
+  function composedRef(node: HTMLDivElement | null) {
+    setNodeRef(node);
+    if (typeof outerRef === 'function') outerRef(node);
+    else if (outerRef && 'current' in outerRef) {
+      outerRef.current = node;
+    }
+  }
+  return <div ref={composedRef} style={style} {...rest} {...attributes} {...listeners} />;
 }
 
 function EditorTabContextMenu({
@@ -232,6 +277,7 @@ export function EditorTabs() {
     closeNewTab,
     closeTab,
     closeTabs,
+    getPoolActiveDocName,
     isNewTabActive,
     newTabIds,
     openNewTab,
@@ -239,6 +285,7 @@ export function EditorTabs() {
     pinTab,
     pinnedTabIds,
     remapTabsForRename,
+    reorderTabs,
     unpinTab,
     visibleTabIds,
   } = useDocumentContext();
@@ -386,14 +433,22 @@ export function EditorTabs() {
       const currentActiveDocName = activeDocNameRef.current;
       const nextActiveDocName = remapActiveDocName(currentActiveDocName, renamed);
 
-      await Promise.all(
-        renamed.flatMap((entry) => [
-          closeAndClearForRename(entry.fromDocName),
-          closeAndClearForRename(entry.toDocName),
-        ]),
-      );
-      remapTabsForRename(renamed);
-      emitDocumentsChanged(['files', 'backlinks', 'graph']);
+      let reconcileOk = true;
+      try {
+        const cleanupDocNames = planRenameCleanupCalls(renamed, getPoolActiveDocName());
+        await Promise.all(cleanupDocNames.map((name) => closeAndClearForRename(name)));
+        remapTabsForRename(renamed);
+        emitDocumentsChanged(['files', 'backlinks', 'graph']);
+      } catch (reconcileErr) {
+        reconcileOk = false;
+        console.warn('[EditorTabs] post-rename reconciliation failed', {
+          err: reconcileErr,
+          docName,
+          newDocName,
+          normalized,
+        });
+        toast.error('Rename succeeded but the tabstrip may be out of date — refresh to resync');
+      }
 
       cancelRequestedRef.current = true;
       setRenamingTab(null);
@@ -403,7 +458,7 @@ export function EditorTabs() {
       commitInProgressRef.current = false;
       lastFailedValueRef.current = null;
 
-      if (nextActiveDocName && nextActiveDocName !== currentActiveDocName) {
+      if (reconcileOk && nextActiveDocName && nextActiveDocName !== currentActiveDocName) {
         navigateToDoc(nextActiveDocName);
       }
     } catch (err) {
@@ -435,6 +490,21 @@ export function EditorTabs() {
     for (const tabId of emptyTabIds) closeNewTab(tabId);
   }
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const activeId = String(event.active.id);
+    const overId = event.over ? String(event.over.id) : null;
+    if (!overId || activeId === overId) return;
+    const fromIndex = visibleTabIds.indexOf(activeId);
+    const toIndex = visibleTabIds.indexOf(overId);
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+    reorderTabs(arrayMove([...visibleTabIds], fromIndex, toIndex), activeId);
+  }
+
   return (
     <div
       ref={tabListRef}
@@ -444,336 +514,345 @@ export function EditorTabs() {
       )}
       onWheel={scrollTabListOnWheel}
     >
-      {visibleTabIds.map((tabId) => {
-        if (newTabIdSet.has(tabId)) {
-          const isActive = tabId === activeNewTabId;
-          return (
-            <EditorTabContextMenu
-              key={tabId}
-              tabId={tabId}
-              canPin={false}
-              openTabs={visibleTabIds}
-              closeTab={closeNewTab}
-              closeTabs={closeVisibleTabs}
-              pinTab={pinTab}
-              pinnedTabIds={pinnedTabIds}
-              unpinTab={unpinTab}
-            >
-              {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button */}
-              <div
-                role="presentation"
-                data-active-tab={isActive ? 'true' : undefined}
-                className={cn(
-                  TAB_BASE_CLASS,
-                  isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
-                  isElectronHost && '[-webkit-app-region:no-drag]',
-                )}
-                onAuxClick={(event) => {
-                  if (event.button !== 1) return;
-                  event.preventDefault();
-                  closeNewTab(tabId);
-                }}
-                onClick={(event) => {
-                  if (event.target !== event.currentTarget) return;
-                  activateNewTab(tabId);
-                }}
-              >
-                <button
-                  type="button"
-                  aria-label="Activate new tab"
-                  className={TAB_BUTTON_CLASS}
-                  onClick={() => activateNewTab(tabId)}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+        accessibility={{
+          container: typeof document !== 'undefined' ? document.body : undefined,
+        }}
+      >
+        <SortableContext items={[...visibleTabIds]} strategy={horizontalListSortingStrategy}>
+          {visibleTabIds.map((tabId) => {
+            if (newTabIdSet.has(tabId)) {
+              const isActive = tabId === activeNewTabId;
+              return (
+                <EditorTabContextMenu
+                  key={tabId}
+                  tabId={tabId}
+                  canPin={false}
+                  openTabs={visibleTabIds}
+                  closeTab={closeNewTab}
+                  closeTabs={closeVisibleTabs}
+                  pinTab={pinTab}
+                  pinnedTabIds={pinnedTabIds}
+                  unpinTab={unpinTab}
                 >
-                  <span className="min-w-0 truncate">New tab</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label="Close new tab"
-                  className={tabCloseButtonClass(isActive)}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    closeNewTab(tabId);
-                  }}
-                >
-                  <XIcon aria-hidden="true" className="size-3.5" />
-                </button>
-              </div>
-            </EditorTabContextMenu>
-          );
-        }
-
-        const tab = parseEditorTabId(tabId);
-        const isActive = tabId === activeTabId;
-        const isPinned = pinnedTabIds.includes(tabId);
-        if (tab.kind === 'folder') {
-          const { baseName, label, prefix } = tabParts(tab.folderPath, '/');
-          const accessibleLabel = `${prefix}${label}`;
-          return (
-            <EditorTabContextMenu
-              key={tabId}
-              tabId={tabId}
-              openTabs={visibleTabIds}
-              closeTab={closeTab}
-              closeTabs={closeVisibleTabs}
-              pinTab={pinTab}
-              pinnedTabIds={pinnedTabIds}
-              unpinTab={unpinTab}
-            >
-              {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button */}
-              <div
-                role="presentation"
-                data-active-tab={isActive ? 'true' : undefined}
-                className={cn(
-                  TAB_BASE_CLASS,
-                  isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
-                  isElectronHost && '[-webkit-app-region:no-drag]',
-                )}
-                onAuxClick={(event) => {
-                  if (event.button !== 1) return;
-                  event.preventDefault();
-                  if (isPinned) return;
-                  closeTab(tabId);
-                }}
-                onClick={(event) => {
-                  if (event.target !== event.currentTarget) return;
-                  activateTab(tabId);
-                }}
-              >
-                <button
-                  type="button"
-                  aria-label={accessibleLabel}
-                  className={TAB_BUTTON_CLASS}
-                  onClick={() => {
-                    activateTab(tabId);
-                  }}
-                >
-                  {prefix && (
-                    <span
-                      className={cn('min-w-0 flex-1 truncate', isActive && 'text-muted-foreground')}
-                    >
-                      {prefix}
-                    </span>
-                  )}
-                  <span
+                  <SortableTab
+                    tabId={tabId}
+                    aria-current={isActive ? 'page' : undefined}
+                    data-active-tab={isActive ? 'true' : undefined}
                     className={cn(
-                      'flex min-w-0 items-center',
-                      prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
+                      TAB_BASE_CLASS,
+                      isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
+                      isElectronHost && '[-webkit-app-region:no-drag]',
                     )}
+                    onAuxClick={(event) => {
+                      if (event.button !== 1) return;
+                      event.preventDefault();
+                      closeNewTab(tabId);
+                    }}
+                    onClick={(event) => {
+                      if (event.target !== event.currentTarget) return;
+                      activateNewTab(tabId);
+                    }}
                   >
-                    <span className="min-w-0 truncate">{baseName}</span>
-                    <span className="shrink-0">/</span>
-                  </span>
-                </button>
-                <TabPinOrCloseButton
-                  accessibleLabel={accessibleLabel}
-                  closeTab={closeTab}
-                  isPinned={isPinned}
-                  tabId={tabId}
-                  unpinTab={unpinTab}
-                />
-              </div>
-            </EditorTabContextMenu>
-          );
-        }
-
-        if (tab.kind === 'asset') {
-          const { baseName, label, prefix } = tabParts(tab.assetPath, '');
-          const accessibleLabel = `${prefix}${label}`;
-          return (
-            <EditorTabContextMenu
-              key={tabId}
-              tabId={tabId}
-              openTabs={visibleTabIds}
-              closeTab={closeTab}
-              closeTabs={closeVisibleTabs}
-              pinTab={pinTab}
-              pinnedTabIds={pinnedTabIds}
-              unpinTab={unpinTab}
-            >
-              {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button */}
-              <div
-                role="presentation"
-                data-active-tab={isActive ? 'true' : undefined}
-                className={cn(
-                  TAB_BASE_CLASS,
-                  isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
-                  isElectronHost && '[-webkit-app-region:no-drag]',
-                )}
-                onAuxClick={(event) => {
-                  if (event.button !== 1) return;
-                  event.preventDefault();
-                  if (isPinned) return;
-                  closeTab(tabId);
-                }}
-                onClick={(event) => {
-                  if (event.target !== event.currentTarget) return;
-                  activateTab(tabId);
-                }}
-              >
-                <button
-                  type="button"
-                  aria-label={accessibleLabel}
-                  className={TAB_BUTTON_CLASS}
-                  onClick={() => {
-                    activateTab(tabId);
-                  }}
-                >
-                  {prefix ? (
-                    <span
-                      className={cn(
-                        'min-w-0 flex-1 truncate text-muted-foreground/60',
-                        isActive && 'text-muted-foreground',
-                      )}
+                    <button
+                      type="button"
+                      aria-label="Activate new tab"
+                      className={TAB_BUTTON_CLASS}
+                      onClick={() => activateNewTab(tabId)}
                     >
-                      {prefix}
-                    </span>
-                  ) : null}
-                  <span
-                    className={cn('min-w-0 truncate', prefix ? 'max-w-[70%] shrink-0' : 'flex-1')}
-                  >
-                    {baseName}
-                  </span>
-                </button>
-                <TabPinOrCloseButton
-                  accessibleLabel={accessibleLabel}
-                  closeTab={closeTab}
-                  isPinned={isPinned}
-                  tabId={tabId}
-                  unpinTab={unpinTab}
-                />
-              </div>
-            </EditorTabContextMenu>
-          );
-        }
+                      <span className="min-w-0 truncate">New tab</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Close new tab"
+                      className={tabCloseButtonClass(isActive)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        closeNewTab(tabId);
+                      }}
+                    >
+                      <XIcon aria-hidden="true" className="size-3.5" />
+                    </button>
+                  </SortableTab>
+                </EditorTabContextMenu>
+              );
+            }
 
-        const docName = tab.docName;
-        const docExt = pageMeta.get(docName)?.docExt ?? '.md';
-        const { baseName, extension, label, prefix } = tabParts(docName, docExt);
-        const accessibleLabel = `${prefix}${label}`;
-        const isRenaming = renamingTab?.tabId === tabId;
-        const renameErrorId = `editor-tab-rename-error-${tabDomIdPart(docName)}`;
-        return (
-          <EditorTabContextMenu
-            key={tabId}
-            disabled={isRenaming}
-            tabId={tabId}
-            openTabs={visibleTabIds}
-            closeTab={closeTab}
-            closeTabs={closeVisibleTabs}
-            pinTab={pinTab}
-            pinnedTabIds={pinnedTabIds}
-            unpinTab={unpinTab}
-          >
-            {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only dead-zone fill; keyboard activation stays on the inner tab button */}
-            <div
-              role="presentation"
-              data-active-tab={isActive ? 'true' : undefined}
-              className={cn(
-                TAB_BASE_CLASS,
-                isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
-                isRenaming && renameError && 'border-destructive',
-                isElectronHost && '[-webkit-app-region:no-drag]',
-              )}
-              onAuxClick={(event) => {
-                if (event.button !== 1) return;
-                event.preventDefault();
-                if (isPinned) return;
-                closeTab(tabId);
-              }}
-              onClick={(event) => {
-                if (event.target !== event.currentTarget) return;
-                activateTab(tabId);
-              }}
-            >
-              {isRenaming ? (
-                <>
-                  <InputGroup className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent dark:bg-transparent">
-                    <InputGroupInput
-                      ref={renameInputRef}
-                      value={renameValue}
-                      disabled={isRenameLoading}
-                      aria-label={`Rename ${label}`}
-                      aria-invalid={renameError ? true : undefined}
-                      aria-describedby={renameError ? renameErrorId : undefined}
-                      aria-busy={isRenameLoading || undefined}
-                      title={renameError ?? docName}
-                      className="h-full min-w-0 px-2 py-0 font-medium text-foreground text-xs selection:bg-primary selection:text-primary-foreground"
-                      onChange={(event) => {
-                        setRenameValue(stripRenameExtensionSuffix(event.target.value, docExt));
-                        setRenameError(null);
-                        lastFailedValueRef.current = null;
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          void commitRename();
-                        } else if (event.key === 'Escape') {
-                          event.preventDefault();
-                          cancelRename();
-                        }
-                      }}
-                      onBlur={commitRename}
-                    />
-                    <InputGroupAddon align="inline-end" aria-hidden="true" className="pr-2 text-xs">
-                      <InputGroupText className="text-muted-foreground/60 text-xs">
-                        {docExt}
-                      </InputGroupText>
-                    </InputGroupAddon>
-                  </InputGroup>
-                  {renameError ? (
-                    <span id={renameErrorId} role="alert" className="sr-only">
-                      {renameError}
-                    </span>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    aria-label={accessibleLabel}
-                    className={TAB_BUTTON_CLASS}
-                    onClick={() => {
+            const tab = parseEditorTabId(tabId);
+            const isActive = tabId === activeTabId;
+            const isPinned = pinnedTabIds.includes(tabId);
+            if (tab.kind === 'folder') {
+              const { baseName, label, prefix } = tabParts(tab.folderPath, '/');
+              const accessibleLabel = `${prefix}${label}`;
+              return (
+                <EditorTabContextMenu
+                  key={tabId}
+                  tabId={tabId}
+                  openTabs={visibleTabIds}
+                  closeTab={closeTab}
+                  closeTabs={closeVisibleTabs}
+                  pinTab={pinTab}
+                  pinnedTabIds={pinnedTabIds}
+                  unpinTab={unpinTab}
+                >
+                  <SortableTab
+                    tabId={tabId}
+                    aria-current={isActive ? 'page' : undefined}
+                    data-active-tab={isActive ? 'true' : undefined}
+                    className={cn(
+                      TAB_BASE_CLASS,
+                      isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
+                      isElectronHost && '[-webkit-app-region:no-drag]',
+                    )}
+                    onAuxClick={(event) => {
+                      if (event.button !== 1) return;
+                      event.preventDefault();
+                      if (isPinned) return;
+                      closeTab(tabId);
+                    }}
+                    onClick={(event) => {
+                      if (event.target !== event.currentTarget) return;
                       activateTab(tabId);
                     }}
-                    onDoubleClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      enterRenameMode(tabId, docName);
-                    }}
                   >
-                    {prefix && (
+                    <button
+                      type="button"
+                      aria-label={accessibleLabel}
+                      className={TAB_BUTTON_CLASS}
+                      onClick={() => {
+                        activateTab(tabId);
+                      }}
+                    >
+                      {prefix && (
+                        <span
+                          className={cn(
+                            'min-w-0 flex-1 truncate',
+                            isActive && 'text-muted-foreground',
+                          )}
+                        >
+                          {prefix}
+                        </span>
+                      )}
                       <span
                         className={cn(
-                          'min-w-0 flex-1 truncate text-muted-foreground/60',
-                          isActive && 'text-muted-foreground',
+                          'flex min-w-0 items-center',
+                          prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
                         )}
                       >
-                        {prefix}
+                        <span className="min-w-0 truncate">{baseName}</span>
+                        <span className="shrink-0">/</span>
                       </span>
-                    )}
-                    <span
-                      className={cn(
-                        'flex min-w-0 items-center',
-                        prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
-                      )}
-                    >
-                      <span className="min-w-0 truncate">{baseName}</span>
-                      <span className="shrink-0">{extension}</span>
-                    </span>
-                  </button>
-                  <TabPinOrCloseButton
-                    accessibleLabel={accessibleLabel}
-                    closeTab={closeTab}
-                    isPinned={isPinned}
+                    </button>
+                    <TabPinOrCloseButton
+                      accessibleLabel={accessibleLabel}
+                      closeTab={closeTab}
+                      isPinned={isPinned}
+                      tabId={tabId}
+                      unpinTab={unpinTab}
+                    />
+                  </SortableTab>
+                </EditorTabContextMenu>
+              );
+            }
+
+            if (tab.kind === 'asset') {
+              const { baseName, label, prefix } = tabParts(tab.assetPath, '');
+              const accessibleLabel = `${prefix}${label}`;
+              return (
+                <EditorTabContextMenu
+                  key={tabId}
+                  tabId={tabId}
+                  openTabs={visibleTabIds}
+                  closeTab={closeTab}
+                  closeTabs={closeVisibleTabs}
+                  pinTab={pinTab}
+                  pinnedTabIds={pinnedTabIds}
+                  unpinTab={unpinTab}
+                >
+                  <SortableTab
                     tabId={tabId}
-                    unpinTab={unpinTab}
-                  />
-                </>
-              )}
-            </div>
-          </EditorTabContextMenu>
-        );
-      })}
+                    aria-current={isActive ? 'page' : undefined}
+                    data-active-tab={isActive ? 'true' : undefined}
+                    className={cn(
+                      TAB_BASE_CLASS,
+                      isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
+                      isElectronHost && '[-webkit-app-region:no-drag]',
+                    )}
+                    onAuxClick={(event) => {
+                      if (event.button !== 1) return;
+                      event.preventDefault();
+                      if (isPinned) return;
+                      closeTab(tabId);
+                    }}
+                    onClick={(event) => {
+                      if (event.target !== event.currentTarget) return;
+                      activateTab(tabId);
+                    }}
+                  >
+                    <button
+                      type="button"
+                      aria-label={accessibleLabel}
+                      className={TAB_BUTTON_CLASS}
+                      onClick={() => {
+                        activateTab(tabId);
+                      }}
+                    >
+                      {prefix ? (
+                        <span
+                          className={cn(
+                            'min-w-0 flex-1 truncate text-muted-foreground/60',
+                            isActive && 'text-muted-foreground',
+                          )}
+                        >
+                          {prefix}
+                        </span>
+                      ) : null}
+                      <span
+                        className={cn(
+                          'min-w-0 truncate',
+                          prefix ? 'max-w-[70%] shrink-0' : 'flex-1',
+                        )}
+                      >
+                        {baseName}
+                      </span>
+                    </button>
+                    <TabPinOrCloseButton
+                      accessibleLabel={accessibleLabel}
+                      closeTab={closeTab}
+                      isPinned={isPinned}
+                      tabId={tabId}
+                      unpinTab={unpinTab}
+                    />
+                  </SortableTab>
+                </EditorTabContextMenu>
+              );
+            }
+
+            const docName = tab.docName;
+            const docExt = pageMeta.get(docName)?.docExt ?? '.md';
+            const { baseName, extension, label, prefix } = tabParts(docName, docExt);
+            const accessibleLabel = `${prefix}${label}`;
+            const hideDocExtension = docExt === '.md' || docExt === '.mdx';
+            const isRenaming = renamingTab?.tabId === tabId;
+            const renameErrorId = `editor-tab-rename-error-${tabDomIdPart(docName)}`;
+            return (
+              <EditorTabContextMenu
+                key={tabId}
+                disabled={isRenaming}
+                tabId={tabId}
+                openTabs={visibleTabIds}
+                closeTab={closeTab}
+                closeTabs={closeVisibleTabs}
+                pinTab={pinTab}
+                pinnedTabIds={pinnedTabIds}
+                unpinTab={unpinTab}
+              >
+                <SortableTab
+                  tabId={tabId}
+                  disabled={isRenaming}
+                  aria-current={isActive ? 'page' : undefined}
+                  data-active-tab={isActive ? 'true' : undefined}
+                  className={cn(
+                    TAB_BASE_CLASS,
+                    isActive ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS,
+                    isRenaming && renameError && 'border-destructive',
+                    isElectronHost && '[-webkit-app-region:no-drag]',
+                  )}
+                  onAuxClick={(event) => {
+                    if (event.button !== 1) return;
+                    event.preventDefault();
+                    if (isPinned) return;
+                    closeTab(tabId);
+                  }}
+                  onClick={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    activateTab(tabId);
+                  }}
+                >
+                  {isRenaming ? (
+                    <>
+                      <InputGroup className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent dark:bg-transparent">
+                        <InputGroupInput
+                          ref={renameInputRef}
+                          value={renameValue}
+                          disabled={isRenameLoading}
+                          aria-label={`Rename ${label}`}
+                          aria-invalid={renameError ? true : undefined}
+                          aria-describedby={renameError ? renameErrorId : undefined}
+                          aria-busy={isRenameLoading || undefined}
+                          title={renameError ?? docName}
+                          className="h-full min-w-0 px-2 py-0 font-medium text-foreground text-xs selection:bg-primary selection:text-primary-foreground"
+                          onChange={(event) => {
+                            setRenameValue(stripRenameExtensionSuffix(event.target.value, docExt));
+                            setRenameError(null);
+                            lastFailedValueRef.current = null;
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              void commitRename();
+                            } else if (event.key === 'Escape') {
+                              event.preventDefault();
+                              cancelRename();
+                            }
+                          }}
+                          onBlur={commitRename}
+                        />
+                        <InputGroupAddon
+                          align="inline-end"
+                          aria-hidden="true"
+                          className="pr-2 text-xs"
+                        >
+                          <InputGroupText className="text-muted-foreground/60 text-xs">
+                            {docExt}
+                          </InputGroupText>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      {renameError ? (
+                        <span id={renameErrorId} role="alert" className="sr-only">
+                          {renameError}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        aria-label={accessibleLabel}
+                        title={accessibleLabel}
+                        className={TAB_BUTTON_CLASS}
+                        onClick={() => {
+                          activateTab(tabId);
+                        }}
+                        onDoubleClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          enterRenameMode(tabId, docName);
+                        }}
+                      >
+                        <span className="flex min-w-0 flex-1 items-center">
+                          <span className="min-w-0 truncate">{baseName}</span>
+                          {!hideDocExtension && <span className="shrink-0">{extension}</span>}
+                        </span>
+                      </button>
+                      <TabPinOrCloseButton
+                        accessibleLabel={accessibleLabel}
+                        closeTab={closeTab}
+                        isPinned={isPinned}
+                        tabId={tabId}
+                        unpinTab={unpinTab}
+                      />
+                    </>
+                  )}
+                </SortableTab>
+              </EditorTabContextMenu>
+            );
+          })}
+        </SortableContext>
+      </DndContext>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button

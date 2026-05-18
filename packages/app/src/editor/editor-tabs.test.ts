@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import {
   addOpenTab,
   addPinnedTab,
+  applyDragPinMutation,
   assetTabId,
   createEditorTabSessionState,
   docNameForTabId,
@@ -24,11 +25,13 @@ import {
   readLocalTabSessionState,
   reconcileVisibleTabOrder,
   remapOpenTabs,
+  remapVisibleTabsForRename,
   removeOpenTab,
   removePinnedTab,
   replaceOpenTab,
   sameTabTarget,
   tabIdForNavigationTarget,
+  tabParts,
   writeLocalTabSessionState,
 } from './editor-tabs';
 
@@ -198,9 +201,7 @@ describe('editor tab state', () => {
     });
   });
 
-  test('openDocTab creates a duplicate tab when replacing another tab with an already-open document', () => {
-    const duplicateFooTab = 'foo.md\u0000doc-tab:1';
-
+  test('openDocTab focuses the existing tab when replace-active targets an already-open doc', () => {
     expect(
       openDocTab(['foo.md', 'bar.md'], 'foo.md', {
         behavior: 'replace-active',
@@ -208,14 +209,26 @@ describe('editor tab state', () => {
         limit: 10,
       }),
     ).toEqual({
-      tabs: ['foo.md', duplicateFooTab],
-      activeTabId: duplicateFooTab,
+      tabs: ['foo.md', 'bar.md'],
+      activeTabId: 'foo.md',
     });
   });
 
-  test('openDocTab skips already-occupied duplicate instance numbers', () => {
+  test('openDocTab mints a new tab when the target is not already open under replace-active', () => {
+    expect(
+      openDocTab(['bar.md'], 'foo.md', {
+        behavior: 'replace-active',
+        currentTabId: 'bar.md',
+        limit: 10,
+      }),
+    ).toEqual({
+      tabs: ['foo.md'],
+      activeTabId: 'foo.md',
+    });
+  });
+
+  test('openDocTab focuses an existing duplicate instance instead of minting another one', () => {
     const duplicateFooTab1 = 'foo.md\u0000doc-tab:1';
-    const duplicateFooTab2 = 'foo.md\u0000doc-tab:2';
 
     expect(
       openDocTab(['foo.md', duplicateFooTab1, 'bar.md'], 'foo.md', {
@@ -224,8 +237,8 @@ describe('editor tab state', () => {
         limit: 10,
       }),
     ).toEqual({
-      tabs: ['foo.md', duplicateFooTab1, duplicateFooTab2],
-      activeTabId: duplicateFooTab2,
+      tabs: ['foo.md', duplicateFooTab1, 'bar.md'],
+      activeTabId: 'foo.md',
     });
   });
 
@@ -277,9 +290,8 @@ describe('editor tab state', () => {
     });
   });
 
-  test('openTab creates a duplicate tab when replacing another tab with an already-open folder', () => {
+  test('openTab focuses the existing folder tab when replace-active targets an already-open folder', () => {
     const folder = folderTabId('docs');
-    const duplicateFolder = `${folder}\u0000doc-tab:1`;
 
     expect(
       openTab([folder, 'bar.md'], folder, {
@@ -288,14 +300,13 @@ describe('editor tab state', () => {
         limit: 10,
       }),
     ).toEqual({
-      tabs: [folder, duplicateFolder],
-      activeTabId: duplicateFolder,
+      tabs: [folder, 'bar.md'],
+      activeTabId: folder,
     });
   });
 
-  test('openTab creates a duplicate tab when filling a blank tab with an already-open asset', () => {
+  test('openTab focuses the existing asset tab when a blank tab targets the same asset', () => {
     const asset = assetTabId('docs/photo.png');
-    const duplicateAsset = `${asset}\u0000doc-tab:1`;
 
     expect(
       openTab([asset], asset, {
@@ -304,8 +315,8 @@ describe('editor tab state', () => {
         limit: 10,
       }),
     ).toEqual({
-      tabs: [asset, duplicateAsset],
-      activeTabId: duplicateAsset,
+      tabs: [asset],
+      activeTabId: asset,
     });
   });
 
@@ -428,6 +439,62 @@ describe('editor tab state', () => {
         ['pinned'],
       ),
     ).toEqual(['renamed', 'b']);
+  });
+
+  test('remapVisibleTabsForRename — doc rename preserves slot order', () => {
+    expect(
+      remapVisibleTabsForRename(
+        ['foo.md', 'bar.md', 'baz.md'],
+        [{ fromDocName: 'foo.md', toDocName: 'bazz.md' }],
+      ),
+    ).toEqual(['bazz.md', 'bar.md', 'baz.md']);
+  });
+
+  test('remapVisibleTabsForRename — uncapped (no limit applied to visible tabs)', () => {
+    const many = Array.from({ length: 100 }, (_, i) => `doc${i}.md`);
+    const result = remapVisibleTabsForRename(many, [
+      { fromDocName: 'doc0.md', toDocName: 'renamed0.md' },
+      { fromDocName: 'doc99.md', toDocName: 'renamed99.md' },
+    ]);
+    expect(result).toHaveLength(100);
+    expect(result[0]).toBe('renamed0.md');
+    expect(result[99]).toBe('renamed99.md');
+    expect(result.slice(1, 99)).toEqual(many.slice(1, 99));
+  });
+
+  test('remapVisibleTabsForRename — folder rename remaps every nested visible tab', () => {
+    expect(
+      remapVisibleTabsForRename(
+        [folderTabId('docs'), folderTabId('docs/guides'), 'docs/guides/a.md', 'other.md'],
+        [{ fromDocName: 'docs/guides/a.md', toDocName: 'notes/guides/a.md' }],
+        [{ fromPath: 'docs', toPath: 'notes' }],
+      ),
+    ).toEqual([folderTabId('notes'), folderTabId('notes/guides'), 'notes/guides/a.md', 'other.md']);
+  });
+
+  test('remapVisibleTabsForRename — multiple renames apply atomically', () => {
+    expect(
+      remapVisibleTabsForRename(
+        ['a.md', 'b.md', 'c.md'],
+        [
+          { fromDocName: 'a.md', toDocName: 'x.md' },
+          { fromDocName: 'c.md', toDocName: 'z.md' },
+        ],
+      ),
+    ).toEqual(['x.md', 'b.md', 'z.md']);
+  });
+
+  test('remapVisibleTabsForRename — empty rename list is a no-op', () => {
+    expect(remapVisibleTabsForRename(['a.md', 'b.md'], [])).toEqual(['a.md', 'b.md']);
+  });
+
+  test('remapVisibleTabsForRename — new-tab placeholder is preserved through rename', () => {
+    expect(
+      remapVisibleTabsForRename(
+        ['foo.md', 'new-tab:1', 'bar.md'],
+        [{ fromDocName: 'foo.md', toDocName: 'bazz.md' }],
+      ),
+    ).toEqual(['bazz.md', 'new-tab:1', 'bar.md']);
   });
 
   test('nextActiveTabAfterClose prefers the tab to the right, then left', () => {
@@ -635,6 +702,91 @@ describe('editor tab state', () => {
       ).not.toThrow();
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls[0]?.[0]).toBe('[editor-tabs] failed to write local tab session:');
+    });
+  });
+
+  test('readLocalTabSessionState returns empty state when storage is null', () => {
+    expect(readLocalTabSessionState(null, 'key', 10)).toEqual({
+      openTabs: [],
+      pinnedTabIds: [],
+      activeDocName: null,
+      activeTabId: null,
+      updatedAt: null,
+    });
+  });
+
+  test('writeLocalTabSessionState is a silent no-op when storage is null', () => {
+    expect(() =>
+      writeLocalTabSessionState(null, 'key', {
+        openTabs: ['docs/a'],
+        pinnedTabIds: [],
+        activeDocName: 'docs/a',
+        activeTabId: 'docs/a',
+        updatedAt: '2026-05-06T00:00:00.000Z',
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe('applyDragPinMutation — drag-mutable pin state', () => {
+  test('pinned tab dragged out of the (size-1) pinned zone unpins; only it changes', () => {
+    expect(applyDragPinMutation(['B', 'A', 'C'], ['A'], 'A')).toEqual([]);
+  });
+
+  test('unpinned tab dragged into the pinned zone pins; others keep state', () => {
+    expect(applyDragPinMutation(['D', 'A', 'B', 'C'], ['A', 'B'], 'D')).toEqual(['A', 'B', 'D']);
+  });
+
+  test('pinned tab dragged past the divide into the unpinned region unpins', () => {
+    expect(applyDragPinMutation(['B', 'C', 'A', 'D'], ['A', 'B'], 'A')).toEqual(['B']);
+  });
+
+  test('swapping two pinned tabs within the zone keeps both pinned', () => {
+    expect(applyDragPinMutation(['B', 'A', 'C', 'D'], ['A', 'B'], 'A')).toEqual(['A', 'B']);
+  });
+
+  test('reordering unpinned tabs among themselves never touches pin state', () => {
+    expect(applyDragPinMutation(['A', 'B', 'D', 'C'], ['A', 'B'], 'C')).toEqual(['A', 'B']);
+  });
+
+  test('with no pinned tabs, dragging any tab cannot pin it (no pinned position to cross)', () => {
+    expect(applyDragPinMutation(['C', 'A', 'B'], [], 'C')).toEqual([]);
+  });
+
+  test('dragged id that is not an open tab (placeholder/unknown) never mutates pin state', () => {
+    expect(applyDragPinMutation(['A', 'B'], ['A'], 'new-tab:placeholder')).toEqual(['A']);
+  });
+
+  test('normalizes inputs: stale pinned ids not in openTabs are dropped', () => {
+    expect(applyDragPinMutation(['A', 'B'], ['A', 'Z'], 'B')).toEqual(['A']);
+  });
+});
+
+describe('tabParts — non-`.md` call-site shapes (folder + asset)', () => {
+  test('folder shape: docExt `/` produces baseName-with-trailing-slash label', () => {
+    expect(tabParts('docs/guides', '/')).toEqual({
+      baseName: 'guides',
+      extension: '/',
+      label: 'guides/',
+      prefix: 'docs/',
+    });
+  });
+
+  test('asset shape: docExt empty string produces label equal to baseName', () => {
+    expect(tabParts('images/cat.jpg', '')).toEqual({
+      baseName: 'cat.jpg',
+      extension: '',
+      label: 'cat.jpg',
+      prefix: 'images/',
+    });
+  });
+
+  test('folder shape at top-level (no slash) has empty prefix', () => {
+    expect(tabParts('drafts', '/')).toEqual({
+      baseName: 'drafts',
+      extension: '/',
+      label: 'drafts/',
+      prefix: '',
     });
   });
 });

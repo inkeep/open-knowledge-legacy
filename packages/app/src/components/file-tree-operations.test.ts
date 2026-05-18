@@ -5,6 +5,7 @@ import {
   buildRenamedNodePath,
   isValidNodeName,
   normalizeRenameValue,
+  planRenameCleanupCalls,
   remapActiveDocName,
 } from './file-tree-operations';
 import type { FileEntry } from './file-tree-utils';
@@ -113,5 +114,58 @@ describe('file-tree-operations', () => {
     expect(
       remapActiveDocName('README', [{ fromDocName: 'docs/notes', toDocName: 'docs/renamed' }]),
     ).toBe('README');
+  });
+
+  describe('planRenameCleanupCalls — symptom 1+3 race gate', () => {
+    test('pool active === toDocName → skip the destructive `to` clear', () => {
+      expect(
+        planRenameCleanupCalls(
+          [{ fromDocName: 'docs/notes', toDocName: 'docs/renamed' }],
+          'docs/renamed',
+        ),
+      ).toEqual(['docs/notes']);
+    });
+
+    test('pool active === fromDocName (server-push not yet run) → clear BOTH ends', () => {
+      expect(
+        planRenameCleanupCalls(
+          [{ fromDocName: 'docs/notes', toDocName: 'docs/renamed' }],
+          'docs/notes',
+        ),
+      ).toEqual(['docs/notes', 'docs/renamed']);
+    });
+
+    test('pool active is unrelated (renamed doc was never active) → clear BOTH ends', () => {
+      expect(
+        planRenameCleanupCalls(
+          [{ fromDocName: 'docs/notes', toDocName: 'docs/renamed' }],
+          'README',
+        ),
+      ).toEqual(['docs/notes', 'docs/renamed']);
+    });
+
+    test('pool active is null (collabUrl unresolved) → clear BOTH ends', () => {
+      expect(
+        planRenameCleanupCalls([{ fromDocName: 'docs/notes', toDocName: 'docs/renamed' }], null),
+      ).toEqual(['docs/notes', 'docs/renamed']);
+    });
+
+    test('multi-rename batch — gate is per-entry', () => {
+      expect(
+        planRenameCleanupCalls(
+          [
+            { fromDocName: 'docs/a', toDocName: 'archive/a' },
+            { fromDocName: 'docs/b', toDocName: 'archive/b' },
+            { fromDocName: 'docs/c', toDocName: 'archive/c' },
+          ],
+          'archive/a',
+        ),
+      ).toEqual(['docs/a', 'docs/b', 'archive/b', 'docs/c', 'archive/c']);
+    });
+
+    test('empty rename batch — empty result', () => {
+      expect(planRenameCleanupCalls([], null)).toEqual([]);
+      expect(planRenameCleanupCalls([], 'anything')).toEqual([]);
+    });
   });
 });
