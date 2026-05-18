@@ -56,7 +56,6 @@ export function Tabs({ id, children }: TabsProps) {
   }, [labels.length]);
 
   useLayoutEffect(() => {
-    if (typeof window === 'undefined') return;
     const resolveHash = () => {
       const hash = window.location.hash.slice(1);
       if (!hash) return;

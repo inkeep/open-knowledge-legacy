@@ -9,10 +9,6 @@ const cmdkRoot = (page: Page) => page.locator('[cmdk-root]');
 const cmdkInput = (page: Page) => page.locator('[data-slot="command-input"]');
 const sidebarHeader = (page: Page) => page.locator('[data-slot="sidebar-header"]');
 
-function isMacUA(userAgent: string): boolean {
-  return userAgent.includes('Mac');
-}
-
 async function deletePathIfExists(baseURL: string, kind: 'file' | 'folder', path: string) {
   const response = await fetch(`${baseURL}/api/delete-path`, {
     method: 'POST',
@@ -325,7 +321,7 @@ test.describe('sidebar-search-pill — visual anatomy and layout', () => {
     expect(r).toBeLessThanOrEqual(12);
   });
 
-  test('kbd hint adapts to platform — Mac shows ⌘K (flush), non-Mac shows Ctrl<NBSP>K (single-unit keycap)', async ({
+  test('kbd hint adapts to platform — Mac shows ⌘ K, non-Mac shows Ctrl K', async ({
     page,
     api,
   }) => {
@@ -334,13 +330,13 @@ test.describe('sidebar-search-pill — visual anatomy and layout', () => {
     await page.goto('/#/q010');
     await page.waitForSelector('[role="treeitem"]', { timeout: 15_000 });
 
-    const userAgent = await page.evaluate(() => navigator.userAgent);
+    const isMac = await page.evaluate(() => navigator.userAgent.includes('Mac'));
     const kbdText = await pill(page).locator('kbd').textContent();
 
-    if (isMacUA(userAgent)) {
-      expect(kbdText).toBe('⌘K');
+    if (isMac) {
+      expect(kbdText).toBe('⌘ K');
     } else {
-      expect(kbdText).toBe('Ctrl K');
+      expect(kbdText).toBe('Ctrl K');
     }
   });
 

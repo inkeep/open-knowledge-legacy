@@ -1,30 +1,11 @@
-import { cn, isMacOs } from '@/lib/utils';
+import { isMacOS } from '@tiptap/core';
+import { Kbd } from '@/components/ui/kbd';
 
-interface KeyboardHintsFooterProps {
-  readonly className?: string;
-}
-
-export function KeyboardHintsFooter({ className }: KeyboardHintsFooterProps) {
-  const mod = isMacOs() ? '⌘' : 'Ctrl';
+export function KeyboardHintsFooter() {
+  const shortcut = isMacOS() ? '⌘ K' : 'Ctrl K';
   return (
-    <p
-      className={cn(
-        'select-none font-mono text-2xs uppercase tracking-wider text-muted-foreground',
-        className,
-      )}
-    >
-      <Kbd mod={mod} letter="K" /> Search
+    <p className="text-sm text-muted-foreground">
+      <Kbd>{shortcut}</Kbd> <span>Search</span>
     </p>
-  );
-}
-
-function Kbd({ mod, letter }: { readonly mod: string; readonly letter: string }) {
-  const spacer = mod.length > 1 ? ' ' : '';
-  return (
-    <kbd className="font-mono not-italic">
-      {mod}
-      {spacer}
-      {letter}
-    </kbd>
   );
 }

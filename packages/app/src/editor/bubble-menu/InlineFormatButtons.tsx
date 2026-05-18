@@ -1,7 +1,9 @@
+import { isMacOS } from '@tiptap/core';
 import type { Editor } from '@tiptap/react';
 import { useEditorState } from '@tiptap/react';
 import { Bold, Code, Highlighter, Italic, Strikethrough, Underline } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Kbd } from '@/components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const formatActions = [
@@ -10,42 +12,42 @@ const formatActions = [
     icon: Bold,
     command: (editor: Editor) => editor.chain().focus().toggleBold().run(),
     isActive: (editor: Editor) => editor.isActive('strong'),
-    shortcut: '⌘B',
+    shortcut: '⌘ B',
   },
   {
     name: 'italic',
     icon: Italic,
     command: (editor: Editor) => editor.chain().focus().toggleItalic().run(),
     isActive: (editor: Editor) => editor.isActive('emphasis'),
-    shortcut: '⌘I',
+    shortcut: '⌘ I',
   },
   {
     name: 'underline',
     icon: Underline,
     command: (editor: Editor) => editor.chain().focus().toggleUnderline().run(),
     isActive: (editor: Editor) => editor.isActive('underline'),
-    shortcut: '⌘U',
+    shortcut: '⌘ U',
   },
   {
     name: 'strikethrough',
     icon: Strikethrough,
     command: (editor: Editor) => editor.chain().focus().toggleStrike().run(),
     isActive: (editor: Editor) => editor.isActive('strike'),
-    shortcut: '⌘⇧X',
+    shortcut: '⌘ ⇧ X',
   },
   {
     name: 'code',
     icon: Code,
     command: (editor: Editor) => editor.chain().focus().toggleCode().run(),
     isActive: (editor: Editor) => editor.isActive('code'),
-    shortcut: '⌘E',
+    shortcut: '⌘ E',
   },
   {
     name: 'highlight',
     icon: Highlighter,
     command: (editor: Editor) => editor.chain().focus().toggleHighlight().run(),
     isActive: (editor: Editor) => editor.isActive('highlight'),
-    shortcut: '⌘⇧H',
+    shortcut: '⌘ ⇧ H',
   },
 ] as const;
 
@@ -79,7 +81,7 @@ export function InlineFormatButtons({ editor }: { editor: Editor }) {
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={8}>
               <span className="capitalize">{action.name}</span>
-              <kbd className="ml-1.5 text-[10px] opacity-60">{action.shortcut}</kbd>
+              <Kbd>{isMacOS() ? action.shortcut : action.shortcut.replace('⌘', 'Ctrl')}</Kbd>
             </TooltipContent>
           </Tooltip>
         );

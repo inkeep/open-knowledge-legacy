@@ -114,7 +114,15 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
+  # Helper processes (Renderer / GPU / Plugin / utility-process.fork) MUST
+  # use a helper-only plist that excludes restricted entitlements (notably
+  # `com.apple.developer.associated-domains`) and the main-app file-access
+  # entitlements. Helpers do not carry an embedded `.provisionprofile`;
+  # macOS 26.4.x AMFI rejects helpers that claim profile-restricted
+  # entitlements (SIGKILL — parent observes `exit_code=9`). See
+  # `build/entitlements.mac.inherit.plist` for the full contract +
+  # `tests/unit/entitlements-helper-split.test.ts` for the drift guard.
+  entitlementsInherit: build/entitlements.mac.inherit.plist
   # Developer-ID provisioning profile that grants the
   # `com.apple.developer.associated-domains` entitlement at codesign time.
   # Apple-Silicon-only Developer-ID build (NOT Mac App Store), so the profile

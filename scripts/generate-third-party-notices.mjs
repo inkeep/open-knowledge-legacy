@@ -133,8 +133,8 @@ function collectClosure() {
     }
 
     const deps = {
-      ...(pkg.dependencies || {}),
-      ...(pkg.optionalDependencies || {}),
+      ...pkg.dependencies,
+      ...pkg.optionalDependencies,
     };
 
     for (const depName of Object.keys(deps)) {

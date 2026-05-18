@@ -23,8 +23,10 @@
     "check:fast": "bun run typecheck",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "lint": "biome check packages docs *.json *.jsonc *.ts --error-on-warnings",
-    "format": "bun run lint --write --unsafe",
+    "lint": "bun lint:biome && bun lint:oxlint",
+    "lint:biome": "biome check packages docs *.json *.jsonc *.ts --error-on-warnings",
+    "lint:oxlint": "oxlint .",
+    "format": "bun run lint:biome --write --unsafe",
     "check": "bun run lint && turbo run typecheck test",
     "check:full:parallel": "bash scripts/check-husky-prepare-guard.sh && bash scripts/check-knip-clean.sh && bash scripts/check-notices-clean.sh && bash scripts/check-schema-snapshot-clean.sh && bun run lint && bun test scripts/ && turbo run typecheck test test:dom test:integration test:conversion test:fidelity test:perf:regression:unit test:health:unit test:health test:e2e test:visual test:perf test:a11y --concurrency=100% --output-logs=errors-only",
     "tier1": "bun run check",
@@ -56,6 +58,8 @@
     "husky": "^9.1.7",
     "knip": "^6.7.0",
     "lint-staged": "^16.4.0",
+    "oxlint": "^1.63.0",
+    "oxlint-plugin-eslint": "^1.63.0",
     "turbo": "^2.7.0"
   },
   "patchedDependencies": {

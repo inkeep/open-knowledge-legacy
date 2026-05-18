@@ -1,7 +1,9 @@
+import { isMacOS } from '@tiptap/core';
 import type { Editor } from '@tiptap/react';
 import { ArrowUpRight, CornerDownLeft, Link, Trash2 } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Kbd } from '@/components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { openHashHrefInNewTab } from '../internal-link-helpers';
 
@@ -145,7 +147,7 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
       </TooltipTrigger>
       <TooltipContent side="bottom" sideOffset={8}>
         Link
-        <kbd className="ml-1.5 text-[10px] opacity-60">⌘K</kbd>
+        <Kbd>{isMacOS() ? '⌘ K' : 'Ctrl K'}</Kbd>
       </TooltipContent>
     </Tooltip>
   );

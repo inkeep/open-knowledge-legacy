@@ -1,14 +1,15 @@
 # Universal Link Activation — OPS Runbook
 
-**Last updated:** 2026-05-15
+**Last updated:** 2026-05-18
 
 ## What this document covers
 
-The macOS share-receive flow routes inbound `https://openknowledge.ai/d/<encoded>` clicks (Slack, iMessage, email previews) directly into the installed Open Knowledge app via Apple's Handoff / Universal Links mechanism. Three load-bearing artifacts in this directory must stay aligned for that to work:
+The macOS share-receive flow routes inbound `https://openknowledge.ai/d/<encoded>` clicks (Slack, iMessage, email previews) directly into the installed Open Knowledge app via Apple's Handoff / Universal Links mechanism. Four load-bearing artifacts in this directory must stay aligned for that to work:
 
-1. **`build/entitlements.mac.plist`** — declares the `com.apple.developer.associated-domains` entitlement with `applinks:openknowledge.ai` + `applinks:www.openknowledge.ai`. This is what the kernel checks when AppKit is asked to deliver an inbound Universal Link to the app.
-2. **`build/embedded.provisionprofile`** — Developer-ID provisioning profile, CMS-signed by Apple, granting the app the right to use the restricted `com.apple.developer.associated-domains` entitlement at codesign time. Without it, `codesign` rejects the binary at notarize time with "not authorized to use restricted entitlement."
-3. **`electron-builder.yml`** — `mac.provisioningProfile: build/embedded.provisionprofile` setting that tells electron-builder to embed the profile inside the packaged `.app`. Plus `mac.extendInfo.NSUserActivityTypes: [NSUserActivityTypeBrowsingWeb]` which is required for AppKit to dispatch `continue-activity` events to the app — without it, even a perfectly-entitled binary silently drops Handoff payloads (`LSOpenURLsWithRole error -10810` in console.app).
+1. **`build/entitlements.mac.plist`** — declares the `com.apple.developer.associated-domains` entitlement with `applinks:openknowledge.ai` + `applinks:www.openknowledge.ai`. This is what the kernel checks when AppKit is asked to deliver an inbound Universal Link to the app. **Applied to the MAIN binary only** (`mac.entitlements` in `electron-builder.yml`).
+2. **`build/entitlements.mac.inherit.plist`** — helper-only plist for helper processes (Renderer / GPU / Plugin / utility-process.fork children). Excludes `com.apple.developer.associated-domains` because that entitlement is restricted (requires an embedded provisioning profile to claim, and helpers do not carry one — macOS 26.4.x AMFI SIGKILLs helpers that claim restricted entitlements without a profile, producing the `exit_code=9` failure mode that blocks project open). Wired via `mac.entitlementsInherit` in `electron-builder.yml`. The contract test at `tests/unit/entitlements-helper-split.test.ts` prevents drift.
+3. **`build/embedded.provisionprofile`** — Developer-ID provisioning profile, CMS-signed by Apple, granting the app the right to use the restricted `com.apple.developer.associated-domains` entitlement at codesign time. Without it, `codesign` rejects the binary at notarize time with "not authorized to use restricted entitlement."
+4. **`electron-builder.yml`** — `mac.provisioningProfile: build/embedded.provisionprofile` setting that tells electron-builder to embed the profile inside the packaged `.app`. Plus `mac.extendInfo.NSUserActivityTypes: [NSUserActivityTypeBrowsingWeb]` which is required for AppKit to dispatch `continue-activity` events to the app — without it, even a perfectly-entitled binary silently drops Handoff payloads (`LSOpenURLsWithRole error -10810` in console.app). Plus the `mac.entitlements` vs `mac.entitlementsInherit` split called out above — pointing both at the same plist is the documented anti-pattern that broke helper spawn on macOS 26.4.x.
 
 Cross-references:
 - [`SPEC.md`](../../../specs/2026-05-14-sharing-virality-flow/SPEC.md) §9 (Proposed solution / Architecture overview), §13 (Deployment / rollout considerations)

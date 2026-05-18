@@ -32,6 +32,11 @@ const SettingsDialog = lazy(() =>
   import('@/components/settings/SettingsDialog').then((m) => ({ default: m.SettingsDialog })),
 );
 
+const LazyActivityModeContent = lazy(async () => {
+  const mod = await import('@/components/ActivityModeContent');
+  return { default: mod.ActivityModeContent };
+});
+
 interface EditorAreaProps {
   editorMode: EditorMode;
   onModeChange: (mode: EditorMode) => void;
@@ -87,6 +92,7 @@ function EditorAreaInner({
     activeTarget,
     recycleDocument,
     docPanelMode,
+    docPanelAgentId,
     docPanelExpandSignal,
   } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
@@ -161,7 +167,41 @@ function EditorAreaInner({
   }, [activeDocName]);
 
   if (activeTarget?.kind === 'folder') {
-    return <FolderOverview folderPath={activeTarget.folderPath} />;
+    const showAgentPanel = docPanelMode === 'agent' && docPanelAgentId !== null;
+    if (!showAgentPanel) {
+      return <FolderOverview folderPath={activeTarget.folderPath} />;
+    }
+    return (
+      <div className="flex min-h-0 flex-1">
+        <ResizablePanelGroup orientation="horizontal">
+          <ResizablePanel minSize="30%" defaultSize="75%">
+            <FolderOverview folderPath={activeTarget.folderPath} />
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          {/* Non-collapsible — folder view has no toolbar toggle; dismiss via avatar re-click. */}
+          <ResizablePanel
+            defaultSize="25%"
+            minSize="300px"
+            maxSize="40%"
+            className="flex flex-col bg-muted/20"
+          >
+            <Suspense
+              fallback={
+                <div
+                  role="status"
+                  aria-busy="true"
+                  className="flex h-full items-center justify-center text-sm text-muted-foreground"
+                >
+                  Loading agent activity
+                </div>
+              }
+            >
+              <LazyActivityModeContent showBackButton={false} />
+            </Suspense>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
+    );
   }
 
   if (activeTarget?.kind === 'asset') {

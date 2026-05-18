@@ -7,7 +7,6 @@ export function useWorkspace(): Workspace | null {
 
   useEffect(() => {
     if (workspace !== null) return; // Electron path — already resolved synchronously.
-    if (typeof window === 'undefined') return;
     if (window.okDesktop) return; // Belt-and-braces: never fetch when a bridge is present.
 
     let active = true;

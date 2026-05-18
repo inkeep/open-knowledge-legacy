@@ -39,7 +39,7 @@ function makeRes(): { res: ServerResponse; captured: CapturedResponse } {
     destroyed: false,
     writeHead: (status: number, headers?: Record<string, string>) => {
       captured.status = status;
-      captured.headers = { ...(headers ?? {}) };
+      captured.headers = { ...headers };
     },
     end: (chunk?: string) => {
       if (chunk) chunks += chunk;
