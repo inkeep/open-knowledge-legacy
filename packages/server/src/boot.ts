@@ -259,6 +259,10 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
     contentAssetMiddleware,
   });
 
+  let destroy: () => Promise<void> = async () => {
+    throw new Error('bootServer: destroy() invoked before initialization — boot did not complete');
+  };
+
   let idleHandle: IdleShutdownHandle | null = null;
   if (idleMsOption !== null) {
     const idleMs = idleMsOption ?? DEFAULT_IDLE_THRESHOLD_MS;
@@ -272,7 +276,7 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
       thresholdMs: idleMs,
       log,
       onShutdown: idleHandler(async () => {
-        await destroyHocuspocus();
+        await destroy();
       }),
     });
   }
@@ -316,7 +320,7 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
       if (timer !== undefined) clearTimeout(timer);
     }
   };
-  const destroy = async (): Promise<void> => {
+  destroy = async (): Promise<void> => {
     if (destroyed) return;
     destroyed = true;
     const errors: unknown[] = [];
