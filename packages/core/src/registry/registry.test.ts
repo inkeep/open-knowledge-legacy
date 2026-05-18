@@ -4,10 +4,10 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the 12 canonical + 9 compat descriptors + wildcard', () => {
+  test('returns the 14 canonical + 9 compat descriptors + wildcard', () => {
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(22);
+    expect(entries.length).toBe(24);
   });
 
   test('get returns registered component by name', () => {
@@ -80,6 +80,8 @@ describe('createRegistry', () => {
     expect(registry.has('Tabs')).toBe(true);
     expect(registry.has('Tab')).toBe(true);
     expect(registry.has('Embed')).toBe(true);
+    expect(registry.has('Mirror')).toBe(true);
+    expect(registry.has('MirrorSource')).toBe(true);
     expect(registry.has('*')).toBe(true);
     expect(registry.has('Image')).toBe(false);
     expect(registry.has('Video')).toBe(false);
@@ -90,11 +92,11 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains 12 canonical + 9 compat entries (5-pack + Math + MermaidFence + Pdf + File + Tabs + Tab + Embed canonicals; source-form preservation + math syntax + wiki-embed compats; Mermaid is fence-only)', () => {
-    expect(builtInComponents.length).toBe(21);
+  test('contains 14 canonical + 9 compat entries (5-pack + Math + MermaidFence + Pdf + File + Tabs + Tab + Embed + Mirror + MirrorSource canonicals; source-form preservation + math syntax + wiki-embed compats; Mermaid is fence-only)', () => {
+    expect(builtInComponents.length).toBe(23);
     const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
     const compat = builtInComponents.filter((m) => m.surface === 'compat');
-    expect(canonical.length).toBe(12);
+    expect(canonical.length).toBe(14);
     expect(compat.length).toBe(9);
   });
 
@@ -498,6 +500,41 @@ describe('builtInComponents manifest', () => {
   test('MermaidFence keeps `displayName: "Mermaid"` (user-facing label unchanged)', () => {
     const mermaid = builtInComponents.find((m) => m.name === 'MermaidFence');
     expect(mermaid?.displayName).toBe('Mermaid');
+  });
+
+  test('Mirror exposes split-prop self-closing shape (src + anchor)', () => {
+    const mirror = builtInComponents.find((m) => m.name === 'Mirror');
+    expect(mirror).toBeDefined();
+    if (!mirror) return;
+    expect(mirror.hasChildren).toBe(false);
+    expect(mirror.isSelfClosing).toBe(true);
+    const propNames = mirror.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(['anchor', 'src']);
+    const src = mirror.props.find((p) => p.name === 'src');
+    const anchor = mirror.props.find((p) => p.name === 'anchor');
+    expect(src?.type).toBe('string');
+    expect(src?.required).toBe(true);
+    if (src?.type === 'string') {
+      expect(src.autoFocus).toBe(true);
+    }
+    expect(anchor?.type).toBe('string');
+    expect(anchor?.required).toBe(true);
+  });
+
+  test('MirrorSource exposes container shape (id + children slot)', () => {
+    const mirrorSource = builtInComponents.find((m) => m.name === 'MirrorSource');
+    expect(mirrorSource).toBeDefined();
+    if (!mirrorSource) return;
+    expect(mirrorSource.hasChildren).toBe(true);
+    expect(mirrorSource.isSelfClosing).toBeUndefined();
+    const propNames = mirrorSource.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(['children', 'id']);
+    const id = mirrorSource.props.find((p) => p.name === 'id');
+    expect(id?.type).toBe('string');
+    expect(id?.required).toBe(true);
+    if (id?.type === 'string') {
+      expect(id.autoFocus).toBe(true);
+    }
   });
 
   test('MermaidFence serializes to a ` ```mermaid ` code fence (not JSX)', () => {

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import {
   rewriteMarkdownLinksForDocumentRename,
+  rewriteMirrorSrcForDocumentRename,
   rewriteOutboundMarkdownLinksForSourceMove,
   rewriteWikiLinksForDocumentRename,
 } from './managed-rename-rewrite.ts';
@@ -128,9 +129,14 @@ function rewriteSupportedLinksForRename(
     oldDocName,
     newDocName,
   );
+  const mirrorRewrite = rewriteMirrorSrcForDocumentRename(
+    markdownRewrite.markdown,
+    oldDocName,
+    newDocName,
+  );
   return {
-    markdown: prependFrontmatter(frontmatter, markdownRewrite.markdown),
-    rewrites: wikiRewrite.rewrites + markdownRewrite.rewrites,
+    markdown: prependFrontmatter(frontmatter, mirrorRewrite.markdown),
+    rewrites: wikiRewrite.rewrites + markdownRewrite.rewrites + mirrorRewrite.rewrites,
   };
 }
 

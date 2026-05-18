@@ -185,6 +185,38 @@ describe('applyRenameMap — multi-entry rewrites', () => {
     expect(result.markdown).toBe(`---\ntitle: Doc\n---\n\nSee [[X]].\n`);
     expect(result.rewrites).toBe(1);
   });
+
+  test('rewrites Mirror src for a renamed source doc', () => {
+    const result = applyRenameMap(
+      '<Mirror src="api-spec" anchor="intro" />\n',
+      'viewer-doc',
+      new Map([['api-spec', 'api-reference']]),
+    );
+    expect(result.markdown).toBe('<Mirror src="api-reference" anchor="intro" />\n');
+    expect(result.rewrites).toBe(1);
+  });
+
+  test('rewrites Mirror src alongside wiki + markdown links in the same body', () => {
+    const result = applyRenameMap(
+      'See [[api-spec]] and [docs](./api-spec.md):\n<Mirror src="api-spec" anchor="dep" />\n',
+      'viewer-doc',
+      new Map([['api-spec', 'api-reference']]),
+    );
+    expect(result.markdown).toBe(
+      'See [[api-reference]] and [docs](./api-reference.md):\n<Mirror src="api-reference" anchor="dep" />\n',
+    );
+    expect(result.rewrites).toBe(3);
+  });
+
+  test('Mirror rewrite cooperates with frontmatter strip', () => {
+    const result = applyRenameMap(
+      `---\ntitle: Doc\n---\n\n<Mirror src="A" anchor="x" />\n`,
+      'source',
+      new Map([['A', 'B']]),
+    );
+    expect(result.markdown).toBe(`---\ntitle: Doc\n---\n\n<Mirror src="B" anchor="x" />\n`);
+    expect(result.rewrites).toBe(1);
+  });
 });
 
 describe('applyRenameMap — outbound link recomputation when source doc moves', () => {

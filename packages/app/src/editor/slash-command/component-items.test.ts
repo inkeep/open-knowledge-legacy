@@ -25,6 +25,8 @@ describe('getComponentItems (slash menu)', () => {
         'Image',
         'Math',
         'Mermaid',
+        'Mirror',
+        'Mirror Source',
         'PDF',
         'Tabs',
         'Video',
@@ -164,11 +166,11 @@ describe('agent-surface ↔ slash-menu filter parity', () => {
     expect(divergence).toEqual(new Set(SLASH_HIDDEN_CANONICALS));
   });
 
-  test('intersection covers every canonical NOT in either curation set (9 names today)', () => {
+  test('intersection covers every canonical NOT in either curation set (11 names today)', () => {
     const agent = agentCanonicalSet();
     const slash = slashMenuCanonicalSet();
     const intersection = new Set([...agent].filter((name) => slash.has(name)));
-    expect(intersection.size).toBe(9);
+    expect(intersection.size).toBe(11);
   });
 
   test('agent surface excludes wildcard descriptor', () => {

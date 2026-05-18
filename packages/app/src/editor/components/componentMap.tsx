@@ -6,6 +6,8 @@ import { File } from './File.tsx';
 import { Image } from './Image.tsx';
 import { MathView } from './Math.tsx';
 import { MermaidView } from './Mermaid.tsx';
+import { Mirror } from './Mirror.tsx';
+import { MirrorSource } from './MirrorSource.tsx';
 import { Pdf } from './Pdf.tsx';
 import { Tab } from './Tab.tsx';
 import { Tabs } from './Tabs.tsx';
@@ -29,5 +31,7 @@ export const componentMap: Record<string, React.ComponentType<any>> = {
   Tab,
   Math: MathView,
   MermaidFence: MermaidView,
+  Mirror,
+  MirrorSource,
   '*': UnregisteredBadgeRender,
 };

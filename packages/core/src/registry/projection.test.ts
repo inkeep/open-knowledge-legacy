@@ -14,9 +14,9 @@ const PARSE_EXTENSIONS = [mdx()];
 const PARSE_MDAST_EXTENSIONS = [mdxFromMarkdown()];
 
 describe('getCanonicalDescriptors (broad filter)', () => {
-  test('returns 12 canonicals (matches built-ins snapshot)', () => {
+  test('returns 14 canonicals (matches built-ins snapshot)', () => {
     const canonicals = getCanonicalDescriptors();
-    expect(canonicals.length).toBe(12);
+    expect(canonicals.length).toBe(14);
   });
 
   test('excludes compat surfaces', () => {
@@ -38,8 +38,8 @@ describe('getCanonicalDescriptors (broad filter)', () => {
 });
 
 describe('getAgentCanonicalDescriptors (JSX-only agent surface)', () => {
-  test('returns 11 canonicals — broad set minus fence-kind', () => {
-    expect(getAgentCanonicalDescriptors().length).toBe(11);
+  test('returns 13 canonicals — broad set minus fence-kind', () => {
+    expect(getAgentCanonicalDescriptors().length).toBe(13);
   });
 
   test('excludes MermaidFence (no JSX form exists; agents author the fence directly)', () => {
