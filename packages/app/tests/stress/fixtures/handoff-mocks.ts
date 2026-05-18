@@ -199,6 +199,8 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         revealAsset: async (): Promise<{ ok: true }> => ({ ok: true }),
         showAssetMenu: async (): Promise<void> => {},
         showItemInFolder: async (): Promise<void> => {},
+        trashItem: async (): Promise<{ ok: true }> => ({ ok: true }),
+        openInTerminal: async (): Promise<{ ok: true }> => ({ ok: true }),
       };
 
       const bridge = {
@@ -308,6 +310,14 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         },
         share: {
           validateLocalFolder: async () => ({ kind: 'not-git' as const }),
+        },
+        editor: {
+          notifyActiveTargetChanged: (): void => {},
+          notifyViewMenuStateChanged: (): void => {},
+        },
+        sidebar: {
+          expandAll: (_cb: () => void) => () => {},
+          collapseAll: (_cb: () => void) => () => {},
         },
         platform: 'darwin' as const,
         appVersion: 'test-0.0.0',

@@ -1,13 +1,17 @@
 import {
+  type Config,
+  type ConfigBinding,
   CreateFolderSuccessSchema,
   CreatePageSuccessSchema,
   DeletePathSuccessSchema,
   DocumentListSuccessSchema,
   type HandoffOutcome,
   type HandoffTarget,
+  humanFormat,
   type InstallState,
   type OkignoreBinding,
   RenamePathSuccessSchema,
+  TrashCleanupSuccessSchema,
   WorkspaceSuccessSchema,
 } from '@inkeep/open-knowledge-core';
 import {
@@ -29,6 +33,7 @@ import {
   FoldVertical,
   Pencil,
   SquarePen,
+  Terminal,
   Trash2,
   UnfoldVertical,
 } from 'lucide-react';
@@ -80,6 +85,7 @@ import {
   resolveFileTreeSelection,
   resolveFileTreeSelectionAction,
 } from '@/components/file-tree-selection';
+import { selectTrashConfirmCopy, trashTargetDisplayName } from '@/components/file-tree-trash-copy';
 import {
   type DocumentEntry,
   type FileEntry,
@@ -95,10 +101,16 @@ import {
   parseOkignoreDoc,
   serializeOkignoreDoc,
 } from '@/components/settings/okignore-doc';
+import {
+  coerceTrashFailureReason,
+  type TrashFailedTarget,
+  TrashFailureModal,
+} from '@/components/TrashFailureModal';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -112,13 +124,19 @@ import { asDirectoryHandle, useSelectionMirror } from '@/components/use-selectio
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { docTabId, folderTabId, remapPathForFolderRenames } from '@/editor/editor-tabs';
 import { useConfigContext } from '@/lib/config-provider';
+import { dispatchOpenInTerminal } from '@/lib/dispatch-open-in-terminal';
 import { hashFromDocName, hashFromFolderPath } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
+import {
+  subscribeToFileTreeMenuActionDelete,
+  subscribeToFileTreeMenuActionRename,
+} from '@/lib/file-tree-menu-action-events';
 import { parseServerResponse, parseSuccessOrWarn } from '@/lib/parse-server-response';
 import { createRefreshScheduler } from '@/lib/refresh-scheduler';
 import { joinWorkspacePath } from '@/lib/workspace-paths';
 import { OpenInAgentContextSubmenu } from './handoff/OpenInAgentContextSubmenu';
 import {
+  buildFolderHandoffInput,
   buildHandoffInput,
   type HandoffDispatchInput,
   useHandoffDispatch,
@@ -238,6 +256,11 @@ interface FileTreeDeleteRequest {
   targets: FileTreeTarget[];
 }
 
+interface TrashFailureRequest {
+  failed: TrashFailedTarget[];
+  originalTargets: FileTreeTarget[];
+}
+
 interface WorkspaceInfo {
   contentDir: string;
   pathSeparator: '/' | '\\';
@@ -288,6 +311,37 @@ function RevealInFileManagerMenuItem({
   );
 }
 
+function OpenInTerminalMenuItem({
+  dirAbsPath,
+  onClose,
+}: {
+  dirAbsPath: string | null;
+  onClose: () => void;
+}) {
+  const bridge = typeof window !== 'undefined' ? window.okDesktop : undefined;
+  if (!bridge) return null;
+  const hint = dirAbsPath === null ? 'No workspace' : null;
+  return (
+    <DropdownMenuItem
+      disabled={dirAbsPath === null}
+      onSelect={() => {
+        if (dirAbsPath === null) return;
+        onClose();
+        void dispatchOpenInTerminal(bridge, dirAbsPath);
+      }}
+      aria-label={hint ? `Open in Terminal, ${hint}` : 'Open in Terminal'}
+    >
+      <Terminal aria-hidden="true" />
+      <span className="flex-1">Open in Terminal</span>
+      {hint ? (
+        <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+          {hint}
+        </span>
+      ) : null}
+    </DropdownMenuItem>
+  );
+}
+
 interface FileTreeMenuProps {
   item: ContextMenuItem;
   context: ContextMenuOpenContext;
@@ -303,6 +357,13 @@ interface FileTreeMenuProps {
   };
   model: PierreFileTreeModel;
   okignoreBinding: OkignoreBinding | null;
+  /** Project-local config binding for the `Show Hidden Files` / `Show all files`
+   *  folder-menu toggles. Patched directly here (mirrors the okignore Hide
+   *  flow); `null` during cold-start disables the toggle items. */
+  projectLocalBinding: ConfigBinding | null;
+  /** Layered config view, source for the two toggle check-states
+   *  (`appearance.sidebar.{showHiddenFiles,showAllFiles}`). */
+  mergedConfig: Config | null;
   onStartCreating: (kind: 'file' | 'folder', parentDir: string) => void;
   /** Open NewItemDialog for the given parent dir so the template picker is
    *  reachable. Sibling to `onStartCreating`'s inline-rename fast path. */
@@ -405,6 +466,8 @@ function FileTreeMenu({
   handoff,
   model,
   okignoreBinding,
+  projectLocalBinding,
+  mergedConfig,
   onStartCreating,
   onStartCreatingFromTemplate,
   onDelete,
@@ -417,22 +480,71 @@ function FileTreeMenu({
   const target = treeItemToTarget(item);
   const isFolder = item.kind === 'directory';
   const canHide = !isAsset && okignoreBinding !== null;
-  const hideLabel = isFolder ? 'Hide files in this folder' : 'Hide this file';
+  const hideLabel = isFolder ? 'Hide folder' : 'Hide this file';
+  const showHiddenFiles = mergedConfig?.appearance?.sidebar?.showHiddenFiles ?? false;
+  const showAllFiles = mergedConfig?.appearance?.sidebar?.showAllFiles ?? false;
+  const canToggleVisibility = projectLocalBinding !== null;
   const selectedTreePaths = model.getSelectedPaths();
   const selectedDeleteTargets = selectedTreePaths.includes(target.treePath)
     ? selectedTreePathsToDeleteTargets(selectedTreePaths, isAssetTreePath)
     : [];
   const deleteTargets = selectedDeleteTargets.length > 1 ? selectedDeleteTargets : [target];
   const deleteLabel = deleteTargets.length > 1 ? `Delete ${deleteTargets.length} Items` : 'Delete';
-  const handoffInput = !isFolder
-    ? buildHandoffInput({
-        docName: treeFilePathToDocName(item.path),
-        workspace,
-      })
-    : null;
+  const folderAbsPath =
+    isFolder && workspace
+      ? joinWorkspacePath(
+          workspace.contentDir,
+          relativePathForTreeItem(item),
+          workspace.pathSeparator,
+        )
+      : null;
+  const parentDirAbsPath: string | null = (() => {
+    if (!workspace || isFolder) return null;
+    const rel = relativePathForTreeItem(item);
+    const lastSep = rel.lastIndexOf('/');
+    if (lastSep === -1) return workspace.contentDir;
+    return joinWorkspacePath(workspace.contentDir, rel.slice(0, lastSep), workspace.pathSeparator);
+  })();
+  const handoffInput: HandoffDispatchInput | null = isAsset
+    ? null
+    : isFolder
+      ? buildFolderHandoffInput({
+          folderAbsPath: folderAbsPath ?? '',
+          folderRelativePath: relativePathForTreeItem(item),
+          workspace,
+        })
+      : buildHandoffInput({
+          docName: treeFilePathToDocName(item.path),
+          workspace,
+        });
 
   const closeForInlineSurface = () => context.close({ restoreFocus: false });
   const close = () => context.close();
+
+  const handleShowHiddenFilesToggle = (checked: boolean) => {
+    if (projectLocalBinding === null) return;
+    const result = projectLocalBinding.patch({
+      appearance: { sidebar: { showHiddenFiles: checked } },
+    });
+    if (!result.ok) {
+      console.warn('[FileTree] showHiddenFiles toggle rejected:', humanFormat(result.error));
+      toast.error('Could not update sidebar settings', {
+        description: humanFormat(result.error),
+      });
+    }
+  };
+  const handleShowAllFilesToggle = (checked: boolean) => {
+    if (projectLocalBinding === null) return;
+    const result = projectLocalBinding.patch({
+      appearance: { sidebar: { showAllFiles: checked } },
+    });
+    if (!result.ok) {
+      console.warn('[FileTree] showAllFiles toggle rejected:', humanFormat(result.error));
+      toast.error('Could not update sidebar settings', {
+        description: humanFormat(result.error),
+      });
+    }
+  };
 
   let subtreeFolderCount = 0;
   let subtreeExpandedCount = 0;
@@ -504,6 +616,71 @@ function FileTreeMenu({
               New Folder
             </DropdownMenuItem>
             <DropdownMenuSeparator />
+            <RevealInFileManagerMenuItem item={item} workspace={workspace} onClose={close} />
+            <OpenInAgentContextSubmenu
+              input={handoffInput}
+              installStates={handoff.installStates}
+              isElectronHost={handoff.isElectronHost}
+              dispatch={handoff.dispatch}
+              webFallbackVisible={false}
+            />
+            <OpenInTerminalMenuItem dirAbsPath={folderAbsPath} onClose={close} />
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Copy aria-hidden="true" />
+                Copy Path
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem
+                  disabled={!workspace}
+                  onSelect={() => {
+                    if (!workspace) return;
+                    close();
+                    const full = joinWorkspacePath(
+                      workspace.contentDir,
+                      relativePathForTreeItem(item),
+                      workspace.pathSeparator,
+                    );
+                    void copyToClipboard(full, 'full path');
+                  }}
+                >
+                  Full Path
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    close();
+                    void copyToClipboard(relativePathForTreeItem(item), 'relative path');
+                  }}
+                >
+                  Relative Path
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
+            {/* These toggles only flip the persisted config; the filter
+                pipeline (client dot-segment bypass / server showAll) reads it
+                from a separate seam. */}
+            <DropdownMenuCheckboxItem
+              checked={showHiddenFiles}
+              onCheckedChange={handleShowHiddenFilesToggle}
+              disabled={!canToggleVisibility}
+              data-testid="file-tree-menu-show-hidden-files"
+            >
+              Show Hidden Files
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={showAllFiles}
+              onCheckedChange={handleShowAllFilesToggle}
+              disabled={!canToggleVisibility}
+              data-testid="file-tree-menu-show-all-files"
+            >
+              Show all files
+            </DropdownMenuCheckboxItem>
+            {/* Subtree-scoped Expand/Collapse, smart-hidden. The divider only
+                renders when the section is non-empty so a fully-expanded or
+                fully-collapsed subtree collapses to a single divider before
+                the destructive section instead of an empty double rule. */}
+            {showSubtreeExpandAll || showSubtreeCollapseAll ? <DropdownMenuSeparator /> : null}
             {showSubtreeExpandAll ? (
               <DropdownMenuItem
                 onSelect={() => {
@@ -526,65 +703,20 @@ function FileTreeMenu({
                 Collapse All
               </DropdownMenuItem>
             ) : null}
-            {showSubtreeExpandAll || showSubtreeCollapseAll ? <DropdownMenuSeparator /> : null}
-          </>
-        ) : null}
-        {!isAsset ? (
-          <DropdownMenuItem
-            disabled={anyActionBusy}
-            onSelect={() => {
-              closeForInlineSurface();
-              model.startRenaming(item.path);
-            }}
-          >
-            <Pencil aria-hidden="true" />
-            Rename
-          </DropdownMenuItem>
-        ) : null}
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <Copy aria-hidden="true" />
-            Copy Path
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent>
-            <DropdownMenuItem
-              disabled={!workspace}
-              onSelect={() => {
-                if (!workspace) return;
-                close();
-                const full = joinWorkspacePath(
-                  workspace.contentDir,
-                  relativePathForTreeItem(item),
-                  workspace.pathSeparator,
-                );
-                void copyToClipboard(full, 'full path');
-              }}
-            >
-              Full Path
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => {
-                close();
-                void copyToClipboard(relativePathForTreeItem(item), 'relative path');
-              }}
-            >
-              Relative Path
-            </DropdownMenuItem>
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-        <DropdownMenuSeparator />
-        <RevealInFileManagerMenuItem item={item} workspace={workspace} onClose={close} />
-        {!isFolder && !isAsset && (
-          <OpenInAgentContextSubmenu
-            input={handoffInput}
-            installStates={handoff.installStates}
-            isElectronHost={handoff.isElectronHost}
-            dispatch={handoff.dispatch}
-          />
-        )}
-        {!isAsset ? (
-          <>
+            {/* Destructive section. Rename sits with Hide/Delete here (not at
+                the top with creation) so the menu's read order is
+                create → act → filter → tree → mutate-or-remove. */}
             <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={anyActionBusy}
+              onSelect={() => {
+                closeForInlineSurface();
+                model.startRenaming(item.path);
+              }}
+            >
+              <Pencil aria-hidden="true" />
+              Rename
+            </DropdownMenuItem>
             <DropdownMenuItem
               data-testid="file-tree-menu-hide"
               disabled={!canHide}
@@ -598,7 +730,7 @@ function FileTreeMenu({
                 if (updated === doc) return;
                 okignoreBinding.patch(serializeOkignoreDoc(updated));
                 const basename = target.path.split('/').pop() || target.path;
-                toast.success(`Hidden “${basename}”`, {
+                toast.success(`Hidden folder “${basename}”`, {
                   description: 'Manage hidden files in Settings → Ignore patterns.',
                   duration: 5000,
                 });
@@ -607,7 +739,6 @@ function FileTreeMenu({
               <EyeOff aria-hidden="true" />
               {hideLabel}
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
               disabled={anyActionBusy}
@@ -620,7 +751,100 @@ function FileTreeMenu({
               {deleteLabel}
             </DropdownMenuItem>
           </>
-        ) : null}
+        ) : (
+          <>
+            <RevealInFileManagerMenuItem item={item} workspace={workspace} onClose={close} />
+            {!isAsset && (
+              <OpenInAgentContextSubmenu
+                input={handoffInput}
+                installStates={handoff.installStates}
+                isElectronHost={handoff.isElectronHost}
+                dispatch={handoff.dispatch}
+                webFallbackVisible={true}
+              />
+            )}
+            <OpenInTerminalMenuItem dirAbsPath={parentDirAbsPath} onClose={close} />
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Copy aria-hidden="true" />
+                Copy Path
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem
+                  disabled={!workspace}
+                  onSelect={() => {
+                    if (!workspace) return;
+                    close();
+                    const full = joinWorkspacePath(
+                      workspace.contentDir,
+                      relativePathForTreeItem(item),
+                      workspace.pathSeparator,
+                    );
+                    void copyToClipboard(full, 'full path');
+                  }}
+                >
+                  Full Path
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    close();
+                    void copyToClipboard(relativePathForTreeItem(item), 'relative path');
+                  }}
+                >
+                  Relative Path
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            {!isAsset ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={anyActionBusy}
+                  onSelect={() => {
+                    closeForInlineSurface();
+                    model.startRenaming(item.path);
+                  }}
+                >
+                  <Pencil aria-hidden="true" />
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  data-testid="file-tree-menu-hide"
+                  disabled={!canHide}
+                  onSelect={() => {
+                    if (!okignoreBinding) return;
+                    close();
+                    const pattern = buildOkignorePatternFromTarget(target);
+                    const current = okignoreBinding.current();
+                    const doc = parseOkignoreDoc(current);
+                    const updated = appendPattern(doc, pattern);
+                    if (updated === doc) return;
+                    okignoreBinding.patch(serializeOkignoreDoc(updated));
+                    const basename = target.path.split('/').pop() || target.path;
+                    toast.success(`Hidden “${basename}”`, {
+                      description: 'Manage hidden files in Settings → Ignore patterns.',
+                      duration: 5000,
+                    });
+                  }}
+                >
+                  <EyeOff aria-hidden="true" />
+                  {hideLabel}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  variant="destructive"
+                  disabled={anyActionBusy}
+                  onSelect={() => {
+                    close();
+                    onDelete(deleteTargets);
+                  }}
+                >
+                  <Trash2 aria-hidden="true" />
+                  {deleteLabel}
+                </DropdownMenuItem>
+              </>
+            ) : null}
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -679,6 +903,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const [error, setError] = useState<string | null>(null);
   const [busyPath, setBusyPath] = useState<string | null>(null);
   const [deleteRequest, setDeleteRequest] = useState<FileTreeDeleteRequest | null>(null);
+  const [trashFailure, setTrashFailure] = useState<TrashFailureRequest | null>(null);
   const [newItemRequest, setNewItemRequest] = useState<{ parentDir: string } | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
 
@@ -726,6 +951,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const hoveredPrewarmDocRef = useRef<string | null>(null);
   const suppressSelectionRef = useRef(false);
   const busyPathRef = useRef<string | null>(null);
+  const showHiddenFilesRef = useRef<boolean>(false);
+  const showAllFilesRef = useRef<boolean>(false);
+  const refreshDocsScheduleRef = useRef<(() => void) | null>(null);
   const fileTreeHostRef = useRef<HTMLDivElement | null>(null);
   const handleSelectionChangeRef = useRef<(selectedPaths: readonly string[]) => void>(() => {});
   const handleRenameRef = useRef<(event: FileTreeRenameEvent) => void>(() => {});
@@ -758,7 +986,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     isElectronHost: typeof window !== 'undefined' && window.okDesktop != null,
     dispatch: dispatchHandoff,
   };
-  const { okignoreBinding } = useConfigContext();
+  const { okignoreBinding, projectLocalBinding, merged } = useConfigContext();
+  const showHiddenFiles = merged?.appearance?.sidebar?.showHiddenFiles ?? false;
+  const showAllFiles = merged?.appearance?.sidebar?.showAllFiles ?? false;
 
   const isAvailable = () => busyPathRef.current === null;
 
@@ -996,7 +1226,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
     async function refreshDocs() {
       try {
-        const res = await fetch('/api/documents');
+        const showAll = showAllFilesRef.current;
+        const url = showAll ? '/api/documents?showAll=true' : '/api/documents';
+        const res = await fetch(url);
         const parsed = await parseServerResponse(res, 'Failed to load documents');
         if (!active) return;
         if (!parsed.ok) {
@@ -1006,7 +1238,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           if (!success.success) {
             setError('Documents response did not match expected shape.');
           } else {
-            setDocuments(filterVisibleEntries(success.data.documents as unknown as FileEntry[]));
+            const bypassClientDotDrop = showHiddenFilesRef.current || showAll;
+            setDocuments(
+              filterVisibleEntries(
+                success.data.documents as unknown as FileEntry[],
+                bypassClientDotDrop,
+              ),
+            );
             setError(null);
           }
         }
@@ -1018,6 +1256,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     }
 
     const scheduler = createRefreshScheduler(refreshDocs);
+    refreshDocsScheduleRef.current = () => scheduler.request();
     scheduler.request();
     const handleResume = () => {
       if (document.visibilityState === 'visible') {
@@ -1033,12 +1272,33 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     });
     return () => {
       active = false;
+      refreshDocsScheduleRef.current = null;
       scheduler.dispose();
       window.removeEventListener('focus', handleResume);
       window.removeEventListener('visibilitychange', handleResume);
       unsubscribe();
     };
   }, []);
+
+  const isFirstShowHiddenFilesEffectRunRef = useRef(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: showHiddenFiles is a flip-detection trigger, not a read — the effect body reads refs only. Sibling pattern at the treePathsSignature reset effect above.
+  useEffect(() => {
+    if (isFirstShowHiddenFilesEffectRunRef.current) {
+      isFirstShowHiddenFilesEffectRunRef.current = false;
+      return;
+    }
+    refreshDocsScheduleRef.current?.();
+  }, [showHiddenFiles]);
+
+  const isFirstShowAllFilesEffectRunRef = useRef(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: showAllFiles is a flip-detection trigger, not a read — the effect body reads refs only. Sibling pattern at the treePathsSignature reset effect above.
+  useEffect(() => {
+    if (isFirstShowAllFilesEffectRunRef.current) {
+      isFirstShowAllFilesEffectRunRef.current = false;
+      return;
+    }
+    refreshDocsScheduleRef.current?.();
+  }, [showAllFiles]);
 
   useEffect(() => {
     let active = true;
@@ -1490,6 +1750,8 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     activeTargetRef.current = activeTarget;
     assetTreePathsRef.current = assetTreePaths;
     busyPathRef.current = busyPath;
+    showHiddenFilesRef.current = showHiddenFiles;
+    showAllFilesRef.current = showAllFiles;
     treePathsRef.current = treePaths;
     folderTreePathsRef.current = folderTreePaths;
     activeAncestorTreePathsRef.current = activeAncestorTreePaths;
@@ -1637,116 +1899,315 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     [model],
   );
 
+  async function applyDeleteAftermath(
+    successfulTargets: readonly FileTreeTarget[],
+    deletedDocNames: readonly string[],
+    deletedFolderPaths: readonly string[],
+  ) {
+    const tabsToClose = collectTabsToCloseForDelete(
+      successfulTargets,
+      documentsRef.current,
+      folderTreePathsRef.current,
+    );
+    const pendingCreate = pendingCreateRef.current;
+    if (
+      pendingCreate &&
+      successfulTargets.some((target) => deleteTargetCoversPendingCreate(target, pendingCreate))
+    ) {
+      if (pendingCreate.kind === 'file') {
+        tabsToClose.docNames.add(pendingCreate.createdPath);
+      } else {
+        tabsToClose.folderPaths.add(pendingCreate.createdPath);
+      }
+      clearPendingCreate(pendingCreate);
+    }
+    const deleted = new Set([...tabsToClose.docNames, ...deletedDocNames]);
+    const deletedFolders = new Set([...tabsToClose.folderPaths, ...deletedFolderPaths]);
+    closeTabs(
+      [
+        ...[...deleted].map((docName) => docTabId(docName)),
+        ...[...deletedFolders].map((folderPath) => folderTabId(folderPath)),
+      ],
+      { force: true },
+    );
+    await Promise.all([...deleted].map((docName) => closeAndClearForRename(docName)));
+
+    for (const target of successfulTargets) {
+      const treePath =
+        target.kind === 'folder'
+          ? folderPathToTreeDirectoryPath(target.path)
+          : docNameToTreePath(target.path, target.docExt);
+      if (model.getItem(treePath)) {
+        model.remove(treePath, target.kind === 'folder' ? { recursive: true } : undefined);
+      }
+    }
+    setDocuments((current) => {
+      let next = applyDeleteToDocuments(current, [...deleted]);
+      for (const folderPath of deletedFolders) {
+        next = applyDeleteToDocuments(next, [], folderPath);
+      }
+      markNextDocumentsAsApplied(next);
+      return next;
+    });
+    emitDocumentsChanged(['files', 'backlinks', 'graph']);
+  }
+
+  async function hardDeleteTargets(targets: readonly FileTreeTarget[]): Promise<boolean> {
+    const deletedDocNames: string[] = [];
+    const deletedFolderPaths: string[] = [];
+    const successfulTargets: FileTreeTarget[] = [];
+    for (const target of targets) {
+      setBusyPath(target.path);
+      const res = await fetch('/api/delete-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: target.kind, path: target.path }),
+      });
+      const parsed = await parseServerResponse(res, 'Failed to delete path');
+      if (!parsed.ok) {
+        if (successfulTargets.length > 0) {
+          await applyDeleteAftermath(successfulTargets, deletedDocNames, deletedFolderPaths);
+        }
+        toast.error(parsed.title);
+        return false;
+      }
+      const success = parseSuccessOrWarn(DeletePathSuccessSchema, parsed.body, 'delete-path', {
+        deletedDocNames: [],
+      });
+      deletedDocNames.push(...success.deletedDocNames);
+      if (target.kind === 'folder') {
+        deletedFolderPaths.push(target.path);
+      }
+      successfulTargets.push(target);
+    }
+    await applyDeleteAftermath(successfulTargets, deletedDocNames, deletedFolderPaths);
+    return true;
+  }
+
+  async function trashTargetsViaShell(
+    targets: readonly FileTreeTarget[],
+    bridge: NonNullable<typeof window.okDesktop>,
+    workspaceInfo: WorkspaceInfo,
+  ): Promise<{
+    trashed: FileTreeTarget[];
+    failed: TrashFailedTarget[];
+  }> {
+    const trashed: FileTreeTarget[] = [];
+    const failed: TrashFailedTarget[] = [];
+    for (const target of targets) {
+      setBusyPath(target.path);
+      const absPath = joinWorkspacePath(
+        workspaceInfo.contentDir,
+        target.path,
+        workspaceInfo.pathSeparator,
+      );
+      const result = await bridge.shell.trashItem(absPath);
+      if (result.ok) {
+        trashed.push(target);
+      } else {
+        failed.push({
+          kind: target.kind,
+          path: target.path,
+          name: target.name,
+          reason: coerceTrashFailureReason(result.reason),
+          detail: result.detail,
+        });
+      }
+    }
+    return { trashed, failed };
+  }
+
+  async function postTrashCleanup(
+    trashed: readonly FileTreeTarget[],
+  ): Promise<{ deletedDocNames: string[]; deletedFolderPaths: string[] } | null> {
+    const deletedDocNames: string[] = [];
+    const deletedFolderPaths: string[] = [];
+    const failedCleanups: Array<{ target: FileTreeTarget; reason: string }> = [];
+    for (const target of trashed) {
+      try {
+        const res = await fetch('/api/trash/cleanup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: target.kind, path: target.path }),
+        });
+        const parsed = await parseServerResponse(res, 'Failed to clean up after trash');
+        if (!parsed.ok) {
+          console.warn('[FileTree] trash-cleanup failed', {
+            target: `${target.kind}:${target.path}`,
+            reason: parsed.title,
+          });
+          failedCleanups.push({ target, reason: parsed.title });
+          continue;
+        }
+        const success = parseSuccessOrWarn(
+          TrashCleanupSuccessSchema,
+          parsed.body,
+          'trash-cleanup',
+          { deletedDocNames: [] },
+        );
+        deletedDocNames.push(...success.deletedDocNames);
+        if (target.kind === 'folder') {
+          deletedFolderPaths.push(target.path);
+        }
+      } catch (err) {
+        console.warn('[FileTree] trash-cleanup threw', {
+          target: `${target.kind}:${target.path}`,
+          err,
+        });
+        failedCleanups.push({ target, reason: 'Network error during cleanup' });
+      }
+    }
+    if (failedCleanups.length > 0) {
+      const failedCount = failedCleanups.length;
+      const noun = failedCount === 1 ? 'item' : 'items';
+      toast.error(`Server-side cleanup failed for ${failedCount} ${noun}`, {
+        description: 'The file is in your Trash; the file-watcher will reconcile.',
+      });
+    }
+    if (failedCleanups.length === trashed.length && trashed.length > 0) {
+      return null;
+    }
+    return { deletedDocNames, deletedFolderPaths };
+  }
+
   async function handleDeleteTargets(targets: FileTreeTarget[]) {
     const firstTarget = targets[0];
     if (!firstTarget) return;
     setBusyPath(firstTarget.path);
     setDeleteRequest(null);
 
+    const bridge = typeof window !== 'undefined' ? window.okDesktop : undefined;
     try {
-      const tabsToClose = collectTabsToCloseForDelete(
-        targets,
-        documentsRef.current,
-        folderTreePathsRef.current,
-      );
-      const deletedDocNames: string[] = [];
-      const deletedFolderPaths: string[] = [];
-      const successfulTargets: FileTreeTarget[] = [];
-      for (const target of targets) {
-        setBusyPath(target.path);
-        const res = await fetch('/api/delete-path', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind: target.kind, path: target.path }),
-        });
-        const parsed = await parseServerResponse(res, 'Failed to delete path');
-
-        if (!parsed.ok) {
-          const partialTabsToClose = collectTabsToCloseForDelete(
-            successfulTargets,
-            documentsRef.current,
-            folderTreePathsRef.current,
-          );
-          const partialDeleted = new Set([...partialTabsToClose.docNames, ...deletedDocNames]);
-          const partialDeletedFolders = new Set([
-            ...partialTabsToClose.folderPaths,
-            ...deletedFolderPaths,
-          ]);
-          closeTabs(
-            [
-              ...[...partialDeleted].map((docName) => docTabId(docName)),
-              ...[...partialDeletedFolders].map((folderPath) => folderTabId(folderPath)),
-            ],
-            { force: true },
-          );
-          await Promise.all([...partialDeleted].map((docName) => closeAndClearForRename(docName)));
-          toast.error(parsed.title);
-          setBusyPath(null);
-          resetModelToDocuments();
-          emitDocumentsChanged(['files', 'backlinks', 'graph']);
-          return;
+      if (bridge && workspace) {
+        const { trashed, failed } = await trashTargetsViaShell(targets, bridge, workspace);
+        if (trashed.length > 0) {
+          const cleanup = await postTrashCleanup(trashed);
+          if (cleanup) {
+            await applyDeleteAftermath(
+              trashed,
+              cleanup.deletedDocNames,
+              cleanup.deletedFolderPaths,
+            );
+          } else {
+            const localDocNames = trashed.filter((t) => t.kind === 'file').map((t) => t.path);
+            const localFolderPaths = trashed.filter((t) => t.kind === 'folder').map((t) => t.path);
+            await applyDeleteAftermath(trashed, localDocNames, localFolderPaths);
+          }
         }
-
-        const success = parseSuccessOrWarn(DeletePathSuccessSchema, parsed.body, 'delete-path', {
-          deletedDocNames: [],
-        });
-        deletedDocNames.push(...success.deletedDocNames);
-        if (target.kind === 'folder') {
-          deletedFolderPaths.push(target.path);
+        if (failed.length > 0) {
+          setTrashFailure({ failed, originalTargets: [...targets] });
         }
-        successfulTargets.push(target);
+        setBusyPath(null);
+      } else {
+        const ok = await hardDeleteTargets(targets);
+        setBusyPath(null);
+        if (!ok) resetModelToDocuments();
       }
-
-      const pendingCreate = pendingCreateRef.current;
-      if (
-        pendingCreate &&
-        targets.some((target) => deleteTargetCoversPendingCreate(target, pendingCreate))
-      ) {
-        if (pendingCreate.kind === 'file') {
-          tabsToClose.docNames.add(pendingCreate.createdPath);
-        } else {
-          tabsToClose.folderPaths.add(pendingCreate.createdPath);
-        }
-        clearPendingCreate(pendingCreate);
-      }
-
-      const deleted = new Set([...tabsToClose.docNames, ...deletedDocNames]);
-      const deletedFolders = new Set([...tabsToClose.folderPaths, ...deletedFolderPaths]);
-      closeTabs(
-        [
-          ...[...deleted].map((docName) => docTabId(docName)),
-          ...[...deletedFolders].map((folderPath) => folderTabId(folderPath)),
-        ],
-        { force: true },
-      );
-      await Promise.all([...deleted].map((docName) => closeAndClearForRename(docName)));
-
-      for (const target of targets) {
-        const treePath =
-          target.kind === 'folder'
-            ? folderPathToTreeDirectoryPath(target.path)
-            : docNameToTreePath(target.path, target.docExt);
-        if (model.getItem(treePath)) {
-          model.remove(treePath, target.kind === 'folder' ? { recursive: true } : undefined);
-        }
-      }
-      setDocuments((current) => {
-        let next = applyDeleteToDocuments(current, [...deleted]);
-        for (const folderPath of deletedFolders) {
-          next = applyDeleteToDocuments(next, [], folderPath);
-        }
-        markNextDocumentsAsApplied(next);
-        return next;
-      });
-      emitDocumentsChanged(['files', 'backlinks', 'graph']);
-      setBusyPath(null);
     } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
       console.warn('[FileTree] delete failed:', err);
-      toast.error('Network error — please try again');
+      toast.error('Could not complete delete', { description: detail });
       setBusyPath(null);
       resetModelToDocuments();
     }
   }
+
+  async function handleTrashFailureDeletePermanently() {
+    if (!trashFailure) return;
+    const failedSet = new Set(trashFailure.failed.map((t) => `${t.kind}:${t.path}`));
+    const targetsToHardDelete = trashFailure.originalTargets.filter((t) =>
+      failedSet.has(`${t.kind}:${t.path}`),
+    );
+    setTrashFailure(null);
+    if (targetsToHardDelete.length === 0) return;
+    setBusyPath(targetsToHardDelete[0]?.path ?? null);
+    try {
+      const ok = await hardDeleteTargets(targetsToHardDelete);
+      setBusyPath(null);
+      if (!ok) resetModelToDocuments();
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.warn('[FileTree] hard-delete fallback failed:', err);
+      toast.error('Could not complete delete', { description: detail });
+      setBusyPath(null);
+      resetModelToDocuments();
+    }
+  }
+
+  async function handleTrashFailureRetry() {
+    if (!trashFailure) return;
+    const failedSet = new Set(trashFailure.failed.map((f) => `${f.kind}:${f.path}`));
+    const originals = trashFailure.originalTargets.filter((t) =>
+      failedSet.has(`${t.kind}:${t.path}`),
+    );
+    setTrashFailure(null);
+    await handleDeleteTargets(originals);
+  }
+
+  const handleDeleteTargetsRef = useRef(handleDeleteTargets);
+  useEffect(() => {
+    handleDeleteTargetsRef.current = handleDeleteTargets;
+  });
+
+  useEffect(() => {
+    return subscribeToFileTreeMenuActionDelete((target) => {
+      if (target.kind === 'doc' || target.kind === 'folder-index') {
+        const docName = target.docName;
+        const docEntry = documentsRef.current.find(
+          (entry): entry is DocumentEntry => isDocumentEntry(entry) && entry.docName === docName,
+        );
+        void handleDeleteTargetsRef.current([
+          {
+            kind: 'file',
+            path: docName,
+            name: docName.split('/').pop() ?? docName,
+            docExt: docEntry?.docExt,
+          },
+        ]);
+        return;
+      }
+      if (target.kind === 'folder') {
+        void handleDeleteTargetsRef.current([
+          {
+            kind: 'folder',
+            path: target.folderPath,
+            name: target.folderPath.split('/').pop() ?? target.folderPath,
+          },
+        ]);
+        return;
+      }
+      console.warn(
+        JSON.stringify({
+          event: 'file-tree-menu-action-delete-unsupported-kind',
+          kind: target.kind,
+        }),
+      );
+    });
+  }, []);
+
+  useEffect(() => {
+    return subscribeToFileTreeMenuActionRename((target) => {
+      if (target.kind === 'doc' || target.kind === 'folder-index') {
+        const docName = target.docName;
+        const docEntry = documentsRef.current.find(
+          (entry): entry is DocumentEntry => isDocumentEntry(entry) && entry.docName === docName,
+        );
+        const treePath = docNameToTreePath(docName, docEntry?.docExt);
+        model.startRenaming(treePath);
+        return;
+      }
+      if (target.kind === 'folder') {
+        model.startRenaming(target.folderPath);
+        return;
+      }
+      console.warn(
+        JSON.stringify({
+          event: 'file-tree-menu-action-rename-unsupported-kind',
+          kind: target.kind,
+        }),
+      );
+    });
+  }, [model]);
 
   function cancelCurrentHoverPrewarm() {
     const current = hoveredPrewarmDocRef.current;
@@ -1852,6 +2313,8 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
               handoff={handoff}
               model={model}
               okignoreBinding={okignoreBinding}
+              projectLocalBinding={projectLocalBinding}
+              mergedConfig={merged}
               onStartCreating={startCreating}
               onStartCreatingFromTemplate={startCreatingFromTemplate}
               onDelete={(targets) => setDeleteRequest({ targets })}
@@ -1872,21 +2335,60 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       >
         {deleteRequest && primaryDeleteTarget && (
           <DeleteConfirmationDialog
-            itemName={
-              deleteRequest.targets.length === 1
-                ? `${primaryDeleteTarget.name}${primaryDeleteTarget.kind === 'file' ? (primaryDeleteTarget.docExt ?? '.md') : '/'}`
-                : undefined
-            }
+            {...(() => {
+              const variant: 'electron' | 'web' =
+                typeof window !== 'undefined' && window.okDesktop != null ? 'electron' : 'web';
+              const copy = selectTrashConfirmCopy(variant, deleteRequest.targets);
+              if (copy) {
+                return {
+                  customTitle: copy.title,
+                  customDescription: '',
+                  customDetail: copy.detail,
+                  customConfirmLabel: copy.confirmLabel,
+                  customConfirmLabelBusy: copy.confirmLabelBusy,
+                  children: copy.listedTargets ? (
+                    <ul className="flex flex-col gap-1 font-mono text-foreground text-xs">
+                      {copy.listedTargets.map((target) => (
+                        <li key={`${target.kind}:${target.path}`} data-testid="delete-target-row">
+                          {trashTargetDisplayName(target)}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null,
+                };
+              }
+              return {
+                itemName:
+                  deleteRequest.targets.length === 1
+                    ? `${primaryDeleteTarget.name}${primaryDeleteTarget.kind === 'file' ? (primaryDeleteTarget.docExt ?? '.md') : '/'}`
+                    : undefined,
+                customTitle: deleteRequest.targets.length > 1 ? 'Delete selected items' : undefined,
+                customDescription:
+                  deleteRequest.targets.length > 1
+                    ? `Are you sure you want to delete ${deleteRequest.targets.length} selected items? Folders and all files inside them will be deleted. This action cannot be undone.`
+                    : primaryDeleteTarget.kind === 'folder'
+                      ? `Are you sure you want to delete ${primaryDeleteTarget.name}/ and all files inside? This action cannot be undone.`
+                      : undefined,
+              };
+            })()}
             isSubmitting={busyPath !== null}
             onDelete={() => handleDeleteTargets(deleteRequest.targets)}
-            customTitle={deleteRequest.targets.length > 1 ? 'Delete selected items' : undefined}
-            customDescription={
-              deleteRequest.targets.length > 1
-                ? `Are you sure you want to delete ${deleteRequest.targets.length} selected items? Folders and all files inside them will be deleted. This action cannot be undone.`
-                : primaryDeleteTarget.kind === 'folder'
-                  ? `Are you sure you want to delete ${primaryDeleteTarget.name}/ and all files inside? This action cannot be undone.`
-                  : undefined
-            }
+          />
+        )}
+      </Dialog>
+      <Dialog
+        open={!!trashFailure}
+        onOpenChange={(open) => {
+          if (!open && !busyPath) setTrashFailure(null);
+        }}
+      >
+        {trashFailure && (
+          <TrashFailureModal
+            failedTargets={trashFailure.failed}
+            isSubmitting={busyPath !== null}
+            onDeletePermanently={handleTrashFailureDeletePermanently}
+            onRetry={handleTrashFailureRetry}
+            onCancel={() => setTrashFailure(null)}
           />
         )}
       </Dialog>

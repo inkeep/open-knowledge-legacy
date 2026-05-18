@@ -2,3 +2,154 @@
 title: Editor
 description: The Open Knowledge editor — WYSIWYG markdown, source toggle, content blocks, inline frontmatter, and the file sidebar.
 ---
+The editor is where you read, write, and collaborate on your docs — and where AI agents land when they edit. WYSIWYG by default with a source-mode toggle, a frontmatter properties pane, real-time CRDT collaboration, and a file sidebar that organizes the project.
+
+## Document body
+
+Open any doc from the sidebar. The body renders as WYSIWYG markdown with familiar conventions — bold / italic / headings / lists / tables / code fences / links / images. Toggle to source mode from the editor controls to edit the raw markdown directly; both views are bound to the same CRDT document, so they stay in sync across users and AI agents.
+
+A backslash command (`/`) opens an insert menu for headings, lists, code blocks, callouts, and the other content shapes the editor supports.
+
+## Frontmatter properties
+
+Every doc has a `---`-fenced YAML frontmatter region at the top. The **Properties** panel on the right exposes those fields as form inputs — strings, numbers, booleans, dates, enums, and lists — driven by the folder's schema. Edit either surface; changes propagate live.
+
+Folder-level defaults live in `.ok/frontmatter.yml` inside each folder. New docs created under that folder inherit the defaults; see the [Configuration reference](/docs/reference/configuration) for the schema.
+
+## File sidebar
+
+The sidebar lists every doc in your project that isn't excluded by `.gitignore` or `.okignore`. Folder rows expand and collapse; file rows open in a tab on click. The toolbar at the top of the sidebar has buttons to create files, create folders, and search.
+
+### Right-click context menus
+
+Right-click anywhere in the sidebar to get a context-aware menu. Three shapes share consistent ordering so the muscle memory carries across surfaces:
+
+| Item | Empty space | Folder row | File row |
+| --- | --- | --- | --- |
+| New File | yes | yes | — |
+| New from template | yes | yes | — |
+| New Folder | yes | yes | — |
+| Reveal in Finder | yes (project root) | yes | yes |
+| Open with AI ▸ | yes (project scope) | yes (folder scope) | yes (file scope) |
+| Open in Terminal | yes (project root) | yes (folder) | yes (parent dir) |
+| Copy full path / Copy Path ▸ | yes (full path of project root) | yes (Full / Relative) | yes (Full / Relative) |
+| Show Hidden Files | yes | yes | — |
+| Show all files | yes | yes | — |
+| Expand all / Collapse all | yes (tree-scoped) | yes (subtree-scoped) | — |
+| Rename | — | yes | yes |
+| Hide folder / Hide this file | — | yes | yes |
+| Delete | — | yes | yes |
+
+Items that depend on the desktop app — Reveal in Finder, Open in Terminal, Delete via Trash — are hidden in the web build. Asset rows (images, PDFs, other non-markdown files) suppress Rename, Open with AI, Hide, and Delete; they show Reveal, Open in Terminal (parent dir), and Copy Path only.
+
+Expand all and Collapse all only appear when they have work to do — Expand all is hidden when no folder is collapsed; Collapse all is hidden when no folder is expanded.
+
+### Creating files and folders
+
+Pick **New File**, **New from template**, or **New Folder** from any of the three menus. The sidebar shows an inline rename field at the target location; type a name and press Enter. **New from template** uses the [`NewItemDialog`](/docs/reference/configuration#folder-level-frontmatter) picker — the same dialog the toolbar's create buttons use — and respects the folder's `templates_available` cascade.
+
+Right-click on empty space drops the new item at the project root. Right-click on a folder drops it inside that folder.
+
+### Hiding files and folders
+
+**Hide this file** on a file row, or **Hide folder** on a folder row, appends a matching pattern to `.okignore`. See [Ignore patterns](/docs/features/ignore-patterns) for the full pattern syntax. The item disappears from the tree, search, and the agent's MCP tools immediately — nothing is deleted on disk.
+
+### Show Hidden Files / Show all files
+
+Two toggle items on the empty-space and folder menus surface the corresponding file-tree visibility modes. They persist per-project per-machine in `.ok/local/config.yml` under `appearance.sidebar`. The toggles also live in the macOS **View** menu.
+
+| Toggle | Effect |
+| --- | --- |
+| **Show Hidden Files** | Stops the client from hiding paths that start with `.` (recovers allowed dotfiles like `brain/.archived/note.md`). Server filters still apply, so `.git/`, `.ok/`, and `node_modules/` stay hidden. |
+| **Show all files** | Bypasses every filter — client dot-segment drop AND the server's `.gitignore` / `.okignore` / built-in exclusions. Surfaces literally everything on disk under the content directory, except synthetic system docs. Useful for one-off triage; flip it back off once you've found what you needed. |
+
+When both are on, **Show all files** supersedes.
+
+### Deleting via Trash
+
+**Delete** moves the item to the system Trash via the same `shell.trashItem` call VS Code and Finder use — recoverable, not destructive. A confirm modal mirrors VS Code's copy:
+
+- Single file: `Are you sure you want to delete '<name>'?`
+- Single folder: `Are you sure you want to delete '<name>' and its contents?`
+- Multi-select aggregates into `Are you sure you want to delete the following N <files|directories|files/directories> …`
+
+The detail line reads **You can restore this file from the Trash.** Buttons are **Move to Trash** and **Cancel**. Multi-selection in the tree pre-fills the Delete target — the rest of the menu items act on the right-clicked item only.
+
+If `shell.trashItem` fails (locked file, network drive without Trash, OneDrive quirks), a secondary modal appears:
+
+> **Couldn't move to Trash**
+>
+> Could not move "`<name>`" to the Trash. Do you want to permanently delete instead?
+
+with buttons **Cancel**, **Retry**, and **Delete Permanently** (skips the Trash and unlinks directly). Multi-target failures aggregate into one modal listing every failed path with its per-target failure reason.
+
+### Open with AI
+
+**Open with AI ▸** dispatches the project, the folder, or the file to one of your installed agent apps — Claude, Codex, or Cursor. The agent receives a short text prompt asking it to open the target in the Open Knowledge web preview, then grounds the rest of the conversation via the [Open Knowledge MCP](/docs/reference/mcp). Three scopes, three prompt shapes:
+
+| Scope | Triggered from | Prompt template |
+| --- | --- | --- |
+| Project | Empty-space menu · sparkle icon (no doc / folder active) | `Let's work on this project using Open Knowledge. Open the OK editor in web view.` |
+| Folder | Folder row menu · sparkle icon (folder view active) | ``Let's work on `<folder>` folder using Open Knowledge. Open the OK editor in web view.`` |
+| File | File row menu · sparkle icon (doc active) | ``Can you open `<path>` in web view with open knowledge editor.`` |
+
+The same submenu is mounted on the **sparkle icon** in the editor header — it picks the scope to dispatch from whichever target is currently active in the editor.
+
+**Install detection** filters the submenu to just the agents you have. When the server and your browser are on the same machine (`localhost`), the filter is accurate. When you're running the server elsewhere (a hosted preview, SSH tunnel, remote dev), the submenu lists every supported agent and lets your browser's OS protocol-dispatch dialog be the truth signal.
+
+The Claude **claude.ai** web fallback row appears on file-scope dispatches only — the cloud agent has no project-root parameter, so folder and project dispatches hide it rather than send a context-less prompt.
+
+See the [per-integration pages](/docs/integrations/claude-code) for what each agent receives once dispatched.
+
+### Open in Terminal
+
+Spawns `open -a Terminal.app <dir>` at the right path: the folder for a folder row, the file's parent for a file row, the project root for the empty-space menu, the parent dir for an asset row. Terminal.app is hardcoded for v1; user-configurable terminal preference is on the roadmap.
+
+## macOS application menus
+
+The Open Knowledge desktop app keeps its menu bar in sync with the active editor target — File menu items enable / disable based on whether a doc, folder, or nothing is currently selected.
+
+### File menu
+
+Below the project navigation items (Switch Project, Open Folder, Open Recent, CLI Tools, Configure AI, Close), the File menu surfaces the most-used sidebar affordances so they're reachable from the keyboard:
+
+| Item | Accelerator | Behavior |
+| --- | --- | --- |
+| **New File** | `Cmd+N` | Creates a new file at the project root (or under the active folder if one is selected). |
+| **New Folder** | `Cmd+Shift+N` | Creates a new folder. |
+| **New from Template…** | — | Opens the template picker. |
+| **Rename** | — | Inline-renames the active file or folder. Disabled when nothing is selected. |
+| **Move to Trash** | `Cmd+Delete` | Sends the active file or folder to Trash (with the same confirm modal as the sidebar). Disabled when nothing is selected. |
+| **Reveal in Finder** | — | Reveals the active target in Finder. Empty selection reveals the project root. |
+| **Open in Terminal** | — | Opens Terminal.app at the active target's directory. |
+| **Open with AI ▸** | — | Same submenu as the sidebar / sparkle icon, dispatched at the active scope. |
+| **Copy Path ▸** | — | Full / Relative path of the active target. |
+
+**Switch Project…** moved to `Cmd+Shift+P`. The old `Cmd+Shift+N` binding now creates a new folder, matching macOS Finder, VS Code, and the broader convention.
+
+### View menu
+
+Before the existing Zoom and Toggle Fullscreen items, the View menu gets:
+
+| Item | Bound to |
+| --- | --- |
+| **Show Hidden Files** | `appearance.sidebar.showHiddenFiles` — same toggle as the sidebar's right-click menu. |
+| **Show All Files** | `appearance.sidebar.showAllFiles`. |
+| **Expand All** | Expands every folder in the tree. Hidden when nothing is collapsed. |
+| **Collapse All** | Collapses every folder in the tree. Hidden when nothing is expanded. |
+
+Toggling the menu checkboxes flips the underlying config field, which propagates back to the sidebar via the standard CRDT subscription — both surfaces stay synchronized.
+
+## Real-time collaboration
+
+Everything in the editor — body, frontmatter, sidebar toggles — is backed by a CRDT. Multiple users, plus AI agents writing through MCP, can edit the same doc concurrently. Per-user presence is shown in the editor header; the **agent activity** view ([Agent activity](/docs/features/agent-activity)) groups every burst of agent edits with per-burst diffs and selective undo.
+
+For recovery + history, see [Timeline and recovery](/docs/features/timeline-and-recovery).
+
+## See also
+
+- [Ignore patterns](/docs/features/ignore-patterns) — `.okignore` syntax and Hide-from-tree mechanics
+- [Configuration reference](/docs/reference/configuration) — `.ok/config.yml` schema including `appearance.sidebar.*`
+- [Agent activity](/docs/features/agent-activity) — review and undo per-session agent edits
+- [Timeline and recovery](/docs/features/timeline-and-recovery) — version history and restore
+

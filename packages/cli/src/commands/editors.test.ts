@@ -200,7 +200,7 @@ describe('buildManagedServerEntry', () => {
 });
 
 describe('EDITOR_TARGETS.buildEntry with cliPath', () => {
-  it('Claude Code emits command:cliPath without type:stdio', () => {
+  it('Claude emits command:cliPath without type:stdio', () => {
     const entry = EDITOR_TARGETS.claude.buildEntry('', { cliPath: '/usr/local/bin/ok' });
     expect(entry).toEqual({ command: '/usr/local/bin/ok', args: ['mcp'] });
     expect(entry.type).toBeUndefined();

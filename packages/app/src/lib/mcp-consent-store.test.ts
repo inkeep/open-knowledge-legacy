@@ -61,7 +61,7 @@ function makeBridge(
 
 const sampleShowPayload: OkMcpWiringShowPayload = {
   detectedEditors: [
-    { id: 'claude', label: 'Claude Code', detected: true, willReplace: false },
+    { id: 'claude', label: 'Claude', detected: true, willReplace: false },
     { id: 'cursor', label: 'Cursor', detected: false, willReplace: false },
   ],
 };

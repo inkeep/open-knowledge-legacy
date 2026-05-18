@@ -159,9 +159,9 @@ describe('keepalive WS upgrade → setPresence bootstrap', () => {
       `ws://localhost:${booted.port}/collab/keepalive` +
         `?pid=${process.pid}` +
         `&connectionId=${connectionId}` +
-        `&displayName=${encodeURIComponent('Claude Code')}` +
+        `&displayName=${encodeURIComponent('Claude')}` +
         `&clientName=${encodeURIComponent('claude-code')}` +
-        `&colorSeed=${encodeURIComponent('Claude Code')}`,
+        `&colorSeed=${encodeURIComponent('Claude')}`,
     );
     await new Promise<void>((resolve, reject) => {
       ws.once('open', () => resolve());
@@ -176,7 +176,7 @@ describe('keepalive WS upgrade → setPresence bootstrap', () => {
     );
     const entry = map[presenceKey];
     expect(entry).toBeDefined();
-    expect(entry?.displayName).toBe('Claude Code');
+    expect(entry?.displayName).toBe('Claude');
     expect(typeof entry?.icon).toBe('string');
     expect(entry?.icon.length).toBeGreaterThan(0);
     expect(typeof entry?.color).toBe('string');

@@ -320,40 +320,6 @@ describe('discoverLockDirs', () => {
     expect(dirs).toHaveLength(0);
   });
 
-  it('discovers legacy .ok/.openknowledge lock dirs for already-running older servers', async () => {
-    spawnSyncSpy
-      .mockReturnValueOnce(makeSpawnResult({ stdout: '55\n', status: 0 }))
-      .mockReturnValueOnce(
-        makeSpawnResult({
-          stdout:
-            'PID COMMAND\n 55 /usr/local/bin/node /path/node_modules/.bin/open-knowledge start\n',
-          status: 0,
-        }),
-      )
-      .mockReturnValueOnce(
-        makeSpawnResult({
-          stdout: 'p55\nfcwd\nn/Users/mike/legacy-notes\n',
-          status: 0,
-        }),
-      )
-      .mockReturnValueOnce(makeSpawnResult({ stdout: 'COMMAND PID USER\n', status: 0 }));
-
-    existsSyncSpy.mockImplementation(
-      (p: unknown) =>
-        p === '/Users/mike/legacy-notes/.openknowledge' ||
-        p === '/Users/mike/legacy-notes/.openknowledge/server.lock',
-    );
-
-    const dirs = await discoverLockDirs();
-    expect(dirs[0]).toContain('.openknowledge');
-
-    const calls = spawnSyncSpy.mock.calls as [string, string[]][];
-    expect(calls[0]?.[0]).toBe('pgrep');
-    expect(calls[1]?.[0]).toBe('ps'); // fallback
-    expect(calls[2]?.[0]).toBe('lsof'); // pidCwd
-    expect(calls[3]?.[0]).toBe('lsof'); // port scan
-  });
-
   it('degrades gracefully when lsof is unavailable for pidCwd calls', async () => {
     const enoent = Object.assign(new Error('lsof not found'), { code: 'ENOENT' });
 

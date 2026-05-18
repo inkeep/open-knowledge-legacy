@@ -113,7 +113,7 @@ describe('sanitizeClientName', () => {
   });
 
   test('preserves ordinary printable input unchanged', () => {
-    expect(sanitizeClientName('Claude Code v2.1.0', 'fb')).toBe('Claude Code v2.1.0');
+    expect(sanitizeClientName('Claude v2.1.0', 'fb')).toBe('Claude v2.1.0');
   });
 });
 

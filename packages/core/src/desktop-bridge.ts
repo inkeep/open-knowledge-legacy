@@ -22,7 +22,18 @@ type OkMenuAction =
   | 'save-version'
   | 'version-history'
   | 'focus-search'
-  | 'focus-command-palette';
+  | 'focus-command-palette'
+  | 'new-from-template'
+  | 'move-to-trash'
+  | 'reveal-in-finder'
+  | 'open-in-terminal'
+  | 'send-to-ai'
+  | 'copy-full-path'
+  | 'copy-relative-path'
+  | 'toggle-show-hidden-files'
+  | 'toggle-show-all-files'
+  | 'expand-all-tree'
+  | 'collapse-all-tree';
 
 type OkUnsubscribe = () => void;
 
@@ -320,6 +331,18 @@ type OkLocalOpAuthReposResponse =
   | { ok: true; host: string; repos: OkLocalOpRepoEntry[] }
   | { ok: false; error: string };
 
+type OkEditorActiveTargetSnapshot =
+  | { readonly kind: 'doc'; readonly identifier: string }
+  | { readonly kind: 'folder'; readonly identifier: string }
+  | { readonly kind: null };
+
+interface OkEditorViewMenuStateSnapshot {
+  readonly showHiddenFiles: boolean;
+  readonly showAllFiles: boolean;
+  readonly canExpandAll: boolean;
+  readonly canCollapseAll: boolean;
+}
+
 export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
 
@@ -381,6 +404,19 @@ export interface OkDesktopBridge {
       readonly kind: 'asset' | 'wiki-link' | 'image';
     }): Promise<void>;
     showItemInFolder(path: string): Promise<void>;
+    trashItem(absPath: string): Promise<
+      | { ok: true }
+      | {
+          ok: false;
+          reason: 'not-found' | 'permission-denied' | 'system-error' | 'path-escape';
+          detail?: string;
+        }
+    >;
+    openInTerminal(
+      dirAbsPath: string,
+    ): Promise<
+      { ok: true } | { ok: false; reason: 'not-found' | 'spawn-error' | 'timeout' | 'path-escape' }
+    >;
   };
 
   clipboard: {
@@ -494,6 +530,16 @@ export interface OkDesktopBridge {
       owner: string;
       repo: string;
     }): Promise<ShareFolderValidationResult>;
+  };
+
+  editor: {
+    notifyActiveTargetChanged(target: OkEditorActiveTargetSnapshot): void;
+    notifyViewMenuStateChanged(state: OkEditorViewMenuStateSnapshot): void;
+  };
+
+  sidebar: {
+    expandAll(cb: () => void): OkUnsubscribe;
+    collapseAll(cb: () => void): OkUnsubscribe;
   };
 
   readonly platform: 'darwin' | 'win32' | 'linux';

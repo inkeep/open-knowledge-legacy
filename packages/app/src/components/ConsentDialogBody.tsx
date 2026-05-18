@@ -291,7 +291,7 @@ function ConsentDialogForm({ payload, store, toast }: ConsentDialogFormProps) {
               <legend className="text-sm font-medium">Connect to AI tools</legend>
               <p className="text-xs text-muted-foreground">
                 All editors are checked by default — uncheck the ones you don't use. Each checked
-                editor's project-MCP config is written; the Claude Code entry also scaffolds{' '}
+                editor's project-MCP config is written; the Claude entry also scaffolds{' '}
                 <code>.claude/launch.json</code>.
               </p>
               {payload.editorOptions.map((editor) => (

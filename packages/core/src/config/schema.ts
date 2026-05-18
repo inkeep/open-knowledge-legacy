@@ -42,6 +42,26 @@ export const ConfigSchema = z.looseObject({
           defaultScope: 'user',
         })
         .optional(),
+      sidebar: z
+        .looseObject({
+          showHiddenFiles: z
+            .boolean()
+            .register(fieldRegistry, {
+              scope: 'project-local',
+              agentSettable: false,
+              defaultScope: 'project-local',
+            })
+            .default(false),
+          showAllFiles: z
+            .boolean()
+            .register(fieldRegistry, {
+              scope: 'project-local',
+              agentSettable: false,
+              defaultScope: 'project-local',
+            })
+            .default(false),
+        })
+        .optional(),
     })
     .default({}),
   autoSync: z

@@ -59,7 +59,7 @@ test('buildInstructions interpolates content.dir and points at .okignore for pat
   expect(text).toContain('.okignore');
 });
 
-test('buildInstructions stays under the 2 KB Claude Code per-server cap', () => {
+test('buildInstructions stays under the 2 KB Claude per-server cap', () => {
   const text = buildInstructions(defaultContent());
   expect(Buffer.byteLength(text, 'utf8')).toBeLessThan(2048);
 });

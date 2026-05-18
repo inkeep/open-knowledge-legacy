@@ -1,6 +1,7 @@
 import {
-  composeProjectPrompt,
-  composePrompt,
+  composeEmptySpacePrompt,
+  composeFilePrompt,
+  composeFolderPrompt,
   type DocContext,
   type HandoffOutcome,
   type HandoffPayload,
@@ -26,6 +27,11 @@ import '@/lib/desktop-bridge-types';
 
 export interface HandoffDispatchInput {
   readonly docContext: DocContext | null;
+  /** Folder's path relative to `workspace.contentDir`, forward-slash
+   *  normalized, no trailing slash. Set by `buildFolderHandoffInput`; absent
+   *  for file + project scope. The dispatch hook reads this to select between
+   *  the folder and empty-space prompt templates when `docContext` is null. */
+  readonly folderRelativePath?: string;
   readonly projectDir: string;
   readonly docPath: string;
 }
@@ -51,6 +57,21 @@ export function buildProjectScopedHandoffInput(args: {
   return {
     docContext: null,
     projectDir: args.workspace.contentDir,
+    docPath: '',
+  };
+}
+
+export function buildFolderHandoffInput(args: {
+  readonly folderAbsPath: string;
+  readonly folderRelativePath: string;
+  readonly workspace: Workspace | null;
+}): HandoffDispatchInput | null {
+  if (!args.workspace?.contentDir) return null;
+  if (!args.folderAbsPath || !args.folderRelativePath) return null;
+  return {
+    docContext: null,
+    folderRelativePath: args.folderRelativePath,
+    projectDir: args.folderAbsPath,
     docPath: '',
   };
 }
@@ -112,6 +133,16 @@ function buildStatsLine(
   return { target, host, outcome: 'error', ts, reason: outcome.reason };
 }
 
+export function selectScopedPrompt(input: HandoffDispatchInput): string {
+  if (input.docContext !== null) {
+    return composeFilePrompt(input.docContext.relativePath);
+  }
+  if (input.folderRelativePath) {
+    return composeFolderPrompt(input.folderRelativePath);
+  }
+  return composeEmptySpacePrompt();
+}
+
 export async function runHandoffDispatch(
   target: HandoffTarget,
   input: HandoffDispatchInput,
@@ -144,7 +175,7 @@ export async function runHandoffDispatch(
     target,
     projectDir: input.projectDir,
     docPath: input.docPath,
-    prompt: input.docContext === null ? composeProjectPrompt() : composePrompt(input.docContext),
+    prompt: selectScopedPrompt(input),
   };
 
   const outcome = await deps.dispatchHandoff(payload);

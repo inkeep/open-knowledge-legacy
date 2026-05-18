@@ -6,7 +6,7 @@ import type { EffectValue } from '../../../../packages/server/src/activity-log.t
 import { createTestClient, createTestServer, type TestServer } from './test-harness.ts';
 
 const MCP_PROTOCOL_VERSION = '2025-06-18';
-const CLIENT_NAME = 'Claude Code';
+const CLIENT_NAME = 'Claude';
 
 interface InitializedSession {
   sessionId: string;
@@ -100,7 +100,7 @@ afterAll(async () => {
   await server.cleanup();
 });
 
-test('two simultaneous Claude Code MCP sessions land with identical displayName but distinct connectionIds', async () => {
+test('two simultaneous Claude MCP sessions land with identical displayName but distinct connectionIds', async () => {
   const sessionA = await openMcpSession(server.port, CLIENT_NAME);
   const sessionB = await openMcpSession(server.port, CLIENT_NAME);
 

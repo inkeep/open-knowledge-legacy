@@ -2,6 +2,8 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from 'electron';
 import type {
   OkDesktopBridge,
   OkDesktopConfig,
+  OkEditorActiveTargetSnapshot,
+  OkEditorViewMenuStateSnapshot,
   OkLocalOpAuthEvent,
   OkLocalOpCloneEvent,
   OkLocalOpStream,
@@ -231,6 +233,8 @@ const bridge: OkDesktopBridge = {
     revealAsset: (relPath: string) => invoke('ok:shell:reveal-asset', relPath),
     showAssetMenu: (params) => invoke('ok:shell:show-asset-menu', params),
     showItemInFolder: (path: string) => invoke('ok:shell:show-item-in-folder', path),
+    trashItem: (absPath: string) => invoke('ok:shell:trash-item', absPath),
+    openInTerminal: (dirAbsPath: string) => invoke('ok:shell:open-in-terminal', dirAbsPath),
   },
 
   clipboard: {
@@ -353,6 +357,30 @@ const bridge: OkDesktopBridge = {
 
   share: {
     validateLocalFolder: (args) => invoke('ok:share:validate-folder', args),
+  },
+
+  editor: {
+    notifyActiveTargetChanged: (target: OkEditorActiveTargetSnapshot) => {
+      invoke('ok:editor:active-target-changed', target).catch(() => {});
+    },
+    notifyViewMenuStateChanged: (state: OkEditorViewMenuStateSnapshot) => {
+      invoke('ok:editor:view-menu-state-changed', state).catch(() => {});
+    },
+  },
+
+  sidebar: {
+    expandAll(cb: () => void) {
+      const listener = (_event: IpcRendererEvent) => cb();
+      // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
+      ipcRenderer.on('ok:sidebar:expand-all', listener);
+      return () => ipcRenderer.removeListener('ok:sidebar:expand-all', listener);
+    },
+    collapseAll(cb: () => void) {
+      const listener = (_event: IpcRendererEvent) => cb();
+      // biome-ignore lint/plugin/no-loosely-typed-webcontents-ipc: preload-side subscription wrapper (precedent #14)
+      ipcRenderer.on('ok:sidebar:collapse-all', listener);
+      return () => ipcRenderer.removeListener('ok:sidebar:collapse-all', listener);
+    },
   },
 
   platform: process.platform as 'darwin' | 'win32' | 'linux',

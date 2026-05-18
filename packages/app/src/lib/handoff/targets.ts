@@ -12,7 +12,7 @@ export const KNOWN_TARGETS = [
   },
   {
     id: 'claude-code',
-    displayName: 'Claude Code',
+    displayName: 'Claude',
     appBrandName: 'Claude Desktop',
     schemes: ['claude:'],
     installUrl: 'https://claude.com/download',

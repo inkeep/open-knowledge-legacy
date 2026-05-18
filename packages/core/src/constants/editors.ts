@@ -8,7 +8,7 @@ export const ALL_EDITOR_IDS = [
 ] as const satisfies readonly EditorId[];
 
 export const EDITOR_LABELS = {
-  claude: 'Claude Code',
+  claude: 'Claude',
   'claude-desktop': 'Claude Desktop',
   cursor: 'Cursor',
   codex: 'Codex',

@@ -1,5 +1,6 @@
 import type { Dialog, MenuItemConstructorOptions } from 'electron';
 import type { EntryPoint } from '../shared/entry-point.ts';
+import type { EditorActiveTargetSnapshot } from '../shared/ipc-channels.ts';
 import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '../shared/labels.ts';
 import type { CliInstallStatus } from './cli-install.ts';
 import { promptForExistingFolder } from './dialog-helpers.ts';
@@ -22,6 +23,25 @@ export interface MenuDeps {
   openInstallSkillDialog?(): void;
   openSettings?(): void;
   onCheckForUpdates?(): void;
+  activeTarget?: EditorActiveTargetSnapshot;
+  onNewFile?(): void;
+  onNewFolder?(): void;
+  onNewFromTemplate?(): void;
+  onRename?(): void;
+  onMoveToTrash?(): void;
+  onRevealInFinder?(): void;
+  onOpenInTerminal?(): void;
+  onSendToAi?(): void;
+  onCopyFullPath?(): void;
+  onCopyRelativePath?(): void;
+  showHiddenFilesChecked?: boolean;
+  showAllFilesChecked?: boolean;
+  onToggleShowHiddenFiles?(): void;
+  onToggleShowAllFiles?(): void;
+  canExpandAll?: boolean;
+  canCollapseAll?: boolean;
+  onExpandAll?(): void;
+  onCollapseAll?(): void;
 }
 
 export async function installApplicationMenu(deps: MenuDeps): Promise<void> {
@@ -92,8 +112,76 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       label: 'File',
       submenu: [
         {
-          label: SWITCH_PROJECT_LABEL_WITH_ELLIPSIS,
+          label: 'New File',
+          accelerator: 'CmdOrCtrl+N',
+          enabled: deps.onNewFile !== undefined,
+          click: () => deps.onNewFile?.(),
+        },
+        {
+          label: 'New Folder',
           accelerator: 'CmdOrCtrl+Shift+N',
+          enabled: deps.onNewFolder !== undefined,
+          click: () => deps.onNewFolder?.(),
+        },
+        {
+          label: 'New from Template\u2026',
+          enabled: deps.onNewFromTemplate !== undefined,
+          click: () => deps.onNewFromTemplate?.(),
+        },
+        { type: 'separator' },
+        {
+          label: 'Rename',
+          enabled:
+            deps.onRename !== undefined &&
+            deps.activeTarget !== undefined &&
+            deps.activeTarget.kind !== null,
+          click: () => deps.onRename?.(),
+        },
+        {
+          label: 'Move to Trash',
+          accelerator: 'CmdOrCtrl+Delete',
+          enabled:
+            deps.onMoveToTrash !== undefined &&
+            deps.activeTarget !== undefined &&
+            deps.activeTarget.kind !== null,
+          click: () => deps.onMoveToTrash?.(),
+        },
+        { type: 'separator' },
+        {
+          label: 'Reveal in Finder',
+          enabled: deps.onRevealInFinder !== undefined,
+          click: () => deps.onRevealInFinder?.(),
+        },
+        {
+          label: 'Open in Terminal',
+          enabled: deps.onOpenInTerminal !== undefined,
+          click: () => deps.onOpenInTerminal?.(),
+        },
+        {
+          label: 'Open with AI',
+          enabled: deps.onSendToAi !== undefined,
+          click: () => deps.onSendToAi?.(),
+        },
+        {
+          label: 'Copy Path',
+          enabled: deps.onCopyFullPath !== undefined || deps.onCopyRelativePath !== undefined,
+          submenu: [
+            {
+              label: 'Full Path',
+              enabled: deps.onCopyFullPath !== undefined,
+              click: () => deps.onCopyFullPath?.(),
+            },
+            {
+              label: 'Relative Path',
+              enabled: deps.onCopyRelativePath !== undefined,
+              click: () => deps.onCopyRelativePath?.(),
+            },
+          ],
+        },
+        { type: 'separator' },
+        {
+          label: SWITCH_PROJECT_LABEL_WITH_ELLIPSIS,
+          accelerator: 'CmdOrCtrl+Shift+P',
           click: () => deps.openNavigator(),
         },
         {
@@ -175,6 +263,35 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
               { type: 'separator' as const },
             ] satisfies MenuItemConstructorOptions[])
           : []),
+        {
+          label: 'Show Hidden Files',
+          accelerator: 'CmdOrCtrl+Shift+.',
+          type: 'checkbox',
+          checked: deps.showHiddenFilesChecked ?? false,
+          enabled: deps.onToggleShowHiddenFiles !== undefined,
+          click: () => deps.onToggleShowHiddenFiles?.(),
+        },
+        {
+          label: 'Show All Files',
+          type: 'checkbox',
+          checked: deps.showAllFilesChecked ?? false,
+          enabled: deps.onToggleShowAllFiles !== undefined,
+          click: () => deps.onToggleShowAllFiles?.(),
+        },
+        { type: 'separator' },
+        {
+          label: 'Expand All',
+          visible: deps.canExpandAll ?? true,
+          enabled: deps.onExpandAll !== undefined,
+          click: () => deps.onExpandAll?.(),
+        },
+        {
+          label: 'Collapse All',
+          visible: deps.canCollapseAll ?? true,
+          enabled: deps.onCollapseAll !== undefined,
+          click: () => deps.onCollapseAll?.(),
+        },
+        { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },
         { role: 'zoomOut' },

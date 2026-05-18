@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { buildCursorUrl } from './cursor-url.ts';
-import { composeProjectPrompt } from './prompt-composer.ts';
+import { composeEmptySpacePrompt } from './prompt-composer.ts';
 import type { HandoffPayload } from './types.ts';
 
 function payload(overrides: Partial<HandoffPayload> = {}): HandoffPayload {
@@ -13,58 +13,65 @@ function payload(overrides: Partial<HandoffPayload> = {}): HandoffPayload {
   };
 }
 
-test('buildCursorUrl emits cwd-only workspace + mode=agent for doc-scoped handoff', () => {
+test('buildCursorUrl threads double-encoded prompt for doc-scoped as text=<dbl-enc>&workspace=<basename>&mode=agent', () => {
   expect(buildCursorUrl(payload())).toBe(
-    'cursor://anysphere.cursor-deeplink/prompt?workspace=proj&mode=agent',
+    'cursor://anysphere.cursor-deeplink/prompt?text=open%2520this&workspace=proj&mode=agent',
   );
 });
 
-test('buildCursorUrl doc-scoped omits text= even when prompt contains literal %', () => {
+test('buildCursorUrl doc-scoped double-encodes prompt containing literal %', () => {
   const url = buildCursorUrl(payload({ prompt: 'a%b' }));
-  expect(url).not.toContain('text=');
-  expect(url).not.toContain('a%25b');
-  expect(url).not.toContain('a%2525b');
+  expect(url).toContain('text=a%2525b');
+  expect(url).not.toContain('file=');
 });
 
-test('buildCursorUrl doc-scoped omits text= even when prompt contains em-dash', () => {
+test('buildCursorUrl doc-scoped double-encodes prompt containing em-dash', () => {
   const url = buildCursorUrl(payload({ prompt: 'a — b' }));
-  expect(url).not.toContain('text=');
-  expect(url).not.toContain('%E2%80%94');
-  expect(url).not.toContain('%25E2%2580%2594');
+  expect(url).toContain('text=a%2520%25E2%2580%2594%2520b');
+  expect(url).not.toContain('file=');
 });
 
-test('buildCursorUrl doc-scoped omits text= even when prompt contains literal %41', () => {
+test('buildCursorUrl doc-scoped double-encodes prompt containing literal %41', () => {
   const url = buildCursorUrl(payload({ prompt: 'check %41 please' }));
-  expect(url).not.toContain('text=');
-  expect(url).not.toContain('%2541');
-  expect(url).not.toContain('%252541');
+  expect(url).toContain('text=check%2520%252541%2520please');
+  expect(url).not.toContain('file=');
 });
 
-test('buildCursorUrl doc-scoped omits text= even when prompt contains a pct-encoded URL', () => {
+test('buildCursorUrl doc-scoped double-encodes prompt containing a pct-encoded URL', () => {
   const url = buildCursorUrl(payload({ prompt: 'see https://example.com/p?q=a%20b' }));
-  expect(url).not.toContain('text=');
-  expect(url).not.toContain('example.com');
+  const text = url.match(/text=([^&]+)/)?.[1];
+  expect(text).toBeDefined();
+  expect(decodeURIComponent(decodeURIComponent(text as string))).toBe(
+    'see https://example.com/p?q=a%20b',
+  );
+  expect(url).not.toContain('file=');
 });
 
-test('buildCursorUrl doc-scoped omits text= even when prompt contains literal & — DC8.5', () => {
+test('buildCursorUrl doc-scoped double-encodes & in prompt — DC8.5', () => {
   const url = buildCursorUrl(payload({ prompt: 'A & B' }));
-  expect(url).not.toContain('text=');
-  expect(url.split('&').length - 1).toBe(1);
+  expect(url).toContain('text=A%2520%2526%2520B');
+  expect(url.split('&').length - 1).toBe(2);
 });
 
-test('buildCursorUrl takes basename of POSIX projectDir for workspace= (doc-scoped, no text=)', () => {
+test('buildCursorUrl takes basename of POSIX projectDir for workspace=', () => {
   const url = buildCursorUrl(payload({ projectDir: '/Users/who/projects/open-knowledge' }));
-  expect(url).toBe('cursor://anysphere.cursor-deeplink/prompt?workspace=open-knowledge&mode=agent');
+  expect(url).toBe(
+    'cursor://anysphere.cursor-deeplink/prompt?text=open%2520this&workspace=open-knowledge&mode=agent',
+  );
 });
 
-test('buildCursorUrl takes basename of Windows projectDir for workspace= — DC8.5 (doc-scoped, no text=)', () => {
+test('buildCursorUrl takes basename of Windows projectDir for workspace= — DC8.5', () => {
   const url = buildCursorUrl(payload({ projectDir: 'C:\\Users\\who\\projects\\open-knowledge' }));
-  expect(url).toBe('cursor://anysphere.cursor-deeplink/prompt?workspace=open-knowledge&mode=agent');
+  expect(url).toBe(
+    'cursor://anysphere.cursor-deeplink/prompt?text=open%2520this&workspace=open-knowledge&mode=agent',
+  );
 });
 
-test('buildCursorUrl single-encodes spaces in workspace basename (doc-scoped, no text=)', () => {
+test('buildCursorUrl single-encodes spaces in workspace basename', () => {
   const url = buildCursorUrl(payload({ projectDir: '/Users/who/My Project' }));
-  expect(url).toBe('cursor://anysphere.cursor-deeplink/prompt?workspace=My%20Project&mode=agent');
+  expect(url).toBe(
+    'cursor://anysphere.cursor-deeplink/prompt?text=open%2520this&workspace=My%20Project&mode=agent',
+  );
 });
 
 test('buildCursorUrl mode= is the literal enum value (not encoded)', () => {
@@ -72,14 +79,20 @@ test('buildCursorUrl mode= is the literal enum value (not encoded)', () => {
   expect(url.endsWith('&mode=agent')).toBe(true);
 });
 
-test('buildCursorUrl defensive empty-prompt drops text= and keeps workspace + mode', () => {
+test('buildCursorUrl empty-prompt defensive fallback drops text= and keeps workspace + mode', () => {
   const url = buildCursorUrl(payload({ prompt: '', docPath: '' }));
   expect(url).toBe('cursor://anysphere.cursor-deeplink/prompt?workspace=proj&mode=agent');
   expect(url).not.toContain('text=');
 });
 
-test('buildCursorUrl project-scoped (composeProjectPrompt) double-encodes prompt + keeps workspace + mode', () => {
-  const prompt = composeProjectPrompt();
+test('buildCursorUrl empty-prompt defensive fallback applies to doc-scoped too', () => {
+  const url = buildCursorUrl(payload({ prompt: '' }));
+  expect(url).toBe('cursor://anysphere.cursor-deeplink/prompt?workspace=proj&mode=agent');
+  expect(url).not.toContain('text=');
+});
+
+test('buildCursorUrl project-scoped (composeEmptySpacePrompt) double-encodes prompt + keeps workspace + mode', () => {
+  const prompt = composeEmptySpacePrompt();
   const url = buildCursorUrl(payload({ prompt, docPath: '' }));
   const doubleEncoded = encodeURIComponent(encodeURIComponent(prompt));
   expect(url).toBe(
@@ -95,7 +108,7 @@ test('buildCursorUrl project-scoped double-encodes adversarial prompt (round-tri
   expect(decodeURIComponent(decodeURIComponent(text as string))).toBe(adversarialPrompt);
 });
 
-test('INVARIANT: doc-scoped buildCursorUrl never emits text=, across input variations', () => {
+test('INVARIANT: buildCursorUrl threads double-encoded prompt through ALL scopes; precedent #25 = no file=', () => {
   const cases: ReadonlyArray<{
     projectDir: string;
     docPath: string;
@@ -124,7 +137,6 @@ test('INVARIANT: doc-scoped buildCursorUrl never emits text=, across input varia
       prompt: 'x',
     },
     { projectDir: '/Users/a/proj', docPath: '/Users/a/proj/notes#1.md', prompt: 'x' },
-    { projectDir: '/Users/a/proj', docPath: '/Users/a/proj/log.md', prompt: '' },
   ];
   for (const c of cases) {
     const url = buildCursorUrl({
@@ -132,6 +144,30 @@ test('INVARIANT: doc-scoped buildCursorUrl never emits text=, across input varia
       projectDir: c.projectDir,
       docPath: c.docPath,
       prompt: c.prompt,
+    });
+    expect(url).not.toContain('file=');
+    expect(url).toContain('text=');
+    expect(url).toContain('workspace=');
+    expect(url).toContain('mode=agent');
+  }
+});
+
+test('INVARIANT: buildCursorUrl empty-prompt fallback drops text= across input variations', () => {
+  const cases: ReadonlyArray<{
+    projectDir: string;
+    docPath: string;
+  }> = [
+    { projectDir: '/Users/a/proj', docPath: '/Users/a/proj/a.md' },
+    { projectDir: '/Users/a/proj', docPath: '' },
+    { projectDir: '/Users/a/A & B', docPath: '' },
+    { projectDir: 'C:\\Users\\a\\proj', docPath: 'C:\\Users\\a\\proj\\d.md' },
+  ];
+  for (const c of cases) {
+    const url = buildCursorUrl({
+      target: 'cursor',
+      projectDir: c.projectDir,
+      docPath: c.docPath,
+      prompt: '',
     });
     expect(url).not.toContain('text=');
     expect(url).toContain('workspace=');

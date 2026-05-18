@@ -59,7 +59,7 @@ Research articles default to **3P/external framing** — investigating third-par
 
 ⛔ **ALWAYS THE FIRST ACTION.** Before any read, any scan, any fetch — create tasks. They persist across context compaction, make skipped steps immediately visible, and show progress to the user.
 
-Create these tasks via your host's task system (\`TaskCreate\` in Claude Code; equivalent elsewhere):
+Create these tasks via your host's task system (\`TaskCreate\` in Claude; equivalent elsewhere):
 
 \`\`\`
 TaskCreate: "Research: Scan existing coverage + route"        → start as in_progress

@@ -12,7 +12,7 @@ import { bindTestUiLock } from './preview-url-test-helpers.ts';
 import { buildReadResult } from './read-document.ts';
 
 describe('exec DESCRIPTION — STOP-rule anchoring (SPEC 2026-04-22 FR4 / US-007 / QA-009)', () => {
-  test('total length fits Claude Code per-tool 2 KB cap', () => {
+  test('total length fits Claude per-tool 2 KB cap', () => {
     expect(DESCRIPTION.length).toBeLessThanOrEqual(2048);
   });
 

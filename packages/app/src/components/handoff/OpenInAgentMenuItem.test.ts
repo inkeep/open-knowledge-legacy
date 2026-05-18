@@ -176,7 +176,7 @@ describe('computeRowState — branch 3: not installed', () => {
     expect(state.tooltip?.webFallback?.label).toBe('Open in claude.ai →');
   });
 
-  test('Claude Code disabled tooltip — install + web-fallback affordance', async () => {
+  test('Claude disabled tooltip — install + web-fallback affordance', async () => {
     const { computeRowState } = await import('./OpenInAgentMenuItem');
     const state = computeRowState({
       target: targetById('claude-code'),
@@ -267,7 +267,7 @@ describe('successToastForWebFallback — distinct from dispatch toast copy', () 
     expect(successToastForWebFallback('Claude Cowork')).toBe(
       'Opened Claude Cowork in your browser.',
     );
-    expect(successToastForWebFallback('Claude Code')).toBe('Opened Claude Code in your browser.');
+    expect(successToastForWebFallback('Claude')).toBe('Opened Claude in your browser.');
   });
 
   test('explicitly differs from `Opened in <name>.` (dispatch copy) — fallback signals web', async () => {
@@ -280,7 +280,7 @@ describe('successToastForWebFallback — distinct from dispatch toast copy', () 
 describe('OpenInAgentMenuItem source-level guards', () => {
   test('enabled branch dispatches via onSelect (no install-skill side door)', () => {
     expect(SRC).toMatch(/onSelect=\{onSelect\}/);
-    expect(SRC).toMatch(/Open in \$\{target\.displayName\}/);
+    expect(SRC).toMatch(/Open with AI \$\{target\.displayName\}/);
   });
 
   test('not-installed branch (DropdownMenuSub with install + web fallback) is preserved', () => {

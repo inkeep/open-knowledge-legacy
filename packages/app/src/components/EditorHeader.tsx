@@ -7,12 +7,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { useWorkspace } from '@/lib/use-workspace';
 import { cn } from '@/lib/utils';
+import { joinWorkspacePath } from '@/lib/workspace-paths';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { BetaBadge } from './BetaBadge';
 import { EditorTabs } from './EditorTabs';
 import { HelpPopover } from './HelpPopover';
 import { OpenInAgentMenu } from './handoff/OpenInAgentMenu';
-import { buildHandoffInput } from './handoff/useHandoffDispatch';
+import {
+  buildFolderHandoffInput,
+  buildHandoffInput,
+  buildProjectScopedHandoffInput,
+  type HandoffDispatchInput,
+} from './handoff/useHandoffDispatch';
 import { PublishToGitHubDialog } from './PublishToGitHubDialog';
 import { SettingsButton } from './SettingsButton';
 import { ShareButton } from './ShareButton';
@@ -34,11 +40,29 @@ export function EditorHeader({
   onSetIdentity,
   onOpenConflictResolver,
 }: EditorHeaderProps) {
-  const { activeDocName } = useDocumentContext();
+  const { activeDocName, activeTarget } = useDocumentContext();
   const { state: sidebarState } = useSidebar();
   const workspace = useWorkspace();
   const [publishOpen, setPublishOpen] = useState(false);
-  const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
+  const handoffInput: HandoffDispatchInput | null = (() => {
+    if (activeTarget === null) {
+      return buildProjectScopedHandoffInput({ workspace });
+    }
+    if (activeTarget.kind === 'folder') {
+      if (!workspace) return null;
+      const folderAbsPath = joinWorkspacePath(
+        workspace.contentDir,
+        activeTarget.folderPath,
+        workspace.pathSeparator,
+      );
+      return buildFolderHandoffInput({
+        folderAbsPath,
+        folderRelativePath: activeTarget.folderPath,
+        workspace,
+      });
+    }
+    return buildHandoffInput({ docName: activeDocName, workspace });
+  })();
 
   const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
   const isCollapsed = sidebarState === 'collapsed';
@@ -104,7 +128,7 @@ export function EditorHeader({
             <TooltipContent>{saving ? 'Saving' : 'Checkpoint version'}</TooltipContent>
           </Tooltip>
         )}
-        {activeDocName && <OpenInAgentMenu input={handoffInput} />}
+        <OpenInAgentMenu input={handoffInput} />
         <ShareButton onClickWhenNoRemote={() => setPublishOpen(true)} />
         <PublishToGitHubDialog open={publishOpen} onOpenChange={setPublishOpen} />
         <SyncStatusBadge

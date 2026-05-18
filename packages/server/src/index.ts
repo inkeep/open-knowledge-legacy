@@ -386,6 +386,7 @@ export {
   resolveCursorSpawnInvocation,
   type SpawnCursorOutcome,
 } from './spawn-cursor-api.ts';
+export { type SpawnDetachedOutcome, spawnDetached } from './spawn-detached.ts';
 export {
   assertCompatibleStateManifest,
   detectProjectShape,

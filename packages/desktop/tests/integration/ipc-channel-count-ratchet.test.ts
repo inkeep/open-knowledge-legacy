@@ -5,7 +5,7 @@ import { join } from 'node:path';
 const SRC_PATH = join(__dirname, '..', '..', 'src', 'shared', 'ipc-channels.ts');
 const CHANNELS_SRC = readFileSync(SRC_PATH, 'utf-8');
 
-const REQUEST_CHANNEL_CAP = 51;
+const REQUEST_CHANNEL_CAP = 55;
 
 function extractInterfaceBody(src: string, interfaceName: string): string {
   const re = new RegExp(`(^|\\n)export\\s+interface\\s+${interfaceName}\\s*\\{`);

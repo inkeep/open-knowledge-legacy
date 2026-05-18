@@ -11,7 +11,7 @@ import {
 type EditorDetection = OkMcpWiringShowPayload['detectedEditors'][number];
 
 const sampleDetection: readonly EditorDetection[] = [
-  { id: 'claude', label: 'Claude Code', detected: true, willReplace: false },
+  { id: 'claude', label: 'Claude', detected: true, willReplace: false },
   { id: 'claude-desktop', label: 'Claude Desktop', detected: false, willReplace: false },
   { id: 'cursor', label: 'Cursor', detected: true, willReplace: false },
   { id: 'codex', label: 'Codex', detected: false, willReplace: false },
@@ -34,7 +34,7 @@ describe('computeInitialSelection', () => {
 
   test('all-detected preselects all', () => {
     const sel = computeInitialSelection([
-      { id: 'claude', label: 'Claude Code', detected: true, willReplace: false },
+      { id: 'claude', label: 'Claude', detected: true, willReplace: false },
       { id: 'cursor', label: 'Cursor', detected: true, willReplace: false },
     ]);
     expect(sel.size).toBe(2);
@@ -42,7 +42,7 @@ describe('computeInitialSelection', () => {
 
   test('none-detected preselects none', () => {
     const sel = computeInitialSelection([
-      { id: 'claude', label: 'Claude Code', detected: false, willReplace: false },
+      { id: 'claude', label: 'Claude', detected: false, willReplace: false },
       { id: 'cursor', label: 'Cursor', detected: false, willReplace: false },
     ]);
     expect(sel.size).toBe(0);

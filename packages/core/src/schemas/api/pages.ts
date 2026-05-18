@@ -144,6 +144,23 @@ export const DeletePathSuccessSchema = z
   .loose() satisfies StandardSchemaV1;
 export type DeletePathSuccess = z.infer<typeof DeletePathSuccessSchema>;
 
+export const TrashCleanupRequestSchema = z
+  .object({
+    kind: z.enum(['file', 'folder']),
+    path: z.string().min(1),
+    ...agentIdentityFields,
+    summary: summaryField,
+  })
+  .loose() satisfies StandardSchemaV1;
+export type TrashCleanupRequest = z.infer<typeof TrashCleanupRequestSchema>;
+
+export const TrashCleanupSuccessSchema = z
+  .object({
+    deletedDocNames: z.array(z.string().min(1)),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type TrashCleanupSuccess = z.infer<typeof TrashCleanupSuccessSchema>;
+
 export const RollbackRequestSchema = z
   .object({
     docName: z.string().min(1),

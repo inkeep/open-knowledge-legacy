@@ -61,9 +61,12 @@ export function defaultInitialDir(activeDocName: string | null): string {
 
 export function filterVisibleEntries<T extends { kind?: unknown; docName?: string; path?: string }>(
   entries: ReadonlyArray<T>,
+  showHiddenFiles = false,
 ): T[] {
   return entries.filter((entry) => {
     const ref = entry.docName ?? entry.path ?? '';
-    return ref !== '' && !ref.split('/').some((seg) => seg.startsWith('.'));
+    if (ref === '') return false;
+    if (showHiddenFiles) return true;
+    return !ref.split('/').some((seg) => seg.startsWith('.'));
   });
 }

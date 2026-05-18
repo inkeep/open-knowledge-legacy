@@ -24,6 +24,8 @@ Edits made anywhere reflect everywhere; an open Settings pane refreshes live.
 | --- | --- | --- | --- |
 | `content.dir` | string | `"."` | Content directory, relative to project root. Defaults to `.` (the project root) even when `.ok/` is scaffolded at the git working-tree root from a sub-folder — opened folder and content scope align by default. To narrow scope to a sub-folder, uncomment `content.dir` in `.ok/config.yml` post-init. Excluded paths live in `.okignore` — see [Ignore patterns](/docs/features/ignore-patterns). |
 | `appearance.theme` | `"light" \| "dark" \| "system"` | (unset) | Editor theme. |
+| `appearance.sidebar.showHiddenFiles` | boolean | `false` | Show files whose path segments start with `.`. Server-side `.gitignore` / `.okignore` filters still apply. Lives in project-local config. Toggled from the sidebar's right-click menu or the macOS **View → Show Hidden Files** item. |
+| `appearance.sidebar.showAllFiles` | boolean | `false` | Bypass every ignore filter — both the client dot-segment drop and the server's `.gitignore` / `.okignore` / built-in exclusions. Surfaces every file on disk under the content directory (synthetic system docs stay hidden). Lives in project-local config. Toggled from the sidebar's right-click menu or the macOS **View → Show All Files** item. |
 | `autoSync.enabled` | `boolean \| null` | `null` | Per-machine git auto-sync toggle. Lives in project-local config. `null` means "unanswered" — the editor's onboarding modal triggers on first remote-detected open. |
 
 ## Folder-level frontmatter

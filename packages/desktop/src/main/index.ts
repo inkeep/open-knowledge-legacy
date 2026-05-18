@@ -21,12 +21,17 @@ import {
   writeUserMcpConfigs,
 } from '@inkeep/open-knowledge';
 import {
+  classifyFsPath,
   ensureProjectGit,
   findEnclosingGitRoot,
   findEnclosingProjectRoot,
+  getMeter,
   installUserSkill,
   isProcessAlive,
+  normalizeFsPath,
   readServerLock,
+  spawnDetached,
+  withSpan,
 } from '@inkeep/open-knowledge-server';
 import type { BrowserWindowConstructorOptions } from 'electron';
 import {
@@ -42,8 +47,11 @@ import {
   shell,
   utilityProcess,
 } from 'electron';
+import type { OkMenuAction } from '../shared/bridge-contract.ts';
 import { type EntryPoint, isEntryPoint } from '../shared/entry-point.ts';
 import type {
+  EditorActiveTargetSnapshot,
+  EditorViewMenuStateSnapshot,
   McpWiringEditorId,
   OnboardingShowPayload,
   RecentProject,
@@ -101,9 +109,11 @@ import {
 import { handleSeedApply, handleSeedListPacks, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
+  openInTerminal as openInTerminalImpl,
   recordHandoff as recordHandoffImpl,
   showItemInFolder as showItemInFolderImpl,
   spawnCursor as spawnCursorImpl,
+  trashItem as trashItemImpl,
 } from './ipc-handlers.ts';
 import { logIpcError } from './ipc-log.ts';
 import {
@@ -276,6 +286,15 @@ let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
 let bundleReplaceWatcherHandle: BundleReplaceWatcherHandle | null = null;
 let debugIpc: DebugIpcHandle | null = null;
 let mcpWiringHandle: RunMcpWiringHandle | null = null;
+
+let editorActiveTarget: EditorActiveTargetSnapshot = { kind: null };
+
+let editorViewMenuState: EditorViewMenuStateSnapshot = {
+  showHiddenFiles: false,
+  showAllFiles: false,
+  canExpandAll: true,
+  canCollapseAll: true,
+};
 
 const rendererDevUrl = process.env.ELECTRON_RENDERER_URL ?? null;
 
@@ -675,8 +694,31 @@ async function openProjectOrFallbackToNavigator(
   }
 }
 
-function refreshApplicationMenu() {
-  void installApplicationMenu({
+let refreshInFlight: Promise<void> | null = null;
+let pendingRefresh = false;
+
+function refreshApplicationMenu(): void {
+  if (refreshInFlight !== null) {
+    pendingRefresh = true;
+    return;
+  }
+  refreshInFlight = runApplicationMenuRefresh()
+    .catch((err) => {
+      console.error('[main] refreshApplicationMenu failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    })
+    .finally(() => {
+      refreshInFlight = null;
+      if (pendingRefresh) {
+        pendingRefresh = false;
+        refreshApplicationMenu();
+      }
+    });
+}
+
+async function runApplicationMenuRefresh(): Promise<void> {
+  await installApplicationMenu({
     appName: app.name,
     showDevToolsMenu: !app.isPackaged || channelFromVersion(app.getVersion()) === 'beta',
     dialog,
@@ -751,9 +793,32 @@ function refreshApplicationMenu() {
           });
         }
       : undefined,
-  }).catch((err) => {
-    console.error('[main] installApplicationMenu failed', { err: (err as Error).message });
+    activeTarget: editorActiveTarget,
+    onNewFile: () => sendMenuActionToFocused('new-doc'),
+    onNewFolder: () => sendMenuActionToFocused('new-folder'),
+    onNewFromTemplate: () => sendMenuActionToFocused('new-from-template'),
+    onRename: () => sendMenuActionToFocused('rename'),
+    onMoveToTrash: () => sendMenuActionToFocused('move-to-trash'),
+    onRevealInFinder: () => sendMenuActionToFocused('reveal-in-finder'),
+    onOpenInTerminal: () => sendMenuActionToFocused('open-in-terminal'),
+    onSendToAi: () => sendMenuActionToFocused('send-to-ai'),
+    onCopyFullPath: () => sendMenuActionToFocused('copy-full-path'),
+    onCopyRelativePath: () => sendMenuActionToFocused('copy-relative-path'),
+    showHiddenFilesChecked: editorViewMenuState.showHiddenFiles,
+    showAllFilesChecked: editorViewMenuState.showAllFiles,
+    canExpandAll: editorViewMenuState.canExpandAll,
+    canCollapseAll: editorViewMenuState.canCollapseAll,
+    onToggleShowHiddenFiles: () => sendMenuActionToFocused('toggle-show-hidden-files'),
+    onToggleShowAllFiles: () => sendMenuActionToFocused('toggle-show-all-files'),
+    onExpandAll: () => sendMenuActionToFocused('expand-all-tree'),
+    onCollapseAll: () => sendMenuActionToFocused('collapse-all-tree'),
   });
+}
+
+function sendMenuActionToFocused(action: OkMenuAction): void {
+  const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  if (!target) return;
+  sendToRenderer(target.webContents, 'ok:menu-action', action);
 }
 
 function createMcpWiringCliSurface(): McpWiringCliSurface {
@@ -1081,6 +1146,109 @@ function registerIpcHandlers() {
     if (!result.ok) {
       console.warn('[main] show-item-in-folder refused', { reason: result.reason });
     }
+    return undefined;
+  });
+
+  handle('ok:shell:trash-item', async (event, absPath) => {
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    const start = performance.now();
+    const result = await withSpan(
+      'ok.shell.trash_item',
+      {
+        attributes: {
+          'ok.shell.path': normalizeFsPath(absPath),
+          'ok.shell.path.role': classifyFsPath(absPath),
+        },
+      },
+      async (span) => {
+        const outcome = await trashItemImpl(
+          {
+            platform: process.platform,
+            projectPath: callerProjectPath,
+            realpath: (p) => realpathSync(p),
+            trashItem: (p) => shell.trashItem(p),
+          },
+          absPath,
+        );
+        span.setAttribute('ok.shell.outcome', outcome.ok ? 'ok' : 'failure');
+        if (!outcome.ok) {
+          span.setAttribute('ok.shell.reason', outcome.reason);
+        }
+        return outcome;
+      },
+    );
+    const elapsedMs = performance.now() - start;
+    _trashItemDurationHist().record(elapsedMs, {
+      'ok.shell.outcome': result.ok ? 'ok' : 'failure',
+    });
+    if (!result.ok) {
+      _trashItemFailureCounter().add(1, { 'ok.shell.reason': result.reason });
+      console.warn('[main] trash-item refused', {
+        reason: result.reason,
+        detail: result.detail,
+      });
+    }
+    return result;
+  });
+
+  handle('ok:shell:open-in-terminal', async (event, dirAbsPath) => {
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    const start = performance.now();
+    const result = await withSpan(
+      'ok.shell.open_in_terminal',
+      {
+        attributes: {
+          'ok.shell.path': normalizeFsPath(dirAbsPath),
+          'ok.shell.path.role': classifyFsPath(dirAbsPath),
+        },
+      },
+      async (span) => {
+        const outcome = await openInTerminalImpl(
+          {
+            platform: process.platform,
+            projectPath: callerProjectPath,
+            realpath: (p) => realpathSync(p),
+            spawn: spawnDetached,
+          },
+          dirAbsPath,
+        );
+        span.setAttribute('ok.shell.outcome', outcome.ok ? 'ok' : 'failure');
+        if (!outcome.ok) {
+          span.setAttribute('ok.shell.reason', outcome.reason);
+        }
+        return outcome;
+      },
+    );
+    const elapsedMs = performance.now() - start;
+    _openInTerminalDurationHist().record(elapsedMs, {
+      'ok.shell.outcome': result.ok ? 'ok' : 'failure',
+    });
+    if (!result.ok) {
+      _openInTerminalFailureCounter().add(1, { 'ok.shell.reason': result.reason });
+      console.warn('[main] open-in-terminal refused', {
+        reason: result.reason,
+      });
+    }
+    return result;
+  });
+
+  handle('ok:editor:active-target-changed', async (_event, target) => {
+    editorActiveTarget = target;
+    refreshApplicationMenu();
+    return undefined;
+  });
+
+  handle('ok:editor:view-menu-state-changed', async (_event, state) => {
+    editorViewMenuState = state;
+    refreshApplicationMenu();
     return undefined;
   });
 
@@ -1725,3 +1893,57 @@ function bootPrimaryInstance(): void {
     }
   });
 } // end bootPrimaryInstance
+
+let _trashItemDurationHistCache: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null =
+  null;
+function _trashItemDurationHist() {
+  if (!_trashItemDurationHistCache) {
+    _trashItemDurationHistCache = getMeter().createHistogram('ok.shell.trash_item.duration_ms', {
+      description: 'Duration of ok:shell:trash-item IPC dispatches in milliseconds',
+      unit: 'ms',
+    });
+  }
+  return _trashItemDurationHistCache;
+}
+
+let _trashItemFailureCounterCache: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null =
+  null;
+function _trashItemFailureCounter() {
+  if (!_trashItemFailureCounterCache) {
+    _trashItemFailureCounterCache = getMeter().createCounter('ok.shell.trash_item.failures', {
+      description: 'Count of ok:shell:trash-item handler failures, labeled by reason',
+    });
+  }
+  return _trashItemFailureCounterCache;
+}
+
+let _openInTerminalDurationHistCache: ReturnType<
+  ReturnType<typeof getMeter>['createHistogram']
+> | null = null;
+function _openInTerminalDurationHist() {
+  if (!_openInTerminalDurationHistCache) {
+    _openInTerminalDurationHistCache = getMeter().createHistogram(
+      'ok.shell.open_in_terminal.duration_ms',
+      {
+        description: 'Duration of ok:shell:open-in-terminal IPC dispatches in milliseconds',
+        unit: 'ms',
+      },
+    );
+  }
+  return _openInTerminalDurationHistCache;
+}
+
+let _openInTerminalFailureCounterCache: ReturnType<
+  ReturnType<typeof getMeter>['createCounter']
+> | null = null;
+function _openInTerminalFailureCounter() {
+  if (!_openInTerminalFailureCounterCache) {
+    _openInTerminalFailureCounterCache = getMeter().createCounter(
+      'ok.shell.open_in_terminal.failures',
+      {
+        description: 'Count of ok:shell:open-in-terminal handler failures, labeled by reason',
+      },
+    );
+  }
+  return _openInTerminalFailureCounterCache;
+}

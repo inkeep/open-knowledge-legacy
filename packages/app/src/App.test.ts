@@ -119,3 +119,42 @@ describe('Editor BrowserWindow — wrapper-strip drag region contract', () => {
     expect(dragLiteralFound).toBe(true);
   });
 });
+
+describe('ActiveTargetBridgePush — renderer→main push for File menu', () => {
+  test('declares an ActiveTargetBridgePush component and mounts it inside the App tree', () => {
+    expect(src).toMatch(/function\s+ActiveTargetBridgePush\s*\(/);
+    expect(src).toMatch(/<ActiveTargetBridgePush\s*\/>/);
+  });
+
+  const handlerBlock =
+    src
+      .split('function ActiveTargetBridgePush()')[1]
+      ?.split('function NewItemShortcutHandler()')[0] ?? '';
+
+  test('reads activeTarget via useDocumentContext (single source of truth)', () => {
+    expect(handlerBlock).toContain('useDocumentContext');
+    expect(handlerBlock).toMatch(/const\s*\{\s*activeTarget\s*\}\s*=\s*useDocumentContext\(\)/);
+  });
+
+  test('gates the push on the desktop bridge being present (web mode is no-op)', () => {
+    expect(handlerBlock).toMatch(/window\.okDesktop\s*\?\?\s*null/);
+    expect(handlerBlock).toMatch(/if\s*\(!bridge\)\s*return\s*;/);
+  });
+
+  test('invokes bridge.editor.notifyActiveTargetChanged with the normalized snapshot', () => {
+    expect(handlerBlock).toMatch(/bridge\.editor\.notifyActiveTargetChanged\(/);
+  });
+
+  test('effect deps narrow to the discriminator + identifier (no full-target re-fires)', () => {
+    expect(handlerBlock).toMatch(
+      /useEffect\(\s*\(\)\s*=>\s*\{[\s\S]*?\},\s*\[\s*bridge\s*,\s*kind\s*,\s*identifier\s*\]\)/,
+    );
+  });
+
+  test('collapses non-{doc,folder} kinds to the project-scope null snapshot', () => {
+    expect(handlerBlock).toMatch(
+      /activeTarget\?\.kind\s*===\s*'doc'\s*\|\|\s*activeTarget\?\.kind\s*===\s*'folder'/,
+    );
+    expect(handlerBlock).toMatch(/notifyActiveTargetChanged\(\s*\{\s*kind:\s*null\s*\}\s*\)/);
+  });
+});

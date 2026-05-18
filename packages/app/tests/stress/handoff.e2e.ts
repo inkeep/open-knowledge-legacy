@@ -118,7 +118,7 @@ test.describe('handoff — 8-cell matrix', () => {
     expect(u.hostname).toBe('anysphere.cursor-deeplink');
     expect(u.pathname).toBe('/prompt');
     expect(u.searchParams.get('mode')).toBe('agent');
-    expect(u.searchParams.get('text')).toBeNull();
+    expect(u.searchParams.get('text')).toBeTruthy();
     expect(u.searchParams.get('workspace')).toBeTruthy();
 
     await expect(page.getByText('Opened in Cursor.')).toBeVisible();
@@ -207,7 +207,7 @@ test.describe('handoff — 8-cell matrix', () => {
     expect(u.hostname).toBe('anysphere.cursor-deeplink');
     expect(u.pathname).toBe('/prompt');
     expect(u.searchParams.get('mode')).toBe('agent');
-    expect(u.searchParams.get('text')).toBeNull();
+    expect(u.searchParams.get('text')).toBeTruthy();
     expect(u.searchParams.get('workspace')).toBeTruthy();
 
     await expect(page.getByText('Opened in Cursor.')).toBeVisible();
@@ -251,7 +251,7 @@ test.describe('handoff — 8-cell matrix', () => {
     const u = new URL(captured.anchorClicks[0] as string);
     expect(u.hostname).toBe('claude.ai');
     expect(u.pathname).toBe('/new');
-    expect(u.searchParams.get('q')).toContain('Open Knowledge doc');
+    expect(u.searchParams.get('q')).toContain('in web view with open knowledge editor.');
 
     await expect(page.getByText('Opened claude.ai in your browser.')).toBeVisible();
   });

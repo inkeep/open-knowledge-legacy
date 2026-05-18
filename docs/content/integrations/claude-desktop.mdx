@@ -64,3 +64,7 @@ npx @inkeep/open-knowledge install-skill --no-open --out ./openknowledge.skill
 ```
 
 Upload via **Organization settings → Skills → + Add**. Every member sees it in Chat and Cowork.
+
+## Open with AI
+
+Once the skill is installed, Chat and Cowork sessions can ask Open Knowledge for anything in the workspace through MCP — that's the user-facing surface. The editor's **Open with AI ▸** menu does not list Cowork as a target today (Cowork has no `claude-cowork://` deep-link scheme to dispatch to), so the menu surfaces Claude, Codex, and Cursor only. A claude.ai web fallback opens file-scope dispatches in the Claude web UI for users without a local Claude install; see [Editor → Open with AI](/docs/features/editor#open-with-ai) for the full menu UX.

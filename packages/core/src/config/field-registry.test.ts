@@ -132,13 +132,17 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     expect(projectStrict).toEqual(['content.dir']);
   });
 
-  test('project-local-strict fields cover autoSync.enabled', () => {
+  test('project-local-strict fields cover autoSync.enabled + appearance.sidebar.*', () => {
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
     const projectLocalStrict = leaves
       .filter((l) => getFieldMeta(l.schema)?.scope === 'project-local')
       .map((l) => l.path.join('.'))
       .sort();
-    expect(projectLocalStrict).toEqual(['autoSync.enabled']);
+    expect(projectLocalStrict).toEqual([
+      'appearance.sidebar.showAllFiles',
+      'appearance.sidebar.showHiddenFiles',
+      'autoSync.enabled',
+    ]);
   });
 });

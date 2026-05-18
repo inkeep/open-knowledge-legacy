@@ -9,6 +9,7 @@ import {
   INSTALLED_AGENTS_CACHE_TTL_MS,
   INSTALLED_AGENTS_SCHEMES,
   type InstalledAgentScheme,
+  isLocalWebHost,
 } from './handoff-api.ts';
 
 describe('createInstalledAgentsProbe', () => {
@@ -104,8 +105,11 @@ describe('createInstalledAgentsProbe', () => {
 });
 
 describe('handleInstalledAgents', () => {
-  function createMockReq(method: string): import('node:http').IncomingMessage {
-    return { method } as import('node:http').IncomingMessage;
+  function createMockReq(
+    method: string,
+    headers: Record<string, string> = {},
+  ): import('node:http').IncomingMessage {
+    return { method, headers } as import('node:http').IncomingMessage;
   }
 
   function createMockRes(): {
@@ -180,6 +184,40 @@ describe('handleInstalledAgents', () => {
     const body = JSON.parse(mock.body) as Record<string, unknown>;
     expect(body.type).toBe('urn:ok:error:internal-server-error');
     expect(body.status).toBe(500);
+  });
+
+  test('D47 capability-tier: remote-web Host → all-true and probe NOT called', async () => {
+    let probeCalled = false;
+    const probeAll = async () => {
+      probeCalled = true;
+      return { claude: false, codex: false, cursor: false };
+    };
+    const mock = createMockRes();
+    await handleInstalledAgents(
+      createMockReq('GET', { host: 'example.com:5173' }),
+      mock.res,
+      probeAll,
+    );
+    expect(mock.writeHead.status).toBe(200);
+    expect(JSON.parse(mock.body)).toEqual({ claude: true, codex: true, cursor: true });
+    expect(probeCalled).toBe(false);
+  });
+
+  test('D47 capability-tier: local-web Host → real probe results', async () => {
+    let probeCalled = false;
+    const probeAll = async () => {
+      probeCalled = true;
+      return { claude: true, codex: false, cursor: true };
+    };
+    const mock = createMockRes();
+    await handleInstalledAgents(
+      createMockReq('GET', { host: 'localhost:5173' }),
+      mock.res,
+      probeAll,
+    );
+    expect(mock.writeHead.status).toBe(200);
+    expect(JSON.parse(mock.body)).toEqual({ claude: true, codex: false, cursor: true });
+    expect(probeCalled).toBe(true);
   });
 });
 
@@ -298,6 +336,66 @@ describe('createOsProbe', () => {
   });
 });
 
+describe('isLocalWebHost — capability-tier Host detection (D47)', () => {
+  function reqWith(headers: Record<string, string>): import('node:http').IncomingMessage {
+    return { headers } as unknown as import('node:http').IncomingMessage;
+  }
+
+  test('Host: localhost:5173 → local-web', () => {
+    expect(isLocalWebHost(reqWith({ host: 'localhost:5173' }))).toBe(true);
+  });
+
+  test('Host: 127.0.0.1:5173 → local-web', () => {
+    expect(isLocalWebHost(reqWith({ host: '127.0.0.1:5173' }))).toBe(true);
+  });
+
+  test('Host: [::1]:5173 (IPv6 bracketed) → local-web', () => {
+    expect(isLocalWebHost(reqWith({ host: '[::1]:5173' }))).toBe(true);
+  });
+
+  test('Host: localhost (no port) → local-web', () => {
+    expect(isLocalWebHost(reqWith({ host: 'localhost' }))).toBe(true);
+  });
+
+  test('Host: example.com:5173 → remote-web', () => {
+    expect(isLocalWebHost(reqWith({ host: 'example.com:5173' }))).toBe(false);
+  });
+
+  test('Host: 192.168.1.100:5173 → remote-web (LAN address, not loopback)', () => {
+    expect(isLocalWebHost(reqWith({ host: '192.168.1.100:5173' }))).toBe(false);
+  });
+
+  test('Host: 127.0.0.1.evil.com → remote-web (rebinding-style hostname is NOT loopback)', () => {
+    expect(isLocalWebHost(reqWith({ host: '127.0.0.1.evil.com:5173' }))).toBe(false);
+  });
+
+  test('no Host header but Origin: http://localhost → local-web (Origin fallback)', () => {
+    expect(isLocalWebHost(reqWith({ origin: 'http://localhost:5173' }))).toBe(true);
+  });
+
+  test('no Host header but Origin: https://example.com → remote-web', () => {
+    expect(isLocalWebHost(reqWith({ origin: 'https://example.com' }))).toBe(false);
+  });
+
+  test('no Host and no Origin → local-web (conservative default; route gate already required loopback socket)', () => {
+    expect(isLocalWebHost(reqWith({}))).toBe(true);
+  });
+
+  test('malformed Host falls back to Origin when present', () => {
+    expect(
+      isLocalWebHost(reqWith({ host: '::::not-a-host::::', origin: 'http://localhost' })),
+    ).toBe(true);
+  });
+
+  test('malformed Origin → remote-web (conservative — non-loopback)', () => {
+    expect(isLocalWebHost(reqWith({ origin: 'not a url at all' }))).toBe(false);
+  });
+
+  test('empty Host string falls back to Origin', () => {
+    expect(isLocalWebHost(reqWith({ host: '', origin: 'http://127.0.0.1:5173' }))).toBe(true);
+  });
+});
+
 describe('GET /api/installed-agents (integration — real HTTP + real createApiExtension)', () => {
   let tmpDir: string;
   let contentDir: string;
@@ -410,5 +508,47 @@ describe('GET /api/installed-agents (integration — real HTTP + real createApiE
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toEqual({ claude: true, codex: false, cursor: true });
+  });
+
+  test('remote-web (Host: example.com) → all-true and probe NOT called', async () => {
+    const res = await fetch(`http://localhost:${port}/api/installed-agents`, {
+      headers: {
+        Host: 'example.com:5173',
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ claude: true, codex: true, cursor: true });
+    expect(probeCalls).toEqual({});
+  });
+
+  test('remote-web (Host: 192.168.1.100) → all-true (LAN-bound dev server case)', async () => {
+    const res = await fetch(`http://localhost:${port}/api/installed-agents`, {
+      headers: { Host: '192.168.1.100:5173' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ claude: true, codex: true, cursor: true });
+    expect(probeCalls).toEqual({});
+  });
+
+  test('local-web Host: 127.0.0.1 → real probe results', async () => {
+    const res = await fetch(`http://localhost:${port}/api/installed-agents`, {
+      headers: { Host: `127.0.0.1:${port}` },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ claude: true, codex: false, cursor: true });
+    expect(probeCalls).toEqual({ claude: 1, codex: 1, cursor: 1 });
+  });
+
+  test('remote-web requests are NOT cached against later local-web requests', async () => {
+    const remote = await fetch(`http://localhost:${port}/api/installed-agents`, {
+      headers: { Host: 'example.com:5173' },
+    });
+    expect(await remote.json()).toEqual({ claude: true, codex: true, cursor: true });
+    expect(probeCalls).toEqual({});
+
+    const local = await fetch(`http://localhost:${port}/api/installed-agents`);
+    expect(await local.json()).toEqual({ claude: true, codex: false, cursor: true });
+    expect(probeCalls).toEqual({ claude: 1, codex: 1, cursor: 1 });
   });
 });

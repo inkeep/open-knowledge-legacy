@@ -4,11 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   detectProtocol,
+  extractTrashDetail,
   isPathWithinProject,
+  openInTerminal,
   recordHandoff,
   STATS_FILE_RELATIVE_PATH,
   showItemInFolder,
   spawnCursor,
+  trashItem,
   validateSpawnPath,
 } from '../../src/main/ipc-handlers.ts';
 import type { HandoffStatsLine } from '../../src/shared/ipc-channels.ts';
@@ -853,5 +856,547 @@ describe('showItemInFolder', () => {
     );
     expect(result).toEqual({ ok: false, reason: 'out-of-project' });
     expect(calls).toEqual([]);
+  });
+});
+
+function makeErrnoError(code: string, message: string): Error {
+  const err = new Error(message) as NodeJS.ErrnoException;
+  err.code = code;
+  return err;
+}
+
+function makeNsError(localized: string, message = 'underlying message'): Error {
+  const err = new Error(message);
+  (err as Error & { localizedDescription?: string }).localizedDescription = localized;
+  return err;
+}
+
+describe('extractTrashDetail', () => {
+  test('prefers Error.localizedDescription when present (macOS NSError bridge)', () => {
+    expect(extractTrashDetail(makeNsError('OneDrive denied the operation', 'EPERM: ...'))).toBe(
+      'OneDrive denied the operation',
+    );
+  });
+
+  test('falls back to Error.message when no localizedDescription', () => {
+    expect(extractTrashDetail(new Error('plain message'))).toBe('plain message');
+  });
+
+  test('returns undefined for Error with empty message and no localizedDescription', () => {
+    expect(extractTrashDetail(new Error(''))).toBeUndefined();
+  });
+
+  test('returns undefined for null / undefined inputs', () => {
+    expect(extractTrashDetail(null)).toBeUndefined();
+    expect(extractTrashDetail(undefined)).toBeUndefined();
+  });
+
+  test('stringifies non-Error values', () => {
+    expect(extractTrashDetail('string thrown')).toBe('string thrown');
+    expect(extractTrashDetail({ foo: 'bar' })).toBe('[object Object]');
+  });
+
+  test('treats empty-string localizedDescription as absent (falls back to message)', () => {
+    const err = new Error('fallback message');
+    (err as Error & { localizedDescription?: string }).localizedDescription = '';
+    expect(extractTrashDetail(err)).toBe('fallback message');
+  });
+});
+
+describe('trashItem', () => {
+  test('success: realpath canonicalizes, containment passes, shell.trashItem resolves', async () => {
+    const trashCalls: string[] = [];
+    const realpathCalls: string[] = [];
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => {
+          realpathCalls.push(p);
+          return p; // identity — no symlink dereferencing in the test
+        },
+        trashItem: async (p) => {
+          trashCalls.push(p);
+        },
+      },
+      '/Users/me/proj/notes/foo.md',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(realpathCalls).toEqual(['/Users/me/proj/notes/foo.md']);
+    expect(trashCalls).toEqual(['/Users/me/proj/notes/foo.md']);
+  });
+
+  test('success: realpath dereferences a symlink that resolves back inside project', async () => {
+    const trashCalls: string[] = [];
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => {
+          if (p === '/Users/me/proj/link.md') return '/Users/me/proj/real.md';
+          return p;
+        },
+        trashItem: async (p) => {
+          trashCalls.push(p);
+        },
+      },
+      '/Users/me/proj/link.md',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(trashCalls).toEqual(['/Users/me/proj/real.md']);
+  });
+
+  test('path-escape: realpath dereferences a symlink that escapes project root', async () => {
+    let trashCalled = false;
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (_p) => '/etc/passwd',
+        trashItem: async () => {
+          trashCalled = true;
+        },
+      },
+      '/Users/me/proj/notes/passwd-link',
+    );
+    expect(result).toEqual({ ok: false, reason: 'path-escape' });
+    expect(trashCalled).toBe(false);
+  });
+
+  test('path-escape: refuses non-absolute input (validateSpawnPath fails)', async () => {
+    let trashCalled = false;
+    let realpathCalled = false;
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: () => {
+          realpathCalled = true;
+          return '/should/not/be/called';
+        },
+        trashItem: async () => {
+          trashCalled = true;
+        },
+      },
+      'relative/foo.md',
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: 'path-escape',
+      detail: 'invalid path format',
+    });
+    expect(realpathCalled).toBe(false);
+    expect(trashCalled).toBe(false);
+  });
+
+  test('path-escape: refuses null-byte input', async () => {
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        trashItem: async () => {
+          throw new Error('should not be called');
+        },
+      },
+      '/Users/me/proj/foo\0.md',
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: 'path-escape',
+      detail: 'invalid path format',
+    });
+  });
+
+  test('path-escape: refuses every path when projectPath is undefined (Navigator window)', async () => {
+    let trashCalled = false;
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: undefined,
+        realpath: (p) => p,
+        trashItem: async () => {
+          trashCalled = true;
+        },
+      },
+      '/Users/me/proj/foo.md',
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: 'path-escape',
+      detail: 'no project bound',
+    });
+    expect(trashCalled).toBe(false);
+  });
+
+  test('path-escape: lexical-only containment refuses parent-escape input even before realpath', async () => {
+    let trashCalled = false;
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        trashItem: async () => {
+          trashCalled = true;
+        },
+      },
+      '/Users/me/other/secrets.txt',
+    );
+    expect(result).toEqual({ ok: false, reason: 'path-escape' });
+    expect(trashCalled).toBe(false);
+  });
+
+  test('not-found: realpath throws ENOENT (file removed between probe and click)', async () => {
+    let trashCalled = false;
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: () => {
+          throw makeErrnoError(
+            'ENOENT',
+            "ENOENT: no such file or directory, lstat '/Users/me/proj/gone.md'",
+          );
+        },
+        trashItem: async () => {
+          trashCalled = true;
+        },
+      },
+      '/Users/me/proj/gone.md',
+    );
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'not-found',
+    });
+    expect((result as { detail?: string }).detail).toContain('ENOENT');
+    expect(trashCalled).toBe(false);
+  });
+
+  test('not-found: surfaces from shell.trashItem ENOENT (race window after realpath success)', async () => {
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        trashItem: async () => {
+          throw makeErrnoError('ENOENT', 'ENOENT during trash');
+        },
+      },
+      '/Users/me/proj/disappeared.md',
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'not-found',
+    });
+    expect((result as { detail?: string }).detail).toBe('ENOENT during trash');
+  });
+
+  test('permission-denied: shell.trashItem throws EPERM (locked file)', async () => {
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        trashItem: async () => {
+          throw makeErrnoError('EPERM', 'EPERM: operation not permitted');
+        },
+      },
+      '/Users/me/proj/locked.md',
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: 'permission-denied',
+      detail: 'EPERM: operation not permitted',
+    });
+  });
+
+  test('permission-denied: shell.trashItem throws EACCES (read-only filesystem)', async () => {
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        trashItem: async () => {
+          throw makeErrnoError('EACCES', 'EACCES: permission denied');
+        },
+      },
+      '/Users/me/proj/ro.md',
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: 'permission-denied',
+      detail: 'EACCES: permission denied',
+    });
+  });
+
+  test('system-error: shell.trashItem throws a non-ENOENT/EPERM/EACCES error (catch-all)', async () => {
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        trashItem: async () => {
+          throw makeNsError(
+            'The operation couldn’t be completed. (NSFileManager NSFeatureUnsupportedError 256.)',
+            'trash backend error',
+          );
+        },
+      },
+      '/Users/me/proj/file-on-tmpfs.md',
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: 'system-error',
+      detail: 'The operation couldn’t be completed. (NSFileManager NSFeatureUnsupportedError 256.)',
+    });
+  });
+
+  test('system-error: surfaces from non-Error thrown values via String() coercion', async () => {
+    const result = await trashItem(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        trashItem: () => Promise.reject('unexpected string throw'),
+      },
+      '/Users/me/proj/foo.md',
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: 'system-error',
+      detail: 'unexpected string throw',
+    });
+  });
+});
+
+describe('openInTerminal', () => {
+  test('success: spawns /usr/bin/open -a Terminal.app <resolved> after realpath + containment', async () => {
+    const spawnCalls: Array<[string, ReadonlyArray<string>, number]> = [];
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        spawn: async (exec, args, timeoutMs) => {
+          spawnCalls.push([exec, args, timeoutMs]);
+          return { ok: true };
+        },
+      },
+      '/Users/me/proj/specs',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(spawnCalls).toHaveLength(1);
+    const call = spawnCalls[0];
+    if (!call) throw new Error('expected one spawn call');
+    const [exec, args, timeoutMs] = call;
+    expect(exec).toBe('/usr/bin/open');
+    expect(args).toEqual(['-a', 'Terminal.app', '/Users/me/proj/specs']);
+    expect(timeoutMs).toBe(2000);
+  });
+
+  test('success: spawn uses caller-provided timeoutMs override', async () => {
+    let observedTimeout = -1;
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        spawn: async (_e, _a, timeoutMs) => {
+          observedTimeout = timeoutMs;
+          return { ok: true };
+        },
+        timeoutMs: 500,
+      },
+      '/Users/me/proj/specs',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(observedTimeout).toBe(500);
+  });
+
+  test('success: realpath dereferences a symlink that resolves back inside project', async () => {
+    const spawnCalls: string[] = [];
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => {
+          if (p === '/Users/me/proj/link') return '/Users/me/proj/real-folder';
+          return p;
+        },
+        spawn: async (_e, args) => {
+          spawnCalls.push(args[2] ?? '');
+          return { ok: true };
+        },
+      },
+      '/Users/me/proj/link',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(spawnCalls).toEqual(['/Users/me/proj/real-folder']);
+  });
+
+  test('path-escape: realpath dereferences a symlink that escapes project root', async () => {
+    let spawnCalled = false;
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (_p) => '/etc',
+        spawn: async () => {
+          spawnCalled = true;
+          return { ok: true };
+        },
+      },
+      '/Users/me/proj/notes/escape-link',
+    );
+    expect(result).toEqual({ ok: false, reason: 'path-escape' });
+    expect(spawnCalled).toBe(false);
+  });
+
+  test('path-escape: refuses non-absolute input (validateSpawnPath fails)', async () => {
+    let spawnCalled = false;
+    let realpathCalled = false;
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: () => {
+          realpathCalled = true;
+          return '/should/not/be/called';
+        },
+        spawn: async () => {
+          spawnCalled = true;
+          return { ok: true };
+        },
+      },
+      'relative/folder',
+    );
+    expect(result).toEqual({ ok: false, reason: 'path-escape' });
+    expect(realpathCalled).toBe(false);
+    expect(spawnCalled).toBe(false);
+  });
+
+  test('path-escape: refuses null-byte input', async () => {
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        spawn: async () => ({ ok: true }),
+      },
+      '/Users/me/proj/foo\0bar',
+    );
+    expect(result).toEqual({ ok: false, reason: 'path-escape' });
+  });
+
+  test('path-escape: refuses every path when projectPath is undefined (Navigator window)', async () => {
+    let spawnCalled = false;
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: undefined,
+        realpath: (p) => p,
+        spawn: async () => {
+          spawnCalled = true;
+          return { ok: true };
+        },
+      },
+      '/Users/me/proj/specs',
+    );
+    expect(result).toEqual({ ok: false, reason: 'path-escape' });
+    expect(spawnCalled).toBe(false);
+  });
+
+  test('path-escape: lexical parent-escape refused after realpath identity', async () => {
+    let spawnCalled = false;
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        spawn: async () => {
+          spawnCalled = true;
+          return { ok: true };
+        },
+      },
+      '/Users/me/other/secrets',
+    );
+    expect(result).toEqual({ ok: false, reason: 'path-escape' });
+    expect(spawnCalled).toBe(false);
+  });
+
+  test('not-found: realpath throws ENOENT (folder removed between menu open and click)', async () => {
+    let spawnCalled = false;
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: () => {
+          throw makeErrnoError(
+            'ENOENT',
+            "ENOENT: no such file or directory, lstat '/Users/me/proj/gone'",
+          );
+        },
+        spawn: async () => {
+          spawnCalled = true;
+          return { ok: true };
+        },
+      },
+      '/Users/me/proj/gone',
+    );
+    expect(result).toEqual({ ok: false, reason: 'not-found' });
+    expect(spawnCalled).toBe(false);
+  });
+
+  test('not-found: spawnDetached returns reason=not-installed (translated from ENOENT/EACCES/EPERM)', async () => {
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        spawn: async () => ({ ok: false, reason: 'not-installed' }),
+      },
+      '/Users/me/proj/specs',
+    );
+    expect(result).toEqual({ ok: false, reason: 'not-found' });
+  });
+
+  test('timeout: spawn 2s budget exceeded surfaces as reason=timeout', async () => {
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        spawn: async () => ({ ok: false, reason: 'timeout' }),
+      },
+      '/Users/me/proj/specs',
+    );
+    expect(result).toEqual({ ok: false, reason: 'timeout' });
+  });
+
+  test('spawn-error: catch-all surfaces as reason=spawn-error', async () => {
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        spawn: async () => ({ ok: false, reason: 'spawn-error' }),
+      },
+      '/Users/me/proj/specs',
+    );
+    expect(result).toEqual({ ok: false, reason: 'spawn-error' });
+  });
+
+  test('path-escape: spawnDetached returns reason=invalid-path translated to path-escape', async () => {
+    const result = await openInTerminal(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        realpath: (p) => p,
+        spawn: async () => ({ ok: false, reason: 'invalid-path' }),
+      },
+      '/Users/me/proj/specs',
+    );
+    expect(result).toEqual({ ok: false, reason: 'path-escape' });
   });
 });

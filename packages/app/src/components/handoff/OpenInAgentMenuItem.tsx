@@ -195,7 +195,7 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
       <DropdownMenuItem
         onSelect={onSelect}
         data-testid={`open-in-agent-item-${target.id}`}
-        aria-label={`Open in ${target.displayName}`}
+        aria-label={`Open with AI ${target.displayName}`}
       >
         <TargetIcon id={target.id} aria-hidden="true" />
         <span>{target.displayName}</span>
@@ -205,8 +205,8 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
 
   if (!rowState.tooltip) {
     const preProbeLabel = hint
-      ? `Open in ${target.displayName}, ${hint}`
-      : `Open in ${target.displayName}`;
+      ? `Open with AI ${target.displayName}, ${hint}`
+      : `Open with AI ${target.displayName}`;
     return (
       <DropdownMenuItem
         disabled
@@ -225,8 +225,8 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
   }
 
   const accessibleLabel = hint
-    ? `Open in ${target.displayName}, ${hint}`
-    : `Open in ${target.displayName}`;
+    ? `Open with AI ${target.displayName}, ${hint}`
+    : `Open with AI ${target.displayName}`;
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger

@@ -32,6 +32,10 @@ import { withSpan } from './telemetry.ts';
  *   .ok  — per-project state dir; the committed `.ok/.gitignore` already
  *          self-ignores its contents for git, but adding it here lets the
  *          walker skip the descent entirely
+ *   .open-knowledge / .openknowledge — legacy per-project state dirs from
+ *          pre-rename OK versions (≤v0.3.0). Kept in the skip set so any
+ *          residue left on disk in user content dirs stays out of the
+ *          sidebar even though the codebase no longer writes to them.
  *
  * OS-managed directories (macOS):
  *   Library     — application data, caches, preferences; ~macOS only but safe
@@ -60,6 +64,8 @@ const BUILTIN_SKIP_DIRS = new Set([
   'coverage',
   '.git',
   '.ok',
+  '.open-knowledge',
+  '.openknowledge',
   'Library',
   'Applications',
   '.Trash',
@@ -86,10 +92,14 @@ export type RebuildResult =
       error: { message: string };
     };
 
+interface ContentFilterReadOpts {
+  bypassFilters?: boolean;
+}
+
 export interface ContentFilter {
-  isExcluded(relativePath: string): boolean;
-  isDirExcluded(relativePath: string): boolean;
-  isPathIgnored(relativePath: string): boolean;
+  isExcluded(relativePath: string, opts?: ContentFilterReadOpts): boolean;
+  isDirExcluded(relativePath: string, opts?: ContentFilterReadOpts): boolean;
+  isPathIgnored(relativePath: string, opts?: ContentFilterReadOpts): boolean;
   getWatcherIgnoreGlobs(): string[];
   incrementMdDir(dir: string): void;
   decrementMdDir(dir: string): void;
@@ -188,10 +198,12 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
 
   populateDirCount(contentDir, '', isIgnored, dirCount);
 
-  function isRejectedByPathRules(relativePath: string): boolean {
+  function isReservedDocName(relativePath: string): boolean {
     const docName = stripDocExtension(relativePath);
-    if (isSystemDoc(docName) || isConfigDoc(docName)) return true;
+    return isSystemDoc(docName) || isConfigDoc(docName);
+  }
 
+  function isRejectedByConfigurableRules(relativePath: string): boolean {
     for (const segment of relativePath.split('/')) {
       if (BUILTIN_SKIP_DIRS.has(segment)) return true;
     }
@@ -201,8 +213,12 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
   }
 
   return {
-    isExcluded(relativePath: string): boolean {
-      if (isRejectedByPathRules(relativePath)) return true;
+    isExcluded(relativePath: string, opts?: ContentFilterReadOpts): boolean {
+      if (isReservedDocName(relativePath)) return true;
+
+      if (opts?.bypassFilters) return false;
+
+      if (isRejectedByConfigurableRules(relativePath)) return true;
 
       if (isSupportedDocFile(relativePath)) return false;
 
@@ -216,7 +232,8 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
       return true;
     },
 
-    isDirExcluded(relativePath: string): boolean {
+    isDirExcluded(relativePath: string, opts?: ContentFilterReadOpts): boolean {
+      if (opts?.bypassFilters) return false;
       for (const segment of relativePath.split('/')) {
         if (BUILTIN_SKIP_DIRS.has(segment)) return true;
       }
@@ -227,8 +244,10 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
       return ig.ignores(projectRelPath) || ig.ignores(`${projectRelPath}/`);
     },
 
-    isPathIgnored(relativePath: string): boolean {
-      return isRejectedByPathRules(relativePath);
+    isPathIgnored(relativePath: string, opts?: ContentFilterReadOpts): boolean {
+      if (isReservedDocName(relativePath)) return true;
+      if (opts?.bypassFilters) return false;
+      return isRejectedByConfigurableRules(relativePath);
     },
 
     getWatcherIgnoreGlobs(): string[] {
@@ -511,9 +530,11 @@ export async function createContentFilterAsync(opts: ContentFilterOptions): Prom
     return ig.ignores(projectRelPath);
   }
 
-  function isRejectedByPathRules(relativePath: string): boolean {
+  function isReservedDocName(relativePath: string): boolean {
     const docName = stripDocExtension(relativePath);
-    if (isSystemDoc(docName) || isConfigDoc(docName)) return true;
+    return isSystemDoc(docName) || isConfigDoc(docName);
+  }
+  function isRejectedByConfigurableRules(relativePath: string): boolean {
     for (const segment of relativePath.split('/')) {
       if (BUILTIN_SKIP_DIRS.has(segment)) return true;
     }
@@ -573,8 +594,10 @@ export async function createContentFilterAsync(opts: ContentFilterOptions): Prom
   await buildAndSwapPatternState();
 
   return {
-    isExcluded(relativePath: string): boolean {
-      if (isRejectedByPathRules(relativePath)) return true;
+    isExcluded(relativePath: string, opts?: ContentFilterReadOpts): boolean {
+      if (isReservedDocName(relativePath)) return true;
+      if (opts?.bypassFilters) return false;
+      if (isRejectedByConfigurableRules(relativePath)) return true;
       if (isSupportedDocFile(relativePath)) return false;
       const ext = extname(relativePath).slice(1).toLowerCase();
       if (ASSET_EXTENSIONS.has(ext)) {
@@ -585,7 +608,8 @@ export async function createContentFilterAsync(opts: ContentFilterOptions): Prom
       return true;
     },
 
-    isDirExcluded(relativePath: string): boolean {
+    isDirExcluded(relativePath: string, opts?: ContentFilterReadOpts): boolean {
+      if (opts?.bypassFilters) return false;
       for (const segment of relativePath.split('/')) {
         if (BUILTIN_SKIP_DIRS.has(segment)) return true;
       }
@@ -596,8 +620,10 @@ export async function createContentFilterAsync(opts: ContentFilterOptions): Prom
       return ig.ignores(projectRelPath) || ig.ignores(`${projectRelPath}/`);
     },
 
-    isPathIgnored(relativePath: string): boolean {
-      return isRejectedByPathRules(relativePath);
+    isPathIgnored(relativePath: string, opts?: ContentFilterReadOpts): boolean {
+      if (isReservedDocName(relativePath)) return true;
+      if (opts?.bypassFilters) return false;
+      return isRejectedByConfigurableRules(relativePath);
     },
 
     getWatcherIgnoreGlobs(): string[] {

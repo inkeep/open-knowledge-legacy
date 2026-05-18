@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { buildCodexUrl } from './codex-url.ts';
-import { composeProjectPrompt } from './prompt-composer.ts';
+import { composeEmptySpacePrompt } from './prompt-composer.ts';
 import type { HandoffPayload } from './types.ts';
 
 function payload(overrides: Partial<HandoffPayload> = {}): HandoffPayload {
@@ -13,50 +13,56 @@ function payload(overrides: Partial<HandoffPayload> = {}): HandoffPayload {
   };
 }
 
-test('buildCodexUrl emits cwd-only codex://new?path=... for doc-scoped handoff', () => {
-  expect(buildCodexUrl(payload())).toBe('codex://new?path=%2FUsers%2Fwho%2Fproj');
+test('buildCodexUrl threads prompt for doc-scoped as prompt=<prompt>&path=<projectDir>', () => {
+  expect(buildCodexUrl(payload())).toBe(
+    'codex://new?prompt=open%20this&path=%2FUsers%2Fwho%2Fproj',
+  );
 });
 
-test('buildCodexUrl single-encodes % in projectDir (doc-scoped, no prompt=)', () => {
+test('buildCodexUrl single-encodes % in projectDir', () => {
   const url = buildCodexUrl(payload({ projectDir: '/Users/who/My %Project' }));
   expect(url).toContain('path=%2FUsers%2Fwho%2FMy%20%25Project');
-  expect(url).not.toContain('prompt=');
+  expect(url).not.toContain('file=');
 });
 
-test('buildCodexUrl doc-scoped omits prompt= even when prompt contains em-dash + unicode', () => {
+test('buildCodexUrl threads em-dash + unicode prompt safely (precedent #25: no file=)', () => {
   const url = buildCodexUrl(payload({ prompt: 'Read café — notes about the feature' }));
-  expect(url).not.toContain('prompt=');
-  expect(url).not.toContain('caf%C3%A9');
-  expect(url).not.toContain('%E2%80%94');
+  expect(url).toContain('prompt=Read%20caf%C3%A9%20%E2%80%94%20notes%20about%20the%20feature');
+  expect(url).not.toContain('file=');
 });
 
 test('buildCodexUrl single-encodes literal & in projectDir — DC8.5', () => {
   const url = buildCodexUrl(payload({ projectDir: '/Users/who/A & B' }));
   expect(url).toContain('path=%2FUsers%2Fwho%2FA%20%26%20B');
-  expect(url).not.toContain('prompt=');
-  expect(url.split('&').length - 1).toBe(0);
+  expect(url).not.toContain('file=');
+  expect(url.split('&').length - 1).toBe(1);
 });
 
-test('buildCodexUrl does NOT thread docPath (only projectDir via path=)', () => {
+test('buildCodexUrl precedent #25: docPath bytes never thread into URL', () => {
   const url = buildCodexUrl(payload({ docPath: '/Users/who/proj/docs/SPECIFIC-FILE.md' }));
   expect(url).not.toContain('SPECIFIC-FILE');
   expect(url).not.toContain('file=');
-  expect(url).not.toContain('prompt=');
 });
 
-test('buildCodexUrl defensive empty-prompt drops prompt= and keeps path=', () => {
+test('buildCodexUrl empty-prompt defensive fallback drops prompt= and keeps path=', () => {
   const url = buildCodexUrl(payload({ prompt: '', docPath: '' }));
   expect(url).toBe('codex://new?path=%2FUsers%2Fwho%2Fproj');
   expect(url).not.toContain('prompt=');
 });
 
-test('buildCodexUrl project-scoped (composeProjectPrompt) includes encoded prompt + path', () => {
-  const prompt = composeProjectPrompt();
+test('buildCodexUrl empty-prompt defensive fallback applies to doc-scoped too', () => {
+  const url = buildCodexUrl(payload({ prompt: '' }));
+  expect(url).toBe('codex://new?path=%2FUsers%2Fwho%2Fproj');
+  expect(url).not.toContain('prompt=');
+});
+
+test('buildCodexUrl project-scoped (composeEmptySpacePrompt) includes encoded prompt + path', () => {
+  const prompt = composeEmptySpacePrompt();
   const url = buildCodexUrl(payload({ prompt, docPath: '' }));
   expect(url).toBe(`codex://new?prompt=${encodeURIComponent(prompt)}&path=%2FUsers%2Fwho%2Fproj`);
 });
 
-test('INVARIANT: doc-scoped buildCodexUrl never emits prompt=, across input variations', () => {
+test('INVARIANT: buildCodexUrl threads prompt through ALL scopes; precedent #25 = no file=', () => {
   const cases: ReadonlyArray<{
     projectDir: string;
     docPath: string;
@@ -85,7 +91,6 @@ test('INVARIANT: doc-scoped buildCodexUrl never emits prompt=, across input vari
       prompt: 'x',
     },
     { projectDir: '/Users/a/proj', docPath: '/Users/a/proj/notes#1.md', prompt: 'x' },
-    { projectDir: '/Users/a/proj', docPath: '/Users/a/proj/log.md', prompt: '' },
   ];
   for (const c of cases) {
     const url = buildCodexUrl({
@@ -93,6 +98,29 @@ test('INVARIANT: doc-scoped buildCodexUrl never emits prompt=, across input vari
       projectDir: c.projectDir,
       docPath: c.docPath,
       prompt: c.prompt,
+    });
+    expect(url).not.toContain('file=');
+    expect(url).toContain('prompt=');
+    expect(url).toContain('path=');
+  }
+});
+
+test('INVARIANT: buildCodexUrl empty-prompt fallback drops prompt= across input variations', () => {
+  const cases: ReadonlyArray<{
+    projectDir: string;
+    docPath: string;
+  }> = [
+    { projectDir: '/Users/a/proj', docPath: '/Users/a/proj/a.md' },
+    { projectDir: '/Users/a/proj', docPath: '' },
+    { projectDir: '/Users/a/A & B', docPath: '' },
+    { projectDir: 'C:\\Users\\a\\proj', docPath: 'C:\\Users\\a\\proj\\d.md' },
+  ];
+  for (const c of cases) {
+    const url = buildCodexUrl({
+      target: 'codex',
+      projectDir: c.projectDir,
+      docPath: c.docPath,
+      prompt: '',
     });
     expect(url).not.toContain('prompt=');
     expect(url).not.toContain('file=');

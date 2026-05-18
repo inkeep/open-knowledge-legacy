@@ -134,7 +134,7 @@ describe('writeProjectAiIntegrations — failure isolation', () => {
   });
 });
 
-describe('writeProjectAiIntegrations — Claude Code launch.json', () => {
+describe('writeProjectAiIntegrations — Claude launch.json', () => {
   test('selecting "claude" scaffolds .claude/launch.json', () => {
     const result = writeProjectAiIntegrations(projectDir, ['claude']);
 

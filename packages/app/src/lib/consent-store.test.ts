@@ -71,7 +71,7 @@ const samplePayload: OkOnboardingShowPayload = {
   gitRootPromoted: false,
   warnings: [],
   editorOptions: [
-    { id: 'claude', label: 'Claude Code', hasProjectConfig: true },
+    { id: 'claude', label: 'Claude', hasProjectConfig: true },
     { id: 'cursor', label: 'Cursor', hasProjectConfig: true },
   ],
 };

@@ -207,6 +207,119 @@ export function showItemInFolder(
   return { ok: true };
 }
 
+type TrashItemReason = 'not-found' | 'permission-denied' | 'system-error' | 'path-escape';
+
+type TrashItemOutcome = { ok: true } | { ok: false; reason: TrashItemReason; detail?: string };
+
+interface TrashItemDeps {
+  readonly platform: NodeJS.Platform;
+  readonly projectPath: string | undefined;
+  readonly realpath: (path: string) => string;
+  readonly trashItem: (path: string) => Promise<void>;
+}
+
+export function extractTrashDetail(err: unknown): string | undefined {
+  if (err === null || err === undefined) return undefined;
+  if (err instanceof Error) {
+    const localized = (err as Error & { localizedDescription?: unknown }).localizedDescription;
+    if (typeof localized === 'string' && localized.length > 0) return localized;
+    if (err.message.length > 0) return err.message;
+    return undefined;
+  }
+  const stringified = String(err);
+  return stringified.length > 0 ? stringified : undefined;
+}
+
+function classifyTrashError(err: unknown): TrashItemReason {
+  if (!(err instanceof Error)) return 'system-error';
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code === 'EPERM' || code === 'EACCES') return 'permission-denied';
+  if (code === 'ENOENT') return 'not-found';
+  return 'system-error';
+}
+
+export async function trashItem(deps: TrashItemDeps, absPath: string): Promise<TrashItemOutcome> {
+  if (!validateSpawnPath(absPath, deps.platform)) {
+    return { ok: false, reason: 'path-escape', detail: 'invalid path format' };
+  }
+  if (deps.projectPath === undefined) {
+    return { ok: false, reason: 'path-escape', detail: 'no project bound' };
+  }
+  let resolved: string;
+  try {
+    resolved = deps.realpath(absPath);
+  } catch (err) {
+    return { ok: false, reason: 'not-found', detail: extractTrashDetail(err) };
+  }
+  if (!isPathWithinProject(resolved, deps.projectPath, deps.platform)) {
+    return { ok: false, reason: 'path-escape' };
+  }
+  try {
+    await deps.trashItem(resolved);
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: classifyTrashError(err),
+      detail: extractTrashDetail(err),
+    };
+  }
+}
+
+type OpenInTerminalReason = 'not-found' | 'spawn-error' | 'timeout' | 'path-escape';
+
+type OpenInTerminalOutcome = { ok: true } | { ok: false; reason: OpenInTerminalReason };
+
+interface OpenInTerminalDeps {
+  readonly platform: NodeJS.Platform;
+  readonly projectPath: string | undefined;
+  readonly realpath: (path: string) => string;
+  readonly spawn: (
+    exec: string,
+    args: ReadonlyArray<string>,
+    timeoutMs: number,
+  ) => Promise<SpawnOutcome>;
+  readonly timeoutMs?: number;
+}
+
+const MACOS_OPEN_BINARY = '/usr/bin/open';
+
+function translateSpawnOutcomeReason(
+  reason: Extract<SpawnOutcome, { ok: false }>['reason'],
+): OpenInTerminalReason {
+  if (reason === 'not-installed') return 'not-found';
+  if (reason === 'invalid-path') return 'path-escape';
+  return reason;
+}
+
+export async function openInTerminal(
+  deps: OpenInTerminalDeps,
+  dirAbsPath: string,
+): Promise<OpenInTerminalOutcome> {
+  if (!validateSpawnPath(dirAbsPath, deps.platform)) {
+    return { ok: false, reason: 'path-escape' };
+  }
+  if (deps.projectPath === undefined) {
+    return { ok: false, reason: 'path-escape' };
+  }
+  let resolved: string;
+  try {
+    resolved = deps.realpath(dirAbsPath);
+  } catch {
+    return { ok: false, reason: 'not-found' };
+  }
+  if (!isPathWithinProject(resolved, deps.projectPath, deps.platform)) {
+    return { ok: false, reason: 'path-escape' };
+  }
+  const outcome = await deps.spawn(
+    MACOS_OPEN_BINARY,
+    ['-a', 'Terminal.app', resolved],
+    deps.timeoutMs ?? SPAWN_TIMEOUT_MS,
+  );
+  if (outcome.ok) return { ok: true };
+  return { ok: false, reason: translateSpawnOutcomeReason(outcome.reason) };
+}
+
 interface RecordHandoffDeps {
   readonly homedir: () => string;
   readonly appendFile: (path: string, content: string) => Promise<void>;
