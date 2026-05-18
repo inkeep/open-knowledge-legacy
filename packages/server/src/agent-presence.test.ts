@@ -318,9 +318,9 @@ describe('AgentPresenceBroadcaster', () => {
     const dir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
     const src = readFileSync(resolve(dir, 'api-extension.ts'), 'utf-8');
 
-    const handlerCallSites = src.match(/apply(?:AgentMarkdownWrite|AgentUndo)\(/g) ?? [];
+    const handlerCallSites = src.match(/apply(?:AgentMarkdownWrite|AgentUndo|PatchToFm)\(/g) ?? [];
     const expectedCount = handlerCallSites.length;
-    expect(expectedCount).toBeGreaterThanOrEqual(4); // 3 write + 1 undo
+    expect(expectedCount).toBeGreaterThanOrEqual(5); // 3 write + 1 undo + 1 fm-patch
 
     const tryShapePattern =
       /try\s*\{\s*const\s+icon\s*=\s*iconFromClientName\([^)]*\);\s*const\s+color\s*=\s*[\s\S]*?;\s*agentPresenceBroadcaster\?\.setPresence\(\s*agentId,\s*\{[\s\S]*?mode:\s*'writing'/g;

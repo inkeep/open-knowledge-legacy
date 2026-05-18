@@ -10,7 +10,7 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  'Set up an existing repo for Open Knowledge by extracting conventions from existing siblings + activating the link graph. Multi-step instructional body with seven phases and per-phase user-confirmation STOP gates.',
+  'Returns a multi-step plan for setting up an existing repo (extract conventions, set folder frontmatter, write templates, activate link graph). Does NOT execute the plan — you do, with per-phase user confirmation.',
   '',
   '**Use when:**',
   '- First arrival at a repo that has existing markdown content AND no folder frontmatter / templates configured',

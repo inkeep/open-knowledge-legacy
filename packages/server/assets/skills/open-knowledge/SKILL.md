@@ -186,7 +186,7 @@ tags:
 
 Folder-level defaults that any new doc here inherits live in opt-in nested `<folder>/.ok/frontmatter.yml` and merge at read time — see *Folder structure + metadata* below.
 
-**Editing frontmatter.** `edit_document` does NOT change frontmatter — it's body-only by design; frontmatter-intersecting find/replace calls return HTTP 400. To change `title` / `description` / `tags`, call `write_document({ docName, position: "replace", markdown })` and include the new YAML block at the top of `markdown`. Folder defaults from the nested `.ok/frontmatter.yml` cascade still merge at read time, so you only need to declare keys that differ from the cascade. (Future server work may add a single-key frontmatter-patch tool with JSON Merge Patch semantics; until that lands, `write_document(replace)` is the canonical pathway.)
+**Editing frontmatter.** `edit_document` does NOT change frontmatter — it's body-only by design; frontmatter-intersecting find/replace calls return HTTP 400. For single-key edits (set / create / delete one or a few properties), prefer `frontmatter_patch({ docName, patch: { key: value } })` — JSON Merge Patch (RFC 7396), `null` deletes, field-level CRDT merge for concurrent edits, atomic per-call. For full-document rewrites (≥3-5 frontmatter keys changing, or body and frontmatter together), call `write_document({ docName, position: "replace", markdown })` and include the new YAML block at the top of `markdown`. Folder defaults from the nested `.ok/frontmatter.yml` cascade still merge at read time, so you only need to declare keys that differ from the cascade.
 
 ## Follow project conventions — read folder defaults before writing (MUST)
 
@@ -399,7 +399,7 @@ If `write_document` or `edit_document` returns a "Hocuspocus server is not runni
 
 ## Scope recap
 
-When MCP is connected, the server's `instructions` echo the **resolved** `content.dir` for this session — that's where Open Knowledge looks for documents. `.gitignore` and `.okignore` (at the project root and at any folder depth) define exclusions. Folder defaults + templates live in nested `<folder>/.ok/frontmatter.yml` + `<folder>/.ok/templates/` files — NOT in `.ok/config.yml`.
+Open Knowledge looks for documents under the resolved `content.dir` (discoverable at runtime via `get_config({ path: ['content', 'dir'] })`). `.gitignore` and `.okignore` (at the project root and at any folder depth) define exclusions. Folder defaults + templates live in nested `<folder>/.ok/frontmatter.yml` + `<folder>/.ok/templates/` files — NOT in `.ok/config.yml`.
 
 Default mental model (no jargon): **every `.md` and `.mdx` under `content.dir`** not excluded by `.gitignore` or `.okignore` is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. Read `.okignore` (and any nested `.okignore` files) once per turn to know what's excluded.
 

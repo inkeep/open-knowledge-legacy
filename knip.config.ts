@@ -86,7 +86,6 @@ export default {
     'packages/server': {
       entry: ['src/**/*.test.ts'],
       project: 'src/**',
-      ignoreFiles: ['src/mcp/tools/frontmatter-patch.ts'],
     },
     'packages/cli': {
       entry: ['src/**/*.test.ts', 'scripts/*.ts', 'tests/**/*.ts'],

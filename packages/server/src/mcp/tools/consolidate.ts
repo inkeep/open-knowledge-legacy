@@ -155,7 +155,7 @@ superseded_by: <path-to-new-canonical-article>.md
 }
 
 export const DESCRIPTION = [
-  'Promote research into a canonical article inside the project content directory. Canonical, not provisional — the output is the source of truth for future agents.',
+  'Returns a multi-step plan for promoting research findings into a canonical article. Does NOT write the article — you execute the plan after the STOP gate confirms the decision.',
   '',
   '**Use when:**',
   '- A team has made a decision after research and wants the outcome committed as canonical knowledge',

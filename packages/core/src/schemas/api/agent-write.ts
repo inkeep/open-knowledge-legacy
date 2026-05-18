@@ -1,6 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { z } from 'zod';
 
+import { FRONTMATTER_TYPES, FrontmatterValueSchema } from '../../frontmatter/schema.ts';
 import { agentIdentityFields, safeDocNameField, summaryField } from './_shared.ts';
 
 export const AgentWriteRequestSchema = z
@@ -101,3 +102,25 @@ export const AgentUndoSuccessSchema = z
   })
   .loose() satisfies StandardSchemaV1;
 export type AgentUndoSuccess = z.infer<typeof AgentUndoSuccessSchema>;
+
+export const FrontmatterPatchRequestSchema = z
+  .object({
+    docName: safeDocNameField,
+    patch: z.record(z.string(), z.union([FrontmatterValueSchema, z.null()])),
+    types: z.record(z.string(), z.enum(FRONTMATTER_TYPES)).optional(),
+    summary: summaryField,
+    ...agentIdentityFields,
+  })
+  .loose() satisfies StandardSchemaV1;
+export type FrontmatterPatchRequest = z.infer<typeof FrontmatterPatchRequestSchema>;
+
+export const FrontmatterPatchSuccessSchema = z
+  .object({
+    timestamp: z.string().min(1),
+    subscriberCount: z.number().int().nonnegative(),
+    systemSubscriberCount: z.number().int().nonnegative(),
+    appliedKeys: z.array(z.string()),
+    summary: SummaryResponseFieldSchema.optional(),
+  })
+  .loose() satisfies StandardSchemaV1;
+export type FrontmatterPatchSuccess = z.infer<typeof FrontmatterPatchSuccessSchema>;

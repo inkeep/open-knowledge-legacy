@@ -89,7 +89,7 @@ If the source is directly relevant to an existing article or research doc, updat
 }
 
 export const DESCRIPTION = [
-  'Fetch an external source (URL or local file) and save raw content as reference material in the project content directory.',
+  "Returns a multi-step plan for ingesting an external source (URL or local file). Does NOT fetch, write, or execute — you execute the plan. The body details Karpathy's three-layer pattern + the closed-loop ingest contract.",
   'Raw preservation only — no analysis or interpretation.',
   'The knowledge base is closed-loop: web sources cited by KB docs MUST resolve to a local doc captured here, not bare URLs.',
   '',

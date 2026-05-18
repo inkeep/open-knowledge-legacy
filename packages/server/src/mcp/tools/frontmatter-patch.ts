@@ -20,7 +20,7 @@ export const DESCRIPTION = [
   '',
   'Field-level CRDT merge: concurrent patches to different keys (human form + this tool, or two agents) merge cleanly. Same-key concurrent writes resolve last-writer-wins per key.',
   '',
-  '**Use this tool — not `edit_document` — for any frontmatter change.** `edit_document` (agent-patch) targets body content; FM-intersecting `edit_document` calls will start returning HTTP 400 once the deprecation window closes.',
+  '**Use this tool — not `edit_document` — for any frontmatter change.** `edit_document` (agent-patch) targets body content; FM-intersecting `edit_document` calls return HTTP 400. For full-document rewrites (≥3-5 frontmatter keys changing), `write_document({ position: "replace" })` remains the canonical pathway.',
   '',
   '**Parameters:**',
   '- `docName` — Document name. A trailing `.md` or `.mdx` is stripped automatically.',

@@ -358,7 +358,7 @@ In headless mode, write the recap into the research article's "Further reading" 
 }
 
 export const DESCRIPTION = [
-  'Analyze a topic by gathering sources via ingest and writing provisional findings into the project content directory.',
+  'Returns a multi-step plan for researching a topic. Does NOT fetch sources or write articles — you execute the plan (which calls `ingest` for sources, then writes a provisional article).',
   'Provisional, not canonical — findings live here until decisions solidify.',
   '',
   '**Use when:**',

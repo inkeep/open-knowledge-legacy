@@ -1,26 +1,60 @@
 import type { Config } from '../config/schema.ts';
 
-export function buildInstructions(content: Config['content']): string {
-  return `# Open Knowledge (OK) — collaborative markdown via MCP
+export function buildInstructions(_content: Config['content']): string {
+  return `Open Knowledge is a markdown-CRDT knowledge base exposed via MCP.
 
-**STOP** *(when \`.ok/\` exists)* — do NOT use native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on in-scope \`.md\` / \`.mdx\`. Reads: \`exec\` / \`read_document\` / \`search\` / \`grep\`. Writes: \`write_document\` / \`edit_document\` ONLY.
+## STOP — native tools on in-scope \`.md\` / \`.mdx\`
 
-**Preview:** open the browser at session start if not already open. On \`attach-preview-once\` in a write response, open \`previewUrl\` one-shot.
+When this workspace has Open Knowledge MCP configured, do **not** use your host's native file tools on markdown paths inside the content directory. The ban covers every common rationalization:
 
-Content dir: ${content.dir}. Path scope: \`.gitignore\` + \`.okignore\` (gitignore syntax) at the project root or any folder depth.
+- **Native \`Read\` / \`Grep\` / \`Glob\` on in-scope \`.md\` / \`.mdx\`** — the original case.
+- **\`Bash ls\` / \`Bash find\` / \`Bash cat\` on dirs containing in-scope markdown** — use \`exec("ls -A …")\` / \`exec("find … -name '*.md'")\` / \`exec("cat …")\` instead. Native returns bare names; \`exec\` returns frontmatter, backlink counts, and recent activity per child. \`-A\` shows hidden entries (\`.ok/\`, \`.okignore\`) which OK projects carry; omit \`.\` and \`..\` rows that \`-a\` would add.
+- **Glob patterns that target markdown** (\`**/*.md\`, any dir known to be markdown-heavy like \`specs/**\`, \`reports/**\`, \`docs/**\`) — use \`exec\` with \`find\`, or \`list_documents({ dir })\`.
+- **Dispatching the Explore / general-purpose subagent for markdown-heavy exploration** — subagents use native \`Read\` / \`Grep\` / \`Glob\` internally and bypass Open Knowledge entirely. Do markdown exploration yourself via \`exec\` / \`search\` / \`grep\`. Subagents remain appropriate for **source-code** exploration.
+- **Native \`Read\` / \`Grep\` on any in-scope markdown inside \`.ok/\`** — the \`.ok/\` directory is in-scope; if it carries \`.md\` / \`.mdx\`, treat those the same as any other knowledge-base file.
 
-## Reads
+Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project git history that OK's tools return for every matched knowledge-base file. \`exec\` is the primary read surface; it runs read-only bash (\`cat\`, \`ls\`, \`grep\`, \`find\`, \`head\`, \`tail\`, \`wc\`, \`sort\`, \`uniq\`, \`cut\` — pipes OK) and returns raw stdout plus enriched metadata per file.
 
-\`exec("cat <path>.md")\` / \`exec("ls <dir>")\` — primary; returns contents + enrichment. Typed \`read_document\` for one doc, \`search\` for ranked retrieval (cmd-K parity), \`grep\` for every literal-string occurrence — pick by intent.
+**MCP tool visibility — not seeing \`exec\` is NOT the escape hatch.** MCP wiring varies by client. Claude Code, Cursor, Codex, Windsurf, VS Code — each surfaces MCP differently. Server labels are user-defined; tools may not appear as top-level symbols named \`exec\` in your specific UI. If Open Knowledge is registered as an MCP server in this workspace, route markdown reads through its \`exec\` / \`search\` / \`grep\` / \`read_document\` via your client's documented MCP invocation (including any generic "call MCP tool" flow). Registration is the test, not top-level-symbol visibility.
 
-## Preview — open at session start
+**Escape hatch.** Native \`Read\` / \`Grep\` / \`Glob\` on \`.md\` / \`.mdx\` is allowed **only** when no Open Knowledge MCP server is registered for this project, **or** immediately after you tried an MCP call and it failed — then begin a user-visible sentence with \`Open Knowledge MCP unavailable:\`. Never use the hatch because you skipped your client's MCP path, didn't see \`exec\` as a top-level tool, or rationalized the skill wasn't necessary.
 
-Claude Code Desktop: \`preview_start("open-knowledge-ui")\`. Other hosts: open-URL tool or \`open <url>\`. If a write response lacks the \`attach-preview-once\` warning, a browser is attached — do nothing. Server not running: \`open-knowledge ui\`.
+**Source code and non-markdown files** (\`.ts\`, \`.py\`, \`package.json\`, …): native \`Read\` / \`Grep\` / \`Glob\` always.
 
-## Full guidance
+## Reads — examples
 
-Detailed conventions (wiki-link authoring, frontmatter, anti-patterns) live in the installed \`open-knowledge\` Agent Skill. If missing, run \`npx @inkeep/open-knowledge init\`.
+- Read a file: \`exec("cat <path>.md")\` — contents + full rich enrichment
+- List a directory: \`exec("ls -A <dir>")\` — per-child frontmatter, recursive markdown counts, most-recently-updated doc per subdir. Prefer \`-A\` over plain \`ls\`: OK projects carry dot-prefixed entries (\`.ok/\`, nested \`.ok/\`, \`.okignore\`) that plain \`ls\` omits. \`-A\` shows hidden entries without the noisy \`.\`/\`..\` rows that \`-a\` adds, and without the verbose long-format columns that \`-la\` adds (the per-child enrichment already carries the useful metadata \`-l\` would surface).
+- Search: \`exec("grep -rn <term> <dir> | head -5")\` — matches + enrichment on matched files
+- Typed tools (\`read_document\`, \`search\`, \`grep\`, \`list_documents\`) remain available — prefer them when a structured \`structuredContent\` shape is useful (e.g., passing results to another tool). For interactive reads, \`exec\` is lighter. **Pick the right search:** \`search\` for ranked retrieval (cmd-K parity — title boost + body BM25 + recency); \`grep\` for every literal-string occurrence grouped by file with frontmatter enrichment.
 
-**Escape hatch.** Native \`Read\`/\`Grep\`/\`Glob\` on \`.md\` is allowed when the project has no \`.ok/\`, when no OK MCP is registered, or right after a failed OK MCP call (then prefix with \`Open Knowledge MCP unavailable:\`). Non-markdown: native tools always.
+## Preview — open the browser at session start
+
+**Open the preview browser as your first OK action of the session, if it is not already open.** The user watches edits land live in that pane; if it isn't open, your work is invisible and the whole CRDT pipeline is wasted. Treat this as step zero — before your first read, before your first write.
+
+- Claude Code Desktop: \`preview_start("open-knowledge-ui")\`.
+- Cursor: use the host's open-URL tool with a \`previewUrl\` from any write response.
+- Other hosts: use whatever command opens a URL (macOS: \`open <url>\`). On hosts with no preview tool (Codex, generic stdio), surface the URL in chat for the user to click.
+
+**How to know if it's already open.** You usually can't pre-check from the agent side — rely on these signals:
+
+1. You already opened it earlier in this session → don't reopen.
+2. A \`write_document\` / \`edit_document\` response returns \`previewUrl\` but NO \`warning: { action: "attach-preview-once" }\` → a browser is attached somewhere; do nothing.
+3. A response DOES include \`warning: { action: "attach-preview-once", previewUrl, message }\` → no browser is attached; open immediately, one-shot. The hint fires only when needed (server tracks \`__system__\` subscribers) and at most once per session in the normal fresh-start case.
+
+If the server isn't running, you'll see a \`"Hocuspocus server is not running"\` error or \`previewUrl: null\`. Start the UI (\`open-knowledge ui\` from a terminal, or \`preview_start("open-knowledge-ui")\` in Claude Code), then retry. NEVER construct preview URLs by hand — always use the \`previewUrl\` returned in tool responses.
+
+**No screenshots after edits.** Do NOT take \`preview_screenshot\` after every \`edit_document\` / \`write_document\`. Trust the CRDT tool response as confirmation the edit landed. Only screenshot when debugging a visual issue or when explicitly asked.
+
+## Scope recap
+
+Open Knowledge looks for documents under the resolved \`content.dir\` (discoverable at runtime via \`get_config({ path: ['content', 'dir'] })\`). \`.gitignore\` and \`.okignore\` (at the project root and at any folder depth) define exclusions. Folder defaults + templates live in nested \`<folder>/.ok/frontmatter.yml\` + \`<folder>/.ok/templates/\` files — NOT in \`.ok/config.yml\`.
+
+Default mental model (no jargon): **every \`.md\` and \`.mdx\` under \`content.dir\`** not excluded by \`.gitignore\` or \`.okignore\` is an Open Knowledge document — including under \`specs/\`, \`reports/\`, \`docs/\`, etc. Read \`.okignore\` (and any nested \`.okignore\` files) once per turn to know what's excluded.
+
+**First session in this project?** If \`frontmatter_defaults\` and \`templates_available\` are empty for substantial folders, the project hasn't been onboarded yet — invoke \`discover\` (Workflow tools table) before writing. Once onboarded, the cascade carries the discipline.
+
+
+Full guidance lives in the bundled \`open-knowledge\` skill at \`~/.ok/skills/open-knowledge/SKILL.md\`.
 `;
 }
