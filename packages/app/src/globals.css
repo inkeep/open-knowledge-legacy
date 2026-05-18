@@ -850,6 +850,17 @@
   @apply py-0.5 px-1 rounded-sm bg-amber-100 dark:bg-amber-900/50;
 }
 
+.ProseMirror .ok-find-match {
+  border-radius: 0.15rem;
+  background-color: color-mix(in oklab, var(--color-agent) 28%, transparent);
+  color: inherit;
+}
+
+.ProseMirror .ok-find-match-active {
+  background-color: color-mix(in oklab, var(--primary) 34%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 55%, transparent);
+}
+
 .ProseMirror h1,
 .ProseMirror h2,
 .ProseMirror h3 {

@@ -5,6 +5,7 @@ import { useEditorState } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import { useRef, useState } from 'react';
 import { Separator } from '@/components/ui/separator';
+import { getFindReplaceState } from '../find-replace/tiptap-find-replace-extension';
 import { BlockTypeSelector } from './BlockTypeSelector';
 import { FileBubbleButtons, isFileNodeSelected } from './FileBubbleButtons';
 import { ImageAlignButtons, isImageNodeSelected } from './ImageAlignButtons';
@@ -12,6 +13,7 @@ import { InlineFormatButtons } from './InlineFormatButtons';
 import { LinkEditPopover } from './LinkEditPopover';
 
 function shouldShowBubbleMenu({ editor }: { editor: Editor }): boolean {
+  if (getFindReplaceState(editor.state).query) return false;
   if (editor.isActive('codeBlock')) return false;
   if (isImageNodeSelected(editor)) return true;
   if (isFileNodeSelected(editor)) return true;
@@ -79,6 +81,7 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
     <BubbleMenu
       ref={menuRef}
       editor={editor}
+      data-testid="bubble-menu-bar"
       appendTo={() => document.body}
       shouldShow={shouldShowBubbleMenu}
       updateDelay={250}

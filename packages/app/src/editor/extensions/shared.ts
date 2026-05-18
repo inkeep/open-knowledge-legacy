@@ -2,6 +2,7 @@ import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core'
 import { Extension } from '@tiptap/core';
 import FileHandler from '@tiptap/extension-file-handler';
 import { KeyboardNav } from '../block-ux/keyboard-nav';
+import { TiptapFindReplace } from '../find-replace/tiptap-find-replace-extension';
 import { uploadAndInsert } from '../image-upload/index.ts';
 import { getComponentItems, getInlineComponentItems } from '../slash-command/component-items';
 import { slashCommandItems } from '../slash-command/items';
@@ -58,6 +59,7 @@ export const sharedExtensions = [
     },
   }),
   HeadingAnchors,
+  TiptapFindReplace,
   TagClickPlugin,
   FootnoteAnchorScroll,
   BlockDragHandle,
