@@ -98,6 +98,22 @@ export function assetTabId(assetPath: string): string {
   return `${ASSET_TAB_PREFIX}${assetPath}`;
 }
 
+export function tabParts(
+  docName: string,
+  docExt: string,
+): { baseName: string; extension: string; label: string; prefix: string } {
+  const slash = docName.lastIndexOf('/');
+  const baseName = slash < 0 ? docName : docName.slice(slash + 1);
+  const label = `${baseName}${docExt}`;
+  if (slash < 0) return { baseName, extension: docExt, label, prefix: '' };
+  return {
+    baseName,
+    extension: docExt,
+    label,
+    prefix: `${docName.slice(0, slash)}/`,
+  };
+}
+
 export function tabIdForNavigationTarget(
   target:
     | { kind: 'doc'; docName: string }
@@ -209,6 +225,23 @@ export function filterClosableTabIds(
   return normalizeOpenTabs(tabIds, Number.MAX_SAFE_INTEGER).filter((tabId) => !pinned.has(tabId));
 }
 
+export function applyDragPinMutation(
+  nextOpenTabs: readonly string[],
+  pinnedTabIds: readonly string[],
+  draggedTabId: string,
+): string[] {
+  const normalizedOpen = normalizeOpenTabs(nextOpenTabs, Number.MAX_SAFE_INTEGER);
+  const prevPinned = normalizePinnedTabIds(pinnedTabIds, normalizedOpen);
+  const draggedIdx = normalizedOpen.indexOf(draggedTabId);
+  if (draggedIdx < 0) return prevPinned;
+  const wasPinned = prevPinned.includes(draggedTabId);
+  const shouldBePinned = draggedIdx < prevPinned.length;
+  if (wasPinned === shouldBePinned) return prevPinned;
+  return shouldBePinned
+    ? addPinnedTab(prevPinned, draggedTabId, normalizedOpen)
+    : removePinnedTab(prevPinned, draggedTabId);
+}
+
 export function addOpenTab(
   tabs: readonly string[],
   tabId: string,
@@ -272,6 +305,14 @@ export function openTab(
     return {
       tabs: addOpenTab(normalized, canonicalTabId, limit, pinnedTabIds),
       activeTabId: canonicalTabId,
+    };
+  }
+
+  const existingTabId = findOpenTabTarget(normalized, canonicalTabId);
+  if (existingTabId) {
+    return {
+      tabs: normalized,
+      activeTabId: existingTabId,
     };
   }
 
@@ -362,6 +403,14 @@ export function remapOpenTabs(
         : assetTabId(remapPathForFolderRenames(parsed.assetPath, folderMappings));
   });
   return capOpenTabsPreservingPinned(next, limit, remappedPinnedTabIds);
+}
+
+export function remapVisibleTabsForRename(
+  currentOrder: readonly string[],
+  renamed: readonly { fromDocName: string; toDocName: string }[],
+  renamedFolders: readonly RenamedFolderMapping[] = [],
+): string[] {
+  return remapOpenTabs(currentOrder, renamed, Number.MAX_SAFE_INTEGER, renamedFolders);
 }
 
 export function remapPathForFolderRenames(

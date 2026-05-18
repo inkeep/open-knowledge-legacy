@@ -279,6 +279,7 @@ function EditorAreaInner({
           ) : null}
         </div>
         <EditorToolbar
+          activeDocName={activeDocName}
           isSourceMode={isSourceMode}
           sourceDisabled={sourceDisabled}
           onModeChange={onModeChange}

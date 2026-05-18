@@ -175,7 +175,25 @@ describe('PropertyPanel add-property trigger', () => {
     seedYTextFm(provider, '---\ntitle: A\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('data-testid="add-property-trigger"');
-    expect(html).toContain('Add property');
+    expect(html).toContain('>Add<');
+    expect(html).not.toMatch(/>Add property</);
+    const triggerTagMatch = html.match(/<[^>]*data-testid="add-property-trigger"[^>]*>/);
+    expect(triggerTagMatch).not.toBeNull();
+    expect(triggerTagMatch?.[0]).not.toContain('pl-7');
+    expect(triggerTagMatch?.[0]).toContain('px-2');
+    const spacerIdx = html.search(/<span\s+aria-hidden[^>]*class="h-7 w-4 shrink-0"/);
+    const triggerIdx = html.indexOf('data-testid="add-property-trigger"');
+    expect(spacerIdx).toBeGreaterThan(-1);
+    expect(spacerIdx).toBeLessThan(triggerIdx);
+  });
+
+  test('the add-property trigger carries `aria-label="Add property"` for screen readers', () => {
+    const provider = makeProvider('add-trigger-aria-doc');
+    seedYTextFm(provider, '---\ntitle: A\n---\n');
+    const html = renderPanel(provider);
+    const triggerTagMatch = html.match(/<[^>]*data-testid="add-property-trigger"[^>]*>/);
+    expect(triggerTagMatch).not.toBeNull();
+    expect(triggerTagMatch?.[0]).toMatch(/aria-label="Add property"/);
   });
 
   test('panel is hidden when there are no rows AND no add-row open', () => {

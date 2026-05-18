@@ -612,3 +612,245 @@ describe('FileTree — Option B 2-step Trash flow (US-018 source-level)', () => 
     expect(slice).toContain('emitDocumentsChanged');
   });
 });
+
+describe('FileTree — Sidebar extension badge (replaces US-007 CSS hide-and-reveal)', () => {
+  const BADGE_MODULE_SRC = readFileSync(join(__dirname, 'file-tree-extension-badge.ts'), 'utf8');
+
+  test('FileTree imports the badge processor + CSS from the dedicated module', () => {
+    expect(FILETREE_SRC).toMatch(
+      /import\s*\{[^}]*applyExtensionBadges[^}]*\}\s*from\s*'@\/components\/file-tree-extension-badge'/,
+    );
+    expect(FILETREE_SRC).toMatch(
+      /import\s*\{[^}]*FILE_TREE_EXT_BADGE_CSS[^}]*\}\s*from\s*'@\/components\/file-tree-extension-badge'/,
+    );
+  });
+
+  test('the .md/.mdx-only CSS hide-and-hover-reveal block is removed (its trailing-dot artifact is the bug)', () => {
+    expect(FILETREE_SRC).not.toContain("[data-item-path$='.md']");
+    expect(FILETREE_SRC).not.toContain("[data-item-path$='.mdx']");
+    expect(FILETREE_SRC).not.toMatch(/:hover[^{]+:last-child\s*\{\s*display:\s*inline;/);
+  });
+
+  test('FILE_TREE_UNSAFE_CSS concatenates badge + rename-chip CSS (single unsafeCSS payload)', () => {
+    expect(FILETREE_SRC).toMatch(
+      /const\s+FILE_TREE_UNSAFE_CSS\s*=\s*`\$\{FILE_TREE_EXT_BADGE_CSS\}\\n\$\{FILE_TREE_RENAME_CHIP_CSS\}`\s*;/,
+    );
+    expect(FILETREE_SRC).toMatch(
+      /import\s*\{[^}]*FILE_TREE_RENAME_CHIP_CSS[^}]*\}\s*from\s*'@\/components\/file-tree-rename-chip'/,
+    );
+    expect(FILETREE_SRC).toContain('useFileTree({');
+    expect(FILETREE_SRC).toContain('unsafeCSS: FILE_TREE_UNSAFE_CSS,');
+  });
+
+  test('badge module imports getFileExtension from the existing rename-validation helper', () => {
+    expect(BADGE_MODULE_SRC).toMatch(
+      /import\s*\{[^}]*getFileExtension[^}]*\}\s*from\s*'@\/components\/file-tree-rename-validation'/,
+    );
+  });
+
+  test('badge module CSS hides extension segment for any file with an extension (broader than .md/.mdx)', () => {
+    expect(BADGE_MODULE_SRC).toContain(
+      "[data-type='item'][data-item-path*='.']:not([data-item-path$='/']) [data-truncate-segment-priority]:last-child",
+    );
+    expect(BADGE_MODULE_SRC).toMatch(
+      /\[data-truncate-segment-priority\]:last-child\s*\{\s*display:\s*none;\s*\}/,
+    );
+  });
+
+  test('badge styling is small, muted, uppercase, non-interactive (matches text-muted-foreground/60 text-xs)', () => {
+    expect(BADGE_MODULE_SRC).toContain(
+      'color: color-mix(in oklab, var(--muted-foreground) 60%, transparent)',
+    );
+    expect(BADGE_MODULE_SRC).toContain('font-size: 0.75rem');
+    expect(BADGE_MODULE_SRC).toContain('text-transform: uppercase');
+    expect(BADGE_MODULE_SRC).toContain('pointer-events: none');
+    expect(BADGE_MODULE_SRC).toContain('user-select: none');
+  });
+
+  test('badge module preserves the pre-existing markdown selected-icon override (carryover from US-007)', () => {
+    expect(BADGE_MODULE_SRC).toContain("[data-item-selected='true'] [data-icon-token='markdown']");
+  });
+
+  test('FileTree wires a useEffect MutationObserver that calls applyExtensionBadges', () => {
+    expect(FILETREE_SRC).toContain('applyExtensionBadges(shadow)');
+    const effectStart = FILETREE_SRC.indexOf('applyExtensionBadges(shadow)');
+    expect(effectStart).toBeGreaterThan(-1);
+    const useEffectIdx = FILETREE_SRC.lastIndexOf('useEffect(', effectStart);
+    expect(useEffectIdx).toBeGreaterThan(-1);
+    const effectClose = FILETREE_SRC.indexOf('}, [', effectStart);
+    expect(effectClose).toBeGreaterThan(effectStart);
+    const effectFragment = FILETREE_SRC.slice(useEffectIdx, effectClose);
+    expect(effectFragment).toContain('shadowRoot');
+    expect(effectFragment).toContain('new MutationObserver');
+    expect(effectFragment).toContain('characterData: true');
+    expect(effectFragment).toContain("attributeFilter: ['data-item-path']");
+  });
+});
+
+describe('FileTree — Sidebar rename extension chip (lives next to badge)', () => {
+  const CHIP_MODULE_SRC = readFileSync(join(__dirname, 'file-tree-rename-chip.ts'), 'utf8');
+
+  test('FileTree imports the chip processor + CSS from the dedicated module', () => {
+    expect(FILETREE_SRC).toMatch(
+      /import\s*\{[^}]*applyRenameChip[^}]*\}\s*from\s*'@\/components\/file-tree-rename-chip'/,
+    );
+    expect(FILETREE_SRC).toMatch(
+      /import\s*\{[^}]*FILE_TREE_RENAME_CHIP_CSS[^}]*\}\s*from\s*'@\/components\/file-tree-rename-chip'/,
+    );
+  });
+
+  test('chip module imports getFileExtension from the existing rename-validation helper', () => {
+    expect(CHIP_MODULE_SRC).toMatch(
+      /import\s*\{[^}]*getFileExtension[^}]*\}\s*from\s*'@\/components\/file-tree-rename-validation'/,
+    );
+  });
+
+  test('chip CSS targets only the active rename input + pads its inline-end so text clears the chip', () => {
+    expect(CHIP_MODULE_SRC).toContain(
+      '[data-item-section="content"]:has([data-item-rename-input])',
+    );
+    expect(CHIP_MODULE_SRC).toContain('padding-inline-end:');
+  });
+
+  test('chip is non-interactive (pointer-events: none + user-select: none + aria-hidden)', () => {
+    expect(CHIP_MODULE_SRC).toContain('pointer-events: none');
+    expect(CHIP_MODULE_SRC).toContain('user-select: none');
+    expect(CHIP_MODULE_SRC).toContain("setAttribute('aria-hidden', 'true')");
+  });
+
+  test('strip path routes through the prototype native setter so React/Preact value-tracker syncs', () => {
+    expect(CHIP_MODULE_SRC).toContain('window.HTMLInputElement.prototype');
+    expect(CHIP_MODULE_SRC).toContain("new Event('input', { bubbles: true })");
+  });
+
+  test('basename is selected after strip (mirrors the tab rename UX)', () => {
+    expect(CHIP_MODULE_SRC).toContain('setSelectionRange(0, stripped.length)');
+  });
+
+  test('FileTree wires a separate useEffect MutationObserver that calls applyRenameChip', () => {
+    expect(FILETREE_SRC).toContain('applyRenameChip(shadow)');
+    const effectStart = FILETREE_SRC.indexOf('applyRenameChip(shadow)');
+    expect(effectStart).toBeGreaterThan(-1);
+    const useEffectIdx = FILETREE_SRC.lastIndexOf('useEffect(', effectStart);
+    expect(useEffectIdx).toBeGreaterThan(-1);
+    const effectClose = FILETREE_SRC.indexOf('}, [', effectStart);
+    expect(effectClose).toBeGreaterThan(effectStart);
+    const effectFragment = FILETREE_SRC.slice(useEffectIdx, effectClose);
+    expect(effectFragment).toContain('shadowRoot');
+    expect(effectFragment).toContain('new MutationObserver');
+    expect(effectFragment).toContain('childList: true');
+  });
+});
+
+describe('FileTree — Sidebar rename extension preservation (US-008 source-level)', () => {
+  test('FileTree imports the pure validateAndCoerceRenameDestination helper', () => {
+    expect(FILETREE_SRC).toMatch(
+      /import\s*\{\s*validateAndCoerceRenameDestination\s*\}\s*from\s*'@\/components\/file-tree-rename-validation'/,
+    );
+  });
+
+  test('handleTreeRename calls the validator on RAW event paths (not the normalized ones)', () => {
+    const handlerStart = FILETREE_SRC.indexOf('async function handleTreeRename(');
+    expect(handlerStart).toBeGreaterThan(-1);
+    const handlerEnd = FILETREE_SRC.indexOf('\n  }\n', handlerStart);
+    expect(handlerEnd).toBeGreaterThan(handlerStart);
+    const handlerBody = FILETREE_SRC.slice(handlerStart, handlerEnd);
+    expect(handlerBody).toMatch(
+      /validateAndCoerceRenameDestination\(\s*event\.sourcePath,\s*event\.destinationPath,\s*event\.isFolder,?\s*\)/,
+    );
+  });
+
+  test('the block branch surfaces the D15 toast literal verbatim', () => {
+    expect(FILETREE_SRC).toContain(
+      "'File extensions are managed automatically - please rename without changing the extension'",
+    );
+  });
+
+  test('the block branch reverts Pierre + clears pending + ends busy state, then returns', () => {
+    const handlerStart = FILETREE_SRC.indexOf('async function handleTreeRename(');
+    const handlerEnd = FILETREE_SRC.indexOf('\n  }\n', handlerStart);
+    const handlerBody = FILETREE_SRC.slice(handlerStart, handlerEnd);
+    const blockIdx = handlerBody.indexOf("validation.kind === 'block'");
+    expect(blockIdx).toBeGreaterThan(-1);
+    const blockSlice = handlerBody.slice(blockIdx, blockIdx + 1200);
+    expect(blockSlice).toContain('resetModelToDocuments()');
+    expect(blockSlice).toContain('queueMicrotask(');
+    expect(blockSlice).toContain('clearPendingCreate()');
+    expect(blockSlice).toContain('setBusyPath(null)');
+    expect(blockSlice).toMatch(/return\s*;/);
+    expect(blockSlice.slice(0, blockSlice.indexOf('return'))).not.toMatch(
+      /fetch\(\s*['"]\/api\/rename-path['"]/,
+    );
+  });
+
+  test('the allow branch normalizes validation.destinationPath (NOT event.destinationPath)', () => {
+    const handlerStart = FILETREE_SRC.indexOf('async function handleTreeRename(');
+    const handlerEnd = FILETREE_SRC.indexOf('\n  }\n', handlerStart);
+    const handlerBody = FILETREE_SRC.slice(handlerStart, handlerEnd);
+    expect(handlerBody).toMatch(
+      /const\s+destinationTreePath\s*=\s*normalizeTreePathForKind\(\s*validation\.destinationPath,\s*event\.isFolder,?\s*\)/,
+    );
+    expect(handlerBody).not.toMatch(/normalizeTreePathForKind\(\s*event\.destinationPath,/);
+  });
+
+  test('payload.toPath still derives from the validated destinationTreePath', () => {
+    const handlerStart = FILETREE_SRC.indexOf('async function handleTreeRename(');
+    const handlerEnd = FILETREE_SRC.indexOf('\n  }\n', handlerStart);
+    const handlerBody = FILETREE_SRC.slice(handlerStart, handlerEnd);
+    expect(handlerBody).toMatch(/toPath:\s*treeFilePathToDocName\(destinationTreePath\)/);
+  });
+
+  test('folder branch is unaffected by the validation gate (isFolder short-circuits to allow)', () => {
+    const handlerStart = FILETREE_SRC.indexOf('async function handleTreeRename(');
+    const handlerEnd = FILETREE_SRC.indexOf('\n  }\n', handlerStart);
+    const handlerBody = FILETREE_SRC.slice(handlerStart, handlerEnd);
+    expect(handlerBody).toMatch(/validateAndCoerceRenameDestination\([^)]*event\.isFolder[^)]*\)/s);
+  });
+
+  test('Pierre blur-without-onRename edge is preserved (no new onRename invocations added)', () => {
+    expect(FILETREE_SRC).toContain('Pierre commits an unchanged inline rename on blur');
+  });
+});
+
+describe('FileTree — Post-commit reconciliation error labeling', () => {
+  test('applyRenamedDocuments is wrapped in its own try/catch (split from the fetch catch)', () => {
+    const handlerStart = FILETREE_SRC.indexOf('async function handleTreeRename(');
+    const handlerEnd = FILETREE_SRC.indexOf('\n  }\n', handlerStart);
+    const handlerBody = FILETREE_SRC.slice(handlerStart, handlerEnd);
+    const applyIdx = handlerBody.indexOf('await applyRenamedDocuments(');
+    expect(applyIdx).toBeGreaterThan(-1);
+    const beforeApply = handlerBody.slice(0, applyIdx);
+    const innerTryIdx = beforeApply.lastIndexOf('try {');
+    expect(innerTryIdx).toBeGreaterThan(-1);
+    const sliceFromTry = handlerBody.slice(innerTryIdx);
+    expect(sliceFromTry).toMatch(/catch\s*\(\s*reconcileErr\s*\)/);
+  });
+
+  test('post-commit failure surfaces a distinct toast (NOT "Network error")', () => {
+    expect(FILETREE_SRC).toContain(
+      "'Rename succeeded but the sidebar may be out of date — refresh to resync'",
+    );
+  });
+});
+
+describe('FileTree — handleDropComplete split try/catch (source-level)', () => {
+  test('applyRenamedDocuments is wrapped in its own try/catch (split from the fetch catch)', () => {
+    const handlerStart = FILETREE_SRC.indexOf('async function handleDropComplete(');
+    expect(handlerStart).toBeGreaterThan(-1);
+    const handlerEnd = FILETREE_SRC.indexOf('\n  }\n', handlerStart);
+    const handlerBody = FILETREE_SRC.slice(handlerStart, handlerEnd);
+    const applyIdx = handlerBody.indexOf('await applyRenamedDocuments(');
+    expect(applyIdx).toBeGreaterThan(-1);
+    const beforeApply = handlerBody.slice(0, applyIdx);
+    const innerTryIdx = beforeApply.lastIndexOf('try {');
+    expect(innerTryIdx).toBeGreaterThan(-1);
+    const sliceFromTry = handlerBody.slice(innerTryIdx);
+    expect(sliceFromTry).toMatch(/catch\s*\(\s*reconcileErr\s*\)/);
+  });
+
+  test('post-move failure surfaces a distinct toast (NOT "Network error")', () => {
+    expect(FILETREE_SRC).toContain(
+      "'Move succeeded but the sidebar may be out of date — refresh to resync'",
+    );
+  });
+});

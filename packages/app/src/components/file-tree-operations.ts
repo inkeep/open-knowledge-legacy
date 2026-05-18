@@ -96,6 +96,16 @@ export function remapActiveDocName(
   return renamed.find((entry) => entry.fromDocName === activeDocName)?.toDocName ?? activeDocName;
 }
 
+export function planRenameCleanupCalls(
+  renamed: readonly RenamedDocMapping[],
+  poolActiveDocName: string | null,
+): string[] {
+  return renamed.flatMap((entry) => {
+    const serverPushHandledTo = poolActiveDocName === entry.toDocName;
+    return serverPushHandledTo ? [entry.fromDocName] : [entry.fromDocName, entry.toDocName];
+  });
+}
+
 function remapPathForFolderRenames(path: string, renamedFolders: RenamedFolderMapping[]): string {
   for (const { fromPath, toPath } of renamedFolders) {
     if (path === fromPath) return toPath;

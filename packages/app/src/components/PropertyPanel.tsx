@@ -446,17 +446,21 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
               onCancel={cancelAdd}
             />
           ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              data-testid="add-property-trigger"
-              onClick={beginAdd}
-              className="mt-1 flex items-center gap-1.5 rounded px-2 py-1 font-medium text-sm hover:bg-muted/50 hover:text-foreground"
-            >
-              <Plus className="size-3.5" />
-              <span>Add property</span>
-            </Button>
+            <div className="mt-1 flex items-center gap-1">
+              <span aria-hidden className="h-7 w-4 shrink-0" />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="add-property-trigger"
+                onClick={beginAdd}
+                aria-label="Add property"
+                className="flex items-center gap-1.5 rounded px-2 py-1 font-medium text-sm hover:bg-muted/50 hover:text-foreground"
+              >
+                <Plus className="size-3.5" />
+                <span>Add</span>
+              </Button>
+            </div>
           )}
         </CollapsibleContent>
       </Collapsible>

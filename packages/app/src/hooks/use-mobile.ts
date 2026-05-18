@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export const SIDEBAR_PUSH_BREAKPOINT = 1280;
+export const SIDEBAR_PUSH_BREAKPOINT = 768;
 
 export function useIsMobile() {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < SIDEBAR_PUSH_BREAKPOINT);
