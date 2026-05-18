@@ -33,19 +33,17 @@ export interface TemplateMenuEntry {
   description?: string;
   path: string;
   source_folder: string;
-  scope: 'local' | 'inherited' | 'user';
+  scope: 'local' | 'inherited';
 }
 
 export interface TemplateDetail {
   name: string;
   folder: string;
-  scope: 'local' | 'inherited' | 'user';
+  scope: 'local' | 'inherited';
   path: string;
   frontmatter: Record<string, unknown>;
   body: string;
 }
-
-export type TemplateTarget = 'project' | 'user';
 
 export type AsyncState<T> =
   | { status: 'idle' }
@@ -123,24 +121,17 @@ export function useFolderConfig(folderPath: string | null): FolderConfigHandle {
 export function useTemplate(
   folder: string | null,
   name: string | null,
-  target?: TemplateTarget,
 ): AsyncState<TemplateDetail> {
   const [state, setState] = useState<AsyncState<TemplateDetail>>({ status: 'idle' });
 
   useEffect(() => {
-    if (!name) {
-      setState({ status: 'idle' });
-      return;
-    }
-    if (target !== 'user' && folder === null) {
+    if (!name || folder === null) {
       setState({ status: 'idle' });
       return;
     }
     let cancelled = false;
     setState({ status: 'loading' });
-    const folderParam = target === 'user' ? '' : (folder ?? '');
-    let qs = `?folder=${encodeURIComponent(folderParam)}&name=${encodeURIComponent(name)}`;
-    if (target !== undefined) qs += `&target=${encodeURIComponent(target)}`;
+    const qs = `?folder=${encodeURIComponent(folder)}&name=${encodeURIComponent(name)}`;
     fetch(`/api/template${qs}`)
       .then(async (r) => {
         if (!r.ok) {
@@ -167,7 +158,7 @@ export function useTemplate(
     return () => {
       cancelled = true;
     };
-  }, [folder, name, target]);
+  }, [folder, name]);
 
   return state;
 }

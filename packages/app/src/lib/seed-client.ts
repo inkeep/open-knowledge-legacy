@@ -2,7 +2,6 @@ import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import type {
   OkPackId,
   OkScaffoldApplyResult,
-  OkScaffoldPersonalTemplateWriteResult,
   OkScaffoldPlan,
   OkSeedApplyResult,
   OkSeedError,
@@ -34,11 +33,9 @@ async function translateSeedError(res: Response): Promise<OkSeedError> {
 interface SeedPlanOptions {
   rootDir?: string;
   packId?: OkPackId;
-  includePersonalTemplates?: boolean;
 }
 interface SeedApplyOptions {
   packId?: OkPackId;
-  includePersonalTemplates?: boolean;
 }
 
 interface SeedClientShape {
@@ -61,7 +58,6 @@ export function seedClient(): SeedClientShape {
       const params = new URLSearchParams();
       if (options?.rootDir) params.set('rootDir', options.rootDir);
       if (options?.packId) params.set('packId', options.packId);
-      if (options?.includePersonalTemplates) params.set('includePersonalTemplates', 'true');
       const qs = params.toString();
       const res = await fetch(`/api/seed/plan${qs ? `?${qs}` : ''}`);
       if (!res.ok) {
@@ -80,7 +76,6 @@ export function seedClient(): SeedClientShape {
         body: JSON.stringify({
           plan,
           packId: options?.packId,
-          includePersonalTemplates: options?.includePersonalTemplates,
         }),
       });
       if (!res.ok) {
@@ -88,12 +83,11 @@ export function seedClient(): SeedClientShape {
       }
       const body = (await res.json().catch(() => null)) as {
         result?: OkScaffoldApplyResult;
-        personalTemplates?: OkScaffoldPersonalTemplateWriteResult;
       } | null;
       if (!body?.result) {
         return { ok: false, error: { kind: 'internal', message: 'Malformed apply response' } };
       }
-      return { ok: true, result: body.result, personalTemplates: body.personalTemplates };
+      return { ok: true, result: body.result };
     },
     listPacks: async (): Promise<OkSeedListPacksResult> => {
       const res = await fetch('/api/seed/packs');

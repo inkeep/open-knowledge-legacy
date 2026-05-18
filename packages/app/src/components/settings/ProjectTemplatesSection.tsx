@@ -5,7 +5,6 @@ export function ProjectTemplatesSection() {
     <TemplatesManagerSection
       config={{
         scope: 'local',
-        target: 'project',
         title: 'Project templates',
         description: (
           <>

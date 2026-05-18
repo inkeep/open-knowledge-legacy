@@ -3,12 +3,10 @@ import {
   coercePackId,
   listStarterPacks,
   type PackId,
-  planPersonalTemplates,
   planSeed as planSeedImpl,
   type ScaffoldPlan,
   SeedPrerequisiteError,
   SeedRootDirError,
-  writePersonalTemplates as writePersonalTemplatesImpl,
 } from '@inkeep/open-knowledge-server';
 import type {
   OkSeedApplyResult,
@@ -26,7 +24,6 @@ interface SeedIpcDeps {
   resolveProjectRoot: () => string | undefined;
   planSeed?: typeof planSeedImpl;
   applySeed?: typeof applySeedImpl;
-  writePersonalTemplates?: typeof writePersonalTemplatesImpl;
 }
 
 function noProjectError(): { ok: false; error: { kind: 'no-project'; message: string } } {
@@ -68,13 +65,7 @@ export async function handleSeedPlan(
       rootDir: options?.rootDir,
       packId,
     });
-    const personalTemplates = options?.includePersonalTemplates
-      ? planPersonalTemplates()
-      : undefined;
-    return {
-      ok: true,
-      plan: personalTemplates ? { ...result, personalTemplates } : result,
-    };
+    return { ok: true, plan: result };
   } catch (err) {
     if (err instanceof SeedPrerequisiteError) {
       return { ok: false, error: { kind: 'prerequisite-missing', message: err.message } };
@@ -95,7 +86,6 @@ export async function handleSeedApply(
   if (!projectRoot) return noProjectError();
 
   const apply = deps.applySeed ?? applySeedImpl;
-  const writePersonalTemplates = deps.writePersonalTemplates ?? writePersonalTemplatesImpl;
   const rawPackId = options?.packId;
   const packId: PackId | undefined = coercePackId(rawPackId);
   if (typeof rawPackId === 'string' && rawPackId.length > 0 && packId === undefined) {
@@ -106,10 +96,7 @@ export async function handleSeedApply(
   }
   try {
     const result = await apply(plan, { projectDir: projectRoot, packId });
-    const personalTemplates = options?.includePersonalTemplates
-      ? writePersonalTemplates()
-      : undefined;
-    return { ok: true, result, personalTemplates };
+    return { ok: true, result };
   } catch (err) {
     return internalError(err);
   }

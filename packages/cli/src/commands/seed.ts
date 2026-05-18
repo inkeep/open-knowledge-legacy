@@ -9,7 +9,6 @@ import {
   SeedPrerequisiteError,
   STARTER_PACK_IDS,
   STARTER_PACKS,
-  writePersonalTemplates,
 } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { accent, dim, error as errorColor, info, success, warning } from '../ui/colors.ts';
@@ -18,7 +17,6 @@ interface SeedCommandOptions {
   cwd?: string;
   root?: string;
   pack?: PackId;
-  personalTemplates?: boolean;
   yes?: boolean;
   dryRun?: boolean;
   confirmStream?: NodeJS.ReadableStream;
@@ -67,31 +65,6 @@ export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedComman
 
   if (plan.created.length === 0) {
     const packName = STARTER_PACKS[packId].name;
-    if (opts.personalTemplates && !opts.dryRun) {
-      const ptResult = writePersonalTemplates();
-      if (ptResult.errors.length > 0) {
-        const lines = ptResult.errors.map((e) => `  ${warning('!')} ${e.path}: ${e.error}`);
-        return {
-          status: 'failed',
-          message: [
-            `${success(`Your ${packName} pack is already seeded.`)}`,
-            `${warning('Personal templates: some writes failed:')}`,
-            ...lines,
-          ].join('\n'),
-          plan,
-          exitCode: 1,
-        };
-      }
-      const wrote = ptResult.written.length;
-      if (wrote > 0) {
-        return {
-          status: 'applied',
-          message: `${success(`Your ${packName} pack is already seeded.`)}\n${success(`✓ Wrote ${wrote} personal template${wrote === 1 ? '' : 's'}`)} ${dim('to ~/.ok/templates/')}`,
-          plan,
-          exitCode: 0,
-        };
-      }
-    }
     return {
       status: 'no-op',
       message: `${success(`Your ${packName} pack is already seeded.`)}\n${dim('Nothing to do.')}`,
@@ -139,23 +112,10 @@ export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedComman
     };
   }
 
-  let personalTemplatesNote = '';
-  if (opts.personalTemplates) {
-    const result = writePersonalTemplates();
-    if (result.written.length > 0) {
-      personalTemplatesNote = `\n${success(`✓ Wrote ${result.written.length} personal template(s)`)} ${dim(`to ~/.ok/templates/`)}`;
-    } else if (result.errors.length === 0) {
-      personalTemplatesNote = `\n${dim('Personal templates already present — skipped.')}`;
-    } else {
-      const lines = result.errors.map((e) => `  ${warning('!')} ${e.path}: ${e.error}`);
-      personalTemplatesNote = `\n${warning('Personal templates: errors:')}\n${lines.join('\n')}`;
-    }
-  }
-
   const packName = STARTER_PACKS[packId].name;
   return {
     status: 'applied',
-    message: `${success(`✓ Seeded ${packName}`)} ${dim(`(${applyResult.applied} entries, ${applyResult.durationMs}ms)`)}${personalTemplatesNote}`,
+    message: `${success(`✓ Seeded ${packName}`)} ${dim(`(${applyResult.applied} entries, ${applyResult.durationMs}ms)`)}`,
     plan,
     exitCode: 0,
   };
@@ -236,10 +196,6 @@ export function seedCommand(): Command {
       '-r, --root <path>',
       'Subfolder (relative to the project dir) to scaffold into — created if missing. Defaults to the project root when omitted in non-interactive runs; prompts on a TTY.',
     )
-    .option(
-      '--personal-templates',
-      'Also write the personal-templates pack (daily journal, reading log, etc.) to ~/.ok/templates/ — idempotent.',
-    )
     .option('--list-packs', 'List available starter packs and exit.')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--dry-run', 'Print the plan and exit without writing')
@@ -249,7 +205,6 @@ export function seedCommand(): Command {
         opts: {
           pack?: string;
           root?: string;
-          personalTemplates?: boolean;
           listPacks?: boolean;
           yes?: boolean;
           dryRun?: boolean;
@@ -270,7 +225,6 @@ export function seedCommand(): Command {
           cwd: pathArg ?? process.cwd(),
           pack: opts.pack as PackId | undefined,
           root: opts.root,
-          personalTemplates: opts.personalTemplates,
           yes: opts.yes,
           dryRun: opts.dryRun,
         });

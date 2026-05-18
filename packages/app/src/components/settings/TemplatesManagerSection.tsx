@@ -14,16 +14,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  type TemplateMenuEntry,
-  type TemplateTarget,
-  useFolderConfig,
-} from '@/hooks/use-folder-config';
+import { type TemplateMenuEntry, useFolderConfig } from '@/hooks/use-folder-config';
 import { deleteTemplate } from '@/lib/folder-config-api';
 
 interface TemplatesManagerConfig {
   scope: TemplateMenuEntry['scope'];
-  target: TemplateTarget;
   title: string;
   description: ReactNode;
   emptyMessage: ReactNode;
@@ -33,8 +28,8 @@ interface TemplatesManagerConfig {
   /** DOM id to wire `<h2>` ↔ `<section aria-labelledby>` for screen readers,
    *  matching the convention used by every other Settings section. */
   settingsId: string;
-  /** Stable suffix for `data-testid` selectors (e.g., `'user-templates'` →
-   *  `settings-user-templates-section`). */
+  /** Stable suffix for `data-testid` selectors (e.g., `'project-templates'` →
+   *  `settings-project-templates-section`). */
   testIdPrefix: string;
 }
 
@@ -58,7 +53,7 @@ export function TemplatesManagerSection({ config }: { config: TemplatesManagerCo
 
   async function handleDelete(target: TemplateMenuEntry) {
     setDeleting(true);
-    const result = await deleteTemplate('', target.name, config.target);
+    const result = await deleteTemplate('', target.name);
     setDeleting(false);
     if (!result.ok) {
       toast.error(`Delete failed: ${result.error}`);
@@ -95,7 +90,6 @@ export function TemplatesManagerSection({ config }: { config: TemplatesManagerCo
           open={newOpen}
           onOpenChange={setNewOpen}
           onCreated={refresh}
-          target={config.target}
         />
       </section>
     );
@@ -165,7 +159,6 @@ export function TemplatesManagerSection({ config }: { config: TemplatesManagerCo
         open={newOpen}
         onOpenChange={setNewOpen}
         onCreated={refresh}
-        target={config.target}
       />
 
       <TemplateEditDialog
@@ -175,7 +168,6 @@ export function TemplatesManagerSection({ config }: { config: TemplatesManagerCo
           if (!open) setEditTarget(null);
         }}
         onSaved={refresh}
-        target={config.target}
       />
 
       <Dialog

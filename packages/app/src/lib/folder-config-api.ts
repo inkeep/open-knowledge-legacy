@@ -9,8 +9,6 @@ interface TemplateFrontmatterFields {
   tags?: string[];
 }
 
-export type TemplateTarget = 'project' | 'user';
-
 async function readErrorBody(res: Response): Promise<string> {
   const body = (await res.json().catch(() => null)) as unknown;
   return parseApiError(body) ?? `HTTP ${res.status}`;
@@ -40,7 +38,6 @@ export async function saveTemplate(input: {
   name: string;
   frontmatter: TemplateFrontmatterFields;
   body: string;
-  target?: TemplateTarget;
 }): Promise<{ ok: true; created: boolean; warnings: string[] } | { ok: false; error: string }> {
   try {
     const res = await fetch('/api/template', {
@@ -69,11 +66,9 @@ export async function saveTemplate(input: {
 export async function deleteTemplate(
   folder: string,
   name: string,
-  target?: TemplateTarget,
 ): Promise<{ ok: true; existed: boolean } | { ok: false; error: string }> {
   try {
-    let qs = `?folder=${encodeURIComponent(folder)}&name=${encodeURIComponent(name)}`;
-    if (target !== undefined) qs += `&target=${encodeURIComponent(target)}`;
+    const qs = `?folder=${encodeURIComponent(folder)}&name=${encodeURIComponent(name)}`;
     const res = await fetch(`/api/template${qs}`, { method: 'DELETE' });
     if (!res.ok) {
       return { ok: false, error: await readErrorBody(res) };

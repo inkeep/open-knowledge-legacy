@@ -55,7 +55,6 @@ import {
   resolveLeafSchema,
 } from './schema-walker';
 import type { SlotForwardedProps } from './slot-forwarded-props';
-import { UserTemplatesSection } from './UserTemplatesSection';
 import { pickFirstIssueForPath, useConfigForm } from './use-config-form';
 
 type Scope = 'user' | 'project';
@@ -161,10 +160,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       id: 'user',
       label: 'User',
       enabled: true,
-      items: [
-        { id: 'preferences', label: 'Preferences' },
-        { id: 'user-templates', label: 'User templates' },
-      ],
+      items: [{ id: 'preferences', label: 'Preferences' }],
     },
     {
       id: 'project',
@@ -320,9 +316,6 @@ function SettingsContent({
   }
   if (activeId === 'sync') {
     return <SyncSection />;
-  }
-  if (activeId === 'user-templates') {
-    return <UserTemplatesSection />;
   }
   if (activeId === 'project-templates') {
     return <ProjectTemplatesSection />;

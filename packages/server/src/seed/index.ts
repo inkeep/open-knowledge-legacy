@@ -1,12 +1,4 @@
 export { applySeed } from './apply.ts';
-export {
-  PERSONAL_TEMPLATE_NAMES,
-  PERSONAL_TEMPLATES,
-  type PersonalTemplatePlan,
-  type PersonalTemplateWriteResult,
-  planPersonalTemplates,
-  writePersonalTemplates,
-} from './personal-templates.ts';
 export { planSeed } from './plan.ts';
 export {
   buildStarterFolderFrontmatterYaml,
