@@ -414,7 +414,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
     switchableProjects.length > 0 &&
     (trimmedDeferredQuery === '' ||
       switchableProjects.some((row) =>
-        matchesCommandQuery(`${row.name} ${row.path}`, deferredQuery, ['recent project']),
+        matchesCommandQuery(`${row.name} ${row.path}`, deferredQuery, ['open recent project']),
       ));
   const showAgentGroup =
     !isTagMode &&
@@ -701,8 +701,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
           {showProjectOpenFolder ||
           showProjectSwitch ||
           showSettings ||
-          showInstallClaudeDesktop ||
-          showProjectRecents ? (
+          showInstallClaudeDesktop ? (
             <CommandGroup heading="Project">
               {showProjectOpenFolder && bridge ? (
                 <CommandItem
@@ -767,44 +766,47 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
                   <span>Install for Claude Chat & Cowork (Desktop App)</span>
                 </CommandItem>
               ) : null}
-              {showProjectRecents && bridge
-                ? switchableProjects
-                    .filter((row) =>
-                      matchesCommandQuery(`${row.name} ${row.path}`, deferredQuery, [
-                        'recent project',
-                      ]),
-                    )
-                    .slice(0, 10)
-                    .map((row) => (
-                      <CommandItem
-                        key={row.path}
-                        value={`${row.name} ${row.path} recent project`}
-                        disabled={row.missing}
-                        onSelect={() =>
-                          runAction(
-                            () =>
-                              bridge.project.open({
-                                path: row.path,
-                                target: 'new-window',
-                                entryPoint: 'recents',
-                              }),
-                            'Failed to open project.',
-                          )
-                        }
-                        data-testid={`command-palette-recent-${row.path}`}
-                        className="items-start"
-                      >
-                        <Box className="mt-0.5" />
-                        <div className="flex min-w-0 flex-col gap-1">
-                          <span className="truncate font-medium">{row.name}</span>
-                          <span className="truncate text-muted-foreground text-xs">
-                            {row.path}
-                            {row.missing ? '  (missing)' : ''}
-                          </span>
-                        </div>
-                      </CommandItem>
-                    ))
-                : null}
+            </CommandGroup>
+          ) : null}
+
+          {showProjectRecents && bridge ? (
+            <CommandGroup heading="Open recent project">
+              {switchableProjects
+                .filter((row) =>
+                  matchesCommandQuery(`${row.name} ${row.path}`, deferredQuery, [
+                    'open recent project',
+                  ]),
+                )
+                .slice(0, 10)
+                .map((row) => (
+                  <CommandItem
+                    key={row.path}
+                    value={`${row.name} ${row.path} recent project`}
+                    disabled={row.missing}
+                    onSelect={() =>
+                      runAction(
+                        () =>
+                          bridge.project.open({
+                            path: row.path,
+                            target: 'new-window',
+                            entryPoint: 'recents',
+                          }),
+                        'Failed to open project.',
+                      )
+                    }
+                    data-testid={`command-palette-recent-${row.path}`}
+                    className="items-start"
+                  >
+                    <Box className="mt-0.5" />
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <span className="truncate font-medium">{row.name}</span>
+                      <span className="truncate text-muted-foreground text-xs">
+                        {row.path}
+                        {row.missing ? '  (missing)' : ''}
+                      </span>
+                    </div>
+                  </CommandItem>
+                ))}
             </CommandGroup>
           ) : null}
 
