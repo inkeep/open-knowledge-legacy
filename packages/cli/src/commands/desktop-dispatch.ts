@@ -140,9 +140,12 @@ export function launchDesktop(deps: LaunchDeps): void {
   log(
     'Launching Open Knowledge desktop (use `ok start` for the browser server, or `OK_FORCE_BROWSER=1` to always skip)',
   );
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
   const child = deps.spawn('open', ['-b', DESKTOP_BUNDLE_ID], {
     detached: true,
     stdio: 'ignore',
+    env,
   } satisfies SpawnOptions);
   child.unref();
 }

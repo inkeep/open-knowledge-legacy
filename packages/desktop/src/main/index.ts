@@ -72,13 +72,7 @@ import {
   type BundleReplaceWatcherHandle,
   startBundleReplaceWatcher,
 } from './bundle-replace-detector.ts';
-import {
-  createBrokenSymlinkRepairHandler,
-  getInstallStatus,
-  installCli,
-  uninstallCli,
-  wrapperPathInBundle,
-} from './cli-install.ts';
+import { getInstallStatus, installCli, uninstallCli, wrapperPathInBundle } from './cli-install.ts';
 import { requestUserConsent, walkExceedsCap } from './consent-dialog.ts';
 import {
   CreateNewProjectError,
@@ -116,6 +110,7 @@ import {
   trashItem as trashItemImpl,
 } from './ipc-handlers.ts';
 import { logIpcError } from './ipc-log.ts';
+import { checkAndRepairLaunchJsonOnProjectOpen } from './launch-json-wiring.ts';
 import {
   checkAndRepairMcpWiringOnStartup,
   type McpStartupRepairResult,
@@ -130,6 +125,7 @@ import {
   recordCreateNewBannerShown,
   recordOnboardingFlow,
 } from './onboarding-telemetry.ts';
+import { type EnsureCliOnPathResult, ensureCliOnPath } from './path-install.ts';
 import {
   applyReducedTransparency,
   type BrowserWindowVibrancyTarget,
@@ -478,6 +474,18 @@ async function openProject(
 
   const warningsCount = validation.warnings.length;
   const resolvedProjectDir = discovery.projectDir;
+  void checkAndRepairLaunchJsonOnProjectOpen({
+    projectDir: resolvedProjectDir,
+    executablePath: app.getPath('exe'),
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    forceEnv: process.env.OK_M6B_FORCE ?? null,
+    reclaimDisableEnv: process.env.OK_RECLAIM_DISABLE ?? null,
+  }).catch((err) => {
+    console.warn('[main] launch.json reclaim failed', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  });
   let didEnsureGit = false;
   let flowKind: OnboardingFlowKind;
   let contentDirChanged = false;
@@ -815,6 +823,10 @@ async function runApplicationMenuRefresh(): Promise<void> {
   });
 }
 
+function formatUnknownError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 function sendMenuActionToFocused(action: OkMenuAction): void {
   const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
   if (!target) return;
@@ -841,6 +853,7 @@ function createMcpWiringOpts(opts: { forceShow?: boolean } = {}) {
     ipcMain,
     cli: createMcpWiringCliSurface(),
     forceEnv: process.env.OK_M6B_FORCE ?? null,
+    reclaimDisableEnv: process.env.OK_RECLAIM_DISABLE ?? null,
     forceShow: opts.forceShow ?? false,
   };
 }
@@ -849,27 +862,50 @@ function armMcpWiring(opts: { forceShow?: boolean } = {}): RunMcpWiringHandle {
   return runMcpWiringOnFirstLaunch(createMcpWiringOpts(opts));
 }
 
-function dispatchMcpRepairToastWhenReady(result: McpStartupRepairResult): void {
-  if (result.status === 'failed') {
-    console.warn('[main] MCP startup repair failed for editors', {
-      failedEditors: result.failedEditors,
+function dispatchStartupReclaimToastWhenReady(results: {
+  mcp: McpStartupRepairResult;
+  path: EnsureCliOnPathResult;
+}): void {
+  const { mcp, path } = results;
+  if (mcp.status === 'failed') {
+    dispatchToastWhenReady({
+      kind: 'startup-reclaim',
+      mcp: { status: 'failed', editors: mcp.failedEditors.map((f) => f.editor) },
+      path:
+        path.status === 'installed'
+          ? { status: 'installed', summary: path.summary }
+          : path.status === 'failed-all'
+            ? { status: 'failed', summary: path.error }
+            : { status: 'none' },
     });
-    const payload = {
-      kind: 'mcp-repair-failed' as const,
-      failedEditors: result.failedEditors.map((f) => f.editor),
-    };
-    dispatchToastWhenReady(payload);
     return;
   }
-  if (result.status !== 'repaired') return;
-  dispatchToastWhenReady({ kind: 'mcp-repaired' as const, editors: result.repairedEditors });
+  const hasMcp = mcp.status === 'repaired';
+  const hasPath = path.status === 'installed' || path.status === 'failed-all';
+  if (!hasMcp && !hasPath) return;
+  dispatchToastWhenReady({
+    kind: 'startup-reclaim',
+    mcp: hasMcp ? { status: 'repaired', editors: mcp.repairedEditors } : { status: 'none' },
+    path:
+      path.status === 'installed'
+        ? { status: 'installed', summary: path.summary }
+        : path.status === 'failed-all'
+          ? { status: 'failed', summary: path.error }
+          : { status: 'none' },
+  });
 }
 
-function dispatchToastWhenReady(
-  payload:
-    | { readonly kind: 'mcp-repaired'; readonly editors: readonly string[] }
-    | { readonly kind: 'mcp-repair-failed'; readonly failedEditors: readonly string[] },
-): void {
+function dispatchToastWhenReady(payload: {
+  readonly kind: 'startup-reclaim';
+  readonly mcp:
+    | { readonly status: 'none' }
+    | { readonly status: 'repaired'; readonly editors: readonly string[] }
+    | { readonly status: 'failed'; readonly editors: readonly string[] };
+  readonly path:
+    | { readonly status: 'none' }
+    | { readonly status: 'installed'; readonly summary: string }
+    | { readonly status: 'failed'; readonly summary: string };
+}): void {
   let dispatched = false;
   const send = (win: Electron.BrowserWindow): void => {
     if (dispatched || win.isDestroyed()) return;
@@ -877,7 +913,7 @@ function dispatchToastWhenReady(
       sendToRenderer(win.webContents, 'ok:onboarding:toast', payload);
       dispatched = true;
     } catch (err) {
-      console.warn('[main] MCP repair toast send failed', {
+      console.warn('[main] startup reclaim toast send failed', {
         err: err instanceof Error ? err.message : String(err),
       });
     }
@@ -904,24 +940,6 @@ function dispatchToastWhenReady(
   setTimeout(() => {
     app.off('browser-window-created', onCreated);
   }, 60_000);
-}
-
-function maybeOfferBrokenSymlinkRepair(): Promise<void> {
-  const handler = createBrokenSymlinkRepairHandler({
-    executablePath: app.getPath('exe'),
-    platform: process.platform,
-    isPackaged: app.isPackaged,
-    dialog,
-    install: installCli,
-    refreshMenu: refreshApplicationMenu,
-    appVersion: app.getVersion(),
-    getDismissedToken: () => appState.dismissedRepairForBundle,
-    setDismissedToken: (token) => {
-      appState = { ...appState, dismissedRepairForBundle: token };
-      saveAppState(appState);
-    },
-  });
-  return handler();
 }
 
 const RECENT_GIT_ROOTS_CAP = 256;
@@ -1743,20 +1761,32 @@ function bootPrimaryInstance(): void {
         });
       });
 
-      void maybeOfferBrokenSymlinkRepair().catch((err) => {
-        console.error('[main] broken-symlink repair prompt failed', {
-          err: (err as Error).message,
-        });
-      });
-
       mcpWiringHandle = armMcpWiring();
-      void checkAndRepairMcpWiringOnStartup(createMcpWiringOpts())
-        .then(dispatchMcpRepairToastWhenReady)
-        .catch((err) => {
-          console.error('[main] MCP startup repair failed', {
-            err: err instanceof Error ? err.message : String(err),
-          });
-        });
+      void Promise.allSettled([
+        checkAndRepairMcpWiringOnStartup(createMcpWiringOpts()),
+        ensureCliOnPath({
+          executablePath: app.getPath('exe'),
+          isPackaged: app.isPackaged,
+          platform: process.platform,
+          forceEnv: process.env.OK_M6B_FORCE ?? null,
+          reclaimDisableEnv: process.env.OK_RECLAIM_DISABLE ?? null,
+          home: osHomedir(),
+          bundleVersion: app.getVersion(),
+        }),
+      ]).then(([mcpSettled, pathSettled]) => {
+        const mcp: McpStartupRepairResult =
+          mcpSettled.status === 'fulfilled'
+            ? mcpSettled.value
+            : {
+                status: 'failed',
+                failedEditors: [{ editor: 'claude', error: formatUnknownError(mcpSettled.reason) }],
+              };
+        const path: EnsureCliOnPathResult =
+          pathSettled.status === 'fulfilled'
+            ? pathSettled.value
+            : { status: 'failed-all', error: formatUnknownError(pathSettled.reason) };
+        dispatchStartupReclaimToastWhenReady({ mcp, path });
+      });
 
       const optionHeld = process.argv.includes('--navigator');
       if (appState.lastOpenedProject && !optionHeld && existsSync(appState.lastOpenedProject)) {

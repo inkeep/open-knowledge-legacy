@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { SpawnOptions } from 'node:child_process';
 import {
   DESKTOP_BUNDLE_ID,
   type DetectDeps,
@@ -198,7 +199,7 @@ describe('detectDesktop — headless gate (FR9 — CI is intentionally NOT a tri
 
 describe('launchDesktop — spawn shape (FR11)', () => {
   test('spawns open with -b <bundle-id>, detached, stdio:ignore, unref()', () => {
-    let captured: { command?: string; args?: readonly string[]; opts?: unknown } = {};
+    let captured: { command?: string; args?: readonly string[]; opts?: SpawnOptions } = {};
     let unrefCalled = false;
 
     const fakeChild = {
@@ -206,7 +207,7 @@ describe('launchDesktop — spawn shape (FR11)', () => {
         unrefCalled = true;
       },
     };
-    const fakeSpawn = ((command: string, args: readonly string[], opts: unknown) => {
+    const fakeSpawn = ((command: string, args: readonly string[], opts: SpawnOptions) => {
       captured = { command, args, opts };
       return fakeChild;
     }) as unknown as Parameters<typeof launchDesktop>[0]['spawn'];
@@ -216,11 +217,32 @@ describe('launchDesktop — spawn shape (FR11)', () => {
 
     expect(captured.command).toBe('open');
     expect(captured.args).toEqual(['-b', DESKTOP_BUNDLE_ID]);
-    expect(captured.opts).toEqual({ detached: true, stdio: 'ignore' });
+    expect(captured.opts?.detached).toBe(true);
+    expect(captured.opts?.stdio).toBe('ignore');
     expect(unrefCalled).toBe(true);
     expect(logged).toContain('Launching Open Knowledge desktop');
     expect(logged).toContain('OK_FORCE_BROWSER=1');
     expect(logged).toContain('ok start');
+  });
+
+  test('spawn env omits ELECTRON_RUN_AS_NODE so the launched GUI does not boot as a Node host', () => {
+    const prevValue = process.env.ELECTRON_RUN_AS_NODE;
+    process.env.ELECTRON_RUN_AS_NODE = '1';
+    try {
+      let captured: { opts?: SpawnOptions } = {};
+      const fakeSpawn = ((_command: string, _args: readonly string[], opts: SpawnOptions) => {
+        captured = { opts };
+        return { unref: () => {} };
+      }) as unknown as Parameters<typeof launchDesktop>[0]['spawn'];
+
+      launchDesktop({ spawn: fakeSpawn, log: () => {} });
+
+      expect(captured.opts?.env).toBeDefined();
+      expect(captured.opts?.env).not.toHaveProperty('ELECTRON_RUN_AS_NODE');
+    } finally {
+      if (prevValue === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = prevValue;
+    }
   });
 
   test('uses bundle ID com.inkeep.open-knowledge (matches electron-builder appId)', () => {
