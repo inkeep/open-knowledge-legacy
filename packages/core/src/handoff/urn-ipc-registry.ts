@@ -48,6 +48,7 @@ export const URN_HTTP_ONLY: ReadonlySet<ProblemType> = new Set<ProblemType>([
   'urn:ok:error:target-not-found',
   'urn:ok:error:stale-target',
   'urn:ok:error:frontmatter-edit-not-supported',
+  'urn:ok:error:invalid-frontmatter-patch',
   'urn:ok:error:no-active-session',
   'urn:ok:error:too-many-agent-sessions',
   'urn:ok:error:doc-not-found',

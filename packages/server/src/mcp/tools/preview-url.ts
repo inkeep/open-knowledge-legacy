@@ -1,9 +1,8 @@
-import { realpathSync } from 'node:fs';
-import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
+import { resolveLockDir } from '../../config/paths.ts';
 import { readUiLock } from '../../ui-lock.ts';
-import { type ConfigOrResolver, resolveConfig } from './shared.ts';
+import type { ConfigOrResolver } from './shared.ts';
 
-export const PREVIEW_URL_SOURCES = ['electron-protocol', 'lock'] as const;
+export const PREVIEW_URL_SOURCES = ['lock'] as const;
 export type PreviewUrlSource = (typeof PREVIEW_URL_SOURCES)[number];
 
 interface PreviewUrlResult {
@@ -13,10 +12,7 @@ interface PreviewUrlResult {
 
 interface PreviewUrlContext {
   lockDir: string;
-  contentDir?: string;
 }
-
-const ELECTRON_PROTOCOL_ENV_VAR = 'OK_ELECTRON_PROTOCOL_HOST';
 
 export interface PreviewUrlDeps {
   config: ConfigOrResolver;
@@ -33,10 +29,8 @@ export async function resolvePreviewUrlForTool(
   cwd?: string,
 ): Promise<PreviewUrlResult | null> {
   const effectiveCwd = cwd ?? (await deps.resolveCwd());
-  const config = await resolveConfig(deps.config, effectiveCwd);
-  const contentDir = resolveContentDir(config, effectiveCwd);
   const lockDir = resolveLockDir(effectiveCwd);
-  return resolvePreviewUrl(docName, { lockDir, contentDir });
+  return resolvePreviewUrl(docName, { lockDir });
 }
 
 export interface UiInfo {
@@ -63,10 +57,8 @@ export async function buildListResolver(
   cwd?: string,
 ): Promise<{ resolve(docName: string): PreviewUrlResult | null; ui: UiInfo }> {
   const effectiveCwd = cwd ?? (await deps.resolveCwd());
-  const config = await resolveConfig(deps.config, effectiveCwd);
-  const contentDir = resolveContentDir(config, effectiveCwd);
   const lockDir = resolveLockDir(effectiveCwd);
-  const ctx: PreviewUrlContext = { lockDir, contentDir };
+  const ctx: PreviewUrlContext = { lockDir };
   return {
     resolve: (docName: string) => resolvePreviewUrl(docName, ctx),
     ui: resolveUiInfo(ctx),
@@ -85,18 +77,6 @@ export function resolvePreviewUrl(
   ctx: PreviewUrlContext,
 ): PreviewUrlResult | null {
   const hash = `/#/${encodeDocName(docName)}`;
-
-  if (process.env[ELECTRON_PROTOCOL_ENV_VAR] === '1' && ctx.contentDir) {
-    try {
-      const projectRealpath = realpathSync(ctx.contentDir);
-      const url = `openknowledge://open?project=${encodeURIComponent(projectRealpath)}&doc=${encodeURIComponent(docName)}`;
-      return { url, source: 'electron-protocol' };
-    } catch (err) {
-      process.stderr.write(
-        `[preview-url] realpathSync failed for ${ctx.contentDir}, falling through to http sources: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-    }
-  }
 
   try {
     const lock = readUiLock(ctx.lockDir);

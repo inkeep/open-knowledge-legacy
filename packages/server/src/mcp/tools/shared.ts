@@ -131,7 +131,7 @@ async function resolveServerUrl(x: ServerUrlOrResolver, cwd?: string): Promise<s
   return typeof x === 'function' ? await x(cwd) : x;
 }
 
-export async function resolveConfig(x: ConfigOrResolver, cwd?: string): Promise<Config> {
+async function resolveConfig(x: ConfigOrResolver, cwd?: string): Promise<Config> {
   return typeof x === 'function' ? await x(cwd) : x;
 }
 

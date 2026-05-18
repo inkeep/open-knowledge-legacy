@@ -12,7 +12,7 @@ function defaultContent(): Config['content'] {
 test('buildInstructions carries the STOP rule on native tools for in-scope markdown', () => {
   const text = buildInstructions(defaultContent());
   expect(text).toContain('STOP');
-  expect(text).toContain('when `.ok/` exists');
+  expect(text).toContain('Open Knowledge MCP configured');
   expect(text).toContain('write_document');
   expect(text).toContain('edit_document');
 });
@@ -24,14 +24,11 @@ test('buildInstructions carries the preview-attach rule', () => {
   expect(text).toContain('previewUrl');
 });
 
-test('buildInstructions points readers at the Agent Skill for full guidance (wiki-links, frontmatter, anti-patterns)', () => {
+test('buildInstructions points readers at the bundled open-knowledge skill for full guidance', () => {
   const text = buildInstructions(defaultContent());
-  expect(text).toContain('## Full guidance');
   expect(text).toContain('open-knowledge');
-  expect(text).toContain('Agent Skill');
-  expect(text).toContain('wiki-link');
-  expect(text).toContain('frontmatter');
-  expect(text).toContain('anti-patterns');
+  expect(text).toContain('skill');
+  expect(text).toContain('~/.ok/skills/open-knowledge/SKILL.md');
 });
 
 test('buildInstructions documents the read tool routing (exec / read_document / search / grep)', () => {
@@ -46,20 +43,26 @@ test('buildInstructions documents the read tool routing (exec / read_document / 
 test('buildInstructions surfaces an explicit native-tool escape hatch', () => {
   const text = buildInstructions(defaultContent());
   expect(text).toContain('Escape hatch');
-  expect(text).toContain('no `.ok/`');
   expect(text).toContain('Open Knowledge MCP unavailable:');
 });
 
-test('buildInstructions interpolates content.dir and points at .okignore for path scope', () => {
-  const content: Config['content'] = {
-    dir: 'wiki',
-  };
-  const text = buildInstructions(content);
-  expect(text).toContain('Content dir: wiki');
+test('buildInstructions surfaces the scope-recap section pointing at .okignore', () => {
+  const text = buildInstructions(defaultContent());
+  expect(text).toContain('## Scope recap');
   expect(text).toContain('.okignore');
+  expect(text).toContain('content.dir');
 });
 
-test('buildInstructions stays under the 2 KB Claude per-server cap', () => {
+test('buildInstructions leads with the identity prefix', () => {
   const text = buildInstructions(defaultContent());
-  expect(Buffer.byteLength(text, 'utf8')).toBeLessThan(2048);
+  expect(text.startsWith('Open Knowledge is a markdown-CRDT knowledge base exposed via MCP.')).toBe(
+    true,
+  );
+});
+
+test('buildInstructions exceeds the legacy 2 KB Claude Code cap (generator emits a warning; see generate-instructions.test.ts)', () => {
+  const text = buildInstructions(defaultContent());
+  const bytes = Buffer.byteLength(text, 'utf8');
+  expect(bytes).toBeGreaterThan(2048);
+  expect(bytes).toBeLessThan(8192);
 });

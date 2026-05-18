@@ -36,6 +36,7 @@ import {
   AgentWriteRequestSchema,
   AgentWriteSuccessSchema,
   ASSET_EXTENSIONS,
+  applyPatchToFm,
   BacklinkCountsSuccessSchema,
   BacklinksSuccessSchema,
   CONFIG_DOC_NAME_OKIGNORE,
@@ -56,12 +57,15 @@ import {
   type DocumentListEntry,
   DocumentListSuccessSchema,
   DocumentReadSuccessSchema,
+  detectFmRegion,
   EmptyRequestSchema,
   encodeShareUrl,
   FolderConfigGetSuccessSchema,
   FolderConfigPutRequestSchema,
   FolderConfigPutSuccessSchema,
   ForwardLinksSuccessSchema,
+  FrontmatterPatchRequestSchema,
+  FrontmatterPatchSuccessSchema,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
@@ -293,6 +297,7 @@ import {
   updateFileIndex,
   upsertFolderIndexEntry as upsertFolderIndexEntryInIndex,
 } from './file-watcher.ts';
+import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
 import {
   classifyFsPath,
   normalizeFsPath,
@@ -2184,6 +2189,206 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     },
     { handler: 'agent-write-md', method: 'POST' },
+  );
+
+  const handleFrontmatterPatch = withValidation(
+    FrontmatterPatchRequestSchema,
+    async (_req, res, body) => {
+      try {
+        const effectiveDocName =
+          body.docName !== undefined && body.docName.length > 0 ? body.docName : 'test-doc';
+        const resolvedDocName = resolveAlias(effectiveDocName);
+
+        const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+          extractAgentIdentity(body);
+
+        if (isSystemDoc(resolvedDocName) || isConfigDoc(resolvedDocName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            `'${resolvedDocName}' is a reserved document name.`,
+            { handler: 'frontmatter-patch' },
+          );
+          return;
+        }
+
+        const patch = body.patch ?? {};
+        const patchKeys = Object.keys(patch);
+
+        const normalizedSummary = normalizeSummary(body.summary);
+        const { response: summaryResponse, stored: storedSummary } =
+          summaryResponseFields(normalizedSummary);
+        const session = await sessionManager.getSession(resolvedDocName, agentId, {
+          displayName: agentName,
+          colorSeed,
+          clientName,
+        });
+        const timestamp = new Date().toISOString();
+
+        let editError: import('@inkeep/open-knowledge-core').FmEditError | undefined;
+        let applied = false;
+        const appliedKeys: string[] = [];
+
+        try {
+          const icon = iconFromClientName(clientName);
+          const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+          agentPresenceBroadcaster?.setPresence(agentId, {
+            displayName: agentName,
+            icon,
+            color,
+            currentDoc: resolvedDocName,
+            mode: 'writing',
+            ts: Date.now(),
+          });
+
+          withSpanSync(
+            'ok.frontmatter_patch',
+            {
+              attributes: {
+                'doc.name': resolvedDocName,
+                'frontmatter_patch.keys': patchKeys.length,
+              },
+            },
+            () => {
+              session.dc.document.transact(() => {
+                const ytext = session.dc.document.getText('source');
+                const currentFull = ytext.toString();
+                const { fenced: currentFenced, body: currentBody } = detectFmRegion(currentFull);
+
+                const result = applyPatchToFm(currentFenced, patch);
+                if (!result.ok) {
+                  editError = result.error;
+                  return;
+                }
+
+                for (const key of Object.keys(patch)) {
+                  appliedKeys.push(key);
+                }
+
+                if (result.nextFenced !== currentFenced) {
+                  const newFull = result.nextFenced + currentBody;
+                  composeAndWriteRawBody(session.dc.document, newFull, 'agent');
+                  recordFrontmatterEditSurface('mcp-write');
+                }
+                applied = true;
+              }, session.origin);
+            },
+          );
+        } finally {
+          agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+        }
+
+        if (editError) {
+          let fieldErrors: Record<string, string>;
+          switch (editError.kind) {
+            case 'invalid_value':
+              fieldErrors = { [editError.key]: editError.reason };
+              break;
+            case 'reserved_key':
+              fieldErrors = { [editError.key]: `'${editError.key}' is reserved` };
+              break;
+            case 'unknown_key':
+              fieldErrors = { [editError.key]: `'${editError.key}' is not a recognized key` };
+              break;
+            case 'duplicate_target':
+              fieldErrors = { [editError.key]: `'${editError.key}' appears more than once` };
+              break;
+            case 'reorder_mismatch':
+              fieldErrors = {
+                __region__: `frontmatter reorder mismatch (expected: ${editError.expected.join(', ')}; got: ${editError.got.join(', ')})`,
+              };
+              break;
+            case 'region_too_large':
+              fieldErrors = {
+                __region__: `frontmatter region too large (${editError.bytes} > ${editError.limit} bytes)`,
+              };
+              break;
+            case 'parse_failed':
+              fieldErrors = { __region__: `frontmatter region unparseable: ${editError.reason}` };
+              break;
+            default: {
+              const _exhaustive: never = editError;
+              fieldErrors = {
+                __region__: `unhandled frontmatter edit error (${String(_exhaustive)})`,
+              };
+            }
+          }
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-frontmatter-patch',
+            'Frontmatter patch rejected: schema validation failed.',
+            { handler: 'frontmatter-patch', extensions: { fieldErrors } },
+          );
+          return;
+        }
+
+        if (applied && appliedKeys.length > 0) {
+          recordContributor(
+            resolvedDocName,
+            agentId,
+            agentName,
+            colorSeed,
+            undefined,
+            buildAgentActor({ clientName, clientVersion, label }),
+            storedSummary,
+          );
+          incrementAgentWriteCalls();
+          countNormalizedSummary(normalizedSummary);
+          flushDocToGit(resolvedDocName, 'frontmatter-patch');
+        }
+
+        agentFocusBroadcaster?.setFocus(agentId, {
+          agentName,
+          currentDoc: resolvedDocName,
+          writeKind: 'write',
+          ts: Date.now(),
+        });
+        onAgentWrite?.();
+
+        const subscriberCount = getSubscriberCount(resolvedDocName);
+        const systemSubscriberCount = getSystemSubscriberCount();
+
+        if (systemSubscriberCount === 0) {
+          hintEmittedCounter().add(1, {
+            'shadow.writer': 'agent',
+            'agent.type': resolveAgentType(clientName),
+          });
+        }
+
+        successResponse(
+          res,
+          200,
+          FrontmatterPatchSuccessSchema,
+          {
+            timestamp,
+            subscriberCount,
+            systemSubscriberCount,
+            appliedKeys,
+            ...(summaryResponse ? { summary: summaryResponse } : {}),
+          },
+          { handler: 'frontmatter-patch' },
+        );
+      } catch (e) {
+        if (e instanceof AgentSessionCapacityError) {
+          errorResponse(
+            res,
+            503,
+            'urn:ok:error:too-many-agent-sessions',
+            'Too many agent sessions.',
+            { handler: 'frontmatter-patch', cause: e, extraHeaders: { 'Retry-After': '10' } },
+          );
+          return;
+        }
+        log.error({ err: e }, '[frontmatter-patch] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'frontmatter-patch',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'frontmatter-patch', method: 'POST' },
   );
 
   const handleDocumentRead = withValidation(
@@ -8152,6 +8357,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/upload': handleUploadAsset,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
+    '/api/frontmatter-patch': handleFrontmatterPatch,
     '/api/agent-patch': handleAgentPatch,
     '/api/agent-undo': handleAgentUndo,
     '/api/agent-activity': handleAgentActivity,
@@ -8211,6 +8417,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/trash/cleanup',
     '/api/agent-write',
     '/api/agent-write-md',
+    '/api/frontmatter-patch',
     '/api/agent-patch',
     '/api/agent-undo',
     '/api/save-version',
