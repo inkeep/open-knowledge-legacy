@@ -51,16 +51,6 @@ const ALLOWLIST: readonly AllowlistEntry[] = [
     rationale: 'Radix Sheet.Overlay backdrop — no interactive content',
   },
   {
-    file: 'editor/extensions/InternalLinkPropPanel.tsx',
-    pattern: 'P1-fixed-inset-0',
-    rationale: 'Radix Dialog.Overlay backdrop — interactive content in centered DialogContent',
-  },
-  {
-    file: 'editor/extensions/WikiLinkPropPanel.tsx',
-    pattern: 'P1-fixed-inset-0',
-    rationale: 'Radix Dialog.Overlay backdrop — interactive content in centered DialogContent',
-  },
-  {
     file: 'components/ConflictResolver.tsx',
     pattern: 'P2-near-fullscreen-vw',
     rationale:
