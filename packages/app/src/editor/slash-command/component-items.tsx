@@ -1,5 +1,5 @@
 import type { Editor } from '@tiptap/react';
-import { FileUp, Hash } from 'lucide-react';
+import { CopyPlus, ExternalLink, FileUp, Hash } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { uploadAndInsert } from '../image-upload/index.ts';
 import { resolveIcon } from '../registry/icons.ts';
@@ -209,6 +209,48 @@ const PREVIEW_CONFIG: Record<string, PreviewConfig> = {
         </div>
         <p className="px-1 text-xs text-muted-foreground">
           Active panel content for the selected tab shows here.
+        </p>
+      </div>
+    ),
+  },
+  Mirror: {
+    description:
+      'Read-only copy of a MirrorSource block from another doc. Edit at the source — every Mirror reflects the change live.',
+    render: () => (
+      <div className="space-y-1.5">
+        <div className="relative rounded-md border border-dashed border-border/40 px-2 py-1.5">
+          <span className="absolute -top-2 right-1.5 flex items-center gap-1 rounded-md bg-background px-1 text-[10px] text-muted-foreground">
+            <ExternalLink className="size-2.5" aria-hidden="true" />
+            <span>
+              Mirror of <code className="font-mono">api-spec</code>
+            </span>
+          </span>
+          <span className="block h-1.5 w-3/4 rounded-sm bg-muted-foreground/30" />
+          <span className="mt-1 block h-1.5 w-2/3 rounded-sm bg-muted-foreground/20" />
+        </div>
+        <p className="px-1 text-[10px] text-muted-foreground">
+          Edits at the source land here — no copy-paste drift.
+        </p>
+      </div>
+    ),
+  },
+  MirrorSource: {
+    description:
+      'Mark a block as the source of truth. Mirror references elsewhere render this content read-only and update live as you edit here.',
+    render: () => (
+      <div className="space-y-1.5">
+        <div className="relative rounded-md border border-dashed border-border/50 px-2 py-1.5">
+          <span className="absolute -top-2 left-1.5 flex items-center gap-1 rounded-md bg-background px-1 text-[10px] text-muted-foreground">
+            <CopyPlus className="size-2.5" aria-hidden="true" />
+            <span>
+              Mirror source <code className="font-mono">api-spec</code>
+            </span>
+          </span>
+          <span className="block h-1.5 w-4/5 rounded-sm bg-muted-foreground/30" />
+          <span className="mt-1 block h-1.5 w-3/5 rounded-sm bg-muted-foreground/20" />
+        </div>
+        <p className="px-1 text-[10px] text-muted-foreground">
+          Authoritative content; mirrored verbatim everywhere it's referenced.
         </p>
       </div>
     ),

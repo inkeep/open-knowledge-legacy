@@ -1313,6 +1313,16 @@
   cursor: pointer;
   @apply font-medium dark:text-sky-blue dark:hover:text-azure-300 hover:underline hover:underline-offset-2;
 }
+/* Chrome-bar anchor items (Embed, Mirror) must NOT inherit the prose-link
+ * blue color or hover underline — they're icon buttons in the
+ * `.jsx-component-chrome` bubble, not body links. Specificity 0,1,1,1
+ * beats `.ProseMirror a` (0,0,1,1) and the Tailwind `@apply` rules above. */
+.ProseMirror a.jsx-chrome-btn,
+.ProseMirror a.jsx-chrome-btn:hover {
+  color: inherit;
+  text-decoration: none;
+  font-weight: inherit;
+}
 
 /* -------------------------------------------------------------------------
  * V2 InteractionLayer chips — InternalLink + WikiLink (precedent #27(h))
@@ -3790,7 +3800,10 @@ html.electron-mode [data-slot="sidebar-inner"] {
   display: none;
 }
 
-/* Chrome bar icon buttons — shared base style */
+/* Chrome bar icon buttons — shared base style. Applies to both `<button>`
+ * and `<a>` siblings; anchor chrome items (Embed's "open in new tab",
+ * Mirror's "Open source" deep-link) need this so they match the button
+ * siblings instead of inheriting the page's link styling. */
 .jsx-chrome-btn {
   display: inline-flex;
   align-items: center;
@@ -3800,6 +3813,7 @@ html.electron-mode [data-slot="sidebar-inner"] {
   border-radius: 0.1875rem;
   background: transparent;
   color: inherit;
+  text-decoration: none;
   cursor: pointer;
   transition:
     background-color 0.1s,

@@ -577,6 +577,40 @@ const pdfProps: PropDef[] = [
   },
 ];
 
+const mirrorProps: PropDef[] = [
+  {
+    name: 'src',
+    type: 'string',
+    required: true,
+    description: 'Path of the source doc, extension-less (e.g. `api-spec`).',
+    autoFocus: true,
+  },
+  {
+    name: 'anchor',
+    type: 'string',
+    required: true,
+    description: 'Id of the `<MirrorSource>` block within the source doc.',
+  },
+];
+
+const mirrorSourceProps: PropDef[] = [
+  {
+    name: 'id',
+    type: 'string',
+    required: true,
+    description:
+      'Stable id agents and authors use to reference this block from `<Mirror>` elsewhere.',
+    autoFocus: true,
+  },
+  {
+    name: 'children',
+    type: 'reactnode',
+    required: true,
+    description:
+      'Block content this MirrorSource owns — paragraphs, callouts, code, nested JSX, anything.',
+  },
+];
+
 function escapeHtmlAttr(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -816,6 +850,35 @@ export const builtInComponents: JsxComponentMeta[] = [
         value: p?.chart ?? '',
       };
     },
+  },
+  {
+    name: 'Mirror',
+    surface: 'canonical',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: mirrorProps,
+    icon: 'CopyPlus',
+    category: 'content',
+    displayName: 'Mirror',
+    description:
+      'Render a read-only copy of a `<MirrorSource>` block from another doc. Use to keep the same content in sync across multiple docs without copy-paste — edits land at the source, every Mirror reflects the change.',
+    searchTerms: ['mirror', 'sync', 'synced', 'transclude', 'embed', 'reference', 'shared block'],
+    serialize: (node, ctx) => emitMdxJsx('Mirror', node, ctx, mirrorProps),
+  },
+  {
+    name: 'MirrorSource',
+    surface: 'canonical',
+    hasChildren: true,
+    props: mirrorSourceProps,
+    icon: 'GitBranch',
+    category: 'content',
+    displayName: 'Mirror Source',
+    description:
+      'Mark a block as the source of truth for content that appears in multiple docs. Wrap any block content; `<Mirror src="…" anchor="<id>">` references render this verbatim read-only at every call-site. Edit here, propagate everywhere.',
+    searchTerms: ['mirror source', 'sync source', 'source block', 'master block', 'shared'],
+    exampleBody:
+      'Authoritative content lives inside this block — edits here propagate to every `<Mirror>` that references this id.',
+    serialize: (node, ctx) => emitMdxJsx('MirrorSource', node, ctx, mirrorSourceProps),
   },
 
   {

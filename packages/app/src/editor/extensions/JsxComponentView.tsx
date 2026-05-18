@@ -60,6 +60,7 @@ import {
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { ErrorBoundary, type FallbackProps } from 'react-error-boundary';
+import { hashFromDocName } from '@/lib/doc-hash';
 import {
   Popover,
   PopoverAnchor,
@@ -659,6 +660,29 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                 rel="noopener noreferrer"
                 className="jsx-chrome-btn"
                 aria-label="Open embedded URL in new tab"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <ExternalLink size={12} aria-hidden="true" />
+              </a>
+            )}
+
+          {/* Mirror — "Open source" deep link to the source doc. Mirrors the
+            Embed `<a>` pattern but builds a same-origin hash href via
+            `hashFromDocName(src, anchor)` instead of an external URL. The
+            DocumentProvider's hashchange listener picks up the navigation. */}
+          {descriptor.name === 'Mirror' &&
+            typeof primitiveProps.src === 'string' &&
+            primitiveProps.src.length > 0 && (
+              <a
+                href={hashFromDocName(
+                  primitiveProps.src,
+                  typeof primitiveProps.anchor === 'string' && primitiveProps.anchor.length > 0
+                    ? primitiveProps.anchor
+                    : null,
+                )}
+                className="jsx-chrome-btn"
+                aria-label={`Open source doc: ${primitiveProps.src}`}
+                title={`Open source: ${primitiveProps.src}`}
                 onMouseDown={(e) => e.stopPropagation()}
               >
                 <ExternalLink size={12} aria-hidden="true" />

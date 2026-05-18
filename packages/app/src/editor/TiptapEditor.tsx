@@ -523,34 +523,55 @@ const TiptapEditorChrome: FC<TiptapEditorChromeProps> = ({
   }, [provider.document, flashStateRef, wrapperRef]);
 
   useEffect(() => {
-    const hash = window.location.hash;
-    const qmark = hash.indexOf('?');
-    const anchorRaw = qmark >= 0 ? new URLSearchParams(hash.slice(qmark + 1)).get('anchor') : null;
-    if (!anchorRaw) return;
-    const anchor = anchorRaw; // narrowed to string for closure
+    function readAnchorFromHash(): string | null {
+      const hash = window.location.hash;
+      const qmark = hash.indexOf('?');
+      if (qmark < 0) return null;
+      return new URLSearchParams(hash.slice(qmark + 1)).get('anchor');
+    }
 
     let attempts = 0;
     let timeoutId: number | undefined;
-    let scrolled = false;
+    let pendingAnchor: string | null = null;
 
     function tryScroll() {
-      if (scrolled) return;
-      const el = document.getElementById(anchor);
+      if (!pendingAnchor) return;
+      const el =
+        document.getElementById(pendingAnchor) ??
+        document.querySelector(`[data-mirror-source-id="${CSS.escape(pendingAnchor)}"]`);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        scrolled = true;
-        provider.off('synced', tryScroll);
+        pendingAnchor = null;
+        attempts = 0;
       } else if (attempts < 20) {
         attempts += 1;
         timeoutId = window.setTimeout(tryScroll, 100);
+      } else {
+        pendingAnchor = null;
+        attempts = 0;
       }
     }
 
-    tryScroll();
+    function scheduleScrollFromHash() {
+      const anchor = readAnchorFromHash();
+      if (!anchor) return;
+      pendingAnchor = anchor;
+      attempts = 0;
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+        timeoutId = undefined;
+      }
+      tryScroll();
+    }
+
+    scheduleScrollFromHash();
     provider.on('synced', tryScroll);
+    window.addEventListener('hashchange', scheduleScrollFromHash);
+
     return () => {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
       provider.off('synced', tryScroll);
+      window.removeEventListener('hashchange', scheduleScrollFromHash);
     };
   }, [provider]);
 

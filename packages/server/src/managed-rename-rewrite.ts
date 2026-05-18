@@ -353,6 +353,93 @@ function rewriteMarkdownLinksInLine(
   return { markdown: rewritten, rewrites };
 }
 
+const MIRROR_TAG_RE = /<Mirror\b([^>]*)\/>/g;
+const MIRROR_SRC_ATTR_RE = /(\bsrc=)(["'])([^"']*)\2/g;
+
+function rewriteMirrorSrcInLine(
+  line: string,
+  oldDocName: string,
+  newDocName: string,
+): RenameRewriteResult {
+  let rewritten = '';
+  let rewrites = 0;
+  let idx = 0;
+
+  while (idx < line.length) {
+    if (line[idx] === '\\' && idx + 1 < line.length) {
+      rewritten += line.slice(idx, idx + 2);
+      idx += 2;
+      continue;
+    }
+
+    if (line[idx] === '`') {
+      const inlineCode = readInlineCode(line, idx);
+      if (inlineCode) {
+        rewritten += line.slice(idx, inlineCode.nextIndex);
+        idx = inlineCode.nextIndex;
+        continue;
+      }
+    }
+
+    if (line[idx] === '<') {
+      const tagRe = new RegExp(MIRROR_TAG_RE.source);
+      const sliceFromHere = line.slice(idx);
+      const match = tagRe.exec(sliceFromHere);
+      if (match && match.index === 0) {
+        const [full, attrs] = match;
+        const attrRe = new RegExp(MIRROR_SRC_ATTR_RE.source, MIRROR_SRC_ATTR_RE.flags);
+        const newAttrs = attrs.replace(attrRe, (whole, prefix, quote, value) => {
+          if (value === oldDocName) {
+            rewrites++;
+            return `${prefix}${quote}${newDocName}${quote}`;
+          }
+          return whole;
+        });
+        rewritten += `<Mirror${newAttrs}/>`;
+        idx += full.length;
+        continue;
+      }
+    }
+
+    rewritten += line[idx];
+    idx++;
+  }
+
+  return { markdown: rewritten, rewrites };
+}
+
+export function rewriteMirrorSrcForDocumentRename(
+  markdown: string,
+  oldDocName: string,
+  newDocName: string,
+): RenameRewriteResult {
+  let fence: FenceState | null = null;
+  let rewrites = 0;
+
+  const rewrittenMarkdown = splitLines(markdown)
+    .map(({ line, ending }) => {
+      if (fence) {
+        if (isFenceClose(line, fence)) {
+          fence = null;
+        }
+        return `${line}${ending}`;
+      }
+
+      const nextFence = matchFence(line);
+      if (nextFence) {
+        fence = nextFence;
+        return `${line}${ending}`;
+      }
+
+      const rewrittenLine = rewriteMirrorSrcInLine(line, oldDocName, newDocName);
+      rewrites += rewrittenLine.rewrites;
+      return `${rewrittenLine.markdown}${ending}`;
+    })
+    .join('');
+
+  return { markdown: rewrittenMarkdown, rewrites };
+}
+
 export function rewriteWikiLinksForDocumentRename(
   markdown: string,
   oldDocName: string,

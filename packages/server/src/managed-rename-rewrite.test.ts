@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   rewriteMarkdownLinksForDocumentRename,
+  rewriteMirrorSrcForDocumentRename,
   rewriteWikiLinksForDocumentRename,
 } from './managed-rename-rewrite.ts';
 
@@ -303,5 +304,112 @@ describe('rewriteMarkdownLinksForDocumentRename — image refs (FR-7)', () => {
       'archive/meeting',
     );
     expect(result).toEqual({ markdown: md, rewrites: 0 });
+  });
+});
+
+describe('rewriteMirrorSrcForDocumentRename', () => {
+  test('rewrites Mirror src when value matches the rename source', () => {
+    expect(
+      rewriteMirrorSrcForDocumentRename(
+        'Before <Mirror src="api-spec" anchor="deprecation" /> after.\n',
+        'api-spec',
+        'api-reference',
+      ),
+    ).toEqual({
+      markdown: 'Before <Mirror src="api-reference" anchor="deprecation" /> after.\n',
+      rewrites: 1,
+    });
+  });
+
+  test('leaves Mirror src that points at a different doc untouched', () => {
+    expect(
+      rewriteMirrorSrcForDocumentRename(
+        '<Mirror src="other-doc" anchor="foo" />\n',
+        'api-spec',
+        'api-reference',
+      ),
+    ).toEqual({
+      markdown: '<Mirror src="other-doc" anchor="foo" />\n',
+      rewrites: 0,
+    });
+  });
+
+  test('supports single-quoted attribute values', () => {
+    expect(
+      rewriteMirrorSrcForDocumentRename(
+        "<Mirror src='api-spec' anchor='deprecation' />\n",
+        'api-spec',
+        'api-reference',
+      ),
+    ).toEqual({
+      markdown: "<Mirror src='api-reference' anchor='deprecation' />\n",
+      rewrites: 1,
+    });
+  });
+
+  test('handles multiple Mirrors on the same line', () => {
+    expect(
+      rewriteMirrorSrcForDocumentRename(
+        '<Mirror src="api-spec" anchor="a" /> and <Mirror src="api-spec" anchor="b" />\n',
+        'api-spec',
+        'api-reference',
+      ),
+    ).toEqual({
+      markdown:
+        '<Mirror src="api-reference" anchor="a" /> and <Mirror src="api-reference" anchor="b" />\n',
+      rewrites: 2,
+    });
+  });
+
+  test('ignores Mirror tags inside fenced code blocks', () => {
+    const md = ['```mdx', '<Mirror src="api-spec" anchor="x" />', '```', ''].join('\n');
+    expect(rewriteMirrorSrcForDocumentRename(md, 'api-spec', 'api-reference')).toEqual({
+      markdown: md,
+      rewrites: 0,
+    });
+  });
+
+  test('preserves prop order (anchor stays after src)', () => {
+    expect(
+      rewriteMirrorSrcForDocumentRename('<Mirror anchor="x" src="old" />\n', 'old', 'new'),
+    ).toEqual({
+      markdown: '<Mirror anchor="x" src="new" />\n',
+      rewrites: 1,
+    });
+  });
+
+  test('returns rewrites=0 for docs with no Mirror tags', () => {
+    expect(rewriteMirrorSrcForDocumentRename('Just prose, no JSX here.\n', 'old', 'new')).toEqual({
+      markdown: 'Just prose, no JSX here.\n',
+      rewrites: 0,
+    });
+  });
+
+  test('skips Mirror tags inside inline code spans (e.g. docs explaining Mirror syntax)', () => {
+    const input =
+      'To embed the deprecation block, write `<Mirror src="api-spec" anchor="dep" />`.\n';
+    expect(rewriteMirrorSrcForDocumentRename(input, 'api-spec', 'api-reference')).toEqual({
+      markdown: input,
+      rewrites: 0,
+    });
+  });
+
+  test('ignores Mirror tags inside tilde fences', () => {
+    const markdown = ['~~~md', '<Mirror src="old" anchor="x" />', '~~~', ''].join('\n');
+    expect(rewriteMirrorSrcForDocumentRename(markdown, 'old', 'new')).toEqual({
+      markdown,
+      rewrites: 0,
+    });
+  });
+
+  test('rewrites Mirror outside inline code on the same line', () => {
+    const input =
+      'See `<Mirror src="api-spec" anchor="x" />` in docs. Live: <Mirror src="api-spec" anchor="y" />\n';
+    const out =
+      'See `<Mirror src="api-spec" anchor="x" />` in docs. Live: <Mirror src="api-reference" anchor="y" />\n';
+    expect(rewriteMirrorSrcForDocumentRename(input, 'api-spec', 'api-reference')).toEqual({
+      markdown: out,
+      rewrites: 1,
+    });
   });
 });
