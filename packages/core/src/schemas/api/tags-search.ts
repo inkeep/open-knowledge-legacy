@@ -67,19 +67,19 @@ export const TemplatePayloadSchema = z
   .object({
     name: z.string().min(1),
     folder: z.string(),
-    scope: z.enum(['local', 'inherited', 'user']),
+    scope: z.enum(['local', 'inherited']),
     path: z.string().min(1),
     frontmatter: TemplateFrontmatterSchema,
     body: z.string(),
   })
-  .loose() satisfies StandardSchemaV1;
+  .strict() satisfies StandardSchemaV1;
 export type TemplatePayload = z.infer<typeof TemplatePayloadSchema>;
 
 export const TemplateGetSuccessSchema = z
   .object({
     template: TemplatePayloadSchema,
   })
-  .loose() satisfies StandardSchemaV1;
+  .strict() satisfies StandardSchemaV1;
 export type TemplateGetSuccess = z.infer<typeof TemplateGetSuccessSchema>;
 
 export const TemplatePutRequestSchema = z
@@ -89,7 +89,7 @@ export const TemplatePutRequestSchema = z
     body: z.string().optional(),
     frontmatter: TemplateFrontmatterSchema.optional(),
   })
-  .loose() satisfies StandardSchemaV1;
+  .strict() satisfies StandardSchemaV1;
 export type TemplatePutRequest = z.infer<typeof TemplatePutRequestSchema>;
 
 export const TemplatePutSuccessSchema = z
@@ -98,7 +98,7 @@ export const TemplatePutSuccessSchema = z
     created: z.boolean(),
     warnings: z.array(z.string()),
   })
-  .loose() satisfies StandardSchemaV1;
+  .strict() satisfies StandardSchemaV1;
 export type TemplatePutSuccess = z.infer<typeof TemplatePutSuccessSchema>;
 
 export const TemplateDeleteSuccessSchema = z
@@ -106,7 +106,7 @@ export const TemplateDeleteSuccessSchema = z
     existed: z.boolean(),
     path: z.string().min(1),
   })
-  .loose() satisfies StandardSchemaV1;
+  .strict() satisfies StandardSchemaV1;
 export type TemplateDeleteSuccess = z.infer<typeof TemplateDeleteSuccessSchema>;
 
 export const SearchRequestSchema = z

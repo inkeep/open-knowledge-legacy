@@ -19,20 +19,10 @@ interface OkScaffoldSkipEntry {
   path: string;
   reason: 'already-exists' | 'user-content' | 'glob-collision';
 }
-interface OkScaffoldPersonalTemplatePreview {
-  willWrite: string[];
-  willSkip: string[];
-}
-export interface OkScaffoldPersonalTemplateWriteResult {
-  written: string[];
-  skipped: string[];
-  errors: Array<{ path: string; error: string }>;
-}
 export interface OkScaffoldPlan {
   created: OkScaffoldFileEntry[];
   skipped: OkScaffoldSkipEntry[];
   warnings: string[];
-  personalTemplates?: OkScaffoldPersonalTemplatePreview;
 }
 interface OkScaffoldApplyError {
   path: string;
@@ -59,12 +49,10 @@ export type OkPackId =
 interface OkSeedPlanOptions {
   rootDir?: string;
   packId?: OkPackId;
-  includePersonalTemplates?: boolean;
 }
 
 interface OkSeedApplyOptions {
   packId?: OkPackId;
-  includePersonalTemplates?: boolean;
 }
 
 interface OkSeedPackFolderInfo {
@@ -90,11 +78,7 @@ export type OkSeedPlanResult =
   | { ok: true; plan: OkScaffoldPlan }
   | { ok: false; error: OkSeedError };
 export type OkSeedApplyResult =
-  | {
-      ok: true;
-      result: OkScaffoldApplyResult;
-      personalTemplates?: OkScaffoldPersonalTemplateWriteResult;
-    }
+  | { ok: true; result: OkScaffoldApplyResult }
   | { ok: false; error: OkSeedError };
 export type OkSeedListPacksResult =
   | { ok: true; packs: OkSeedPackInfo[] }

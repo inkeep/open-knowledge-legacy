@@ -12,16 +12,10 @@ export interface SkipEntry {
   reason: 'already-exists' | 'user-content' | 'glob-collision';
 }
 
-interface PersonalTemplatePreview {
-  willWrite: string[];
-  willSkip: string[];
-}
-
 export interface ScaffoldPlan {
   created: FileEntry[];
   skipped: SkipEntry[];
   warnings: string[];
-  personalTemplates?: PersonalTemplatePreview;
 }
 
 export interface ApplyResult {
@@ -39,7 +33,6 @@ export interface SeedOptions {
   projectDir?: string;
   rootDir?: string;
   packId?: PackId;
-  includePersonalTemplates?: boolean;
 }
 
 export class SeedPrerequisiteError extends Error {

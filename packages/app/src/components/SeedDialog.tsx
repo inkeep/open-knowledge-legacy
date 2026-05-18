@@ -4,7 +4,6 @@ import { toast } from 'sonner';
 import { CreatedItemsList } from '@/components/CreatedItemsList';
 import { PackCardGrid } from '@/components/PackCardGrid';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   DialogBody,
   DialogContent,
@@ -51,7 +50,6 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
   const [phase, setPhase] = useState<DialogPhase>({ kind: 'loading' });
   const [packs, setPacks] = useState<OkSeedPackInfo[] | null>(null);
   const [selectedPackId, setSelectedPackId] = useState<OkPackId>(initialPackId ?? DEFAULT_PACK_ID);
-  const [includePersonalTemplates, setIncludePersonalTemplates] = useState(true);
   const [rootChoice, setRootChoice] = useState<RootChoice>('project-root');
   const [subfolder, setSubfolder] = useState<string>('');
   const [step, setStep] = useState<DialogStep>(initialPackId !== undefined ? 'configure' : 'pick');
@@ -89,7 +87,6 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
   useEffect(() => {
     if (open) {
       setSelectedPackId(initialPackId ?? DEFAULT_PACK_ID);
-      setIncludePersonalTemplates(true);
       setRootChoice('project-root');
       setSubfolder('');
       setStep(initialPackId !== undefined ? 'configure' : 'pick');
@@ -130,7 +127,6 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
         .plan({
           rootDir: effectiveRoot,
           packId: selectedPackId,
-          includePersonalTemplates,
         })
         .then((result) => {
           if (cancelled) return;
@@ -138,9 +134,7 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
             setPhase({ kind: 'error', message: result.error.message });
             return;
           }
-          const hasWork =
-            result.plan.created.length > 0 ||
-            (result.plan.personalTemplates?.willWrite.length ?? 0) > 0;
+          const hasWork = result.plan.created.length > 0;
           setPhase(
             hasWork
               ? { kind: 'plan', plan: result.plan }
@@ -157,16 +151,7 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [
-    open,
-    step,
-    packs,
-    selectedPackId,
-    includePersonalTemplates,
-    rootChoice,
-    trimmedSubfolder,
-    subfolderInvalid,
-  ]);
+  }, [open, step, packs, selectedPackId, rootChoice, trimmedSubfolder, subfolderInvalid]);
 
   async function handleApply() {
     if (phase.kind !== 'plan') return;
@@ -174,10 +159,7 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
     setPhase({ kind: 'applying', plan: planAtClick });
     let result: Awaited<ReturnType<ReturnType<typeof seedClient>['apply']>>;
     try {
-      result = await seedClient().apply(planAtClick, {
-        packId: selectedPackId,
-        includePersonalTemplates,
-      });
+      result = await seedClient().apply(planAtClick, { packId: selectedPackId });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       toast.error(`Initialize failed: ${message}`);
@@ -187,15 +169,10 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
     if (result.ok) {
       const packName = selectedPack?.name ?? 'starter pack';
       const projectEntries = result.result.applied;
-      const personalCount = result.personalTemplates?.written.length ?? 0;
       const message =
-        projectEntries === 0 && personalCount > 0
-          ? `${personalCount} personal template${personalCount === 1 ? '' : 's'} written to ~/.ok/templates/`
-          : projectEntries === 0
-            ? `${packName} was already set up. Nothing to do.`
-            : personalCount > 0
-              ? `${packName} initialized (${projectEntries} ${projectEntries === 1 ? 'entry' : 'entries'}) + ${personalCount} personal template${personalCount === 1 ? '' : 's'}`
-              : `${packName} initialized (${projectEntries} ${projectEntries === 1 ? 'entry' : 'entries'})`;
+        projectEntries === 0
+          ? `${packName} was already set up. Nothing to do.`
+          : `${packName} initialized (${projectEntries} ${projectEntries === 1 ? 'entry' : 'entries'})`;
       toast.success(message);
       onSeedApplied?.();
       onOpenChange(false);
@@ -241,10 +218,6 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
           </DialogBody>
         ) : (
           <DialogBody className="space-y-6">
-            <PersonalTemplatesToggle
-              checked={includePersonalTemplates}
-              onCheckedChange={setIncludePersonalTemplates}
-            />
             <RootPicker
               choice={rootChoice}
               subfolder={subfolder}
@@ -283,33 +256,6 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied, initialPackId }:
         </DialogFooter>
       </DialogContent>
     </DialogRoot>
-  );
-}
-
-function PersonalTemplatesToggle({
-  checked,
-  onCheckedChange,
-}: {
-  checked: boolean;
-  onCheckedChange: (next: boolean) => void;
-}) {
-  return (
-    <FieldLabel htmlFor="seed-include-personal-templates" className="cursor-pointer">
-      <Field orientation="horizontal">
-        <FieldContent>
-          <FieldTitle>Include personal templates</FieldTitle>
-          <FieldDescription className="text-1sm">
-            Adds daily journal, reading log, recipes, and more to <code>~/.ok/templates/</code>.
-            Idempotent. Never overwrites your edits.
-          </FieldDescription>
-        </FieldContent>
-        <Checkbox
-          id="seed-include-personal-templates"
-          checked={checked}
-          onCheckedChange={(next) => onCheckedChange(next === true)}
-        />
-      </Field>
-    </FieldLabel>
   );
 }
 

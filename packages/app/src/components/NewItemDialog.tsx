@@ -44,7 +44,6 @@ const BLANK_TEMPLATE_VALUE = '__blank__';
 const SCOPE_ORDER: Record<TemplateMenuEntry['scope'], number> = {
   local: 0,
   inherited: 1,
-  user: 2,
 };
 
 export function sortTemplatesForPicker(
@@ -338,7 +337,7 @@ export function NewItemDialog({
                 {!templatesLoading && !templatesError && templates.length === 0 ? (
                   <p className="mt-1.5 text-xs text-muted-foreground">
                     No templates resolve here. Add one in this folder's Templates section, or in
-                    Settings → User templates.
+                    Settings → Templates.
                   </p>
                 ) : null}
               </div>
@@ -597,13 +596,6 @@ function TemplatePickerCombobox({
 }
 
 function ScopeBadge({ entry, className }: { entry: TemplateMenuEntry; className?: string }) {
-  if (entry.scope === 'user') {
-    return (
-      <Badge variant="primary" className={cn('shrink-0 text-2xs', className)}>
-        user
-      </Badge>
-    );
-  }
   if (entry.scope === 'inherited') {
     return (
       <Badge variant="gray" className={cn('shrink-0 text-2xs', className)}>

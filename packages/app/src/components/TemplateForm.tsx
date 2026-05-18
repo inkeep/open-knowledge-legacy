@@ -4,7 +4,7 @@ import { buildFrontmatterPayload, FrontmatterFields } from '@/components/Frontma
 import { TemplateBodyTextarea } from '@/components/TemplateBody';
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import { saveTemplate, type TemplateTarget } from '@/lib/folder-config-api';
+import { saveTemplate } from '@/lib/folder-config-api';
 
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -29,9 +29,6 @@ interface UseTemplateFormArgs {
   /** Called after a successful save. Caller closes the dialog / clears the
    *  preview / re-fetches as appropriate. */
   onCommitted: () => void;
-  /** Where the template lives. Defaults to `"project"` (folder-scoped); pass
-   *  `"user"` to write to `~/.ok/templates/` regardless of `folderPath`. */
-  target?: TemplateTarget;
 }
 
 interface TemplateFormState {
@@ -54,10 +51,6 @@ interface TemplateFormState {
   nameInvalid: boolean;
   nameShadows: boolean;
   trimmedName: string;
-  /** Where the template will be written. Surfaced so rendering sites
-   *  (e.g. shadow-warning copy) can vary phrasing for user-scope vs
-   *  project-scope context. */
-  target: TemplateTarget;
   submit: () => Promise<void>;
 }
 
@@ -67,7 +60,6 @@ export function useTemplateForm({
   initial,
   existingNames,
   onCommitted,
-  target,
 }: UseTemplateFormArgs): TemplateFormState {
   const [name, setName] = useState(initial.name);
   const [title, setTitle] = useState(initial.title);
@@ -88,14 +80,12 @@ export function useTemplateForm({
     if (!canSubmit) return;
     setSaving(true);
     const fm = buildFrontmatterPayload({ title, description, tags });
-    const saveInput: Parameters<typeof saveTemplate>[0] = {
+    const result = await saveTemplate({
       folder: folderPath,
       name: mode === 'create' ? trimmedName : initial.name,
       frontmatter: fm,
       body,
-    };
-    if (target !== undefined) saveInput.target = target;
-    const result = await saveTemplate(saveInput);
+    });
     setSaving(false);
     if (!result.ok) {
       toast.error(`${mode === 'create' ? 'Create' : 'Save'} failed: ${result.error}`);
@@ -128,7 +118,6 @@ export function useTemplateForm({
     nameInvalid,
     nameShadows,
     trimmedName,
-    target: target ?? 'project',
     submit,
   };
 }
@@ -168,20 +157,9 @@ export function TemplateFormFields({ form, bodyPlaceholder }: TemplateFormFields
             </FieldError>
           ) : form.nameShadows ? (
             <FieldDescription className="text-yellow-600 dark:text-yellow-500">
-              {form.target === 'user' ? (
-                <>
-                  A template named <code className="font-mono">{form.trimmedName}</code> already
-                  exists in your user scope. Saving overwrites it. Project or folder templates with
-                  the same name will continue to shadow this one in their respective scopes.
-                </>
-              ) : (
-                <>
-                  A template named <code className="font-mono">{form.trimmedName}</code> already
-                  resolves here (likely inherited). Saving creates a{' '}
-                  <code className="font-mono">local</code> shadow that supersedes it for this
-                  folder.
-                </>
-              )}
+              A template named <code className="font-mono">{form.trimmedName}</code> already
+              resolves here (likely inherited). Saving creates a{' '}
+              <code className="font-mono">local</code> shadow that supersedes it for this folder.
             </FieldDescription>
           ) : null}
         </Field>

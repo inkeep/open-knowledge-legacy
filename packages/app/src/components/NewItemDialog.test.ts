@@ -279,7 +279,7 @@ describe('isNewItemShortcut', () => {
 describe('sortTemplatesForPicker', () => {
   function entry(
     name: string,
-    scope: 'local' | 'inherited' | 'user',
+    scope: 'local' | 'inherited',
     title?: string,
   ): {
     name: string;
@@ -287,24 +287,23 @@ describe('sortTemplatesForPicker', () => {
     description?: string;
     path: string;
     source_folder: string;
-    scope: 'local' | 'inherited' | 'user';
+    scope: 'local' | 'inherited';
   } {
     return {
       name,
       ...(title === undefined ? {} : { title }),
       path: `${name}.md`,
-      source_folder: scope === 'user' ? '~/.ok' : '',
+      source_folder: '',
       scope,
     };
   }
 
-  test('groups by scope: local → inherited → user', () => {
+  test('groups by scope: local → inherited', () => {
     const sorted = sortTemplatesForPicker([
-      entry('zeta-user', 'user'),
       entry('beta-inherited', 'inherited'),
       entry('alpha-local', 'local'),
     ]);
-    expect(sorted.map((t) => t.name)).toEqual(['alpha-local', 'beta-inherited', 'zeta-user']);
+    expect(sorted.map((t) => t.name)).toEqual(['alpha-local', 'beta-inherited']);
   });
 
   test('within scope, sorts by title (or name when title absent)', () => {
@@ -330,17 +329,13 @@ describe('sortTemplatesForPicker', () => {
   test('mixed scopes interleaved are correctly grouped', () => {
     const sorted = sortTemplatesForPicker([
       entry('m-local', 'local'),
-      entry('z-user', 'user'),
       entry('a-inherited', 'inherited'),
-      entry('b-user', 'user'),
       entry('c-local', 'local'),
     ]);
     expect(sorted.map((t) => `${t.scope}:${t.name}`)).toEqual([
       'local:c-local',
       'local:m-local',
       'inherited:a-inherited',
-      'user:b-user',
-      'user:z-user',
     ]);
   });
 });

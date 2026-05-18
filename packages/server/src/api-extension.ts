@@ -185,9 +185,7 @@ import {
   applyTemplateDelete,
   applyTemplateWrite,
   type TemplateFrontmatter,
-  type TemplateTarget,
 } from './content/templates-write.ts';
-import { getUserHome } from './content/user-home.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
   createInstalledAgentsProbe,
@@ -353,12 +351,10 @@ import {
   applySeed,
   coercePackId,
   listStarterPacks,
-  planPersonalTemplates,
   planSeed,
   type ScaffoldPlan,
   SeedPrerequisiteError,
   SeedRootDirError,
-  writePersonalTemplates,
 } from './seed/index.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
 import {
@@ -4669,7 +4665,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             ? ((body as Record<string, unknown>).template as string).trim()
             : '';
         let initialContent = '';
-        let templateScopeForLog: 'local' | 'inherited' | 'user' | undefined;
+        let templateScopeForLog: 'local' | 'inherited' | undefined;
         if (templateName.length > 0) {
           if (!/^[A-Za-z0-9_-]+$/.test(templateName)) {
             errorResponse(
@@ -4700,19 +4696,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             );
             return;
           }
-          const templateAbs =
-            matched.scope === 'user' ? matched.path : resolve(resolvedContentDir, matched.path);
+          const templateAbs = resolve(resolvedContentDir, matched.path);
           let templateRaw: string;
           try {
             templateRaw = readFileSync(templateAbs, 'utf-8');
           } catch (err) {
-            const displayTemplatePath =
-              matched.scope === 'user' ? `~/.ok/templates/${matched.name}.md` : matched.path;
             errorResponse(
               res,
               500,
               'urn:ok:error:internal-server-error',
-              `Failed to read template at ${displayTemplatePath}.`,
+              `Failed to read template at ${matched.path}.`,
               { handler: 'create-page', cause: err },
             );
             return;
@@ -6785,19 +6778,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
       return;
     }
-    const includePersonalTemplates = url.searchParams.get('includePersonalTemplates') === 'true';
     try {
       const plan = await planSeed({ projectDir: contentDir, rootDir, packId });
-      const planWithPersonal = includePersonalTemplates
-        ? { ...plan, personalTemplates: planPersonalTemplates() }
-        : plan;
-      successResponse(
-        res,
-        200,
-        SeedPlanSuccessSchema,
-        { plan: planWithPersonal },
-        { handler: 'seed-plan' },
-      );
+      successResponse(res, 200, SeedPlanSuccessSchema, { plan }, { handler: 'seed-plan' });
     } catch (err) {
       if (err instanceof SeedPrerequisiteError) {
         errorResponse(
@@ -6835,7 +6818,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const plan = planValue as ScaffoldPlan;
-      const looseBody = body as { packId?: unknown; includePersonalTemplates?: unknown };
+      const looseBody = body as { packId?: unknown };
       const rawPackId = looseBody.packId;
       const packId = coercePackId(rawPackId);
       if (typeof rawPackId === 'string' && rawPackId.length > 0 && packId === undefined) {
@@ -6845,17 +6828,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
         return;
       }
-      const includePersonalTemplates = looseBody.includePersonalTemplates === true;
       try {
         const result = await applySeed(plan, { projectDir: contentDir, packId });
-        const personalTemplates = includePersonalTemplates ? writePersonalTemplates() : undefined;
-        successResponse(
-          res,
-          200,
-          SeedApplySuccessSchema,
-          personalTemplates ? { result, personalTemplates } : { result },
-          { handler: 'seed-apply' },
-        );
+        successResponse(res, 200, SeedApplySuccessSchema, { result }, { handler: 'seed-apply' });
       } catch (err) {
         errorResponse(
           res,
@@ -7120,23 +7095,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return true;
   }
 
-  function parseTemplateTarget(
-    raw: unknown,
-    res: ServerResponse,
-    handler = 'template',
-  ): TemplateTarget | undefined | null {
-    if (raw === undefined || raw === null || raw === '') return undefined;
-    if (raw === 'project' || raw === 'user') return raw;
-    errorResponse(
-      res,
-      400,
-      'urn:ok:error:invalid-request',
-      `target must be "project" or "user", got: ${JSON.stringify(raw)}`,
-      { handler },
-    );
-    return null;
-  }
-
   function pickFrontmatterFields(raw: unknown): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
@@ -7309,49 +7267,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const url = new URL(req.url ?? '', 'http://localhost');
         const name = url.searchParams.get('name') ?? '';
         if (!validateTemplateName(name, res, 'template-get')) return;
-        const target = parseTemplateTarget(url.searchParams.get('target'), res, 'template-get');
-        if (target === null) return;
-
-        if (target === 'user') {
-          const userHome = getUserHome();
-          if (!userHome) {
-            errorResponse(
-              res,
-              500,
-              'urn:ok:error:internal-server-error',
-              'User home directory could not be resolved.',
-              { handler: 'template-get' },
-            );
-            return;
-          }
-          const userTplAbs = resolve(userHome, '.ok', 'templates', `${name}.md`);
-          if (!existsSync(userTplAbs)) {
-            errorResponse(res, 404, 'urn:ok:error:template-not-found', 'Template not found.', {
-              handler: 'template-get',
-              detail: `User template "${name}" not found at ~/.ok/templates/${name}.md`,
-            });
-            return;
-          }
-          const raw = await readFile(userTplAbs, 'utf-8');
-          const { frontmatter, body } = parseTemplateFile(raw);
-          successResponse(
-            res,
-            200,
-            TemplateGetSuccessSchema,
-            {
-              template: {
-                name,
-                folder: '~/.ok',
-                scope: 'user',
-                path: `~/.ok/templates/${name}.md`,
-                frontmatter,
-                body,
-              },
-            },
-            { handler: 'template-get' },
-          );
-          return;
-        }
 
         const validated = validateFolderRel(
           url.searchParams.get('folder') ?? '',
@@ -7436,14 +7351,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       try {
         const name = body.name;
         if (!validateTemplateName(name, res, 'template-put')) return;
-        const target = parseTemplateTarget(
-          (body as Record<string, unknown>).target,
-          res,
-          'template-put',
-        );
-        if (target === null) return;
-        const folderInput = target === 'user' ? '' : body.folder;
-        const validated = validateFolderRel(folderInput, res, 'folder', 'template-put');
+        const validated = validateFolderRel(body.folder, res, 'folder', 'template-put');
         if (!validated) return;
 
         const writeInput: Parameters<typeof applyTemplateWrite>[0] = {
@@ -7453,13 +7361,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           body: typeof body.body === 'string' ? body.body : '',
           frontmatter: pickFrontmatterFields(body.frontmatter) satisfies TemplateFrontmatter,
         };
-        if (target !== undefined) writeInput.target = target;
         const result = applyTemplateWrite(writeInput);
         if (!result.ok) {
           const status =
-            result.error.code === 'WRITE_ERROR' ||
-            result.error.code === 'BAD_PROJECT_DIR' ||
-            result.error.code === 'USER_HOME_UNAVAILABLE'
+            result.error.code === 'WRITE_ERROR' || result.error.code === 'BAD_PROJECT_DIR'
               ? 500
               : 400;
           const urn =
@@ -7500,10 +7405,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const url = new URL(req.url ?? '', 'http://localhost');
         const name = url.searchParams.get('name') ?? '';
         if (!validateTemplateName(name, res, 'template-delete')) return;
-        const target = parseTemplateTarget(url.searchParams.get('target'), res, 'template-delete');
-        if (target === null) return;
-        const folderInput = target === 'user' ? '' : (url.searchParams.get('folder') ?? '');
-        const validated = validateFolderRel(folderInput, res, 'folder', 'template-delete');
+        const validated = validateFolderRel(
+          url.searchParams.get('folder') ?? '',
+          res,
+          'folder',
+          'template-delete',
+        );
         if (!validated) return;
 
         const deleteInput: Parameters<typeof applyTemplateDelete>[0] = {
@@ -7511,14 +7418,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           folder: validated.folderRel,
           name,
         };
-        if (target !== undefined) deleteInput.target = target;
         const result = applyTemplateDelete(deleteInput);
         if (!result.ok) {
           const status =
             result.error.code === 'WRITE_ERROR' ||
             result.error.code === 'UNLINK_FAILED' ||
-            result.error.code === 'BAD_PROJECT_DIR' ||
-            result.error.code === 'USER_HOME_UNAVAILABLE'
+            result.error.code === 'BAD_PROJECT_DIR'
               ? 500
               : 400;
           const urn =

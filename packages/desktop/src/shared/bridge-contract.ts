@@ -4,7 +4,6 @@ import type {
   FindEnclosingGitRootResult,
   FindEnclosingProjectRootResult,
   PackId,
-  PersonalTemplateWriteResult,
   ScaffoldPlan,
 } from '@inkeep/open-knowledge-server';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
@@ -13,12 +12,10 @@ import type { EntryPoint } from './entry-point.ts';
 export interface SeedPlanOptions {
   rootDir?: string;
   packId?: PackId;
-  includePersonalTemplates?: boolean;
 }
 
 export interface SeedApplyOptions {
   packId?: PackId;
-  includePersonalTemplates?: boolean;
 }
 
 interface OkSeedPackFolderInfo {
@@ -51,7 +48,7 @@ export type OkSeedPlanResult =
     };
 
 export type OkSeedApplyResult =
-  | { ok: true; result: ApplyResult; personalTemplates?: PersonalTemplateWriteResult }
+  | { ok: true; result: ApplyResult }
   | {
       ok: false;
       error: { kind: 'no-project' | 'prerequisite-missing' | 'internal'; message: string };

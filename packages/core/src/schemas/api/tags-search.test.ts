@@ -1,17 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { TemplateGetSuccessSchema, TemplatePayloadSchema } from './tags-search.ts';
 
-const validPayload = (scope: string) => ({
+const validPayload = (scope: 'local' | 'inherited') => ({
   name: 'daily-journal',
-  folder: '~/.ok',
+  folder: 'notes',
   scope,
-  path: '~/.ok/templates/daily-journal.md',
+  path: 'notes/.ok/templates/daily-journal.md',
   frontmatter: { title: '{{date}}' },
   body: '## Morning\n',
 });
 
 describe('TemplatePayloadSchema.scope', () => {
-  test.each(['local', 'inherited', 'user'])('accepts scope=%s', (scope) => {
+  test.each(['local', 'inherited'] as const)('accepts scope=%s', (scope) => {
     const result = TemplatePayloadSchema.safeParse(validPayload(scope));
     expect(result.success).toBe(true);
     if (result.success) {
@@ -20,23 +20,27 @@ describe('TemplatePayloadSchema.scope', () => {
   });
 
   test('rejects unknown scope value', () => {
-    const result = TemplatePayloadSchema.safeParse(validPayload('global'));
+    const result = TemplatePayloadSchema.safeParse({
+      ...validPayload('local'),
+      scope: 'global',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects scope='user' (user-tier removed)", () => {
+    const result = TemplatePayloadSchema.safeParse({
+      ...validPayload('local'),
+      scope: 'user',
+    });
     expect(result.success).toBe(false);
   });
 });
 
 describe('TemplateGetSuccessSchema', () => {
-  test('accepts user-scope payload — pins the GET target=user contract', () => {
-    const result = TemplateGetSuccessSchema.safeParse({
-      template: validPayload('user'),
-    });
-    expect(result.success).toBe(true);
-  });
-
   test('frontmatter accepts free-form unknown values', () => {
     const result = TemplateGetSuccessSchema.safeParse({
       template: {
-        ...validPayload('user'),
+        ...validPayload('local'),
         frontmatter: { title: { '{ date }': null }, tags: ['x'] },
       },
     });

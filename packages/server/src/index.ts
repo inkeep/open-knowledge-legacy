@@ -279,11 +279,6 @@ export {
   LOG_MD_TEMPLATE,
   listStarterPacks,
   type PackId,
-  PERSONAL_TEMPLATE_NAMES,
-  PERSONAL_TEMPLATES,
-  type PersonalTemplatePlan,
-  type PersonalTemplateWriteResult,
-  planPersonalTemplates,
   planSeed,
   resolvePack,
   type ScaffoldPlan,
@@ -301,7 +296,6 @@ export {
   type StarterPackEntryCounts,
   type StarterPackFolderInfo,
   type StarterPackInfo,
-  writePersonalTemplates,
 } from './seed/index.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 export {

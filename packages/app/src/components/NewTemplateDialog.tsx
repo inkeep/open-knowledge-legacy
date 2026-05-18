@@ -9,7 +9,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import type { TemplateTarget } from '@/lib/folder-config-api';
 import { templateFilePath } from '@/lib/folder-config-paths';
 
 interface Props {
@@ -21,9 +20,6 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
-  /** Where the template lives. Defaults to `"project"` (folder-scoped); pass
-      `"user"` for the Settings → User templates flow. */
-  target?: TemplateTarget;
 }
 
 const EMPTY_INITIAL = {
@@ -42,7 +38,6 @@ export function NewTemplateDialog({
   open,
   onOpenChange,
   onCreated,
-  target,
 }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -53,7 +48,6 @@ export function NewTemplateDialog({
             existingNames={existingNames}
             onOpenChange={onOpenChange}
             onCreated={onCreated}
-            target={target}
           />
         ) : null}
       </DialogContent>
@@ -66,18 +60,13 @@ function Body({
   existingNames,
   onOpenChange,
   onCreated,
-  target,
 }: {
   folderPath: string;
   existingNames: ReadonlySet<string>;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
-  target?: TemplateTarget;
 }) {
-  const isUserTarget = target === 'user';
-  const targetPath = isUserTarget
-    ? '~/.ok/templates/<name>.md'
-    : templateFilePath(folderPath, '<name>');
+  const targetPath = templateFilePath(folderPath, '<name>');
 
   const form = useTemplateForm({
     mode: 'create',
@@ -88,18 +77,15 @@ function Body({
       onCreated();
       onOpenChange(false);
     },
-    ...(target !== undefined ? { target } : {}),
   });
 
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{isUserTarget ? 'New user template' : 'New template'}</DialogTitle>
+        <DialogTitle>New template</DialogTitle>
         <DialogDescription>
-          Lands at <code className="font-mono">{targetPath}</code>.{' '}
-          {isUserTarget
-            ? 'Available across every OK project you open with this user account.'
-            : 'Agents resolve it via leaf → root walk-up — closest-wins on filename collision.'}
+          Lands at <code className="font-mono">{targetPath}</code>. Agents resolve it via leaf →
+          root walk-up — closest-wins on filename collision.
         </DialogDescription>
       </DialogHeader>
       <DialogBody>

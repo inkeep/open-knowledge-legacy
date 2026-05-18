@@ -45,7 +45,6 @@ export function CreatedItemsList({
   selectedPack: OkSeedPackInfo | undefined;
 }) {
   const items = describeCreatedItems(plan, selectedPack);
-  const personalCount = plan.personalTemplates?.willWrite.length ?? 0;
 
   const sorted = [...items].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -128,14 +127,6 @@ export function CreatedItemsList({
             );
           })}
         </ul>
-        {personalCount > 0 ? (
-          <div className="flex min-w-0 items-center gap-2 border-t border-border/60 bg-muted/10 px-3 py-1.5">
-            <code className="font-mono text-1sm shrink-0">~/.ok/templates/</code>
-            <span className="truncate text-1sm text-muted-foreground">
-              — {personalCount} personal {personalCount === 1 ? 'template' : 'templates'}
-            </span>
-          </div>
-        ) : null}
       </div>
     </section>
   );
