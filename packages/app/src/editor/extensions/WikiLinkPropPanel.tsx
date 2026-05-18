@@ -7,18 +7,17 @@ import type { Editor } from '@tiptap/core';
 import { posToDOMRect } from '@tiptap/core';
 import {
   CircleAlert,
-  ExternalLink,
   File,
   FileImage,
   FilePlus2,
   FolderOpen,
+  Globe,
   Loader2,
   Pencil,
+  Plus,
   Trash2,
-  Unlink2,
 } from 'lucide-react';
-import { Dialog } from 'radix-ui';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { InteractionPropPanel } from '../../components/InteractionPropPanel';
 import {
@@ -27,12 +26,24 @@ import {
 } from '../../components/link-target-intent';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
+import {
+  Dialog,
+  DialogBody,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { type CreatePageSeed, createPageFromSeedAndUpdate } from '../../lib/create-page';
 import { hashFromAssetPath } from '../../lib/doc-hash';
 import { cn } from '../../lib/utils';
 import { openInternalHashHrefInNewTab } from '../internal-link-helpers';
 import { isSafeNavigationUrl } from '../safe-navigation-url';
+import { CopyButton } from './LinkPropPanelCopy';
 import { useHeadings } from './use-headings';
 import {
   getWikiLinkResolutionCandidates,
@@ -73,12 +84,17 @@ function EditWikiLinkDialog({
   const isEditTargetResolved = isResolvedWikiLinkTarget(editTarget, pages, assetPaths);
   const headings = useHeadings(editTarget, isEditTargetResolved && !editAssetPath && open);
 
+  const prevOpenRef = useRef(false);
   useEffect(() => {
-    if (open) {
-      setEditTarget(target);
-      setEditAlias(alias ?? '');
-      setEditAnchor(anchor ?? '');
+    if (!open) {
+      prevOpenRef.current = false;
+      return;
     }
+    if (prevOpenRef.current) return;
+    prevOpenRef.current = true;
+    setEditTarget(target);
+    setEditAlias(alias ?? '');
+    setEditAnchor(anchor ?? '');
   }, [open, target, alias, anchor]);
 
   function handleSave() {
@@ -89,7 +105,10 @@ function EditWikiLinkDialog({
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter') handleSave();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSave();
+    }
   }
 
   const counts = new Map<string, number>();
@@ -102,20 +121,15 @@ function EditWikiLinkDialog({
   const showHeadings = !!headingsWithKeys?.length;
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
-        <Dialog.Content
-          data-slot="dialog-content"
-          data-ok-layer-spawned=""
-          className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-6 shadow-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
-        >
-          <Dialog.Title className="mb-1 text-base font-semibold">Edit wiki link</Dialog.Title>
-          <Dialog.Description className="mb-4 text-sm text-muted-foreground">
-            Modify the link target, anchor, and display label.
-          </Dialog.Description>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-xl" data-ok-layer-spawned="">
+        <DialogHeader>
+          <DialogTitle>Edit wiki link</DialogTitle>
+          <DialogDescription>Modify the link target, anchor, and display label.</DialogDescription>
+        </DialogHeader>
 
-          <div className="mb-4 space-y-6">
+        <DialogBody>
+          <div className="space-y-6">
             <div>
               <label className="mb-1.5 block text-sm font-medium" htmlFor={targetId}>
                 Page <span className="text-red-500">*</span>
@@ -132,6 +146,20 @@ function EditWikiLinkDialog({
             </div>
 
             <div>
+              <label className="mb-1.5 block text-sm font-medium" htmlFor={aliasId}>
+                Label{' '}
+                <span className="font-normal text-muted-foreground">(optional display text)</span>
+              </label>
+              <Input
+                id={aliasId}
+                value={editAlias}
+                onChange={(e) => setEditAlias(e.target.value)}
+                placeholder="Custom display text"
+                onKeyDown={handleKeyDown}
+              />
+            </div>
+
+            <div>
               <label className="mb-1.5 block text-sm font-medium" htmlFor={anchorId}>
                 Section{' '}
                 <span className="font-normal text-muted-foreground">(optional heading anchor)</span>
@@ -143,19 +171,23 @@ function EditWikiLinkDialog({
                 placeholder="heading-slug"
                 onKeyDown={handleKeyDown}
               />
+              {/*
+                Heading-list is plain click-to-toggle buttons — not a
+                WAI-ARIA listbox. Native button semantics already match
+                the actual click-to-select interaction; the listbox role
+                without arrow-key navigation + aria-activedescendant is
+                an axe-core conflict.
+              */}
               {showHeadings && (
                 <div
-                  role="listbox"
                   id={headingListId}
-                  aria-label="Heading anchors"
                   className="mt-1.5 max-h-36 overflow-y-auto subtle-scrollbar rounded-md border border-border bg-muted/30"
                 >
                   {headingsWithKeys.map((h) => (
                     <button
                       key={h.reactKey}
                       type="button"
-                      role="option"
-                      aria-selected={editAnchor === h.slug}
+                      aria-pressed={editAnchor === h.slug}
                       className={cn(
                         'flex w-full items-center gap-2 px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground',
                         editAnchor === h.slug && 'bg-accent text-accent-foreground',
@@ -172,33 +204,19 @@ function EditWikiLinkDialog({
                 </div>
               )}
             </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-medium" htmlFor={aliasId}>
-                Label{' '}
-                <span className="font-normal text-muted-foreground">(optional display text)</span>
-              </label>
-              <Input
-                id={aliasId}
-                value={editAlias}
-                onChange={(e) => setEditAlias(e.target.value)}
-                placeholder="Custom display text"
-                onKeyDown={handleKeyDown}
-              />
-            </div>
           </div>
+        </DialogBody>
 
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave} disabled={!editTarget.trim()}>
-              Save
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="outline">Cancel</Button>
+          </DialogClose>
+          <Button onClick={handleSave} disabled={!editTarget.trim()}>
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -373,7 +391,7 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
     };
   } else if (externalTarget) {
     stateLabel = {
-      icon: <ExternalLink className="size-3.5 shrink-0" aria-hidden="true" />,
+      icon: <Globe className="size-3.5 shrink-0" aria-hidden="true" />,
       text: 'External wiki link',
       className: 'text-foreground',
     };
@@ -424,81 +442,136 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
     contextElement: editor.view.dom,
   };
 
+  const displayText =
+    assetPath ?? (externalTarget ? externalTarget.url : `${target}${anchor ? `#${anchor}` : ''}`);
+  const copyContent = (() => {
+    const inner = anchor ? `${target}#${anchor}` : target;
+    return alias ? `[[${inner}|${alias}]]` : `[[${inner}]]`;
+  })();
+
+  const iconNode = (
+    <span className={cn('flex shrink-0', stateLabel.className)}>{stateLabel.icon}</span>
+  );
+  const iconElement = isUnresolved ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="flex shrink-0" data-slot="wiki-link-prop-panel-icon-trigger">
+          {iconNode}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{stateLabel.text}</TooltipContent>
+    </Tooltip>
+  ) : (
+    iconNode
+  );
+
   return (
     <>
       <InteractionPropPanel
         kind="wiki-link"
-        ariaLabel="Wiki link options"
+        ariaLabel={`${stateLabel.text}: ${displayText}`}
         onDeactivate={onClose}
         triggerReference={triggerReference}
+        className="w-96"
       >
-        <div className="mb-2 flex items-start gap-2 pr-8">
-          <div className={cn('mt-0.5 flex shrink-0', stateLabel.className)}>{stateLabel.icon}</div>
-          <div className="flex-1 min-w-0">
-            <div className={cn('text-sm font-medium', stateLabel.className)}>{stateLabel.text}</div>
-            <div
-              className="truncate font-mono text-xs text-muted-foreground"
-              title={
-                assetPath ??
-                (externalTarget ? externalTarget.url : `${target}${anchor ? `#${anchor}` : ''}`)
-              }
+        <div className="flex items-center gap-2 pr-8">
+          {iconElement}
+          <div
+            className="flex-1 min-w-0 truncate text-sm"
+            title={displayText}
+            data-slot="wiki-link-prop-panel-text"
+          >
+            <span
+              className={cn(
+                'font-medium',
+                isUnresolved ? 'text-muted-foreground' : 'text-foreground',
+              )}
             >
-              {assetPath ??
-                (externalTarget ? externalTarget.url : `${target}${anchor ? `#${anchor}` : ''}`)}
-            </div>
+              {displayText}
+            </span>
           </div>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          {!isUnresolved ? (
-            <Button
-              size="sm"
-              variant="default"
-              onClick={() => {
-                handleNavigate({});
-                onClose();
-              }}
-            >
-              {externalTarget ? 'Open in new tab' : 'Open'}
-            </Button>
-          ) : null}
-          {isUnresolved ? (
-            <Button
-              size="sm"
-              variant="default"
-              disabled={creatingMode !== null}
-              onClick={() => void handleCreatePage('missing')}
-            >
-              {creatingMode === 'missing' ? 'Creating' : 'Create page'}
-            </Button>
-          ) : null}
-          {isFolder && folderCreateSeed ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={creatingMode !== null}
-              onClick={() => void handleCreatePage('folder-index')}
-            >
-              <FilePlus2 className="size-3.5" aria-hidden="true" />
-              {creatingMode === 'folder-index' ? 'Creating' : 'Create index'}
-            </Button>
-          ) : null}
-          {/* Spacer pushes Edit + Remove to the right, separating
-              navigation/creation actions (left) from modify-the-mark
-              actions (right). */}
-          <div className="flex-1" />
-          <Button size="sm" variant="outline" onClick={() => setEditDialogOpen(true)}>
-            <Pencil className="size-3.5" aria-hidden="true" />
-            Edit
-          </Button>
-          <Button size="sm" variant="destructive" onClick={handleRemove}>
+          <div className="flex shrink-0 items-center gap-0.5">
             {isUnresolved ? (
-              <Unlink2 className="size-3.5" aria-hidden="true" />
+              <Button
+                type="button"
+                size="sm"
+                variant="link"
+                disabled={creatingMode !== null}
+                onClick={() => void handleCreatePage('missing')}
+                data-slot="wiki-link-prop-panel-create"
+                className="flex items-center text-foreground"
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                {creatingMode === 'missing' ? 'Creating…' : 'Create page'}
+              </Button>
             ) : (
-              <Trash2 className="size-3.5" aria-hidden="true" />
+              <Button
+                type="button"
+                size="sm"
+                variant="link"
+                onClick={() => {
+                  handleNavigate({});
+                  onClose();
+                }}
+                data-slot="wiki-link-prop-panel-open"
+                className="flex items-center text-foreground"
+              >
+                {externalTarget ? 'Open in new tab' : 'Open'}
+              </Button>
             )}
-            {isUnresolved ? 'Unlink' : 'Remove'}
-          </Button>
+            {isFolder && folderCreateSeed ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    disabled={creatingMode !== null}
+                    onClick={() => void handleCreatePage('folder-index')}
+                    aria-label={creatingMode === 'folder-index' ? 'Creating index' : 'Create index'}
+                    data-slot="wiki-link-prop-panel-create-index"
+                  >
+                    <FilePlus2 className="size-3.5" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {creatingMode === 'folder-index' ? 'Creating index…' : 'Create index'}
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Edit"
+                  onClick={() => setEditDialogOpen(true)}
+                  data-slot="wiki-link-prop-panel-edit"
+                >
+                  <Pencil className="size-3.5" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Edit</TooltipContent>
+            </Tooltip>
+            <CopyButton copyContent={copyContent} />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Remove"
+                  onClick={handleRemove}
+                  data-slot="wiki-link-prop-panel-remove"
+                >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Remove</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       </InteractionPropPanel>
 

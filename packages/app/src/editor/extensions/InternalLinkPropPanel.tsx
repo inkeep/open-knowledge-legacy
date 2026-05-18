@@ -8,17 +8,16 @@ import type { Editor } from '@tiptap/core';
 import { posToDOMRect } from '@tiptap/core';
 import {
   CircleAlert,
-  ExternalLink,
   File,
   FilePlus2,
   FolderOpen,
+  Globe,
   Loader2,
   Pencil,
+  Plus,
   Trash2,
-  Unlink2,
 } from 'lucide-react';
-import { Dialog } from 'radix-ui';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { InteractionPropPanel } from '../../components/InteractionPropPanel';
 import {
@@ -27,7 +26,18 @@ import {
 } from '../../components/link-target-intent';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
+import {
+  Dialog,
+  DialogBody,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { type CreatePageSeed, createPageFromSeedAndUpdate } from '../../lib/create-page';
 import { normalizeDocNameInput } from '../../lib/doc-paths';
 import { cn } from '../../lib/utils';
@@ -39,6 +49,7 @@ import {
   openInternalHashHrefInNewTab,
   toInternalHashHref,
 } from '../internal-link-helpers';
+import { CopyButton } from './LinkPropPanelCopy';
 import { getCurrentMarkInfo } from './mark-interaction-bridge';
 import { useHeadings } from './use-headings';
 import { isResolvedWikiLinkTarget } from './wiki-link-helpers';
@@ -65,27 +76,41 @@ function getInitialMarkdownLinkEditMode(target: ClassifiedLinkTarget | null): Ma
 interface EditMarkdownLinkDialogProps {
   open: boolean;
   href: string;
+  text: string;
   pages: Set<string>;
   onOpenChange: (open: boolean) => void;
-  onSave: (href: string) => void;
+  onSave: (href: string, text: string, labelChanged: boolean) => void;
 }
 
 function EditMarkdownLinkDialog({
   open,
   href,
+  text,
   pages,
   onOpenChange,
   onSave,
 }: EditMarkdownLinkDialogProps) {
   const [editTarget, setEditTarget] = useState('');
   const [editAnchor, setEditAnchor] = useState('');
+  const [editLabel, setEditLabel] = useState('');
   const [editMode, setEditMode] = useState<MarkdownLinkEditMode>('doc');
   const targetId = useId();
   const anchorId = useId();
+  const labelId = useId();
   const headingListId = useId();
 
+  const prevOpenRef = useRef(false);
+  const labelSnapshotRef = useRef('');
+
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      prevOpenRef.current = false;
+      return;
+    }
+    if (prevOpenRef.current) return;
+    prevOpenRef.current = true;
+    labelSnapshotRef.current = text;
+    setEditLabel(text);
     const classified = classifyCurrentMarkdownHref(href);
     setEditMode(getInitialMarkdownLinkEditMode(classified));
     if (classified?.kind === 'doc') {
@@ -100,7 +125,7 @@ function EditMarkdownLinkDialog({
     }
     setEditTarget(classified?.kind === 'external' ? classified.url : href);
     setEditAnchor('');
-  }, [href, open]);
+  }, [open, href, text]);
 
   const docTarget = normalizeDocNameInput(editTarget);
   const docTargetMode = editMode === 'doc';
@@ -111,11 +136,11 @@ function EditMarkdownLinkDialog({
   function handleSave() {
     const trimmedTarget = editTarget.trim();
     if (!trimmedTarget) return;
-    if (docTargetMode) {
-      onSave(buildCurrentRelativeMarkdownHref(docTarget, editAnchor.trim() || null));
-    } else {
-      onSave(trimmedTarget);
-    }
+    const nextHref = docTargetMode
+      ? buildCurrentRelativeMarkdownHref(docTarget, editAnchor.trim() || null)
+      : trimmedTarget;
+    const labelChanged = editLabel.trim() !== labelSnapshotRef.current.trim();
+    onSave(nextHref, editLabel, labelChanged);
     onOpenChange(false);
   }
 
@@ -127,20 +152,15 @@ function EditMarkdownLinkDialog({
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
-        <Dialog.Content
-          data-slot="dialog-content"
-          data-ok-layer-spawned=""
-          className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-6 shadow-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
-        >
-          <Dialog.Title className="mb-1 text-base font-semibold">Edit markdown link</Dialog.Title>
-          <Dialog.Description className="mb-4 text-sm text-muted-foreground">
-            Update the destination and optional section anchor.
-          </Dialog.Description>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-xl" data-ok-layer-spawned="">
+        <DialogHeader>
+          <DialogTitle>Edit markdown link</DialogTitle>
+          <DialogDescription>Update the destination and optional section anchor.</DialogDescription>
+        </DialogHeader>
 
-          <div className="mb-4 space-y-6">
+        <DialogBody>
+          <div className="space-y-6">
             <div>
               <label className="mb-1.5 block text-sm font-medium" htmlFor={targetId}>
                 {docTargetMode ? 'Page' : 'Link target'}
@@ -157,12 +177,19 @@ function EditMarkdownLinkDialog({
                 autoFocus
                 onKeyDown={handleKeyDown}
               />
-              {docTargetMode ? (
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  This changes the destination page. The visible link text stays editable inline in
-                  the document.
-                </p>
-              ) : null}
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-medium" htmlFor={labelId}>
+                Label <span className="font-normal text-muted-foreground">(visible link text)</span>
+              </label>
+              <Input
+                id={labelId}
+                value={editLabel}
+                onChange={(e) => setEditLabel(e.target.value)}
+                placeholder="Display text"
+                onKeyDown={handleKeyDown}
+              />
             </div>
 
             {docTargetMode ? (
@@ -178,24 +205,26 @@ function EditMarkdownLinkDialog({
                   value={editAnchor}
                   onChange={(e) => setEditAnchor(e.target.value)}
                   placeholder="heading-slug"
-                  aria-controls={showHeadings ? headingListId : undefined}
-                  aria-expanded={showHeadings ? true : undefined}
-                  aria-haspopup={showHeadings ? 'listbox' : undefined}
                   onKeyDown={handleKeyDown}
                 />
+                {/*
+                  Heading-list is plain click-to-toggle buttons — not a
+                  WAI-ARIA listbox. Previously declared role="listbox" /
+                  role="option" but lacked the matching keyboard model
+                  (arrow nav, aria-activedescendant). axe-core flags the
+                  role + missing keyboard model as a conflict; native
+                  button semantics already match the actual interaction.
+                */}
                 {showHeadings ? (
                   <div
-                    role="listbox"
                     id={headingListId}
-                    aria-label="Heading anchors"
                     className="mt-1.5 max-h-36 overflow-y-auto subtle-scrollbar rounded-md border border-border bg-muted/30"
                   >
                     {headings.map((heading) => (
                       <button
                         key={`${heading.slug}-${heading.level}-${heading.text}`}
                         type="button"
-                        role="option"
-                        aria-selected={editAnchor === heading.slug}
+                        aria-pressed={editAnchor === heading.slug}
                         className={cn(
                           'flex w-full items-center gap-2 px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground',
                           editAnchor === heading.slug && 'bg-accent text-accent-foreground',
@@ -216,18 +245,18 @@ function EditMarkdownLinkDialog({
               </div>
             ) : null}
           </div>
+        </DialogBody>
 
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave} disabled={!editTarget.trim()}>
-              Save
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="outline">Cancel</Button>
+          </DialogClose>
+          <Button onClick={handleSave} disabled={!editTarget.trim()}>
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -267,15 +296,26 @@ export function InternalLinkPropPanel({
           ? target.url
           : href;
 
-  function handleSave(nextHref: string) {
+  const linkText = editor.state.doc.textBetween(info.from, info.to);
+
+  function handleSave(nextHref: string, nextText: string, labelChanged: boolean) {
     const live = getCurrentMarkInfo(editor.state, nodeId);
     if (!live) return;
-    editor
-      .chain()
-      .setTextSelection({ from: live.from, to: live.to })
-      .extendMarkRange('link')
-      .updateAttributes('link', { href: nextHref })
-      .run();
+    const trimmedText = nextText.trim();
+    if (!labelChanged || !trimmedText) {
+      editor
+        .chain()
+        .setTextSelection({ from: live.from, to: live.to })
+        .extendMarkRange('link')
+        .updateAttributes('link', { href: nextHref })
+        .run();
+      return;
+    }
+    const linkType = editor.schema.marks.link;
+    if (!linkType) return;
+    const linkMark = linkType.create({ href: nextHref });
+    const textNode = editor.schema.text(trimmedText, [linkMark]);
+    editor.view.dispatch(editor.state.tr.replaceWith(live.from, live.to, textNode));
   }
 
   function handleRemove() {
@@ -356,7 +396,7 @@ export function InternalLinkPropPanel({
     };
   } else if (target?.kind === 'external') {
     stateLabel = {
-      icon: <ExternalLink className="size-3.5 shrink-0" aria-hidden="true" />,
+      icon: <Globe className="size-3.5 shrink-0" aria-hidden="true" />,
       text: 'External link',
       className: 'text-foreground',
     };
@@ -442,80 +482,136 @@ export function InternalLinkPropPanel({
     }
   }
 
+  const iconNode = (
+    <span className={cn('flex shrink-0', stateLabel.className)}>{stateLabel.icon}</span>
+  );
+  const iconElement = isUnresolved ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="flex shrink-0" data-slot="internal-link-prop-panel-icon-trigger">
+          {iconNode}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{stateLabel.text}</TooltipContent>
+    </Tooltip>
+  ) : (
+    iconNode
+  );
+
   return (
     <>
       <InteractionPropPanel
         kind="internal-link"
-        ariaLabel="Link options"
+        ariaLabel={`${stateLabel.text}: ${displayHref}`}
         onDeactivate={onClose}
         triggerReference={triggerReference}
+        className="w-96"
       >
-        <div className="mb-2 flex items-start gap-2 pr-8">
-          <div className={cn('mt-0.5 flex shrink-0', stateLabel.className)}>{stateLabel.icon}</div>
-          <div className="flex-1 min-w-0">
-            <div className={cn('text-sm font-medium', stateLabel.className)}>{stateLabel.text}</div>
-            <div className="truncate font-mono text-xs text-muted-foreground" title={displayHref}>
+        <div className="flex items-center gap-2 pr-8">
+          {iconElement}
+          <div
+            className="flex-1 min-w-0 truncate text-sm"
+            title={displayHref}
+            data-slot="internal-link-prop-panel-text"
+          >
+            <span
+              className={cn(
+                'font-medium',
+                isUnresolved ? 'text-muted-foreground' : 'text-foreground',
+              )}
+            >
               {displayHref}
-            </div>
+            </span>
           </div>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          {!isUnresolved ? (
-            <Button
-              size="sm"
-              variant="default"
-              onClick={() => {
-                handleNavigate({});
-                onClose();
-              }}
-            >
-              {target?.kind === 'external' ? 'Open in new tab' : 'Open'}
-            </Button>
-          ) : null}
-          {isUnresolved ? (
-            <Button
-              size="sm"
-              variant="default"
-              disabled={creatingMode !== null}
-              onClick={() => void handleCreatePage('missing')}
-            >
-              {creatingMode === 'missing' ? 'Creating' : 'Create page'}
-            </Button>
-          ) : null}
-          {isFolder && folderCreateSeed ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={creatingMode !== null}
-              onClick={() => void handleCreatePage('folder-index')}
-            >
-              <FilePlus2 className="size-3.5" aria-hidden="true" />
-              {creatingMode === 'folder-index' ? 'Creating' : 'Create index'}
-            </Button>
-          ) : null}
-          {/* Spacer pushes Edit + Remove to the right, separating
-              navigation/creation actions (left) from modify-the-mark
-              actions (right). */}
-          <div className="flex-1" />
-          <Button size="sm" variant="outline" onClick={() => setEditDialogOpen(true)}>
-            <Pencil className="size-3.5" aria-hidden="true" />
-            Edit
-          </Button>
-          <Button size="sm" variant="destructive" onClick={handleRemove}>
+          <div className="flex shrink-0 items-center gap-0.5">
             {isUnresolved ? (
-              <Unlink2 className="size-3.5" aria-hidden="true" />
+              <Button
+                type="button"
+                size="sm"
+                variant="link"
+                disabled={creatingMode !== null}
+                onClick={() => void handleCreatePage('missing')}
+                data-slot="internal-link-prop-panel-create"
+                className="flex items-center text-foreground"
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                {creatingMode === 'missing' ? 'Creating…' : 'Create page'}
+              </Button>
             ) : (
-              <Trash2 className="size-3.5" aria-hidden="true" />
+              <Button
+                type="button"
+                size="sm"
+                variant="link"
+                onClick={() => {
+                  handleNavigate({});
+                  onClose();
+                }}
+                data-slot="internal-link-prop-panel-open"
+                className="flex items-center text-foreground"
+              >
+                {target?.kind === 'external' ? 'Open in new tab' : 'Open'}
+              </Button>
             )}
-            {isUnresolved ? 'Unlink' : 'Remove'}
-          </Button>
+            {isFolder && folderCreateSeed ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    disabled={creatingMode !== null}
+                    onClick={() => void handleCreatePage('folder-index')}
+                    aria-label={creatingMode === 'folder-index' ? 'Creating index' : 'Create index'}
+                    data-slot="internal-link-prop-panel-create-index"
+                  >
+                    <FilePlus2 className="size-3.5" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {creatingMode === 'folder-index' ? 'Creating index…' : 'Create index'}
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Edit"
+                  onClick={() => setEditDialogOpen(true)}
+                  data-slot="internal-link-prop-panel-edit"
+                >
+                  <Pencil className="size-3.5" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Edit</TooltipContent>
+            </Tooltip>
+            <CopyButton copyContent={href} />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Remove"
+                  onClick={handleRemove}
+                  data-slot="internal-link-prop-panel-remove"
+                >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Remove</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       </InteractionPropPanel>
 
       <EditMarkdownLinkDialog
         open={editDialogOpen}
         href={href}
+        text={linkText}
         pages={pages}
         onOpenChange={setEditDialogOpen}
         onSave={handleSave}
