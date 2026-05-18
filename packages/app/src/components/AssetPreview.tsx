@@ -1,4 +1,5 @@
 import type { InlineAssetMediaKind } from '@inkeep/open-knowledge-core';
+import { LoadingImage } from '@/components/ui/loading-image';
 
 interface AssetPreviewProps {
   assetPath: string;
@@ -20,11 +21,12 @@ export function AssetPreview({ assetPath, mediaKind }: AssetPreviewProps) {
     <main className="flex h-full min-h-0 flex-col bg-background" aria-label={fileName}>
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
         {mediaKind === 'image' ? (
-          <img
+          <LoadingImage
             src={src}
             alt={fileName}
-            className="max-h-full max-w-full object-contain"
             draggable={false}
+            slotClassName="max-h-full max-w-full"
+            className="max-h-full max-w-full object-contain"
           />
         ) : mediaKind === 'video' ? (
           // biome-ignore lint/a11y/useMediaCaption: local preview files do not have sidecar captions.
