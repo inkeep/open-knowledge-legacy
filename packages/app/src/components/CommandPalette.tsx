@@ -1,3 +1,4 @@
+import { isMacOS } from '@tiptap/core';
 import {
   Box,
   Download,
@@ -66,7 +67,7 @@ import { runWithToast as runWithToastBase } from '@/lib/error-state';
 import { VISIBLE_TARGETS } from '@/lib/handoff/targets';
 import { SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 import { useWorkspace } from '@/lib/use-workspace';
-import { cn, isMacOs } from '@/lib/utils.ts';
+import { cn } from '@/lib/utils.ts';
 import { buildHandoffInput, useHandoffDispatch } from './handoff/useHandoffDispatch';
 import { useInstalledAgents } from './handoff/useInstalledAgents';
 
@@ -214,7 +215,7 @@ export function CommandPalette({ bridge = null, open, onOpenChange }: CommandPal
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      const isTrigger = e.key === 'k' && (isMacOs() ? e.metaKey : e.ctrlKey);
+      const isTrigger = e.key === 'k' && (isMacOS() ? e.metaKey : e.ctrlKey);
       if (!isTrigger) return;
       e.preventDefault();
       onOpenChange(!open);

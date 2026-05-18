@@ -11,7 +11,7 @@ export function useUpdateChannel(): UseUpdateChannelResult {
   const [channel, setChannelState] = useState<UpdateChannel | null>(null);
 
   useEffect(() => {
-    const bridge = typeof window !== 'undefined' ? window.okDesktop : undefined;
+    const bridge = window.okDesktop;
     if (!bridge) return;
 
     let cancelled = false;

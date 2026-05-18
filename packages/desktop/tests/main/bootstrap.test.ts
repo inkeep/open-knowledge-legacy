@@ -14,7 +14,7 @@ function makeTracingDeps(overrides?: {
 }) {
   const calls: CallTrace[] = [];
   const warns: Array<{ msg: string; obj?: unknown }> = [];
-  const baseState = { ...emptyState(), ...(overrides?.appStateOverride ?? {}) };
+  const baseState = { ...emptyState(), ...overrides?.appStateOverride };
 
   return {
     calls,

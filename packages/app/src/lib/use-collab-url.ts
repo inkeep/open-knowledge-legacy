@@ -173,7 +173,7 @@ export function useCollabUrl(): UseCollabUrlState {
     void retrySignal;
     const token = ++retryTokenRef.current.token;
 
-    const bridge = tryElectronBridge(typeof window !== 'undefined' ? window : undefined);
+    const bridge = tryElectronBridge(window);
     if (bridge) {
       setState(electronStateFromConfig(bridge.config));
       const unsubscribe = bridge.onProjectSwitched((next) => {

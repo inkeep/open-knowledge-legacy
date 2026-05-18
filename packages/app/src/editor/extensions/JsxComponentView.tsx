@@ -619,7 +619,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                     if (curNode.attrs.kind !== 'element') return;
                     const isCommonMark = curDescriptorName === 'CommonMarkImage';
                     const nextProps = {
-                      ...((curNode.attrs.props as Record<string, unknown>) ?? {}),
+                      ...(curNode.attrs.props as Record<string, unknown>),
                       align: value,
                     };
                     const nextAttrs = isCommonMark

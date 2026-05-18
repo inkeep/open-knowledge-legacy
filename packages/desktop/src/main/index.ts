@@ -1632,7 +1632,7 @@ function installLocalhostCorsInjector() {
   session.defaultSession.webRequest.onHeadersReceived(
     { urls: ['http://localhost:*/*', 'http://127.0.0.1:*/*'] },
     (details, callback) => {
-      const headers: Record<string, string[]> = { ...(details.responseHeaders ?? {}) };
+      const headers: Record<string, string[]> = { ...details.responseHeaders };
       const hasAcao = Object.keys(headers).some(
         (k) => k.toLowerCase() === 'access-control-allow-origin',
       );

@@ -37,7 +37,7 @@ function seedTmpHome(prefix: string, stateOverride?: Record<string, unknown>): s
       lastSeenVersion: null,
       lastSuccessfulCheckAt: null,
       stuckHintShown: false,
-      ...(stateOverride ?? {}),
+      ...stateOverride,
     }),
   );
   return tmpHome;

@@ -20,7 +20,7 @@ mock.module('next/og', () => ({
         status: 200,
         headers: {
           'Content-Type': 'image/png',
-          ...(options?.headers ?? {}),
+          ...options?.headers,
         },
       });
       recordedCalls.push({ body, options });

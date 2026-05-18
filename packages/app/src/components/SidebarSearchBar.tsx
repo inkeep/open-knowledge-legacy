@@ -1,8 +1,10 @@
 import { incrementJsxRenderFailure } from '@inkeep/open-knowledge-core';
+import { isMacOS } from '@tiptap/core';
 import { Search } from 'lucide-react';
 import type { ErrorInfo } from 'react';
 import { Button } from '@/components/ui/button';
-import { cn, isMacOs } from '@/lib/utils';
+import { Kbd } from '@/components/ui/kbd';
+import { cn } from '@/lib/utils';
 
 interface SidebarSearchBarProps {
   onClick: () => void;
@@ -36,9 +38,7 @@ export function SidebarSearchBar({ onClick, className }: SidebarSearchBarProps) 
     >
       <Search aria-hidden="true" />
       <span className="flex-1 text-left text-sm">Search</span>
-      <kbd className="rounded border bg-muted px-1.5 py-0.5 font-medium text-[10px] text-foreground/70">
-        {isMacOs() ? '⌘K' : 'Ctrl K'}
-      </kbd>
+      <Kbd className="text-foreground/70">{isMacOS() ? '⌘ K' : 'Ctrl K'}</Kbd>
     </Button>
   );
 }

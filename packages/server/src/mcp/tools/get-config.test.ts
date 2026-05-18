@@ -34,7 +34,7 @@ function captureRegistration(cwd: string, configOverride?: Partial<Config>): Too
     },
   } as unknown as ServerInstance;
   register(server, {
-    config: { ...BASE_CONFIG, ...(configOverride ?? {}) },
+    config: { ...BASE_CONFIG, ...configOverride },
     resolveCwd: async () => cwd,
   });
   if (!captured) throw new Error('tool not registered');

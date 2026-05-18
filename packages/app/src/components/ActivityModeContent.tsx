@@ -82,7 +82,13 @@ function EmptyState(): React.JSX.Element {
   );
 }
 
-function NoAgentSelectedState({ onExit }: { onExit: () => void }): React.JSX.Element {
+function NoAgentSelectedState({
+  onExit,
+  showBackButton,
+}: {
+  onExit: () => void;
+  showBackButton: boolean;
+}): React.JSX.Element {
   return (
     <section
       className="flex h-full min-h-0 flex-col"
@@ -90,7 +96,7 @@ function NoAgentSelectedState({ onExit }: { onExit: () => void }): React.JSX.Ele
       aria-label="Agent activity"
     >
       <div className="flex shrink-0 flex-row items-center gap-2 border-b border-border px-3 py-2">
-        <BackToDocumentButton onClick={onExit} />
+        {showBackButton ? <BackToDocumentButton onClick={onExit} /> : null}
         <h2 className="truncate text-sm font-medium">Agent activity</h2>
       </div>
       <div className="flex flex-1 items-center justify-center p-6 text-muted-foreground">
@@ -175,6 +181,7 @@ interface ActivityModeBodyProps {
   onNavigate: (docName: string) => void;
   onUndoLast: (docName: string) => Promise<void>;
   onUndoAll: (docName: string) => Promise<void>;
+  showBackButton: boolean;
 }
 
 function ActivityModeBody({
@@ -187,6 +194,7 @@ function ActivityModeBody({
   onNavigate,
   onUndoLast,
   onUndoAll,
+  showBackButton,
 }: ActivityModeBodyProps): React.JSX.Element {
   const lastTs = data?.files?.[0]?.lastTs ?? null;
   return (
@@ -196,7 +204,7 @@ function ActivityModeBody({
       aria-label="Agent activity"
     >
       <div className="flex flex-row items-center gap-2 border-b border-border px-3 py-2 shrink-0">
-        <BackToDocumentButton onClick={onExit} />
+        {showBackButton ? <BackToDocumentButton onClick={onExit} /> : null}
         {data?.agent ? (
           <>
             <AgentAvatar agent={data.agent} />
@@ -258,13 +266,17 @@ function ActivityModeBody({
   );
 }
 
-export function ActivityModeContent(): React.JSX.Element {
+export function ActivityModeContent({
+  showBackButton = true,
+}: {
+  showBackButton?: boolean;
+} = {}): React.JSX.Element {
   const { docPanelAgentId, closeActivityPanel } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
   const { data, status, error, reload, fetchBurstDiff } = useActivityPanel(docPanelAgentId);
 
   if (docPanelAgentId === null) {
-    return <NoAgentSelectedState onExit={closeActivityPanel} />;
+    return <NoAgentSelectedState onExit={closeActivityPanel} showBackButton={showBackButton} />;
   }
 
   const onNavigate = (docName: string): void => {
@@ -316,6 +328,7 @@ export function ActivityModeContent(): React.JSX.Element {
       onNavigate={onNavigate}
       onUndoLast={onUndoLast}
       onUndoAll={onUndoAll}
+      showBackButton={showBackButton}
     />
   );
 }

@@ -120,7 +120,11 @@ export function DocPanel({
         <div className="min-h-0 flex-1">
           <Suspense
             fallback={
-              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              <div
+                role="status"
+                aria-busy="true"
+                className="flex h-full items-center justify-center text-sm text-muted-foreground"
+              >
                 Loading agent activity
               </div>
             }

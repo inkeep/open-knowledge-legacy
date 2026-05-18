@@ -94,30 +94,6 @@ describe('SidebarSearchBar source-level guards', () => {
     expect(SRC).toMatch(/<span\s+className=['"]flex-1\s+text-left\s+text-sm['"]>Search<\/span>/);
   });
 
-  test('renders the keycap-styled kbd with its locked visual classes', () => {
-    expect(SRC).toMatch(/<kbd[\s\S]*?<\/kbd>/);
-    expect(SRC).toContain('text-[10px]');
-    expect(SRC).toMatch(/<kbd[\s\S]*?\brounded\b[\s\S]*?<\/kbd>/);
-    expect(SRC).toMatch(/<kbd[\s\S]*?\bborder\b[\s\S]*?<\/kbd>/);
-    expect(SRC).toMatch(/<kbd[\s\S]*?\bbg-muted\b[\s\S]*?<\/kbd>/);
-    expect(SRC).toMatch(/<kbd[\s\S]*?\bpx-1\.5\b[\s\S]*?<\/kbd>/);
-    expect(SRC).toMatch(/<kbd[\s\S]*?\bpy-0\.5\b[\s\S]*?<\/kbd>/);
-    expect(SRC).toMatch(/<kbd[\s\S]*?\bfont-medium\b[\s\S]*?<\/kbd>/);
-  });
-
-  test('does NOT apply opacity-60 to the kbd (contrast — always-visible context)', () => {
-    expect(SRC).not.toMatch(/<kbd[\s\S]*?\bopacity-60\b[\s\S]*?<\/kbd>/);
-  });
-
-  test('applies text-foreground/70 to the kbd for WCAG 1.4.3 AA contrast', () => {
-    expect(SRC).toMatch(/<kbd[\s\S]*?\btext-foreground\/70\b[\s\S]*?<\/kbd>/);
-  });
-
-  test("imports isMacOs from '@/lib/utils' and pins the kbd chord ternary to the correct branches", () => {
-    expect(SRC).toMatch(/import\s*\{[^}]*\bisMacOs\b[^}]*\}\s*from\s*['"]@\/lib\/utils['"]/);
-    expect(SRC).toMatch(/isMacOs\(\)\s*\?\s*['"]⌘K['"]\s*:\s*['"]Ctrl K['"]/);
-  });
-
   test('button carries the stable telemetry selector value', () => {
     expect(SRC).toMatch(/data-telemetry-event=['"]ok\.sidebar\.search_pill\.click['"]/);
   });

@@ -63,7 +63,7 @@ function toggleListKind(
           const itemPos = parentList.pos + 1 + offset;
           tr.setNodeMarkup(itemPos, undefined, {
             ...child.attrs,
-            ...(itemAttrsOverride ?? {}),
+            ...itemAttrsOverride,
           });
         }
       });

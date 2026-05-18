@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Inherited entitlements for helper processes (Renderer / GPU / Plugin /
+    generic Helper.app spawned by `utilityProcess.fork`).
+
+    Contract — NOT "strict subset": this plist excludes restricted
+    entitlements that require an embedded provisioning profile (helpers
+    do not carry one) AND excludes file-access entitlements the main app
+    brokers on helpers' behalf. It MAY include helper-bootstrap-specific
+    entitlements (`cs.allow-dyld-environment-variables`, `security.inherit`)
+    that are meaningless on the main binary and absent from
+    `entitlements.mac.plist`. The contract enforced by
+    `tests/unit/entitlements-helper-split.test.ts` is forbidden-keys
+    exclusion + required-keys inclusion + allowlist, not subset.
+
+    Why this file exists: macOS 26.4.x ("Tahoe") tightened AMFI enforcement
+    of restricted entitlements on child processes. Sharing the main-app
+    entitlements file across helpers (the prior `entitlementsInherit:
+    build/entitlements.mac.plist` config) made every helper claim
+    `com.apple.developer.associated-domains` — a profile-restricted
+    entitlement. With no embedded profile on the helper binary, AMFI
+    SIGKILLs the helper at launch. Parent observes `exit_code=9`. Symptom:
+    "Unable to open project … utility exited before ready (code=9)" dialog
+    + GPU process exit_code=9 in stderr + eventually `FATAL: GPU process
+    isn't usable. Goodbye.` and the app dies.
+
+    Contract enforcement: `tests/unit/entitlements-helper-split.test.ts`
+    asserts the forbidden-keys exclusion + required-keys inclusion + the
+    `entitlements.mac.plist` regression guard. Update both this file AND
+    that test when adding entitlements either side.
+
+    See `build/UNIVERSAL_LINK_ACTIVATION.md` for the associated-domains
+    provisioning context. See `electron-builder.yml`'s `mac.entitlements`
+    + `mac.entitlementsInherit` keys for the wiring.
+-->
+<plist version="1.0">
+<dict>
+    <!-- V8 JIT: helpers (Renderer, GPU, utility) need executable JIT pages. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- Native modules (@napi-rs/keyring, @parcel/watcher) dlopen'd at
+         runtime have non-system signatures; library validation would
+         reject them without this. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- Electron's helper bootstrap uses DYLD_INSERT_LIBRARIES for
+         per-process initialization; AMFI rejects launch without this. -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <!-- App Sandbox inherit key. Included for parity with the
+         electron-builder helper-plist template (the canonical Electron
+         pattern across signed Electron 41 apps); no-op in this
+         non-sandboxed app, since `com.apple.security.inherit` is the
+         App Sandbox propagation key, not a Hardened Runtime mechanism
+         (Hardened Runtime alone does not propagate via inherit — see
+         `reports/electron-spawns-cli-security/evidence
+         /spawn-mechanism-and-signing.md:35`). Kept for forward-
+         compatibility if the desktop bundle ever opts into App Sandbox. -->
+    <key>com.apple.security.inherit</key>
+    <true/>
+</dict>
+</plist>
