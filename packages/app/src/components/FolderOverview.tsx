@@ -163,7 +163,7 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="flex items-center gap-2">
                 <FolderOpen className="size-5 text-muted-foreground" />
-                <h1 className="text-2xl font-semibold tracking-tight">{data.title}</h1>
+                <h1 className="text-2xl font-light tracking-tight">{data.title}</h1>
               </div>
               <Button onClick={() => setCreateDialogOpen(true)}>
                 <Plus className="size-4" />
