@@ -43,6 +43,9 @@ export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardin
 
         <DialogBody>
           <AutoSyncEnableWarning />
+          <p className="mt-3 text-sm text-muted-foreground">
+            You can turn this on later in <span className="font-medium">Settings → Sync</span>.
+          </p>
         </DialogBody>
 
         <DialogFooter>

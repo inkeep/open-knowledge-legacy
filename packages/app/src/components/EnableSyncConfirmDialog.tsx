@@ -25,7 +25,7 @@ export function EnableSyncConfirmDialog({
 }: EnableSyncConfirmDialogProps) {
   return (
     <DialogRoot open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <AutoSyncEnableDialogIntro />
         </DialogHeader>
