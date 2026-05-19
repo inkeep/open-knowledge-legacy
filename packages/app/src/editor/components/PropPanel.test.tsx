@@ -445,7 +445,7 @@ describe('PropPanel — CodeMirror branch (string props with `language`)', () =>
 });
 
 describe('PropPanel — media URL validation', () => {
-  test('video src with YouTube URL renders inline embed-provider error + a11y wiring', () => {
+  test('video src with YouTube URL is accepted (Video dispatches to iframe — no error)', () => {
     const d = findBuiltIn('video');
     const html = withFakeStorage(() =>
       renderToString(
@@ -456,14 +456,47 @@ describe('PropPanel — media URL validation', () => {
         />,
       ),
     );
-    expect(html).toContain('data-prop-media-error');
-    expect(html).toContain('YouTube');
-    expect(html).toContain('not yet supported');
-    expect(html).not.toMatch(/PRD-\d+/);
-    expect(html).toContain('aria-invalid="true"');
-    expect(html).toContain('aria-describedby="prop-src-error"');
-    expect(html).toContain('id="prop-src-error"');
-    expect(html).toContain('role="alert"');
+    expect(html).not.toContain('data-prop-media-error');
+    expect(html).not.toContain('not yet supported');
+    expect(html).not.toContain('aria-invalid="true"');
+    expect(html).not.toContain('role="alert"');
+    expect(html).toContain('id="prop-src"');
+    expect(html).toContain('https://www.youtube.com/watch?v=rekaSOwGMu0');
+  });
+
+  test('video preload hides on YouTube URLs (no iframe equivalent)', () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() => {
+      persistAdvancedOpenState('video', true);
+      return renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ src: 'https://www.youtube.com/watch?v=jNQXAC9IVRw' }}
+          onChange={() => {}}
+        />,
+      );
+    });
+    expect(html).toContain('id="prop-controls"');
+    expect(html).toContain('id="prop-autoplay"');
+    expect(html).toContain('id="prop-loop"');
+    expect(html).toContain('id="prop-muted"');
+    expect(html).not.toContain('id="prop-preload"');
+    expect(html).not.toContain('data-prop-name="preload"');
+  });
+
+  test('video preload renders for non-YouTube sources (advanced section)', () => {
+    const d = findBuiltIn('video');
+    const html = withFakeStorage(() => {
+      persistAdvancedOpenState('video', true);
+      return renderToString(
+        <PropPanel
+          descriptor={d}
+          values={{ src: 'https://example.com/clip.mp4' }}
+          onChange={() => {}}
+        />,
+      );
+    });
+    expect(html).toContain('id="prop-preload"');
   });
 
   test('video src with Vimeo URL renders inline embed-provider error', () => {

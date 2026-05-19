@@ -80,64 +80,71 @@ describe('validateMediaUrl — extensionless CDN URLs (no false positive)', () =
   });
 });
 
-describe('validateMediaUrl — embed-provider rejection (all kinds)', () => {
-  test('rejects youtube.com/watch URLs', () => {
+describe('validateMediaUrl — YouTube accepted for video kind (Video dispatches to iframe)', () => {
+  test('accepts youtube.com/watch URLs', () => {
     expect(
       validateMediaUrl('https://www.youtube.com/watch?v=rekaSOwGMu0&pp=ugUHEgVlbi1H', 'video'),
-    ).toEqual({ valid: false, reason: 'embed-provider', provider: 'youtube' });
+    ).toEqual({ valid: true });
   });
 
-  test('rejects youtube.com without www', () => {
-    expect(validateMediaUrl('https://youtube.com/watch?v=abc123', 'video')).toEqual({
-      valid: false,
-      reason: 'embed-provider',
-      provider: 'youtube',
+  test('accepts youtube.com without www', () => {
+    expect(validateMediaUrl('https://youtube.com/watch?v=dQw4w9WgXcQ', 'video')).toEqual({
+      valid: true,
     });
   });
 
-  test('rejects youtu.be short links', () => {
-    expect(validateMediaUrl('https://youtu.be/rekaSOwGMu0', 'video')).toEqual({
-      valid: false,
-      reason: 'embed-provider',
-      provider: 'youtube',
+  test('accepts youtu.be short links', () => {
+    expect(validateMediaUrl('https://youtu.be/rekaSOwGMu0', 'video')).toEqual({ valid: true });
+  });
+
+  test('accepts youtube-nocookie.com URLs', () => {
+    expect(validateMediaUrl('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', 'video')).toEqual(
+      { valid: true },
+    );
+  });
+
+  test('accepts youtube subdomains (m., music.)', () => {
+    expect(validateMediaUrl('https://m.youtube.com/watch?v=dQw4w9WgXcQ', 'video')).toEqual({
+      valid: true,
+    });
+    expect(validateMediaUrl('https://music.youtube.com/watch?v=dQw4w9WgXcQ', 'video')).toEqual({
+      valid: true,
     });
   });
 
-  test('rejects youtube-nocookie.com URLs', () => {
-    expect(validateMediaUrl('https://www.youtube-nocookie.com/embed/abc123', 'video')).toEqual({
-      valid: false,
-      reason: 'embed-provider',
-      provider: 'youtube',
-    });
-  });
-
-  test('rejects youtube subdomains (m., music.)', () => {
-    expect(validateMediaUrl('https://m.youtube.com/watch?v=abc', 'video')).toEqual({
-      valid: false,
-      reason: 'embed-provider',
-      provider: 'youtube',
-    });
-    expect(validateMediaUrl('https://music.youtube.com/watch?v=abc', 'video')).toEqual({
-      valid: false,
-      reason: 'embed-provider',
-      provider: 'youtube',
-    });
-  });
-
-  test('rejects /embed and /shorts paths', () => {
+  test('accepts /embed and /shorts paths', () => {
     expect(validateMediaUrl('https://www.youtube.com/embed/rekaSOwGMu0', 'video')).toEqual({
+      valid: true,
+    });
+    expect(validateMediaUrl('https://www.youtube.com/shorts/dQw4w9WgXcQ', 'video')).toEqual({
+      valid: true,
+    });
+  });
+
+  test('rejects unsupported YouTube subdomains the renderer cannot dispatch', () => {
+    expect(validateMediaUrl('https://kids.youtube.com/watch?v=dQw4w9WgXcQ', 'video')).toEqual({
       valid: false,
       reason: 'embed-provider',
       provider: 'youtube',
     });
-    expect(validateMediaUrl('https://www.youtube.com/shorts/abc123', 'video')).toEqual({
+    expect(validateMediaUrl('https://studio.youtube.com/watch?v=dQw4w9WgXcQ', 'video')).toEqual({
       valid: false,
       reason: 'embed-provider',
       provider: 'youtube',
     });
   });
 
-  test('rejects Vimeo URLs', () => {
+  test('rejects malformed YouTube IDs at the validator (matches renderer behavior)', () => {
+    expect(validateMediaUrl('https://youtu.be/short', 'video')).toEqual({
+      valid: false,
+      reason: 'embed-provider',
+      provider: 'youtube',
+    });
+  });
+});
+
+describe('validateMediaUrl — embed-provider rejection (Vimeo / Loom + image / audio)', () => {
+  test('rejects Vimeo URLs for video kind', () => {
     expect(validateMediaUrl('https://vimeo.com/123456789', 'video')).toEqual({
       valid: false,
       reason: 'embed-provider',
@@ -155,7 +162,7 @@ describe('validateMediaUrl — embed-provider rejection (all kinds)', () => {
     });
   });
 
-  test('rejects Loom URLs', () => {
+  test('rejects Loom URLs for video kind', () => {
     expect(validateMediaUrl('https://www.loom.com/share/abc123def456', 'video')).toEqual({
       valid: false,
       reason: 'embed-provider',
@@ -173,16 +180,29 @@ describe('validateMediaUrl — embed-provider rejection (all kinds)', () => {
     });
   });
 
-  test('embed-provider rejection applies to image and audio kinds too', () => {
-    expect(validateMediaUrl('https://youtu.be/abc123', 'image')).toEqual({
+  test('YouTube still rejected for image and audio kinds', () => {
+    expect(validateMediaUrl('https://youtu.be/dQw4w9WgXcQ', 'image')).toEqual({
       valid: false,
       reason: 'embed-provider',
       provider: 'youtube',
     });
+    expect(validateMediaUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'audio')).toEqual({
+      valid: false,
+      reason: 'embed-provider',
+      provider: 'youtube',
+    });
+  });
+
+  test('Vimeo / Loom rejected for image and audio kinds', () => {
     expect(validateMediaUrl('https://vimeo.com/123', 'audio')).toEqual({
       valid: false,
       reason: 'embed-provider',
       provider: 'vimeo',
+    });
+    expect(validateMediaUrl('https://loom.com/share/abc', 'image')).toEqual({
+      valid: false,
+      reason: 'embed-provider',
+      provider: 'loom',
     });
   });
 });
@@ -324,14 +344,21 @@ describe('mediaUrlValidationMessage', () => {
     expect(msg).toBe('Data URIs are not supported for media fields. Use a hosted file URL.');
   });
 
-  test('embed-provider message is video-specific for the video kind', () => {
-    const msg = mediaUrlValidationMessage(
-      { valid: false, reason: 'embed-provider', provider: 'youtube' },
+  test('embed-provider message is video-specific for the video kind (Vimeo / Loom path)', () => {
+    const vimeoMsg = mediaUrlValidationMessage(
+      { valid: false, reason: 'embed-provider', provider: 'vimeo' },
       'video',
     );
-    expect(msg).toContain('YouTube');
-    expect(msg).toContain('not yet supported');
-    expect(msg).not.toContain('PRD-');
+    expect(vimeoMsg).toContain('Vimeo');
+    expect(vimeoMsg).toContain('not yet supported');
+    expect(vimeoMsg).not.toContain('PRD-');
+
+    const loomMsg = mediaUrlValidationMessage(
+      { valid: false, reason: 'embed-provider', provider: 'loom' },
+      'video',
+    );
+    expect(loomMsg).toContain('Loom');
+    expect(loomMsg).toContain('not yet supported');
   });
 
   test('embed-provider message is generic (not "embeds coming soon") for image/audio', () => {

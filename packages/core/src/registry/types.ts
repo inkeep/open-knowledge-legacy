@@ -8,6 +8,7 @@ export interface PropDefBase {
   required: boolean;
   description?: string;
   hidden?: boolean;
+  hideWhen?: (values: Record<string, unknown>) => boolean;
   advanced?: boolean;
   omitOnDefault?: boolean;
 }

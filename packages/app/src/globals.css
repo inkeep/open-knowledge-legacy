@@ -2937,6 +2937,30 @@ html.electron-mode [data-slot="sidebar-inner"] {
   margin: 0.5rem 0;
 }
 
+/* YouTube dispatch: wrap a `<div>` containing react-lite-youtube-embed's
+   `.yt-lite` (which uses `aspect-ratio: 16/9` to derive height from width).
+   Native `<video>` is a replaced element with intrinsic dimensions from
+   the file — the JsxComponentView wrapper's `width: fit-content` rule
+   sizes that correctly. The lite-embed's `<div>` has no intrinsic width
+   (the play button is `position: absolute`), so giving it an explicit
+   default lets the same `fit-content` wrapper hug it without needing a
+   `:has()` override that would otherwise expand the chrome bar / halo
+   to the full column. `max-width: 100%` keeps the embed contained when
+   the column is narrower than 720px. Author-supplied `width` (via
+   inline style from the Video descriptor) overrides this default. */
+.ok-video-youtube {
+  width: 720px;
+  max-width: 100%;
+  /* Clip the inner `.yt-lite`'s rectangular thumbnail (and the
+     post-activation iframe) to the wrapper's rounded corners — without
+     this, the lib's background-image bleeds past the `.ok-video`'s
+     border-radius and the video looks like it's leaking on the right.
+     Native `<video>` doesn't need this because the element renders its
+     pixels inside its own box; for a `<div>` wrapper with rounded
+     corners the clip is on us. */
+  overflow: hidden;
+}
+
 /* 7c-bis. PDF (Obsidian-parity `![[doc.pdf]]` — Pdf.tsx renders pages
  * to canvas via pdfjs-dist, no iframe). Three regions: toolbar (title +
  * page-nav controls), pages container (scrollable canvas list), and the
