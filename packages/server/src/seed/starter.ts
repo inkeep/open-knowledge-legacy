@@ -40,7 +40,7 @@ const KNOWLEDGE_BASE_FOLDERS: readonly StarterFolder[] = [
     path: 'research',
     title: 'Research',
     description:
-      'Provisional analysis synthesizing external sources. Produced by the `research` tool. Every factual claim cites a specific doc in `external-sources/` (or an inline URL if ingest was skipped); no unsourced assertions. Each article has `status: provisional` and a `sources:` frontmatter list of cited paths. Promoted to `articles/` via `consolidate` once the team decides the findings are stable.',
+      "Provisional analysis synthesizing external sources. Produced by the `research` tool. Every factual claim cites a specific doc in `external-sources/` (or an inline URL if ingest was skipped); no unsourced assertions. Each article has `status: provisional` and a `sources:` frontmatter list of cited paths — keep the `sources:` list aligned with the docs linked in the article's body. Promoted to `articles/` via `consolidate` once the team decides the findings are stable.",
     tags: ['research', 'provisional', 'layer-research'],
     starterTemplate: 'research-log',
   },
@@ -92,7 +92,7 @@ tags: [research, provisional]
 
 ## Sources cited
 
-(List paths from external-sources/ this log synthesizes. Mirror in the \`sources:\` frontmatter list.)
+(Link to the docs in external-sources/ this log synthesizes.)
 
 ## Findings
 
@@ -466,7 +466,7 @@ const PLAIN_NOTES_FOLDERS: readonly StarterFolder[] = [
     path: 'notes',
     title: 'Notes',
     description:
-      'Flat notes folder. One file per topic. No structure imposed. Use `[[wiki-links]]` to connect notes; OK\'s link graph builds itself from those edges. The "I just want to write" home base. Promote a note into a more structured folder layout later if you outgrow this.',
+      'Flat notes folder. One file per topic. No structure imposed. Link freely between notes; OK\'s link graph builds itself from those edges. The "I just want to write" home base. Promote a note into a more structured folder layout later if you outgrow this.',
     tags: ['notes', 'flat'],
     starterTemplate: 'note',
   },
@@ -474,7 +474,7 @@ const PLAIN_NOTES_FOLDERS: readonly StarterFolder[] = [
     path: 'daily',
     title: 'Daily',
     description:
-      'Daily journal entries. One file per day (`YYYY-MM-DD.md`). Pre-templated with morning intentions and evening reflections. Use `[[wiki-links]]` to anything worth its own page. Agent: on first instantiation each day, link `[[YYYY-MM-DD-1|yesterday]]` and pre-fill the date so the linear journal is also a navigable graph.',
+      "Daily journal entries. One file per day (`YYYY-MM-DD.md`). Pre-templated with morning intentions and evening reflections. Link to anything worth its own page. Agent: on first instantiation each day, link to yesterday's entry (`YYYY-MM-DD-1.md`) and pre-fill the date so the linear journal is also a navigable graph.",
     tags: ['daily', 'journal'],
     starterTemplate: 'daily',
   },
@@ -489,7 +489,7 @@ author: {{user}}
 tags: []
 ---
 
-(Write here. Use [[wiki-links]] to connect to other notes.)
+(Write here. Link to other notes when relevant.)
 `,
   daily: `---
 title: {{date}}
@@ -508,7 +508,7 @@ tags: [daily]
 
 ## Throughout the day
 
-(Capture as you go. Use [[wiki-links]] for anything worth its own page.)
+(Capture as you go. Link to anything worth its own page.)
 
 ## Evening reflection
 
@@ -590,7 +590,7 @@ tags: [character]
 
 ## Links
 
-(\`[[Faction X]]\`, \`[[Setting Y]]\`, related characters, etc.)
+(Related characters, factions they belong to, settings they appear in. Link to those pages when relevant.)
 `,
   setting: `---
 title: Setting Name
@@ -610,7 +610,7 @@ tags: [setting]
 
 ## What happens here
 
-(Significant events tied to this setting. Link to \`[[characters/...]]\`.)
+(Significant events tied to this setting. Link to related character pages.)
 
 ## What's hidden
 
@@ -849,7 +849,7 @@ const WRITING_PIPELINE_FOLDERS: readonly StarterFolder[] = [
     path: 'published',
     title: 'Published',
     description:
-      "Shipped work. Carries `published_at`, `canonical_url`, `channel`. Source-of-truth for what's gone live. Treat as immutable; if you need to revise, fork to a new draft. Agent: on publish, auto-fill `canonical_url` when a Substack / Ghost / Mirror URL is pasted into the file.",
+      "Shipped work. Carries `published_at`, `canonical_url`, `channel`. Source-of-truth for what's gone live. Treat as immutable; if you need to revise, copy to a new draft. Agent: on publish, auto-fill `canonical_url` when a Substack / Ghost / Mirror URL is pasted into the file.",
     tags: ['published', 'live'],
     starterTemplate: 'published',
   },
@@ -896,7 +896,7 @@ author: {{user}}
 tags: [published]
 ---
 
-(Final version. Treat as immutable; if you need to revise, fork to a new draft.)
+(Final version. Treat as immutable; if you need to revise, copy to a new draft.)
 `,
 };
 
@@ -921,7 +921,7 @@ const GBRAIN_FOLDERS: readonly StarterFolder[] = [
     path: 'meetings',
     title: 'Meetings',
     description:
-      'Meeting notes. Filename `YYYY-MM-DD-<slug>.md`. Frontmatter carries `date`, `attendees: [[wikilinks]]`, and `type: meeting`. Body is raw notes with `[[wiki-links]]` to people, companies, concepts mentioned. Agent: after a meeting note lands, extract entity mentions and append timeline entries to each referenced dossier. Do NOT rewrite the meeting note; it is the verbatim record.',
+      'Meeting notes. Filename `YYYY-MM-DD-<slug>.md`. Frontmatter carries `date`, `attendees:` (list of person names — match dossier filenames in `people/` so the graph stays queryable), and `type: meeting`. Body is raw notes with links to the people, companies, and concepts mentioned. Agent: after a meeting note lands, extract entity mentions and append timeline entries to each referenced dossier. Do NOT rewrite the meeting note; it is the verbatim record.',
     tags: ['meeting', 'note'],
     starterTemplate: 'meeting',
   },
@@ -937,7 +937,7 @@ const GBRAIN_FOLDERS: readonly StarterFolder[] = [
     path: 'originals',
     title: 'Originals',
     description:
-      "Your own thinking, untransformed. Frontmatter `type: idea`. Use freely; use `[[wiki-links]]` for anything that should become its own entity. Agent: treat originals as authoritative source material when extracting facts; these are the user's words, not inferences. Append timeline entries to referenced dossiers when a clear new claim appears, citing the original by wikilink.",
+      "Your own thinking, untransformed. Frontmatter `type: idea`. Use freely; link to anything that should become its own entity. Agent: treat originals as authoritative source material when extracting facts; these are the user's words, not inferences. Append timeline entries to referenced dossiers when a clear new claim appears, citing the original by markdown link.",
     tags: ['original', 'thinking', 'user'],
     starterTemplate: 'original',
   },
@@ -1002,7 +1002,7 @@ tags: [meeting]
 
 ## Notes
 
-(Raw notes from the meeting. Use \`[[wiki-links]]\` for people, companies, concepts mentioned.)
+(Raw notes from the meeting. Link to the people, companies, and concepts mentioned.)
 
 ## Action items
 
@@ -1036,7 +1036,7 @@ author: {{user}}
 tags: [original]
 ---
 
-(Your own thinking. Use \`[[wiki-links]]\` for anything that should become its own entity.)
+(Your own thinking. Link to anything that should become its own entity.)
 `,
   transcript: `---
 title: Transcript
@@ -1105,9 +1105,9 @@ description: Who you are. Agent reads this on every briefing / enrichment pass. 
 
 - ...
 
-**Network anchors:** (people you talk to most; use \`[[wikilinks]]\` once \`people/\` dossiers exist)
+**Network anchors:** (people you talk to most — link to their dossiers in \`people/\` once they exist)
 
-- [[]]
+-
 
 **Communication style:** (how you prefer briefings, summaries, suggestions)
 
