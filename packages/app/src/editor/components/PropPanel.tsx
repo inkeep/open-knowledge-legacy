@@ -80,7 +80,7 @@ interface PropPanelProps {
 
 export function PropPanel({ descriptor, values, onChange }: PropPanelProps) {
   const editableProps = descriptor.props.filter(
-    (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
+    (p) => !('hidden' in p && p.hidden) && p.hideWhen?.(values) !== true && p.type !== 'reactnode',
   );
 
   const commonProps = editableProps.filter((p) => !('advanced' in p && p.advanced));

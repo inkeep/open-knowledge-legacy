@@ -4648,6 +4648,11 @@ Homepage: https://github.com/vasturiano/react-kapsule
 
 Copyright (c) 2017 Vasco Asturiano
 
+### `react-lite-youtube-embed@3.5.1`
+Homepage: https://github.com/ibrahimcesar/react-lite-youtube-embed
+
+Copyright (c) 2021 Ibrahim Cesar
+
 ### `react-remove-scroll@2.7.2`
 Homepage: https://github.com/theKashey/react-remove-scroll
 

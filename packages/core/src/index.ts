@@ -772,3 +772,8 @@ export {
   wikiLinkHref,
 } from './utils/slug.ts';
 export { expandTagToHierarchy, tagsMatchingPrefix } from './utils/tag-rollup.ts';
+export {
+  type ParsedYouTubeUrl,
+  parseYouTubeUrl,
+  youtubeEmbedUrl,
+} from './utils/youtube-embed.ts';

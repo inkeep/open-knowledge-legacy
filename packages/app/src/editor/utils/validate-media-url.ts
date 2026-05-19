@@ -1,4 +1,9 @@
-import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from '@inkeep/open-knowledge-core';
+import {
+  AUDIO_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  parseYouTubeUrl,
+  VIDEO_EXTENSIONS,
+} from '@inkeep/open-knowledge-core';
 
 type MediaKind = 'video' | 'audio' | 'image';
 
@@ -58,6 +63,10 @@ export function validateMediaUrl(input: string, kind: MediaKind): MediaUrlValida
     } catch {
       return { valid: false, reason: 'invalid-url' };
     }
+  }
+
+  if (kind === 'video' && parseYouTubeUrl(trimmed) !== null) {
+    return { valid: true };
   }
 
   const embedProvider = isAbsolute ? detectEmbedProvider(parsed.hostname) : null;

@@ -6,6 +6,7 @@ import {
   ALLOWED_VIDEO_MIME_TYPES,
 } from '../constants/upload.ts';
 import { emitMdxJsx } from '../markdown/serialize-helpers.ts';
+import { parseYouTubeUrl } from '../utils/youtube-embed.ts';
 import type { JsxComponentMeta, PropDef } from './types.ts';
 
 const calloutProps: PropDef[] = [
@@ -307,6 +308,7 @@ const htmlVideoProps: PropDef[] = [
     required: false,
     advanced: true,
     description: 'Hint for how much of the video to preload',
+    hideWhen: (values) => typeof values.src === 'string' && parseYouTubeUrl(values.src) !== null,
   },
 ];
 
