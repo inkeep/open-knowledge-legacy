@@ -31,6 +31,8 @@
     "sweep:cache-regime": "bun run tests/perf/profile.ts --scenario=sweep-cache-regime",
     "sweep:convention-cap-graduation": "bun run tests/perf/profile.ts --scenario=sweep-convention-cap-graduation",
     "probe:tiptap-leak": "bun run tests/perf/probes/tiptap-destroy-leak.ts",
+    "audit:strings": "bun run scripts/audit-strings/extract.ts",
+    "audit:strings:casing": "bun run scripts/audit-strings/check-casing.ts",
     "size": "turbo run build --filter=@inkeep/open-knowledge-app && size-limit"
   },
   "size-limit": [
