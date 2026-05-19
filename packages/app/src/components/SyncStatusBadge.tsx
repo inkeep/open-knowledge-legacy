@@ -42,7 +42,7 @@ function BadgeIcon({ status }: BadgeIconProps) {
       if (status.ahead > 0 || status.behind > 0) {
         return <RefreshCw className={`${cls} text-muted-foreground`} />;
       }
-      return <Cloud className={`${cls} text-emerald-500`} />;
+      return <Cloud className={`${cls} text-muted-foreground`} />;
     case 'fetching':
     case 'pulling':
     case 'pushing':
