@@ -638,7 +638,11 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       { attributes: { 'doc.name': documentName } },
       async () => {
         const lifecycleStatus = document.getMap('lifecycle').get('status');
-        if (lifecycleStatus === 'deleted-upstream' || lifecycleStatus === 'renamed') {
+        if (
+          lifecycleStatus === 'deleted-upstream' ||
+          lifecycleStatus === 'renamed' ||
+          lifecycleStatus === 'conflict'
+        ) {
           log.info(
             { documentName, lifecycleStatus },
             `[persistence] Skipped store for ${documentName}: lifecycle=${lifecycleStatus}`,
