@@ -77,9 +77,9 @@ function OkignoreSectionSkeleton() {
       data-testid="settings-okignore-skeleton"
     >
       <div className="space-y-1">
-        <h2 id="settings-okignore-title" className="text-base font-semibold">
+        <h3 id="settings-okignore-title" className="text-base font-semibold">
           Ignore patterns
-        </h2>
+        </h3>
         <Skeleton className="h-4 w-72" />
       </div>
       <Skeleton className="h-20 w-full" />
@@ -223,9 +223,9 @@ function OkignoreSectionBody({ binding }: { binding: OkignoreBinding }) {
       data-testid="settings-okignore-section"
     >
       <div className="space-y-1">
-        <h2 id="settings-okignore-title" className="text-base font-semibold">
+        <h3 id="settings-okignore-title" className="text-base font-semibold">
           Ignore patterns
-        </h2>
+        </h3>
         <p className="text-sm text-muted-foreground">
           Hide files and folders from your knowledge base. Hidden items don’t appear in the file
           tree, search, or AI tools.{' '}

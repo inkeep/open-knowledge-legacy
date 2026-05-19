@@ -9,7 +9,7 @@ import {
 } from './OkignoreSection';
 
 const SECTION_SRC = readFileSync(join(__dirname, 'OkignoreSection.tsx'), 'utf8');
-const PANE_SRC = readFileSync(join(__dirname, 'SettingsDialog.tsx'), 'utf8');
+const PANE_SRC = readFileSync(join(__dirname, 'SettingsDialogBody.tsx'), 'utf8');
 const CONFIG_PROVIDER_SRC = readFileSync(
   join(__dirname, '..', '..', 'lib', 'config-provider.tsx'),
   'utf8',

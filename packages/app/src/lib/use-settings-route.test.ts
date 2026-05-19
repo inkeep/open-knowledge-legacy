@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { isSettingsHashOpen, isSettingsShortcut, SETTINGS_OPEN_HASH } from './use-settings-route';
+import SRC from './use-settings-route?raw';
 
 describe('isSettingsHashOpen', () => {
   test('empty hash → false', () => {
@@ -87,5 +88,12 @@ describe('isSettingsShortcut', () => {
     expect(isSettingsShortcut(ev({ metaKey: true, target: { tagName: 'BUTTON' } }))).toBe(true);
     expect(isSettingsShortcut(ev({ metaKey: true, target: { tagName: 'DIV' } }))).toBe(true);
     expect(isSettingsShortcut(ev({ metaKey: true, target: null }))).toBe(true);
+  });
+});
+
+describe('useSettingsRoute source-level guards', () => {
+  test('wraps the hashchange setOpen flip in startTransition', () => {
+    expect(SRC).toMatch(/import\s+\{[^}]*\bstartTransition\b[^}]*\}\s+from\s+['"]react['"]/);
+    expect(SRC).toMatch(/startTransition\(\s*\(\s*\)\s*=>\s*\{\s*setOpen\(\s*isSettingsHashOpen\(/);
   });
 });

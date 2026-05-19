@@ -276,6 +276,26 @@
   }
 }
 
+/* Dialog/Sheet overlays carry a viewport-sized `backdrop-filter: blur` over
+   the live editor. The blur is engine-acknowledged expensive (WebKit warns;
+   Chromium + Firefox have documented compositor jank) and, more importantly,
+   is exactly the visual effect prefers-reduced-transparency exists to
+   suppress. Stripping it at the primitive level means every Dialog/Sheet
+   consumer inherits the compliant behavior with no per-call-site opt-in.
+
+   This is a sibling of — not a modification to — the electron outer-canvas
+   reduced-transparency block lower in this file, which intentionally excludes
+   dialog/tooltip surfaces (those are opaque-always there). Unlayered, so it
+   wins over the layered `supports-backdrop-filter:*` utility without
+   `!important` (same cascade discipline as the reduced-motion block above). */
+@media (prefers-reduced-transparency: reduce) {
+  [data-slot="dialog-overlay"],
+  [data-slot="sheet-overlay"] {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
 /* Radix Collapsible content height + opacity. Height drives the reflow of
    surrounding content; opacity hides children early so the eye never lingers
    on partially-laid-out widgets. Closing easing front-loaded (ease-in) so the

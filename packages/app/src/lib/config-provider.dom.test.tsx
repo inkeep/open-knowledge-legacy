@@ -32,6 +32,7 @@ function Consumer() {
           {String(ctx[key])}
         </span>
       ))}
+      <span data-testid="field:userSynced">{String(ctx.userSynced)}</span>
       <span data-testid="field:projectLocalSynced">{String(ctx.projectLocalSynced)}</span>
       <span data-testid="field:okignoreSynced">{String(ctx.okignoreSynced)}</span>
     </div>
@@ -55,6 +56,7 @@ describe('ConfigProvider runtime (Tier-3)', () => {
     for (const key of EXPECTED_NULL_KEYS) {
       expect(screen.getByTestId(`field:${key}`).textContent).toBe('null');
     }
+    expect(screen.getByTestId('field:userSynced').textContent).toBe('false');
     expect(screen.getByTestId('field:projectLocalSynced').textContent).toBe('false');
     expect(screen.getByTestId('field:okignoreSynced').textContent).toBe('false');
   });

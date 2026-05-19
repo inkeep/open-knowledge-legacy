@@ -29,4 +29,15 @@ describe('SettingsButton source-level guards', () => {
     expect(SRC).toMatch(/from\s*'@\/components\/ui\/tooltip'/);
     expect(SRC).toMatch(/<TooltipContent>Settings<\/TooltipContent>/);
   });
+
+  test('warms the lazy Settings body chunk on hover and focus intent', () => {
+    expect(SRC).toMatch(/from\s*'@\/components\/settings\/SettingsDialogBodyLazy'/);
+    expect(SRC).toContain('SettingsDialogBodyLazy.preload()');
+    expect(SRC).toMatch(/onMouseEnter=\{schedulePreload\}/);
+    expect(SRC).toMatch(/onFocus=\{schedulePreload\}/);
+    expect(SRC).toMatch(/onMouseLeave=\{cancelPreload\}/);
+    expect(SRC).toMatch(/onBlur=\{cancelPreload\}/);
+    expect(SRC).toMatch(/PREFETCH_INTENT_DELAY_MS\s*=\s*50\b/);
+    expect(SRC).toMatch(/onClick=\{\(\)\s*=>\s*\{\s*cancelPreload\(\)/);
+  });
 });

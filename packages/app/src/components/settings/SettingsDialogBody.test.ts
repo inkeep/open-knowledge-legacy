@@ -1,17 +1,25 @@
 import { describe, expect, test } from 'bun:test';
-import SRC from './SettingsDialog?raw';
+import SRC from './SettingsDialogBody?raw';
 
-describe('SettingsDialog module', () => {
-  test('exports SettingsDialog component', async () => {
-    const mod = await import('./SettingsDialog');
-    expect(typeof mod.SettingsDialog).toBe('function');
+describe('SettingsDialogBody module', () => {
+  test('exports SettingsDialogBody component', async () => {
+    const mod = await import('./SettingsDialogBody');
+    expect(typeof mod.SettingsDialogBody).toBe('function');
   });
 });
 
-describe('SettingsDialog source-level guards', () => {
-  test('binds via core bindConfigDoc', () => {
+describe('SettingsDialogBody source-level guards', () => {
+  test('consumes the user-scope ConfigBinding via shell-passed props', () => {
+    expect(SRC).toMatch(
+      /interface\s+SettingsDialogBodyProps[\s\S]*?userBinding:\s*ConfigBinding\s*\|\s*null/,
+    );
+    expect(SRC).toMatch(/export\s+function\s+SettingsDialogBody/);
+    expect(SRC).not.toContain('useUserConfigDocConnection');
+    expect(SRC).not.toMatch(/from\s+['"]@hocuspocus\/provider['"]/);
+    expect(SRC).not.toMatch(/import\s+\*\s+as\s+Y\s+from\s+['"]yjs['"]/);
+    expect(SRC).not.toMatch(/\bbindConfigDoc\(/);
+    expect(SRC).toContain('useConfigContext');
     expect(SRC).toContain("from '@inkeep/open-knowledge-core'");
-    expect(SRC).toContain('bindConfigDoc(');
   });
 
   test('admits both well-known config doc names', () => {
@@ -29,10 +37,10 @@ describe('SettingsDialog source-level guards', () => {
     expect(SRC).toContain("type: 'config-validation-rejected'");
   });
 
-  test('renders as a Dialog overlay (not a full-pane page)', () => {
-    expect(SRC).toMatch(/from\s+['"]@\/components\/ui\/dialog['"]/);
-    expect(SRC).toMatch(/<Dialog\s+open=\{open\}/);
-    expect(SRC).toMatch(/<DialogContent\b/);
+  test('does not import the Dialog primitive (it lives in the shell)', () => {
+    expect(SRC).not.toMatch(/from\s+['"]@\/components\/ui\/dialog['"]/);
+    expect(SRC).not.toMatch(/<Dialog\b/);
+    expect(SRC).not.toMatch(/<DialogContent\b/);
   });
 
   test('has Integrations section with Install in Claude Desktop row', () => {
@@ -47,27 +55,12 @@ describe('SettingsDialog source-level guards', () => {
     expect(SRC).not.toMatch(/detectClaudeDesktop\s*\?\.\(/);
   });
 
-  test('Integrations row hides when desktopPresent === false', () => {
-    expect(SRC).toMatch(/desktopPresent\s*\?\s*\[\{[^}]*id:\s*['"]claude-desktop['"]/);
-  });
-
   test('IntegrationsSection button label branches on skillInstalled', () => {
     expect(SRC).toMatch(/skillInstalled\s*\?\s*['"]Reinstall['"]\s*:\s*['"]Install['"]/);
   });
 
   test('IntegrationsSection refreshes the shared hook on dialog close', () => {
     expect(SRC).toMatch(/if\s*\(!next\)\s*refresh\(\)/);
-  });
-
-  test('sidebar exposes the three required group labels', () => {
-    expect(SRC).toContain("label: 'User'");
-    expect(SRC).toContain("label: 'This project'");
-    expect(SRC).toContain("label: 'Integrations'");
-  });
-
-  test('no top-level scope toggle in the dialog header', () => {
-    expect(SRC).not.toMatch(/value=\{scope\}/);
-    expect(SRC).not.toMatch(/aria-label=["']Settings scope["']/);
   });
 
   test('uses sonner for L3 rejection toast', () => {
@@ -101,20 +94,15 @@ describe('SettingsDialog source-level guards', () => {
     expect(SRC).toMatch(/from\s+['"]\.\/use-config-form['"]/);
     expect(SRC).toContain('useConfigForm(');
   });
-
-  test('mounts the user-scope ConfigBinding for the dialog lifetime', () => {
-    expect(SRC).toContain('useUserConfigDocConnection');
-    expect(SRC).toContain('CONFIG_DOC_NAME_USER');
-  });
 });
 
-describe('SettingsDialog Channel section guards', () => {
+describe('SettingsDialogBody Channel section guards', () => {
   test('no longer renders a channel switcher', () => {
     expect(SRC).not.toContain('ChannelSection');
   });
 });
 
-describe('SettingsDialog Okignore section guards', () => {
+describe('SettingsDialogBody Okignore section guards', () => {
   test('imports OkignoreSection from a sibling module', () => {
     expect(SRC).toMatch(/from\s+['"]\.\/OkignoreSection['"]/);
     expect(SRC).toContain('OkignoreSection');
@@ -125,7 +113,7 @@ describe('SettingsDialog Okignore section guards', () => {
   });
 });
 
-describe('SettingsDialog Sync section guards', () => {
+describe('SettingsDialogBody Sync section guards', () => {
   test('Sync section appears under THIS PROJECT as the dedicated "Sync" sidebar item', () => {
     expect(SRC).toMatch(/activeId\s*===\s*['"]sync['"]\s*\)[\s\S]*?<SyncSection\s*\/>/);
   });
@@ -147,7 +135,7 @@ describe('SettingsDialog Sync section guards', () => {
   });
 });
 
-describe('SettingsDialog SyncSection Switch — bound to local CRDT preference (not server status)', () => {
+describe('SettingsDialogBody SyncSection Switch — bound to local CRDT preference (not server status)', () => {
   const syncSectionStart = SRC.indexOf('function SyncSection()');
   const nextSiblingStart = SRC.indexOf('interface SettingsFieldProps', syncSectionStart);
   const syncSectionSrc = SRC.slice(syncSectionStart, nextSiblingStart);

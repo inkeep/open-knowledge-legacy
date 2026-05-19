@@ -1,0 +1,87 @@
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { cleanup, render, screen } from '@testing-library/react';
+import { SettingsDialogErrorBoundary } from './SettingsDialogErrorBoundary';
+
+let throwError: Error | null = null;
+
+function MaybeThrow() {
+  if (throwError) throw throwError;
+  return <span data-testid="settings-body-payload">body</span>;
+}
+
+describe('SettingsDialogErrorBoundary (Tier-3 mount)', () => {
+  let consoleErrorSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    throwError = null;
+    consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    cleanup();
+    consoleErrorSpy.mockRestore();
+  });
+
+  test('renders children when the body does not throw', () => {
+    render(
+      <SettingsDialogErrorBoundary>
+        <MaybeThrow />
+      </SettingsDialogErrorBoundary>,
+    );
+    expect(screen.getByTestId('settings-body-payload').textContent).toBe('body');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  test('a body-chunk failure is contained: fallback renders AND a sibling outside the boundary stays mounted', () => {
+    throwError = new Error(
+      'Failed to fetch dynamically imported module: /assets/SettingsDialogBody.js',
+    );
+    render(
+      <div>
+        <span data-testid="app-survives">editor still here</span>
+        <SettingsDialogErrorBoundary>
+          <MaybeThrow />
+        </SettingsDialogErrorBoundary>
+      </div>,
+    );
+
+    expect(screen.getByTestId('app-survives').textContent).toBe('editor still here');
+
+    const alert = screen.getByRole('alert');
+    expect(alert.getAttribute('data-slot')).toBe('settings-body-error-boundary');
+    expect(document.getElementById('settings-body-error-title')?.textContent).toBe(
+      'Settings failed to load',
+    );
+    expect(screen.getByText(/newer version may have been deployed/i)).toBeTruthy();
+    const reload = screen.getByRole('button', { name: /reload/i });
+    expect(reload.tagName).toBe('BUTTON');
+    expect(consoleErrorSpy).toHaveBeenCalled();
+  });
+
+  test('a bare "Failed to fetch" error (without the dynamic-import phrase) gets the post-deploy explanation', () => {
+    throwError = new Error('Failed to fetch');
+    render(
+      <SettingsDialogErrorBoundary>
+        <MaybeThrow />
+      </SettingsDialogErrorBoundary>,
+    );
+    expect(screen.getByText(/newer version may have been deployed/i)).toBeTruthy();
+  });
+
+  test('a non-import error gets the generic explanation, still contained', () => {
+    throwError = new Error('some unrelated render error');
+    render(
+      <div>
+        <span data-testid="app-survives">alive</span>
+        <SettingsDialogErrorBoundary>
+          <MaybeThrow />
+        </SettingsDialogErrorBoundary>
+      </div>,
+    );
+    expect(screen.getByTestId('app-survives')).toBeTruthy();
+    expect(screen.getByRole('alert').getAttribute('data-slot')).toBe(
+      'settings-body-error-boundary',
+    );
+    expect(screen.getByText(/something went wrong loading the settings panel/i)).toBeTruthy();
+  });
+});

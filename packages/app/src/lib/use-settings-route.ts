@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { startTransition, useEffect, useState } from 'react';
 
 export const SETTINGS_OPEN_HASH = '#settings';
 
@@ -39,7 +39,9 @@ export function useSettingsRoute(): SettingsRouteState {
 
   useEffect(() => {
     const onHashChange = () => {
-      setOpen(isSettingsHashOpen(readCurrentHash()));
+      startTransition(() => {
+        setOpen(isSettingsHashOpen(readCurrentHash()));
+      });
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
