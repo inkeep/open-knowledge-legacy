@@ -1107,7 +1107,7 @@ description: Who you are. Agent reads this on every briefing / enrichment pass. 
 
 **Network anchors:** (people you talk to most — link to their dossiers in \`people/\` once they exist)
 
--
+- ...
 
 **Communication style:** (how you prefer briefings, summaries, suggestions)
 
