@@ -33,6 +33,7 @@ export interface MountMcpAndApiOptions {
   agentPresenceBroadcaster?: AgentPresenceBroadcaster | null;
   keepaliveGraceMs?: number;
   contentAssetMiddleware?: (req: IncomingMessage, res: ServerResponse, next: () => void) => void;
+  reactShellMiddleware?: (req: IncomingMessage, res: ServerResponse, next: () => void) => void;
 }
 
 export interface MountMcpAndApiHandle {
@@ -50,6 +51,7 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
     agentFocusBroadcaster,
     agentPresenceBroadcaster,
     contentAssetMiddleware,
+    reactShellMiddleware,
   } = opts;
   const keepaliveGraceMs = opts.keepaliveGraceMs ?? DEFAULT_KEEPALIVE_GRACE_MS;
 
@@ -139,15 +141,42 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
         });
       return;
     }
+    const fallback = (req2: IncomingMessage, res2: ServerResponse): void => {
+      if (res2.writableEnded || res2.headersSent) return;
+      if (reactShellMiddleware !== undefined) {
+        try {
+          reactShellMiddleware(req2, res2, () => {
+            if (res2.writableEnded || res2.headersSent) return;
+            errorResponse(res2, 404, 'urn:ok:error:not-found', 'Not found.', {
+              handler: 'mcp-mount',
+              detail: `No handler for ${url ?? '/'}`,
+            });
+          });
+        } catch (err) {
+          log.error({ err }, 'Unhandled react-shell middleware error');
+          if (!res2.writableEnded && !res2.headersSent) {
+            errorResponse(
+              res2,
+              500,
+              'urn:ok:error:internal-server-error',
+              'Internal server error.',
+              { handler: 'mcp-mount', cause: err },
+            );
+          } else if (!res2.writableEnded) {
+            res2.end();
+          }
+        }
+        return;
+      }
+      errorResponse(res2, 404, 'urn:ok:error:not-found', 'Not found.', {
+        handler: 'mcp-mount',
+        detail: `No handler for ${url ?? '/'}`,
+      });
+    };
+
     if (contentAssetMiddleware !== undefined) {
       try {
-        contentAssetMiddleware(req, res, () => {
-          if (res.writableEnded || res.headersSent) return;
-          errorResponse(res, 404, 'urn:ok:error:not-found', 'Not found.', {
-            handler: 'mcp-mount',
-            detail: `No handler for ${url ?? '/'}`,
-          });
-        });
+        contentAssetMiddleware(req, res, () => fallback(req, res));
       } catch (err) {
         log.error({ err }, 'Unhandled content-asset middleware error');
         if (!res.writableEnded && !res.headersSent) {
@@ -159,6 +188,10 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
           res.end();
         }
       }
+      return;
+    }
+    if (reactShellMiddleware !== undefined) {
+      fallback(req, res);
       return;
     }
     errorResponse(res, 404, 'urn:ok:error:not-found', 'Not found.', {

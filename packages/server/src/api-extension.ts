@@ -394,7 +394,7 @@ function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCou
   if (!_hintEmittedCounter) {
     _hintEmittedCounter = getMeter().createCounter('ok.preview_attach.hint_emitted', {
       description:
-        'Count of attach-preview-once hints emitted on write-tool responses when no editor is attached to __system__',
+        'Count of preview-attach hints emitted on write-tool responses when no editor is attached to __system__. Covers both attach-preview-once (URL exists, no browser) and start-ui (no UI running anywhere) variants — the tool side disambiguates via the warning action; the metric name is retained as-is so existing dashboards keep working.',
     });
   }
   return _hintEmittedCounter;

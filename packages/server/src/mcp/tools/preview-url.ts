@@ -23,6 +23,39 @@ function encodeDocName(docName: string): string {
   return docName.split('/').map(encodeURIComponent).join('/');
 }
 
+type PreviewAttachWarning =
+  | {
+      action: 'attach-preview-once';
+      previewUrl: string;
+      message: string;
+    }
+  | {
+      action: 'start-ui';
+      previewUrl: null;
+      message: string;
+    };
+
+const START_UI_MESSAGE =
+  'No UI is running for this project. Start one to see the preview: `open-knowledge ui` (terminal), `preview_start("open-knowledge-ui")` (Claude Code Desktop), or open the project in OK Electron.';
+const ATTACH_PREVIEW_ONCE_MESSAGE = 'Open the previewUrl in your preview browser.';
+
+export function buildPreviewAttachWarning(preview: { url: string } | null): PreviewAttachWarning {
+  if (preview) {
+    return {
+      action: 'attach-preview-once',
+      previewUrl: preview.url,
+      message: ATTACH_PREVIEW_ONCE_MESSAGE,
+    };
+  }
+  return {
+    action: 'start-ui',
+    previewUrl: null,
+    message: START_UI_MESSAGE,
+  };
+}
+
+export const START_UI_TEXT_HINT = START_UI_MESSAGE;
+
 export async function resolvePreviewUrlForTool(
   docName: string,
   deps: PreviewUrlDeps,
