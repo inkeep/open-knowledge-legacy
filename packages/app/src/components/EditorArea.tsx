@@ -11,6 +11,7 @@ import { EmptyEditorState } from '@/components/EmptyEditorState';
 import { FolderOverview } from '@/components/FolderOverview';
 import { MountStalledAffordance } from '@/components/MountStalledAffordance';
 import { PropertyProvider, useProperties } from '@/components/PropertyContext';
+import { SettingsDialogShell } from '@/components/settings/SettingsDialogShell';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
@@ -28,10 +29,6 @@ import { EditorFooter } from './EditorFooter';
 import type { EditorMode } from './EditorPane';
 import { EditorToolbar } from './EditorToolbar';
 import { shouldPaintOverlay } from './editor-area-overlay';
-
-const SettingsDialog = lazy(() =>
-  import('@/components/settings/SettingsDialog').then((m) => ({ default: m.SettingsDialog })),
-);
 
 const LazyActivityModeContent = lazy(async () => {
   const mod = await import('@/components/ActivityModeContent');
@@ -64,20 +61,13 @@ export function EditorArea(props: EditorAreaProps) {
 
 function SettingsDialogPortal() {
   const settingsRoute = useSettingsRoute();
-  const [hasOpened, setHasOpened] = useState(false);
-  useEffect(() => {
-    if (settingsRoute.open) setHasOpened(true);
-  }, [settingsRoute.open]);
-  if (!hasOpened) return null;
   return (
-    <Suspense fallback={null}>
-      <SettingsDialog
-        open={settingsRoute.open}
-        onOpenChange={(next) => {
-          if (!next) settingsRoute.close();
-        }}
-      />
-    </Suspense>
+    <SettingsDialogShell
+      open={settingsRoute.open}
+      onOpenChange={(next) => {
+        if (!next) settingsRoute.close();
+      }}
+    />
   );
 }
 

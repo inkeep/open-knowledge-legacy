@@ -31,3 +31,31 @@ describe('SIDEBAR_ID anchors aria-controls referent on every viewport', () => {
     expect(ariaLabels?.length).toBe(2);
   });
 });
+
+describe('Sidebar motion duration is appropriate for toggle frequency', () => {
+  test('mobile sidebar slide uses duration-200 ease-linear with reduced-motion gating', () => {
+    expect(SRC).toMatch(
+      /transition-transform\s+duration-200\s+ease-linear\s+motion-reduce:transition-none/,
+    );
+  });
+
+  test('sidebar-gap width collapse uses duration-200 ease-linear', () => {
+    expect(SRC).toContain(
+      'data-slot="sidebar-gap"\n        className={cn(\n          \'relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear',
+    );
+  });
+
+  test('desktop sidebar-container layout uses duration-200 ease-linear', () => {
+    expect(SRC).toContain('transition-[left,right,width] duration-200 ease-linear');
+  });
+
+  test('SidebarInset push-mode translate uses duration-200 ease-linear with reduced-motion gating', () => {
+    expect(SRC).toMatch(
+      /'transition-transform\s+duration-200\s+ease-linear\s+motion-reduce:transition-none'/,
+    );
+  });
+
+  test('SidebarGroupLabel collapse uses duration-200 ease-linear', () => {
+    expect(SRC).toContain('transition-[margin,opacity] duration-200 ease-linear');
+  });
+});

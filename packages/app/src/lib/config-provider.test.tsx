@@ -48,6 +48,20 @@ describe('ConfigProvider — project-local binding wiring', () => {
   });
 });
 
+describe('ConfigProvider — user binding synced wiring', () => {
+  test('subscribes via binding.subscribeSynced (matches projectLocal wiring)', () => {
+    expect(src).toMatch(/userScoped\.binding\.subscribeSynced\(/);
+    expect(src).not.toMatch(/userScoped\.provider\.on\(\s*['"]synced['"]/);
+  });
+
+  test('seeds initial userSynced from hasSynced() and unsubscribes on unmount', () => {
+    expect(src).toMatch(
+      /setUserState\(\{\s*binding:\s*userScoped\.binding,\s*config:\s*userScoped\.config,\s*synced:\s*userScoped\.binding\.hasSynced\(\),?\s*\}\)/,
+    );
+    expect(src).toMatch(/unsubUserSynced\(\)/);
+  });
+});
+
 describe('ConfigProvider — context value shape', () => {
   test('exposes projectLocalBinding alongside the existing two bindings', () => {
     expect(src).toMatch(/projectLocalBinding:\s*projectLocalState\?\.binding\s*\?\?\s*null/);
@@ -59,6 +73,10 @@ describe('ConfigProvider — context value shape', () => {
 
   test('exposes projectLocalSynced with a false default until first sync', () => {
     expect(src).toMatch(/projectLocalSynced:\s*projectLocalState\?\.synced\s*\?\?\s*false/);
+  });
+
+  test('exposes userSynced with a false default until first sync', () => {
+    expect(src).toMatch(/userSynced:\s*userState\?\.synced\s*\?\?\s*false/);
   });
 });
 

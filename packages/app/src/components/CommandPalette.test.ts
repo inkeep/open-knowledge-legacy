@@ -240,3 +240,15 @@ describe('CommandPalette entry-point propagation (source-level guards)', () => {
     );
   });
 });
+
+describe('CommandPalette overlay-motion policy (source-level guards)', () => {
+  const SRC_PATH = join(__dirname, 'CommandPalette.tsx');
+  const src = readFileSync(SRC_PATH, 'utf-8');
+
+  test('CommandDialog is mounted with no transition or placement prop', () => {
+    const openingTag = src.match(/<CommandDialog\b[^>]*>/);
+    expect(openingTag).not.toBeNull();
+    expect(openingTag?.[0]).not.toContain('transition');
+    expect(openingTag?.[0]).not.toContain('placement');
+  });
+});

@@ -425,10 +425,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
 
   return (
     <Dialog open={open} onOpenChange={onOpenChangeInternal}>
-      <DialogContent
-        className="sm:max-w-lg motion-reduce:duration-0 motion-reduce:data-open:animate-none motion-reduce:data-closed:animate-none"
-        data-testid="create-project-dialog"
-      >
+      <DialogContent className="sm:max-w-lg" data-testid="create-project-dialog">
         <DialogHeader>
           <DialogTitle>Create new project</DialogTitle>
           <DialogDescription>

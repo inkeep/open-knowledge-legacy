@@ -20,6 +20,7 @@ import { useThemeBridge } from '@/hooks/use-theme-bridge';
 
 interface ConfigContextValue {
   userBinding: ConfigBinding | null;
+  userSynced: boolean;
   projectBinding: ConfigBinding | null;
   projectLocalBinding: ConfigBinding | null;
   okignoreBinding: OkignoreBinding | null;
@@ -103,9 +104,11 @@ function makeOkignoreBinding(collabUrl: string): OkignoreScoped {
 
 export function ConfigProvider({ children }: { children: ReactNode }) {
   const { collabUrl } = useDocumentContext();
-  const [userState, setUserState] = useState<{ binding: ConfigBinding; config: Config } | null>(
-    null,
-  );
+  const [userState, setUserState] = useState<{
+    binding: ConfigBinding;
+    config: Config;
+    synced: boolean;
+  } | null>(null);
   const [projectState, setProjectState] = useState<{
     binding: ConfigBinding;
     config: Config;
@@ -130,7 +133,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       'project-local',
     );
     const okignoreScoped = makeOkignoreBinding(collabUrl);
-    setUserState({ binding: userScoped.binding, config: userScoped.config });
+    setUserState({
+      binding: userScoped.binding,
+      config: userScoped.config,
+      synced: userScoped.binding.hasSynced(),
+    });
     setProjectState({ binding: projectScoped.binding, config: projectScoped.config });
     setProjectLocalState({
       binding: projectLocalScoped.binding,
@@ -142,6 +149,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     const unsubUser = userScoped.binding.subscribe((next) => {
       setUserState((prev) =>
         prev?.binding === userScoped.binding ? { ...prev, config: next } : prev,
+      );
+    });
+    const unsubUserSynced = userScoped.binding.subscribeSynced(() => {
+      setUserState((prev) =>
+        prev?.binding === userScoped.binding ? { ...prev, synced: true } : prev,
       );
     });
     const unsubProject = projectScoped.binding.subscribe((next) => {
@@ -168,6 +180,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
     return () => {
       unsubUser();
+      unsubUserSynced();
       unsubProject();
       unsubProjectLocal();
       unsubProjectLocalSynced();
@@ -203,6 +216,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   const value: ConfigContextValue = {
     userBinding: userState?.binding ?? null,
+    userSynced: userState?.synced ?? false,
     projectBinding: projectState?.binding ?? null,
     projectLocalBinding: projectLocalState?.binding ?? null,
     okignoreBinding: okignoreState?.binding ?? null,

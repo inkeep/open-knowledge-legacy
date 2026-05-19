@@ -1,8 +1,6 @@
 // biome-ignore-all lint/plugin/no-raw-html-interactive-element: pre-rule backlog — file uses raw <button>/<input>/<textarea> awaiting shadcn migration; tracked at https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#no-raw-html-interactive-elementgrit
 
-import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
-  bindConfigDoc,
   type CC1ConfigValidationRejectedPayload,
   CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
@@ -19,11 +17,9 @@ import { Check, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { type ControllerRenderProps, type FieldPath, useFormContext } from 'react-hook-form';
 import { toast } from 'sonner';
-import * as Y from 'yjs';
 import { EnableSyncConfirmDialog } from '@/components/EnableSyncConfirmDialog';
 import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import {
   Form,
   FormControl,
@@ -38,7 +34,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useDocumentContext } from '@/editor/DocumentContext';
 import {
   useEnableSyncWithConfirm,
   useSyncEnabledWriter,
@@ -61,18 +56,6 @@ import { pickFirstIssueForPath, useConfigForm } from './use-config-form';
 
 type Scope = 'user' | 'project';
 
-interface SidebarItem {
-  id: string;
-  label: string;
-}
-
-interface SidebarGroup {
-  id: 'user' | 'project' | 'integrations';
-  label: string;
-  enabled: boolean;
-  items: SidebarItem[];
-}
-
 interface FieldDef {
   path: string[];
   label: string;
@@ -89,220 +72,19 @@ const FIELDS_APPEARANCE: FieldDef[] = [
   },
 ];
 
-interface ConfigDocConnection {
-  provider: HocuspocusProvider;
-  binding: ConfigBinding;
-  synced: boolean;
-}
-
-function useUserConfigDocConnection(
-  collabUrl: string | null,
-  enabled: boolean,
-): ConfigDocConnection | null {
-  const [state, setState] = useState<ConfigDocConnection | null>(null);
-
-  useEffect(() => {
-    if (!enabled || collabUrl === null) {
-      setState(null);
-      return;
-    }
-
-    const ydoc = new Y.Doc();
-    const provider = new HocuspocusProvider({
-      url: collabUrl,
-      name: CONFIG_DOC_NAME_USER,
-      document: ydoc,
-    });
-    const binding = bindConfigDoc(provider, 'user');
-    const conn: ConfigDocConnection = { provider, binding, synced: false };
-
-    const onSynced = () => {
-      setState((prev) => {
-        if (prev?.provider !== provider) return prev;
-        return { ...prev, synced: true };
-      });
-    };
-    provider.on('synced', onSynced);
-
-    setState(conn);
-
-    return () => {
-      provider.off('synced', onSynced);
-      binding.dispose();
-      provider.destroy();
-      ydoc.destroy();
-      setState(null);
-    };
-  }, [collabUrl, enabled]);
-
-  return state;
-}
-
-interface SettingsDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}
-
-export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const { collabUrl } = useDocumentContext();
-  const userConn = useUserConfigDocConnection(collabUrl, open);
-  const { okignoreBinding, okignoreSynced } = useConfigContext();
-
-  const [activeId, setActiveId] = useState<string>('preferences');
-  useEffect(() => {
-    if (open) setActiveId('preferences');
-  }, [open]);
-
-  const hasProject = collabUrl !== null;
-
-  const { desktopPresent } = useClaudeDesktopIntegration();
-
-  const groups: SidebarGroup[] = [
-    {
-      id: 'user',
-      label: 'User',
-      enabled: true,
-      items: [{ id: 'preferences', label: 'Preferences' }],
-    },
-    {
-      id: 'project',
-      label: 'This project',
-      enabled: hasProject,
-      items: [
-        { id: 'sync', label: 'Sync' },
-        { id: 'project-templates', label: 'Templates' },
-        { id: 'okignore', label: 'Ignore patterns' },
-      ],
-    },
-    {
-      id: 'integrations',
-      label: 'Integrations',
-      enabled: true,
-      items: desktopPresent ? [{ id: 'claude-desktop', label: 'Claude Desktop' }] : [],
-    },
-  ];
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="grid h-[700px] max-h-[calc(100dvh-4rem)] w-[900px] max-w-[calc(100%-2rem)] grid-cols-[220px_1fr] gap-0 overflow-hidden p-0 sm:max-w-[900px]"
-        data-testid="settings-dialog"
-      >
-        <DialogTitle className="sr-only">Settings</DialogTitle>
-        <DialogDescription className="sr-only">
-          Configure user, project, and integration settings.
-        </DialogDescription>
-        <SettingsSidebar groups={groups} activeId={activeId} onSelect={setActiveId} />
-        <div className="min-h-0 overflow-y-auto overscroll-contain subtle-scrollbar p-6">
-          <SettingsContent
-            activeId={activeId}
-            userBinding={userConn?.synced ? userConn.binding : null}
-            okignoreBinding={okignoreBinding}
-            okignoreSynced={okignoreSynced}
-          />
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-interface SettingsSidebarProps {
-  groups: SidebarGroup[];
-  activeId: string;
-  onSelect: (id: string) => void;
-}
-
-function SettingsSidebar({ groups, activeId, onSelect }: SettingsSidebarProps) {
-  return (
-    <aside
-      aria-label="Settings sections"
-      className="h-full overflow-y-auto overscroll-contain subtle-scrollbar border-r bg-muted/30 px-3 py-4"
-    >
-      <nav>
-        {groups.map((group) => (
-          <SettingsSidebarGroup
-            key={group.id}
-            group={group}
-            activeId={activeId}
-            onSelect={onSelect}
-          />
-        ))}
-      </nav>
-    </aside>
-  );
-}
-
-function SettingsSidebarGroup({
-  group,
-  activeId,
-  onSelect,
-}: {
-  group: SidebarGroup;
-  activeId: string;
-  onSelect: (id: string) => void;
-}) {
-  if (group.items.length === 0) return null;
-  const headerId = `settings-group-${group.id}`;
-  const captionId = `${headerId}-caption`;
-  return (
-    <div className="mb-4">
-      <h2
-        id={headerId}
-        aria-describedby={group.enabled ? undefined : captionId}
-        className={cn(
-          'mb-1 px-2 text-xs font-semibold uppercase tracking-wide font-mono',
-          group.enabled ? 'text-muted-foreground/80' : 'text-muted-foreground/50',
-        )}
-      >
-        {group.label}
-      </h2>
-      {!group.enabled ? (
-        <p id={captionId} className="mb-1 px-2 text-xs italic text-muted-foreground/60">
-          Open a project to edit.
-        </p>
-      ) : null}
-      <ul aria-labelledby={headerId} className="space-y-0.5">
-        {group.items.map((item) => (
-          <li key={item.id}>
-            <button
-              type="button"
-              aria-current={activeId === item.id ? 'true' : undefined}
-              aria-disabled={group.enabled ? undefined : true}
-              tabIndex={group.enabled ? 0 : -1}
-              disabled={!group.enabled}
-              onClick={() => group.enabled && onSelect(item.id)}
-              data-testid={`settings-sidebar-item-${item.id}`}
-              className={cn(
-                'w-full rounded px-2 py-1.5 text-left text-sm transition-colors',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-                activeId === item.id && group.enabled
-                  ? 'bg-accent text-accent-foreground'
-                  : 'hover:bg-accent/50',
-              )}
-            >
-              {item.label}
-            </button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-interface SettingsContentProps {
+interface SettingsDialogBodyProps {
   activeId: string;
   userBinding: ConfigBinding | null;
   okignoreBinding: OkignoreBinding | null;
   okignoreSynced: boolean;
 }
 
-function SettingsContent({
+export function SettingsDialogBody({
   activeId,
   userBinding,
   okignoreBinding,
   okignoreSynced,
-}: SettingsContentProps) {
+}: SettingsDialogBodyProps) {
   if (activeId === 'preferences') {
     return userBinding ? (
       <BoundSchemaSection
@@ -435,9 +217,9 @@ function SchemaSection({
   return (
     <section aria-labelledby={titleId} className="space-y-3">
       <div className="space-y-1">
-        <h2 id={titleId} className="text-base font-semibold">
+        <h3 id={titleId} className="text-base font-semibold">
           {title}
-        </h2>
+        </h3>
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
       <div className="space-y-10">
@@ -470,9 +252,9 @@ function SyncSection() {
         data-testid="settings-sync-empty"
       >
         <div className="space-y-1">
-          <h2 id="settings-sync-title" className="text-base font-semibold">
+          <h3 id="settings-sync-title" className="text-base font-semibold">
             Sync
-          </h2>
+          </h3>
           <p className="text-sm text-muted-foreground">
             No git remote was detected for this project. Set one up if you would like automatic git
             syncing.
@@ -496,9 +278,9 @@ function SyncSection() {
   return (
     <section aria-labelledby="settings-sync-title" className="space-y-3">
       <div className="space-y-1">
-        <h2 id="settings-sync-title" className="text-base font-semibold">
+        <h3 id="settings-sync-title" className="text-base font-semibold">
           Sync
-        </h2>
+        </h3>
         <p className="text-sm text-muted-foreground">
           Auto-sync pushes/pulls commits to your git remote on intervals and on save. Toggling on
           requires confirmation.
@@ -868,9 +650,9 @@ function IntegrationsSection() {
   return (
     <section aria-labelledby="settings-integrations-title" className="space-y-3">
       <div className="space-y-1">
-        <h2 id="settings-integrations-title" className="text-base font-semibold">
+        <h3 id="settings-integrations-title" className="text-base font-semibold">
           Integrations
-        </h2>
+        </h3>
         <p className="text-sm text-muted-foreground">
           Connect Open Knowledge to other tools you use.
         </p>

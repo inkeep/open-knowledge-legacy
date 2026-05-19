@@ -179,7 +179,7 @@ function ConsentDialogForm({ payload, store, toast }: ConsentDialogFormProps) {
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg motion-reduce:duration-0 motion-reduce:data-open:animate-none motion-reduce:data-closed:animate-none">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Open this folder with Open Knowledge</DialogTitle>
           <DialogDescription>

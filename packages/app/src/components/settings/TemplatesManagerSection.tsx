@@ -26,7 +26,7 @@ interface TemplatesManagerConfig {
   deleteWarning: string;
   itemNoun: string;
   badge: { label: string; variant: 'primary' | 'gray' };
-  /** DOM id to wire `<h2>` ↔ `<section aria-labelledby>` for screen readers,
+  /** DOM id to wire `<h3>` ↔ `<section aria-labelledby>` for screen readers,
    *  matching the convention used by every other Settings section. */
   settingsId: string;
   /** Stable suffix for `data-testid` selectors (e.g., `'project-templates'` →
@@ -206,9 +206,9 @@ function SectionHeader({
   return (
     <div className="flex items-center justify-between gap-3">
       <div>
-        <h2 id={settingsId} className="text-base font-semibold">
+        <h3 id={settingsId} className="text-base font-semibold">
           {title}
-        </h2>
+        </h3>
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
       {onNewClick ? (
