@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { renderToString } from 'react-dom/server';
 import { PropertyProvider } from './PropertyContext';
-import { PropertyPanel } from './PropertyPanel';
+import { isTemplateDocName, PropertyPanel } from './PropertyPanel';
 
 function renderPanel(provider: HocuspocusProvider): string {
   return renderToString(
@@ -255,25 +255,32 @@ describe('PropertyPanel error rendering', () => {
   });
 });
 
-describe('PropertyPanel template-doc suppression', () => {
-  test('root template docName suppresses override badge', () => {
-    const provider = makeProvider('.ok/templates/article');
-    seedYTextFm(provider, '---\ntitle: Article Template\ntags:\n  - article\n---\n');
-    const html = renderPanel(provider);
-    expect(html).not.toContain('data-testid="property-override-badge"');
+describe('isTemplateDocName predicate', () => {
+  test('matches root templates (`.ok/templates/<name>`)', () => {
+    expect(isTemplateDocName('.ok/templates/article')).toBe(true);
   });
 
-  test('folder-scoped template docName suppresses override badge', () => {
-    const provider = makeProvider('meetings/.ok/templates/prep-notes');
-    seedYTextFm(provider, '---\ntitle: Meeting Prep Notes\ntags:\n  - meeting\n---\n');
-    const html = renderPanel(provider);
-    expect(html).not.toContain('data-testid="property-override-badge"');
+  test('matches folder-scoped templates (`<folder>/.ok/templates/<name>`)', () => {
+    expect(isTemplateDocName('meetings/.ok/templates/prep-notes')).toBe(true);
   });
 
-  test('nested-folder template docName suppresses override badge', () => {
-    const provider = makeProvider('research/auth/.ok/templates/finding');
-    seedYTextFm(provider, '---\ntitle: Finding\n---\n');
-    const html = renderPanel(provider);
-    expect(html).not.toContain('data-testid="property-override-badge"');
+  test('matches nested-folder templates', () => {
+    expect(isTemplateDocName('research/auth/.ok/templates/finding')).toBe(true);
+  });
+
+  test('does NOT match regular docs', () => {
+    expect(isTemplateDocName('research/auth-providers')).toBe(false);
+    expect(isTemplateDocName('articles/foo')).toBe(false);
+    expect(isTemplateDocName('meetings/2026-05-19')).toBe(false);
+  });
+
+  test('does NOT match docs under a non-templates `.ok/` directory', () => {
+    expect(isTemplateDocName('research/.ok/frontmatter')).toBe(false);
+    expect(isTemplateDocName('.ok/frontmatter')).toBe(false);
+  });
+
+  test('does NOT match docs with "templates" outside `.ok/`', () => {
+    expect(isTemplateDocName('docs/templates/intro')).toBe(false);
+    expect(isTemplateDocName('templates/article')).toBe(false);
   });
 });
