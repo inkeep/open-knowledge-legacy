@@ -167,14 +167,16 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
               role="alert"
             >
               <span className="text-red-700 text-xs dark:text-red-300">{error}</span>
-              <button
+              <Button
                 type="button"
+                variant="link"
+                size="sm"
                 onClick={() => setError(null)}
-                className="text-red-700 text-xs underline hover:no-underline dark:text-red-300"
+                className="h-auto p-0 text-red-700 text-xs dark:text-red-300"
                 data-testid="nav-error-dismiss"
               >
                 Dismiss
-              </button>
+              </Button>
             </div>
           ) : null}
 
@@ -306,18 +308,19 @@ interface NavigatorCardProps {
 
 function NavigatorCard({ title, description, onClick, dataTestId, Icon }: NavigatorCardProps) {
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
       onClick={onClick}
       data-testid={dataTestId}
-      className="flex flex-col items-start gap-1.5 rounded-lg border border-border bg-card py-3.5 px-4 text-left transition-colors hover:bg-accent"
+      className="h-auto flex-col items-start justify-start gap-1.5 whitespace-normal bg-card px-4 py-3.5 text-left"
     >
       <div className="flex items-center gap-2">
         {Icon ? <Icon className="size-4 shrink-0 text-muted-foreground" /> : null}
         <span className="font-medium text-gray-700 dark:text-foreground text-sm">{title}</span>
       </div>
       <span className="text-muted-foreground text-xs leading-snug">{description}</span>
-    </button>
+    </Button>
   );
 }
 
@@ -332,12 +335,13 @@ function RecentRow({
 }) {
   return (
     <li className="group flex items-center justify-between rounded-lg hover:bg-accent">
-      <button
+      <Button
         type="button"
+        variant="ghost"
         onClick={onOpen}
         disabled={project.missing}
         className={cn(
-          'flex min-w-0 flex-1 items-center justify-between gap-2 rounded-md py-3.5 pl-4 pr-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed',
+          'h-auto min-w-0 flex-1 justify-between gap-2 py-3.5 pl-4 pr-2 text-left hover:bg-transparent',
           project.missing && 'opacity-50',
         )}
       >
@@ -352,7 +356,7 @@ function RecentRow({
             Missing
           </Badge>
         ) : null}
-      </button>
+      </Button>
       <Button
         type="button"
         variant="ghost"

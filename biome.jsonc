@@ -70,6 +70,33 @@
       "plugins": ["./biome-plugins/playwright-topass-budget.grit"]
     },
     {
+      // UI primitives discipline (see PR #937 retrospective). Scoped to
+      // packages/{app,desktop,plugin}/src/**/*.tsx — production UI surfaces.
+      // Exemptions:
+      //  - packages/app/src/editor/** — ProseMirror NodeViews + chrome legitimately
+      //    render raw HTML for measurement / PM-managed DOM (matches the existing
+      //    a11y/useSemanticElements suppressions in editor/*).
+      //  - packages/app/src/components/ui/** — these ARE the shadcn primitive
+      //    wrappers; they must render raw HTML by definition.
+      //  - *.test.tsx / *.dom.test.tsx — test fixtures aren't user-facing UI.
+      // Pre-rule backlog (files outside the exemptions that pre-date the rule)
+      // is annotated via `// biome-ignore-all lint/plugin/no-raw-html-interactive-element:`
+      // at the top of each offender file — the comment list is the visible
+      // migration backlog. New files cannot opt out: PR review treats the
+      // suppression header as a backlog marker, not a free pass.
+      "includes": [
+        "packages/app/src/**/*.tsx",
+        "packages/desktop/src/**/*.tsx",
+        "packages/plugin/src/**/*.tsx",
+        "!packages/app/src/editor/**",
+        "!packages/app/src/components/ui/**",
+        "!**/*.test.tsx",
+        "!**/*.dom.test.tsx",
+        "biome-plugins/__fixtures__/no-raw-html-interactive-element.fixture.tsx"
+      ],
+      "plugins": ["./biome-plugins/no-raw-html-interactive-element.grit"]
+    },
+    {
       // Internal developer tooling for the static-string audit. Uses ts-morph's
       // untyped node accessors, embeds `${...}` placeholder literals, and a few
       // safe non-null assertions — none of which affect production code.

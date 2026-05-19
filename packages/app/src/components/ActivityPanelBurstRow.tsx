@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/no-raw-html-interactive-element: pre-rule backlog — file uses raw <button> awaiting shadcn Button migration; tracked at https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#no-raw-html-interactive-elementgrit
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import type { BurstData } from '@/lib/use-activity-panel';

@@ -36,6 +36,26 @@ IPC discipline enforcement. Forbids direct electron IPC primitives (`webContents
 
 Test: [`packages/desktop/tests/integration/no-loosely-typed-webcontents-ipc.test.ts`](../packages/desktop/tests/integration/no-loosely-typed-webcontents-ipc.test.ts).
 
+### `no-raw-html-interactive-element.grit`
+
+UI primitives discipline. Forbids raw JSX `<button>`, `<input>`, `<textarea>`, `<select>` inside production `.tsx` under `packages/{app,desktop,plugin}/src/**`. Consumers must use the shadcn primitives (`Button`, `Input`, `Textarea`, `Select`) from `@/components/ui/*`; if the primitive isn't installed yet, add it via `bunx --bun shadcn@latest add <name>` first. The rule catches the PR #937 failure mode: contributors (including Codex / Claude Code / human reviewers) introducing raw `<button>` JSX while a shadcn `<Button>` from `@/components/ui/button` was already imported in the same file.
+
+**Scoped via `overrides[].plugins`** to `packages/{app,desktop,plugin}/src/**/*.tsx`. Exemptions encoded as negative `!`-globs in the same `includes[]`:
+
+- `!packages/app/src/editor/**` — ProseMirror NodeViews + editor chrome legitimately render raw HTML for measurement / PM-managed DOM. The exemption matches the existing `a11y/useSemanticElements` suppressions scattered through the editor subtree.
+- `!packages/app/src/components/ui/**` — these files ARE the shadcn primitive wrappers; they MUST render raw HTML by definition.
+- `!**/*.test.tsx` + `!**/*.dom.test.tsx` — test fixtures aren't user-facing UI.
+
+**Pre-rule backlog (ratchet pattern).** Files that pre-date the rule and use raw `<button>` / `<input>` / `<textarea>` carry a file-level `// biome-ignore-all lint/plugin/no-raw-html-interactive-element: pre-rule backlog — ...` comment at the top of the file. The comment list across the codebase IS the visible migration backlog — review treats each `biome-ignore-all` header as a backlog marker, not a free pass. Drain by migrating the file to shadcn primitives, then deleting the suppression header (the rule starts firing again immediately, so a partial migration that misses a raw `<button>` fails the gate). Reference migration: `packages/app/src/components/NavigatorApp.tsx` (three raw `<button>` → shadcn `<Button variant="ghost|outline|link">`).
+
+The rule does NOT catch:
+- PascalCase composite components whose name starts with `Button` / `Input` (e.g. `<ButtonGroup>`, `<InputGroup>`) — pattern scopes to lowercase JSX tag names only.
+- Raw HTML in `.ts` files (e.g. dangerouslySetInnerHTML strings, template literals).
+- Raw `<a>` used as an action — anchor-as-button is governed by Biome's built-in `a11y/useSemanticElements` + the codebase's existing button-vs-anchor conventions.
+- Other interactive primitives (`<dialog>`, `<details>`, `<summary>`) where the team hasn't yet committed to a shadcn-only contract.
+
+Plugin: [`biome-plugins/no-raw-html-interactive-element.grit`](no-raw-html-interactive-element.grit). Fixture: [`biome-plugins/__fixtures__/no-raw-html-interactive-element.fixture.tsx`](__fixtures__/no-raw-html-interactive-element.fixture.tsx). Test: [`packages/app/tests/lint-plugins/no-raw-html-interactive-element.test.ts`](../packages/app/tests/lint-plugins/no-raw-html-interactive-element.test.ts). See [PRECEDENTS.md #42](../PRECEDENTS.md#custom-lint-enforcement-precedent-42) for the GritQL-plugin convention.
+
 ### `no-resolved-value-theme-source.grit`
 
 1-way theme contract. Forbids resolving the user-intent theme value at the `bridge.setThemeSource(...)` call site. The contract is 1-way: pass the unresolved CRDT value (`'system' | 'light' | 'dark'`) verbatim. `'system'` delegates appearance tracking to macOS via `nativeTheme`; resolving at the call site (via `matchMedia` or a `prefersDark ? 'dark' : 'light'` ternary) loses tracking. See [PRECEDENTS.md #40(a)](../PRECEDENTS.md) for the renderer-state↔main-state contract.
@@ -97,6 +117,7 @@ Empirically verified (matches Biome 2.4 suppression-comment syntax):
 Current production suppressions:
 - `microcopy-ellipsis`: 2 sites (`AuthModal.tsx`, `Breadcrumb.tsx`)
 - `no-loosely-typed-webcontents-ipc`: 15 sites (`preload/index.ts` ×12, `shared/ipc-send.ts` ×1, `tests/smoke/theme-sync.e2e.ts` ×2)
+- `no-raw-html-interactive-element`: 20 file-level `biome-ignore-all` headers in `packages/app/src/{components,presence}/**` (pre-rule backlog awaiting shadcn migration; see the rule's section above for the ratchet contract)
 - `no-resolved-value-theme-source`: 0 sites
 - `playwright-topass-budget`: 0 sites
 
@@ -147,14 +168,14 @@ The main `bun run lint` does NOT reach the `biome-plugins/` directory (lint path
 
 ### 4. Author the fixture-file test
 
-Place at `packages/<host>/tests/integration/<rule-name>.test.ts` where `<host>` matches the package whose code the rule mainly targets. Template:
+Place at `packages/<host>/tests/<scope>/<rule-name>.test.ts` where `<host>` matches the package whose code the rule mainly targets. For `<scope>`: use `lint-plugins/` when `<host>` is `app` (`packages/app/tests/integration/` is in `md-audit`'s `DEFAULT_TEST_GLOBS` and requires `@covers-surface` / `@covers-construct` JSDoc tags scoped to markdown editor surfaces that don't apply to lint-plugin tests), and use `integration/` for all other hosts (`desktop`, `plugin`). Template:
 
 ```ts
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
-// __dirname → packages/<host>/tests/integration/. Repo root is 4 levels up.
+// __dirname → packages/<host>/tests/<scope>/. Repo root is 4 levels up.
 const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
 const FIXTURE_REL = 'biome-plugins/__fixtures__/<rule-name>.fixture.tsx';
 
