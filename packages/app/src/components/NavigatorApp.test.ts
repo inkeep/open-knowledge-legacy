@@ -228,23 +228,14 @@ describe('NavigatorApp launcher-header channel surface', () => {
     expect(NAVIGATOR_SRC).toMatch(/<BetaBadge\b/);
   });
 
-  test('subscribes to channel state via useUpdateChannel for the channel badge', () => {
-    expect(NAVIGATOR_SRC).toMatch(/from\s+['"]@\/hooks\/use-update-channel['"]/);
-    expect(NAVIGATOR_SRC).toContain('useUpdateChannel(');
-  });
-
-  test('Channel badge hides while channel is null (loading / no desktop bridge)', () => {
-    expect(NAVIGATOR_SRC).toMatch(/channel\s*!==\s*null/);
-  });
-
-  test('Channel badge renders "Beta" / "Stable" via the shared Badge component', () => {
-    expect(NAVIGATOR_SRC).toMatch(
+  test('Channel badge is gone: no useUpdateChannel hook + no Beta/Stable string literal in the header', () => {
+    expect(NAVIGATOR_SRC).not.toMatch(
       /channel\s*===\s*['"]beta['"]\s*\?\s*['"]Beta['"]\s*:\s*['"]Stable['"]/,
     );
-    expect(NAVIGATOR_SRC).toMatch(/<Badge\b[^>]*>\s*\{\s*channel\s*===\s*['"]beta['"]/);
+    expect(NAVIGATOR_SRC).not.toMatch(/useUpdateChannel/);
   });
 
-  test('BetaBadge sits in the title row, not below the version line (chrome-level signal, not About-row info)', () => {
+  test('BetaBadge sits in the title row (chrome-level signal, not About-row info)', () => {
     const titleMatch = NAVIGATOR_SRC.match(/<h1[^>]*>Open Knowledge<\/h1>\s*<BetaBadge/);
     expect(titleMatch).not.toBeNull();
   });

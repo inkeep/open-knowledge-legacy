@@ -265,7 +265,7 @@ export function CloneDialog({
         <DialogBody>
           <div className="flex flex-col gap-4">
             {/* URL input */}
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               <label htmlFor="clone-url" className="text-sm font-medium">
                 Repository URL or owner/repo
               </label>
@@ -280,7 +280,7 @@ export function CloneDialog({
 
             {/* Repo browser */}
             {isSignedIn && (
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-2">
                 <label htmlFor="repo-filter" className="text-sm font-medium">
                   Your repositories
                 </label>
@@ -337,7 +337,6 @@ export function CloneDialog({
                 <span>Browse your repos:</span>
                 <Button
                   variant="link"
-                  size="sm"
                   className="h-auto p-0"
                   onClick={() => onSignIn?.()}
                   disabled={cloning}
@@ -348,7 +347,7 @@ export function CloneDialog({
             )}
 
             {!usePicker && (
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-2">
                 <label htmlFor="clone-path" className="text-sm font-medium">
                   Local path
                 </label>

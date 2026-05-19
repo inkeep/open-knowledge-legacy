@@ -239,7 +239,30 @@ describe('CreateProjectDialog — load-bearing structural guards', () => {
   });
 
   test('Submit button is type="submit" so Enter-on-input fires Create', () => {
-    expect(SRC).toMatch(/<Button type="submit"[\s\S]{0,400}?data-testid="create-submit"/);
+    expect(SRC).toMatch(
+      /<Button[\s\S]{0,400}?type="submit"[\s\S]{0,400}?data-testid="create-submit"/,
+    );
+  });
+
+  test('Submit button form attribute binds to the form element id (cross-form submit contract)', () => {
+    expect(SRC).toMatch(/<form[\s\S]{0,400}?id={formId}/);
+    expect(SRC).toMatch(
+      /<Button[\s\S]{0,400}?form={formId}[\s\S]{0,400}?data-testid="create-submit"/,
+    );
+  });
+
+  test('Subfolder rescue sticky-promotes on block-nonempty at the probe transition', () => {
+    expect(SRC).toMatch(
+      /nextCascade\.kind\s*===\s*['"]block-nonempty['"][\s\S]{0,100}?setNeedsSubfolder\(true\)/,
+    );
+  });
+
+  test('Browse re-pick resets both needsSubfolder and subfolderName', () => {
+    const onBrowseBlock = SRC.match(/async function onBrowse\(\)[\s\S]{0,2500}?\n\s{2}\}/);
+    expect(onBrowseBlock).not.toBeNull();
+    const body = onBrowseBlock?.[0] ?? '';
+    expect(body).toContain('setNeedsSubfolder(false)');
+    expect(body).toContain("setSubfolderName('')");
   });
 
   test('Browse button is type="button" and calls bridge.dialog.openFolder', () => {
@@ -276,10 +299,12 @@ describe('CreateProjectDialog — load-bearing structural guards', () => {
   test('Banner variants carry stable data-testids the e2e relies on', () => {
     expect(SRC).toContain('data-testid="create-banner-nested"');
     expect(SRC).toContain('data-testid="create-banner-git-confirm"');
-    expect(SRC).toContain('data-testid="create-banner-nonempty"');
     expect(SRC).toContain('data-testid="create-banner-nested-open"');
     expect(SRC).toContain('data-testid="create-banner-sanitize-diverged"');
     expect(SRC).toContain('data-testid="create-banner-sanitize-erased"');
+    expect(SRC).not.toContain('data-testid="create-banner-nonempty"');
+    expect(SRC).toContain('data-testid="create-subfolder-rescue"');
+    expect(SRC).toContain('data-testid="create-subfolder-input"');
   });
 
   test('No forbidden React Compiler escape hatches (memo / useMemo / useCallback / forwardRef)', () => {

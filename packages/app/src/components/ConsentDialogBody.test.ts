@@ -16,7 +16,16 @@ describe('ConsentDialogBody — load-bearing structural guards', () => {
   });
 
   test('Start button is type="submit" so Enter-on-input routes through onSubmit', () => {
-    expect(SRC).toMatch(/<Button type="submit"[\s\S]{0,200}?data-testid="consent-start"/);
+    expect(SRC).toMatch(
+      /<Button[\s\S]{0,200}?type="submit"[\s\S]{0,200}?data-testid="consent-start"/,
+    );
+  });
+
+  test('Start button form attribute binds to the form element id (cross-form submit contract)', () => {
+    expect(SRC).toMatch(/<form[\s\S]{0,400}?id={formId}/);
+    expect(SRC).toMatch(
+      /<Button[\s\S]{0,300}?form={formId}[\s\S]{0,300}?data-testid="consent-start"/,
+    );
   });
 
   test('onSubmit calls preventDefault to suppress renderer page-reload', () => {
