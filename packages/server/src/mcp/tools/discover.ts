@@ -21,7 +21,7 @@ export const DESCRIPTION = [
   '- The repo is empty (< 5 .md files) — use `ok seed` instead',
   '- The repo is already fully configured (every substantial folder has folder frontmatter + templates)',
   '',
-  'One-shot per project. Idempotent on re-run — detects prior configuration and switches to "extend mode" (proposes additions only, never re-proposes existing artifacts). **Requires the OK Hocuspocus server running** — most primitives the body composes (`list_documents`, `read_document`, link-graph) hit the server. Phase 1 step 0 enforces this; if the server is down, the tool exits cleanly with a "run `open-knowledge start`" instruction. Only `exec`, `set_folder_rule`, `write_template`, and the `.okignore` write are fs-direct.',
+  'One-shot per project. Idempotent on re-run — detects prior configuration and switches to "extend mode" (proposes additions only, never re-proposes existing artifacts). **Requires the OK Hocuspocus server running** — most primitives the body composes (`list_documents`, `read_document`, link-graph) hit the server. Phase 1 step 0 enforces this; if the server is down, the tool exits cleanly with a "run `ok start`" instruction. Only `exec`, `set_folder_rule`, `write_template`, and the `.okignore` write are fs-direct.',
   '',
   '**Composes existing primitives only** — no new MCP tools, no schema changes. Uses `exec`, `list_documents`, `read_document`, `search`, `set_folder_rule`, `write_template`, `get_orphans`, `get_hubs`, `get_dead_links`, `get_backlinks`, `get_forward_links`, `suggest_links`, `edit_document`.',
 ].join('\n');

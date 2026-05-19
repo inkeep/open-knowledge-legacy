@@ -34,7 +34,7 @@ export const DESCRIPTION = [
   '- `limit` (optional) — Max rows; default 20, max 100.',
   '- `cwd` (optional) — Project root the query runs against.',
   '',
-  '**Server requirement:** the Hocuspocus server must be running (`open-knowledge start`). If not, this tool returns a recovery hint; use `grep` as a server-free fallback.',
+  '**Server requirement:** the Hocuspocus server must be running (`ok start`). If not, this tool returns a recovery hint; use `grep` as a server-free fallback.',
 ].join('\n');
 
 interface SearchDeps {

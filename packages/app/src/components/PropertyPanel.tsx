@@ -84,14 +84,17 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   const [resetCounters, setResetCounters] = useState<Record<string, number>>({});
   const docName = provider.configuration.name ?? '';
 
+  const isTemplateDoc = TEMPLATE_DOCNAME_RE.test(docName);
   const parentFolder = parentFolderOfDoc(docName);
-  const folderConfig = useFolderConfig(parentFolder);
+  const folderConfig = useFolderConfig(isTemplateDoc ? null : parentFolder);
   const cascade =
-    folderConfig.state.status === 'ready'
+    !isTemplateDoc && folderConfig.state.status === 'ready'
       ? ((folderConfig.state.data.folder.frontmatter_defaults ?? {}) as Record<string, unknown>)
       : {};
   const cascadeSources =
-    folderConfig.state.status === 'ready' ? folderConfig.state.data.frontmatterSources : {};
+    !isTemplateDoc && folderConfig.state.status === 'ready'
+      ? folderConfig.state.data.frontmatterSources
+      : {};
 
   function commitPatch(patch: FrontmatterPatch): PatchResult {
     if (!binding) {
@@ -487,6 +490,8 @@ function parentFolderOfDoc(docName: string): string {
   const idx = docName.lastIndexOf('/');
   return idx === -1 ? '' : docName.slice(0, idx);
 }
+
+const TEMPLATE_DOCNAME_RE = /(^|\/)\.ok\/templates\//;
 
 function cascadeValueToFrontmatter(value: unknown): FrontmatterValue {
   if (typeof value === 'string') return value;

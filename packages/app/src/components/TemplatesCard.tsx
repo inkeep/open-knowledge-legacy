@@ -3,6 +3,7 @@ import { FilePlus, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { DeleteConfirmationDialog } from '@/components/DeleteConfirmationDialog';
+import { InheritedBadge } from '@/components/FrontmatterRow';
 import { NewItemDialog } from '@/components/NewItemDialog';
 import { NewTemplateDialog } from '@/components/NewTemplateDialog';
 import { TemplateEditDialog } from '@/components/TemplateEditDialog';
@@ -196,9 +197,12 @@ function TemplateRow({
             </code>
           ) : null}
           {template.scope === 'inherited' ? (
-            <Badge variant="gray" className="ml-auto shrink-0 text-2xs">
-              inherited
-            </Badge>
+            <span className="ml-auto shrink-0">
+              <InheritedBadge
+                source={template.source_folder}
+                target={`templates/${template.name}.md`}
+              />
+            </span>
           ) : null}
         </div>
         {template.description ? (

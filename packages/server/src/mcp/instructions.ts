@@ -30,26 +30,34 @@ Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project
 
 ## Preview — open the browser at session start
 
-**Open the preview browser as your first OK action of the session, if it is not already open.** The user watches edits land live in that pane; if it isn't open, your work is invisible and the whole CRDT pipeline is wasted. Treat this as step zero — before your first read, before your first write.
+**The invariant.** If OK Electron is open for this project OR \`ok ui\` is running for it, every OK tool response carries the preview URL — plain HTTP, no custom URL schemes, works in any browser including agent in-app browsers (Claude Desktop, Cursor, Codex, Cowork). Read tools (\`exec\`, \`grep\`, \`search\`, \`list_documents\`, \`read_document\`) carry it in \`ui.baseUrl\` (top-level) and per-doc \`previewUrl\` fields; write tools carry it in \`previewUrl\` + the optional \`warning\` shape. Never construct this URL; always read it from the latest tool response.
 
-- Claude Code Desktop: \`preview_start("open-knowledge-ui")\`.
-- Cursor: use the host's open-URL tool with a \`previewUrl\` from any write response.
-- Other hosts: use whatever command opens a URL (macOS: \`open <url>\`). On hosts with no preview tool (Codex, generic stdio), surface the URL in chat for the user to click.
+**The default agent move.** Make your first OK tool call (any read works — \`list_documents\`, \`exec("ls -A")\`, or \`read_document\` is enough). The response carries the preview URL. Navigate to it immediately, then proceed with your real work. The user watches edits land live; you can re-navigate later to verify a CRDT edit landed when a response looks ambiguous. Per host:
 
-**How to know if it's already open.** You usually can't pre-check from the agent side — rely on these signals:
+- **In-app browser hosts** (Claude Desktop, Cursor, Codex, Cowork): navigate the in-app browser to the \`previewUrl\`. Default.
+- **Claude Code Desktop**: call \`preview_start("open-knowledge-ui")\` (host tool, not OK MCP).
+- **Stdio-only hosts**: surface the URL in chat; \`open <url>\` (macOS) if the host can shell out.
 
-1. You already opened it earlier in this session → don't reopen.
-2. A \`write_document\` / \`edit_document\` response returns \`previewUrl\` but NO \`warning\` → a browser is attached somewhere; do nothing.
-3. A response DOES include \`warning: { action: "attach-preview-once", previewUrl, message }\` → a UI server is reachable but no browser is attached; open the URL immediately, one-shot.
-4. A response includes \`warning: { action: "start-ui", previewUrl: null, message }\` → no UI is running anywhere for this project. Surface the message to the user (the in-band copy names the recovery options: \`open-knowledge ui\` in a terminal, \`preview_start("open-knowledge-ui")\` in Claude Code Desktop, or opening the project in OK Electron). Don't loop on retries — the user has to act.
+**Four signals to check if it's already open** (you usually can't pre-check, so read these from each write response):
 
-Both warning shapes fire only when needed (server tracks \`__system__\` subscribers) and at most once per session in the normal fresh-start case.
+1. You opened/navigated earlier this session → don't reopen.
+2. Write response has \`previewUrl\` (non-null) and NO \`warning\` → a browser is attached somewhere; do nothing.
+3. \`warning: { action: "attach-preview-once", previewUrl, message }\` → UI reachable, no browser attached; navigate one-shot.
+4. \`warning: { action: "start-ui", previewUrl: null, message }\` → no UI running anywhere. Surface the message verbatim — recovery options are in the in-band copy. Don't loop on retries.
 
-If the server isn't running, you'll see a \`"Hocuspocus server is not running"\` error. If \`previewUrl\` is \`null\` in a tool response, no UI is reachable for this project — neither a CLI \`open-knowledge ui\` process nor an OK Electron window. Start one (\`open-knowledge ui\` from a terminal, \`preview_start("open-knowledge-ui")\` in Claude Code, or just open the project in OK Electron), then retry. NEVER construct preview URLs by hand — always use the \`previewUrl\` returned in tool responses.
+Warnings fire at most once per session in the fresh-start case.
 
-OK Electron and the CLI's \`ok ui\` cannot serve the same project at the same time — they both hold the same \`ui.lock\`. If \`ok ui\` errors with a UI-lock collision, an OK Electron window is open for that project (use that window, or quit it and re-run \`ok ui\`). The reverse holds for the user-facing case: opening a project in OK Electron while a standalone \`ok ui\` is running for the same project will fail the lock acquire.
+**\`previewUrl: null\` only means "no UI reachable" on the three attach-warning tools: \`write_document\` / \`edit_document\` / \`frontmatter_patch\`.** Workflow tools return prose and don't carry \`previewUrl\`. \`delete_document\` / \`rename_document\` / \`rename_folder\` emit \`previousPreviewUrl\` (different field, for closing stale tabs) and don't fire attach warnings.
 
-**No screenshots after edits.** Do NOT take \`preview_screenshot\` after every \`edit_document\` / \`write_document\`. Trust the CRDT tool response as confirmation the edit landed. Only screenshot when debugging a visual issue or when explicitly asked.
+**Always read \`previewUrl\` from the latest write response.** Don't cache the session-start value — Electron quit/reopen (or \`ok ui\` restart) can change the port; the resolver picks up the new port automatically.
+
+If you see \`"Hocuspocus server is not running"\`, run \`ok start\` and retry. NEVER construct preview URLs by hand.
+
+OK Electron and \`ok ui\` cannot serve the same project at once — they share \`ui.lock\`. A UI-lock collision means the other is running for that project (use that one, or quit it first).
+
+**The preview is read-only for the agent.** Navigate to verify edits landed; you cannot click or type to drive edits — the CRDT flow is one-way (agent → MCP → CRDT → preview).
+
+**No screenshots after every edit.** Do NOT take \`preview_screenshot\` (host tool, not OK MCP) after every write. Trust the response. Screenshot only when (a) debugging a visual issue, (b) a response looks ambiguous, or (c) the user asks.
 
 ## Scope recap
 

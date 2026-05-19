@@ -53,7 +53,7 @@ export function textPlusStructured<T>(text: string, structured: T, isError?: boo
 }
 
 export const HOCUSPOCUS_NOT_RUNNING_ERROR =
-  'Error: Hocuspocus server is not running. Start it with `open-knowledge start`, then retry.\nFor disk-only writes without real-time sync, use your native Edit tool directly.';
+  'Error: Hocuspocus server is not running. Start it with `ok start`, then retry.\nFor disk-only writes without real-time sync, use your native Edit tool directly.';
 
 type WorkflowRole = 'ingest' | 'research' | 'consolidate';
 

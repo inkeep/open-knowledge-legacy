@@ -9,13 +9,13 @@ Use OK primitives only — no new files outside \`<folder>/.ok/\`, no body rewri
 
 **You will work through 7 phases in order. STOP gates (⛔) require user confirmation before proceeding. Do not skip or batch ahead.**
 
-**Server requirement.** Most of the primitives this tool composes — \`list_documents\`, \`read_document\`, \`get_backlinks\`, \`get_forward_links\`, \`get_orphans\`, \`get_hubs\`, \`get_dead_links\`, \`suggest_links\`, \`search\` — require the OK Hocuspocus server to be running. Only \`exec\`, \`set_folder_rule\`, \`write_template\`, and the native \`.okignore\` write run fs-direct. **The full \`discover\` flow requires \`open-knowledge start\` to be running.** Phase 1 step 0 enforces this.
+**Server requirement.** Most of the primitives this tool composes — \`list_documents\`, \`read_document\`, \`get_backlinks\`, \`get_forward_links\`, \`get_orphans\`, \`get_hubs\`, \`get_dead_links\`, \`suggest_links\`, \`search\` — require the OK Hocuspocus server to be running. Only \`exec\`, \`set_folder_rule\`, \`write_template\`, and the native \`.okignore\` write run fs-direct. **The full \`discover\` flow requires \`ok start\` to be running.** Phase 1 step 0 enforces this.
 
 ---
 
 ## Phase 1 — Scan + classify (no user interaction)
 
-0. **Server check (required for the flow).** Probe via \`get_hubs()\`. If the response text starts with \`"Error: Hocuspocus server is not running"\`, STOP — tell the user "discover needs the OK server running. Start it with \`open-knowledge start\` from a terminal, then re-invoke \`discover\`." Exit. Do NOT continue to step 1.
+0. **Server check (required for the flow).** Probe via \`get_hubs()\`. If the response text starts with \`"Error: Hocuspocus server is not running"\`, STOP — tell the user "discover needs the OK server running. Start it with \`ok start\` from a terminal, then re-invoke \`discover\`." Exit. Do NOT continue to step 1.
 1. \`exec("ls ${contentDir}")\` — list every top-level entry (fs-direct).
 2. For each top-level **directory**: \`list_documents({ dir: <dir>, depth: 1 })\` to surface \`.md\` count + per-child frontmatter samples + recursive count.
 3. Classify each directory:
@@ -311,7 +311,7 @@ Link-graph activation:
 
 - **Empty project** (Phase 1): < 5 \`.md\` files total → exit with "try \`ok seed\` instead."
 - **All-greenfield-already** (Phase 1 step 6): folder frontmatter exists AND templates exist for every substantial folder → exit with "this project is already configured."
-- **Server down** (Phase 1 step 0): surface "discover needs \`open-knowledge start\` running" and exit cleanly. No partial run.
+- **Server down** (Phase 1 step 0): surface "discover needs \`ok start\` running" and exit cleanly. No partial run.
 - **User aborts at any STOP gate** → exit cleanly, leaving any already-applied proposals in place (apply is per-phase, not all-or-nothing).
 - **Validation failure** (Phase 6) → don't pretend to succeed; surface the failed step to the user.
 `;

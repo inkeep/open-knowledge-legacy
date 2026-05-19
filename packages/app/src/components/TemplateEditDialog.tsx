@@ -1,5 +1,5 @@
+import { InheritedBadge } from '@/components/FrontmatterRow';
 import { TemplateFormFields, useTemplateForm } from '@/components/TemplateForm';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -42,10 +42,11 @@ export function TemplateEditDialog({ folderPath, template, onOpenChange, onSaved
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             Edit {template?.title ?? template?.name ?? 'Template'}
-            {template?.scope === 'inherited' ? (
-              <Badge variant="gray" className="text-2xs">
-                inherited
-              </Badge>
+            {template?.scope === 'inherited' && template ? (
+              <InheritedBadge
+                source={template.source_folder}
+                target={`templates/${template.name}.md`}
+              />
             ) : null}
           </DialogTitle>
           <DialogDescription className="sr-only">

@@ -275,7 +275,7 @@ describe('edit_document MCP tool', () => {
       },
     });
     const warning = (result.structuredContent as { warning: { message: string } }).warning;
-    expect(warning.message).toContain('open-knowledge ui');
+    expect(warning.message).toContain('ok ui');
     expect(warning.message).toContain('preview_start');
     expect(warning.message).toContain('OK Electron');
     expect(result.structuredContent?.previewUrl).toBeUndefined();

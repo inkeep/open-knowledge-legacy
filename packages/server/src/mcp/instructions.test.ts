@@ -64,5 +64,5 @@ test('buildInstructions exceeds the legacy 2 KB Claude Code cap (generator emits
   const text = buildInstructions(defaultContent());
   const bytes = Buffer.byteLength(text, 'utf8');
   expect(bytes).toBeGreaterThan(2048);
-  expect(bytes).toBeLessThan(8192);
+  expect(bytes).toBeLessThan(9216);
 });

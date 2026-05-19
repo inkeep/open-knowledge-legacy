@@ -18,11 +18,26 @@ Open Knowledge (OK) is a markdown-CRDT collaboration platform exposed via MCP. T
 ## TL;DR — the 90% case
 
 1. **Reads:** `exec("cat …")` for a single doc, `exec("ls -A …")` for a directory, `search` for ranked, `grep` for literal. Native `Read` / `Grep` only on source code (`.ts` / `.py` / …), never on in-scope `.md` / `.mdx`.
-2. **Writes:** `write_document` for new or full-replace, `edit_document` for body-only patches. Frontmatter changes go through `write_document({ position: "replace" })` — `edit_document` rejects frontmatter edits with HTTP 400.
-3. **Preview:** open the browser at session start (or when a write response carries `warning: { action: "attach-preview-once" }` — or surface to the user when `warning: { action: "start-ui" }` says no UI is running). Don't `preview_screenshot` after every edit.
+2. **Writes:** `write_document` for new or full-replace, `edit_document` for body-only patches, `frontmatter_patch` for 1-2 frontmatter keys (preferred). Full frontmatter rewrites use `write_document({ position: "replace" })`. `edit_document` rejects frontmatter (HTTP 400).
+3. **Preview:** every OK tool response carries the preview URL (`ui.baseUrl` on reads, `previewUrl` on writes). Navigate your in-app browser to it from the first response you see; refresh from later responses if Electron/UI restarted. Surface to the user on a `start-ui` warning (no UI running). Don't `preview_screenshot` after every edit.
 4. **Workflow tools** (`ingest` / `research` / `consolidate` / `discover`) return procedural guides, not data. Use them when the work fits the layer; follow their numbered steps.
 
 Everything below is depth. Read on demand.
+
+## Tool index — by family
+
+The full MCP surface, grouped by intent. Each family has one canonical instruction site later in this doc (linked). Reach for the family before the individual tool.
+
+- **Read** — `exec` (primary; shell-style), `read_document` (typed; one doc), `search` (ranked, BM25 + recency), `grep` (literal, frontmatter-enriched), `list_documents` (folder + `frontmatter_defaults` + `templates_available` cascade). See *Reads — examples*.
+- **Write / edit** — `write_document` (new or full-replace, incl. `template:` instantiation), `edit_document` (body-only find/replace), `frontmatter_patch` (JSON Merge Patch for 1-2 keys), `delete_document`. See *Writing* and *Frontmatter conventions*.
+- **Restructure** — `rename_document` (single file; updates referrers), `rename_folder` (folder + descendants; updates referrers). Always prefer these over `delete_document` + re-write — they preserve history and rewrite incoming links.
+- **Versioning** — `save_version` (named snapshot), `get_history` (versions for a doc), `rollback_to_version` (restore a snapshot). Call `save_version` before any 1-way operation (delete, large rewrite, folder rename) you may need to undo.
+- **Link graph** — `get_dead_links` (verify after writes; strict-exact), `get_backlinks` (incoming), `get_forward_links` (outgoing), `get_orphans` (no incoming), `get_hubs` (high-incoming), `suggest_links` (untextualized mentions). See *Linking*.
+- **Components** — `get_components` (fetch param schemas + literal `example` bytes). See *Components — prefer canonicals*.
+- **Folder defaults + templates** — `set_folder_rule` (writes `<folder>/.ok/frontmatter.yml`), `write_template` / `delete_template` (writes `<folder>/.ok/templates/`), `get_config` (read resolved config). See *Folder structure + metadata*.
+- **Workflow tools (return procedural guides, not data)** — `ingest`, `research`, `consolidate`, `discover`. See *Workflow tools — when to invoke them*.
+
+Tools NOT in OK MCP (they belong to your agent host): `preview_start`, `preview_screenshot`, `WebFetch`, `WebSearch`, native `Read` / `Grep` / `Glob` / `Edit`. The STOP rule below governs which of those you may use on in-scope markdown.
 
 ## STOP — native tools on in-scope `.md` / `.mdx`
 
@@ -51,32 +66,40 @@ Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project
 
 ## Preview — open the browser at session start
 
-**Open the preview browser as your first OK action of the session, if it is not already open.** The user watches edits land live in that pane; if it isn't open, your work is invisible and the whole CRDT pipeline is wasted. Treat this as step zero — before your first read, before your first write.
+**The invariant.** If OK Electron is open for this project OR `ok ui` is running for it, every OK tool response carries the preview URL — plain HTTP, no custom URL schemes, works in any browser including agent in-app browsers (Claude Desktop, Cursor, Codex, Cowork). Read tools (`exec`, `grep`, `search`, `list_documents`, `read_document`) carry it in `ui.baseUrl` (top-level) and per-doc `previewUrl` fields; write tools carry it in `previewUrl` + the optional `warning` shape. Never construct this URL; always read it from the latest tool response.
 
-- Claude Code Desktop: `preview_start("open-knowledge-ui")`.
-- Cursor: use the host's open-URL tool with a `previewUrl` from any write response.
-- Other hosts: use whatever command opens a URL (macOS: `open <url>`). On hosts with no preview tool (Codex, generic stdio), surface the URL in chat for the user to click.
+**The default agent move.** Make your first OK tool call (any read works — `list_documents`, `exec("ls -A")`, or `read_document` is enough). The response carries the preview URL. Navigate to it immediately, then proceed with your real work. The user watches edits land live; you can re-navigate later to verify a CRDT edit landed when a response looks ambiguous. Per host:
 
-**How to know if it's already open.** You usually can't pre-check from the agent side — rely on these signals:
+- **In-app browser hosts** (Claude Desktop, Cursor, Codex, Cowork): navigate the in-app browser to the `previewUrl`. Default.
+- **Claude Code Desktop**: call `preview_start("open-knowledge-ui")` (host tool, not OK MCP).
+- **Stdio-only hosts**: surface the URL in chat; `open <url>` (macOS) if the host can shell out.
 
-1. You already opened it earlier in this session → don't reopen.
-2. A `write_document` / `edit_document` response returns `previewUrl` but NO `warning` → a browser is attached somewhere; do nothing.
-3. A response DOES include `warning: { action: "attach-preview-once", previewUrl, message }` → a UI server is reachable but no browser is attached; open the URL immediately, one-shot.
-4. A response includes `warning: { action: "start-ui", previewUrl: null, message }` → no UI is running anywhere for this project. Surface the message to the user (the in-band copy names the recovery options: `open-knowledge ui` in a terminal, `preview_start("open-knowledge-ui")` in Claude Code Desktop, or opening the project in OK Electron). Don't loop on retries — the user has to act.
+**Four signals to check if it's already open** (you usually can't pre-check, so read these from each write response):
 
-Both warning shapes fire only when needed (server tracks `__system__` subscribers) and at most once per session in the normal fresh-start case.
+1. You opened/navigated earlier this session → don't reopen.
+2. Write response has `previewUrl` (non-null) and NO `warning` → a browser is attached somewhere; do nothing.
+3. `warning: { action: "attach-preview-once", previewUrl, message }` → UI reachable, no browser attached; navigate one-shot.
+4. `warning: { action: "start-ui", previewUrl: null, message }` → no UI running anywhere. Surface the message verbatim — recovery options are in the in-band copy. Don't loop on retries.
 
-If the server isn't running, you'll see a `"Hocuspocus server is not running"` error. If `previewUrl` is `null` in a tool response, no UI is reachable for this project — neither a CLI `open-knowledge ui` process nor an OK Electron window. Start one (`open-knowledge ui` from a terminal, `preview_start("open-knowledge-ui")` in Claude Code, or just open the project in OK Electron), then retry. NEVER construct preview URLs by hand — always use the `previewUrl` returned in tool responses.
+Warnings fire at most once per session in the fresh-start case.
 
-OK Electron and the CLI's `ok ui` cannot serve the same project at the same time — they both hold the same `ui.lock`. If `ok ui` errors with a UI-lock collision, an OK Electron window is open for that project (use that window, or quit it and re-run `ok ui`). The reverse holds for the user-facing case: opening a project in OK Electron while a standalone `ok ui` is running for the same project will fail the lock acquire.
+**`previewUrl: null` only means "no UI reachable" on the three attach-warning tools: `write_document` / `edit_document` / `frontmatter_patch`.** Workflow tools return prose and don't carry `previewUrl`. `delete_document` / `rename_document` / `rename_folder` emit `previousPreviewUrl` (different field, for closing stale tabs) and don't fire attach warnings.
 
-**No screenshots after edits.** Do NOT take `preview_screenshot` after every `edit_document` / `write_document`. Trust the CRDT tool response as confirmation the edit landed. Only screenshot when debugging a visual issue or when explicitly asked.
+**Always read `previewUrl` from the latest write response.** Don't cache the session-start value — Electron quit/reopen (or `ok ui` restart) can change the port; the resolver picks up the new port automatically.
+
+If you see `"Hocuspocus server is not running"`, run `ok start` and retry. NEVER construct preview URLs by hand.
+
+OK Electron and `ok ui` cannot serve the same project at once — they share `ui.lock`. A UI-lock collision means the other is running for that project (use that one, or quit it first).
+
+**The preview is read-only for the agent.** Navigate to verify edits landed; you cannot click or type to drive edits — the CRDT flow is one-way (agent → MCP → CRDT → preview).
+
+**No screenshots after every edit.** Do NOT take `preview_screenshot` (host tool, not OK MCP) after every write. Trust the response. Screenshot only when (a) debugging a visual issue, (b) a response looks ambiguous, or (c) the user asks.
 
 ## Writing
 
 Call `write_document` / `edit_document` as soon as you have content. Native `Edit` / `sed` / direct `Write` on in-scope markdown is forbidden — it bypasses the CRDT and loses agent attribution in the shadow repo.
 
-To delete a doc, call `delete_document` — never `rm` / `unlink` / native `Bash` removal on in-scope markdown. The MCP path closes open agent sessions and unloads the doc from Hocuspocus before unlinking; native `rm` desynchronizes those. Deletion is irreversible from this tool — call `save_version` first if you may need to roll back, and `get_backlinks` first if you want to fix the referrers that will become redlinks.
+To delete a doc, call `delete_document` — never `rm` / `unlink` / native `Bash` removal on in-scope markdown. The MCP path closes open agent sessions and unloads the doc from Hocuspocus before unlinking; native `rm` desynchronizes those. Deletion is irreversible from this tool — call `save_version` first if you may need to roll back (restore via `rollback_to_version`; list snapshots via `get_history`), and `get_backlinks` first if you want to fix the referrers that will become redlinks. To move or rename a doc instead of delete + rewrite, use `rename_document` (single file) or `rename_folder` (folder + descendants) — both rewrite incoming references atomically.
 
 **If `edit_document` returns "Text not found" on text you can verify exists on disk** (via `exec("cat …")`), the MCP session is likely stale (e.g., after a folder rename or server restart). Treat this as the escape-hatch trigger from the STOP block: prefix your next user-visible sentence with `Open Knowledge MCP unavailable:` and report the inconsistency. Don't loop on retries — the symptom is structural, not transient.
 
@@ -133,7 +156,7 @@ Knowledge-base docs are factual artifacts — whether the project is a wiki, an 
 - **Internal cross-refs between OK docs** → `[text](./other-doc.md)` — link liberally to aid navigation.
 - **Never wrap a link in backticks.** `` `[text](./foo.md)` `` is a bug — the backticks make it render as literal code rather than a link.
 - **Never use HTML anchors** (`<a href="...">`). Markdown link syntax only.
-- **Verify before walking away.** After writing a doc, call `get_dead_links({ sourceDocNames: ['your/doc'] })` to find broken references. Fix each redlink or explicitly accept it.
+- **Verify before walking away.** After writing a doc, call `get_dead_links({ sourceDocNames: ['your/doc'] })` to find broken references. Fix each redlink or explicitly accept it. Companion link-graph reads (same family): `get_backlinks` (incoming), `get_forward_links` (outgoing), `get_orphans` (no incoming), `get_hubs` (high-incoming), `suggest_links` (untextualized mentions worth linking).
 - **The editor's red-underline visual lies.** Its dead-link detection tolerates slug-fallback (e.g., `foo` may appear resolved because `foo.md` exists at root). `get_dead_links` is strict-exact — trust the tool, not the visual.
 
 **Note on wiki-link syntax (`[[Page]]`):** the parser still handles it for legacy content, but it's NO LONGER the recommended default. Write new content with standard markdown links per above. Seed-pack templates (`ok seed --pack <name>`) may still emit `[[Page]]` placeholders inside template body text — those are legacy. When you instantiate a seed-pack template, replace the legacy placeholders with standard markdown links during the `{shape}`-fill pass.
@@ -365,7 +388,7 @@ The skill carries the trigger ("KB content changed this turn — go look"). The 
 | Write a doc in an unfamiliar folder             | go straight to `write_document` with hand-authored markdown                        | `list_documents(<folder>)` first — read `frontmatter_defaults` + `templates_available` before writing |
 | Land in an existing repo without orienting      | go straight to `write_document` or run the per-folder pre-write checklist ad-hoc when no folder frontmatter / templates exist | invoke `discover` once for the project — it extracts conventions from siblings, sets folder frontmatter, writes templates, and activates the link graph |
 | Author a doc when a matching template exists    | `write_document({ markdown: "..." })` from scratch                                 | `write_document({ template, position: "replace" })` — templates carry the folder's frontmatter + body discipline |
-| Change a doc's title / tags                     | `edit_document` to swap the YAML (rejected — HTTP 400 frontmatter-intersect)       | `write_document({ position: "replace", markdown })` with the new frontmatter block at the top of `markdown` |
+| Change a doc's title / tags                     | `edit_document` to swap the YAML (rejected — HTTP 400 frontmatter-intersect)       | `frontmatter_patch({ docName, patch })` for 1-2 keys; `write_document({ position: "replace", markdown })` for full rewrites |
 | Repeat the same frontmatter on sibling docs     | hand-set identical `tags` / `title` prefix on every new file                       | `set_folder_rule(...)` once — the cascade carries it to every child                |
 | Re-derive the same body skeleton repeatedly     | copy-paste the structure from a sibling each time                                  | `write_template(...)` once, then pick from `templates_available` thereafter        |
 | Scaffold a new folder for a doc category        | `set_folder_rule` for frontmatter and stop there                                   | pair `set_folder_rule` with `write_template` in the same turn — discipline + body shape |
@@ -384,7 +407,7 @@ Three correspond to [Karpathy's three-layer knowledge-base pattern](https://gist
 | `ingest`      | Raw sources (immutable) | User shares a URL/PDF/file to preserve verbatim, **OR you fetched a URL** (`WebFetch` / `WebSearch` / equivalent) to ground a claim that's about to land in the knowledge base. The KB is closed-loop — agent-initiated fetches are not exempt. No analysis in the file itself — takeaways go back to the user in chat.                                                                                                                                  |
 | `research`    | KB, provisional         | User asks you to investigate, compare alternatives, or synthesize multiple sources. Produces a `status: provisional` article with a `sources:` list. Follows scan-first routing, a STOP scoping gate, 3P-external framing, and a validate checklist — the tool body enforces each step. |
 | `consolidate` | KB, canonical           | Team has actually decided after research and wants the outcome committed as source-of-truth. Starts with a STOP gate confirming the decision exists; writes a `status: canonical` article with a `supersedes:` chain.                                                                   |
-| `discover`    | Project metadata        | First arrival at a repo with existing content AND no folder frontmatter / templates set. Extracts conventions from siblings; activates the link graph (orphans, hubs, untextualized mentions); proposes folder frontmatter + templates + `.okignore`; per-phase user confirmation. Requires `open-knowledge start` running (Phase 1 step 0 gates). Skip on empty repos (use `ok seed`). One-shot; idempotent on re-run. |
+| `discover`    | Project metadata        | First arrival at a repo with existing content AND no folder frontmatter / templates set. Extracts conventions from siblings; activates the link graph (orphans, hubs, untextualized mentions); proposes folder frontmatter + templates + `.okignore`; per-phase user confirmation. Requires `ok start` running (Phase 1 step 0 gates). Skip on empty repos (use `ok seed`). One-shot; idempotent on re-run. |
 
 **These tools are your default move, not `write_document`.** When the work fits one of the three layers — preserving an external source, investigating/synthesizing, committing a decided outcome — invoke the corresponding tool instead of going straight to `write_document` / `edit_document`. The tool bodies enforce framing (sources, status, supersedes chains) that hand-written articles routinely miss. `write_document` is correct for everything that does **not** fit the three layers (specs, runbooks, scratch notes, project pages); for the three that do, lead with the tool. This is doubly true in projects that ran `ok seed` — a doc landing in `external-sources/` / `research/` / `articles/` should have come out of `ingest` / `research` / `consolidate`.
 
