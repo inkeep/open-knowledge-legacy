@@ -663,8 +663,8 @@ export function __getActivityMountList(): string[] {
 }
 
 export function __resetCacheForTests(): void {
-  for (const docName of [...tiptapCache.keys()]) evictTiptapEditor(docName);
-  for (const docName of [...cmCache.keys()]) evictCmEditor(docName);
+  for (const docName of tiptapCache.keys()) evictTiptapEditor(docName);
+  for (const docName of cmCache.keys()) evictCmEditor(docName);
   activityMountList = new Set();
   activeProviderPool = null;
 }

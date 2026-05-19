@@ -400,7 +400,7 @@ export function installColdMountInstrumentation(): void {
       });
       obs.observe({ type: 'paint', buffered: true });
     }
-  } catch (_err) {}
+  } catch {}
 
   (globalThis as unknown as Record<string, unknown>).__okColdMountInstrumented = true;
 }

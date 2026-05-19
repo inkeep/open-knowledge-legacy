@@ -368,7 +368,7 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
       }
       keepaliveGraceTimers.clear();
       if (keepaliveGraceInflight.size > 0) {
-        await Promise.allSettled([...keepaliveGraceInflight]);
+        await Promise.allSettled(keepaliveGraceInflight);
       }
     },
   };

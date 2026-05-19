@@ -36,7 +36,7 @@ export function ActivityPanelDiffView({
     );
   }
 
-  if (files.length === 0 || files.every((f) => f.hunks.length === 0)) {
+  if (files.every((f) => f.hunks.length === 0)) {
     return (
       <div className="activity-panel-diff px-3 py-2 text-xs text-muted-foreground italic">
         No changes

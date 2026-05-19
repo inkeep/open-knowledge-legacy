@@ -188,7 +188,7 @@ type IconNode = [string, Record<string, string>][];
 
 function iconNodeToSvg(iconNode: IconNode): string {
   return iconNode
-    .map(([tag, { key, ...attrs }]) => {
+    .map(([tag, { key: _, ...attrs }]) => {
       const attrString = Object.entries(attrs)
         .map(([k, v]) => `${k}="${v}"`)
         .join(' ');

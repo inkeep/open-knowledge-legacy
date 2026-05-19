@@ -39,8 +39,10 @@ export function register(
       const { url } = context;
 
       const identity = identityRef?.current;
-      const result = await httpPost(url, '/api/save-version', {
-        ...(identity
+      const result = await httpPost(
+        url,
+        '/api/save-version',
+        identity
           ? {
               writers: [
                 {
@@ -50,8 +52,8 @@ export function register(
                 },
               ],
             }
-          : {}),
-      });
+          : {},
+      );
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
       return textPlusStructured(`Checkpoint saved. Checkpoint ref: ${result.checkpointRef}`, {

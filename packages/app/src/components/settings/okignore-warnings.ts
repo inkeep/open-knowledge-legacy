@@ -34,7 +34,7 @@ export function checkHeuristicWarnings(line: string): OkignoreWarning[] {
   if (trimmed === '!') {
     warnings.push({ code: 'lone-bang', message: WARNING_MESSAGES['lone-bang'] });
   }
-  if (/\\$/.test(trimmed)) {
+  if (trimmed.endsWith('\\')) {
     warnings.push({
       code: 'trailing-backslash',
       message: WARNING_MESSAGES['trailing-backslash'],
