@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/no-raw-html-interactive-element: pre-rule backlog — file uses raw <button>/<input>/<textarea> awaiting shadcn migration; tracked at https://github.com/inkeep/open-knowledge-legacy/blob/main/biome-plugins/README.md#no-raw-html-interactive-elementgrit
 import type { TargetData } from '@inkeep/open-knowledge-core';
 import { ArrowUpRight } from 'lucide-react';
 import { TargetIcon } from '@/components/handoff/OpenInAgentMenuItem';
