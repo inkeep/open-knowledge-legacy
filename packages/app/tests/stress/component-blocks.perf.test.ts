@@ -51,8 +51,8 @@ describe('PF03: parseWithFallback cycle time under load', () => {
       expect(result.type).toBe('doc');
     }
 
-    const warmUpSorted = [...timings.slice(0, WARM_UP)].sort((a, b) => a - b);
-    const steadySorted = [...timings.slice(WARM_UP)].sort((a, b) => a - b);
+    const warmUpSorted = timings.slice(0, WARM_UP).sort((a, b) => a - b);
+    const steadySorted = timings.slice(WARM_UP).sort((a, b) => a - b);
     const warmUpP95 = percentile(warmUpSorted, 0.95);
     const steadyP95 = percentile(steadySorted, 0.95);
     const maxVal = Math.max(...timings);

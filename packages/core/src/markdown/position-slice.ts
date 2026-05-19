@@ -241,7 +241,7 @@ export function applyPositionSliceToNode(
         const matches = cell.match(/-/g);
         dashCounts.push(matches ? matches.length : 0);
       }
-      if (dashCounts.length > 0 && dashCounts.some((c) => c > 0)) {
+      if (dashCounts.some((c) => c > 0)) {
         node.data.sourceDashCounts = dashCounts;
       }
 

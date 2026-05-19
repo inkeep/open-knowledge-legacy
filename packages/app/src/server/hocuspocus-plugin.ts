@@ -336,7 +336,7 @@ export function hocuspocusPlugin(): Plugin {
         }
         keepaliveGraceTimers.clear();
         if (keepaliveGraceInflight.size > 0) {
-          await Promise.allSettled([...keepaliveGraceInflight]);
+          await Promise.allSettled(keepaliveGraceInflight);
         }
         try {
           await currentSrv.destroy();

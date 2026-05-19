@@ -315,7 +315,7 @@ function classifyLink(
     if (!stat.isSymbolicLink()) return 'foreign';
     const target = fs.readlinkSync(path);
     if (target === currentWrapper) return 'our-current';
-    if (/\.app\/Contents\/Resources\/cli\/bin\/ok\.sh$/.test(target)) return 'our-stale';
+    if (target.endsWith('.app/Contents/Resources/cli/bin/ok.sh')) return 'our-stale';
     return 'foreign';
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'empty' : 'foreign';

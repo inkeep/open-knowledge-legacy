@@ -44,7 +44,7 @@ case "$TEST_STUB_BEHAVIOR" in
   always-fail-code)
     # Generic-passthrough probe — exit with whatever code the test supplies
     # in TEST_FAIL_EXIT_CODE (default 1). Used by the passthrough test that
-    # proves \`exit "\$rc"\` is not hardcoded.
+    # proves \`exit "$rc"\` is not hardcoded.
     echo "stub: synthetic non-1 failure (exit \${TEST_FAIL_EXIT_CODE:-1})" >&2
     exit "\${TEST_FAIL_EXIT_CODE:-1}"
     ;;

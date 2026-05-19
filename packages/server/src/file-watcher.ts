@@ -163,7 +163,7 @@ export function removeFolderIndexEntries(
   relativePath: string,
 ): boolean {
   let removed = false;
-  for (const path of [...folderIndex.keys()]) {
+  for (const path of folderIndex.keys()) {
     if (path === relativePath || path.startsWith(`${relativePath}/`)) {
       folderIndex.delete(path);
       removed = true;

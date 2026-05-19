@@ -48,7 +48,7 @@ const ANIMAL_ICON_MAP: Record<string, FC<LucideProps>> = {
   Turtle,
 };
 
-export const ANIMAL_ICON_NAMES = Object.freeze([...Object.keys(ANIMAL_ICON_MAP)]);
+export const ANIMAL_ICON_NAMES = Object.freeze(Object.keys(ANIMAL_ICON_MAP));
 
 type HumanAvatarKind = { kind: 'initials' } | { kind: 'animal'; animal: string };
 

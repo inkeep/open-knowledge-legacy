@@ -1170,7 +1170,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const index = getMutableFolderIndex();
     if (!index) return;
     const renamed: Array<[string, FolderIndexEntry]> = [];
-    for (const [folderPath, entry] of [...index.entries()]) {
+    for (const [folderPath, entry] of index.entries()) {
       if (folderPath !== fromPath && !folderPath.startsWith(`${fromPath}/`)) continue;
       index.delete(folderPath);
       const suffix = folderPath.slice(fromPath.length);
@@ -5240,9 +5240,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
         let result: { renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] };
         try {
-          result = await _performManagedRenameForDocs(fromPath, toPath, kind, {
-            ...(renameActor ? { actor: renameActor } : {}),
-          });
+          result = await _performManagedRenameForDocs(
+            fromPath,
+            toPath,
+            kind,
+            renameActor ? { actor: renameActor } : {},
+          );
         } catch (err) {
           if (err instanceof ManagedRenameCollisionError) {
             errorResponse(res, 409, 'urn:ok:error:doc-already-exists', withPeriod(err.message), {
