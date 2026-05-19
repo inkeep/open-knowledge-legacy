@@ -68,6 +68,31 @@
         "biome-plugins/__fixtures__/playwright-topass-budget.fixture.tsx"
       ],
       "plugins": ["./biome-plugins/playwright-topass-budget.grit"]
+    },
+    {
+      // Internal developer tooling for the static-string audit. Uses ts-morph's
+      // untyped node accessors, embeds `${...}` placeholder literals, and a few
+      // safe non-null assertions — none of which affect production code.
+      "includes": ["packages/app/scripts/audit-strings/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off",
+            "noTemplateCurlyInString": "off",
+            "noAssignInExpressions": "off",
+            "noShadowRestrictedNames": "off"
+          },
+          "style": {
+            "noNonNullAssertion": "off"
+          },
+          "complexity": {
+            "noUselessSwitchCase": "off"
+          },
+          "correctness": {
+            "noUnusedFunctionParameters": "off"
+          }
+        }
+      }
     }
   ],
   "files": {

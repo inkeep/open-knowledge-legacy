@@ -1,0 +1,746 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>OK strings audit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+          color-scheme: light dark;
+          --bg: #fafafa;
+          --panel: #fff;
+          --border: #e5e5e5;
+          --muted: #707070;
+          --text: #1a1a1a;
+          --accent: #0a66c2;
+          --warn: #c2410c;
+          --ok: #166534;
+          --code-bg: #f4f4f4;
+        }
+        @media (prefers-color-scheme: dark) {
+          :root {
+            --bg: #1a1a1a;
+            --panel: #232323;
+            --border: #383838;
+            --muted: #999;
+            --text: #f0f0f0;
+            --accent: #66b3ff;
+            --warn: #f59e0b;
+            --ok: #4ade80;
+            --code-bg: #2a2a2a;
+          }
+        }
+        * { box-sizing: border-box; }
+        body {
+          margin: 0;
+          background: var(--bg);
+          color: var(--text);
+          font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        }
+        header {
+          background: var(--panel);
+          border-bottom: 1px solid var(--border);
+          padding: 12px 20px;
+          position: sticky;
+          top: 0;
+          z-index: 10;
+        }
+        h1 { margin: 0; font-size: 16px; font-weight: 600; }
+        .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+        .stats {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+          gap: 8px;
+          margin-top: 12px;
+        }
+        .stat {
+          background: var(--bg);
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          padding: 8px 12px;
+        }
+        .stat .n { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+        main { display: grid; grid-template-columns: 280px 1fr; gap: 0; min-height: calc(100vh - 200px); }
+        aside {
+          border-right: 1px solid var(--border);
+          background: var(--panel);
+          padding: 12px;
+          overflow: auto;
+          max-height: calc(100vh - 200px);
+          position: sticky;
+          top: 200px;
+        }
+        aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 12px 0 6px; }
+        .view-list { list-style: none; padding: 0; margin: 0; }
+        .view-list li {
+          padding: 4px 6px;
+          border-radius: 4px;
+          cursor: pointer;
+          display: flex;
+          justify-content: space-between;
+          gap: 8px;
+          font-size: 13px;
+        }
+        .view-list li:hover { background: var(--bg); }
+        .view-list .count { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+        .view-list li.active { background: var(--accent); color: white; }
+        .view-list li.active .count { color: rgba(255,255,255,0.85); }
+
+        section.content { padding: 16px 20px; overflow: auto; }
+        .controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+        .controls input[type=search] {
+          flex: 1;
+          min-width: 240px;
+          padding: 8px 10px;
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          background: var(--panel);
+          color: var(--text);
+          font: inherit;
+        }
+        .controls label { font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
+        .controls select {
+          padding: 6px 8px;
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          background: var(--panel);
+          color: var(--text);
+          font: inherit;
+        }
+
+        table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+        th { background: var(--bg); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 500; cursor: pointer; user-select: none; }
+        th[aria-sort="ascending"]::after { content: " \2191"; }
+        th[aria-sort="descending"]::after { content: " \2193"; }
+        tr.row { cursor: pointer; }
+        tr.row:hover { background: var(--bg); }
+        tr.row.expanded { background: var(--bg); }
+        tr.detail td { background: var(--bg); border-top: none; padding-top: 0; }
+        .val { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+        .val.template { color: var(--warn); }
+        .num { font-variant-numeric: tabular-nums; text-align: right; }
+        .badges { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+        .badge {
+          font-size: 10px;
+          padding: 2px 6px;
+          border-radius: 10px;
+          background: var(--bg);
+          border: 1px solid var(--border);
+          color: var(--muted);
+        }
+        .badge.repeat { background: rgba(194,65,12,0.15); border-color: var(--warn); color: var(--warn); }
+        .badge.cross { background: rgba(10,102,194,0.15); border-color: var(--accent); color: var(--accent); }
+        .occurrences { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+        .occurrences li { padding: 4px 0; border-bottom: 1px dotted var(--border); }
+        .occurrences li:last-child { border-bottom: none; }
+        .occ-file { color: var(--accent); text-decoration: none; }
+        .occ-file:hover { text-decoration: underline; }
+        .occ-kind { color: var(--muted); font-style: italic; }
+        .occ-attr { color: var(--warn); }
+        .occ-cmp { color: var(--ok); }
+        footer { text-align: center; color: var(--muted); font-size: 11px; padding: 16px; }
+        @media (max-width: 768px) {
+          main { grid-template-columns: 1fr; }
+          aside { position: static; max-height: none; }
+        }
+
+        /* Comments overlay */
+        .toolbar-right { display: inline-flex; gap: 8px; margin-left: auto; align-items: center; }
+        .btn {
+          padding: 6px 10px;
+          border: 1px solid var(--border);
+          background: var(--panel);
+          color: var(--text);
+          border-radius: 6px;
+          font: inherit;
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .btn:hover { background: var(--bg); }
+        .btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
+        .btn.primary:hover { filter: brightness(1.1); }
+        .badge.has-comment { background: rgba(22,101,52,0.15); border-color: var(--ok); color: var(--ok); }
+        .view-list .has-comment-dot {
+          width: 6px; height: 6px; border-radius: 50%; background: var(--ok); display: inline-block;
+          margin-left: 4px; vertical-align: middle;
+        }
+        .comment-block { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-top: 8px; }
+        .comment-block label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 4px; }
+        .comment-block textarea {
+          width: 100%; min-height: 56px; padding: 6px 8px;
+          border: 1px solid var(--border); border-radius: 4px;
+          background: var(--bg); color: var(--text); font: inherit; font-size: 12px;
+          resize: vertical;
+        }
+        .comment-block textarea:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+        .comment-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+        .comment-row select {
+          padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px;
+          background: var(--panel); color: var(--text); font: inherit; font-size: 12px;
+        }
+        .comment-saved { color: var(--ok); font-size: 11px; }
+
+        /* Comments panel (modal-ish) */
+        .panel-overlay {
+          position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: none;
+          align-items: center; justify-content: center; z-index: 100;
+        }
+        .panel-overlay.open { display: flex; }
+        .panel {
+          background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+          max-width: 640px; width: 90vw; max-height: 80vh; overflow: auto; padding: 16px;
+        }
+        .panel h2 { margin-top: 0; font-size: 14px; }
+        .panel .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+        .panel textarea { width: 100%; min-height: 80px; padding: 6px 8px;
+          border: 1px solid var(--border); border-radius: 4px;
+          background: var(--bg); color: var(--text); font: inherit; font-size: 12px; resize: vertical;
+        }
+        .panel .summary-list { font-size: 12px; max-height: 200px; overflow: auto; }
+        .panel .summary-list li { padding: 3px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Open Knowledge — static strings audit</h1>
+  <div class="meta" id="meta">loading…</div>
+  <div class="stats" id="stats"></div>
+</header>
+
+<main>
+  <aside>
+    <h2>Filter by view</h2>
+    <ul class="view-list" id="viewList"></ul>
+  </aside>
+
+  <section class="content">
+    <div class="controls">
+      <input type="search" id="q" placeholder="Search strings (case-insensitive)…" />
+      <label>
+        Show:
+        <select id="filter">
+          <option value="all">All strings</option>
+          <option value="repeats">Repeated only (2+ sites)</option>
+          <option value="cross">Repeated across views</option>
+          <option value="templates">Templates only</option>
+          <option value="unique">Single-occurrence only</option>
+        </select>
+      </label>
+      <label>
+        Sort:
+        <select id="sort">
+          <option value="occ">Occurrences (desc)</option>
+          <option value="weight">Char weight (occ × len, desc)</option>
+          <option value="len">Length (desc)</option>
+          <option value="alpha">Alphabetical</option>
+        </select>
+      </label>
+      <span id="resultCount" class="meta"></span>
+      <span class="toolbar-right">
+        <span id="commentCount" class="meta"></span>
+        <button class="btn" id="openCommentsPanel" type="button">Comments…</button>
+      </span>
+    </div>
+
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th data-col="value">String</th>
+          <th data-col="occurrenceCount" class="num">Sites</th>
+          <th data-col="uniqueViewCount" class="num">Views</th>
+          <th data-col="charCount" class="num">Chars</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+
+    <footer>
+      <span id="footMeta"></span>
+    </footer>
+  </section>
+</main>
+
+<div class="panel-overlay" id="commentsPanel">
+  <div class="panel" role="dialog" aria-label="Audit comments">
+    <h2>Audit comments</h2>
+    <p class="meta">
+      Comments are persisted to your browser (localStorage) and exportable as a single JSON file
+      you can hand back to the implementer. Comments survive reload; they do not sync across browsers.
+    </p>
+    <div class="row">
+      <button class="btn primary" id="exportComments" type="button">Export JSON</button>
+      <button class="btn" id="importComments" type="button">Import JSON…</button>
+      <input type="file" id="importInput" accept="application/json,.json" style="display:none" />
+      <button class="btn" id="clearComments" type="button">Clear all</button>
+      <span class="meta" id="panelCount"></span>
+    </div>
+    <h2 style="margin-top:16px">General notes</h2>
+    <textarea id="generalNotes" placeholder="Free-form notes about the audit as a whole — priorities, sweep order, blockers, etc."></textarea>
+    <h2 style="margin-top:16px">Per-view comments</h2>
+    <ul class="summary-list" id="viewCommentsSummary"></ul>
+    <h2 style="margin-top:16px">Per-string comments</h2>
+    <ul class="summary-list" id="stringCommentsSummary"></ul>
+    <div class="row" style="justify-content:flex-end">
+      <button class="btn" id="closeCommentsPanel" type="button">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const DATA = /*__CATALOG_DATA__*/null;
+const state = {
+  view: null,
+  query: "",
+  filter: "all",
+  sort: "occ",
+  expanded: new Set(),
+};
+
+const $ = (id) => document.getElementById(id);
+
+/* -------------------- Comments storage -------------------- */
+
+const COMMENTS_VERSION = 1;
+const COMMENTS_STORAGE_KEY = `ok-strings-audit-comments-v${COMMENTS_VERSION}`;
+const COMMENT_TAGS = ["general", "rename", "centralize", "remove", "question", "wontfix"];
+
+const comments = {
+  stringComments: {},      // key: string value → { tag, body, savedAt }
+  viewComments: {},        // key: view name → { body, savedAt }
+  generalNotes: "",
+};
+
+function loadComments() {
+  try {
+    const raw = localStorage.getItem(COMMENTS_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      Object.assign(comments, {
+        stringComments: parsed.stringComments || {},
+        viewComments: parsed.viewComments || {},
+        generalNotes: parsed.generalNotes || "",
+      });
+    }
+  } catch (_) {
+    /* ignore corrupted state */
+  }
+}
+
+function saveComments() {
+  try {
+    localStorage.setItem(COMMENTS_STORAGE_KEY, JSON.stringify({
+      version: COMMENTS_VERSION,
+      savedAt: new Date().toISOString(),
+      ...comments,
+    }));
+  } catch (_) { /* ignore quota */ }
+  updateCommentCount();
+}
+
+function commentCount() {
+  return Object.keys(comments.stringComments).length
+    + Object.keys(comments.viewComments).length
+    + (comments.generalNotes.trim() ? 1 : 0);
+}
+
+function updateCommentCount() {
+  const n = commentCount();
+  $("commentCount").textContent = n === 0 ? "no comments yet" : `${n} comment${n === 1 ? "" : "s"} pending export`;
+}
+
+function buildExportPayload() {
+  return {
+    version: COMMENTS_VERSION,
+    generatedAt: new Date().toISOString(),
+    sourceCatalog: {
+      srcRoot: DATA.srcRoot,
+      fileBaseAbsolute: DATA.fileBaseAbsolute,
+      catalogGeneratedAt: DATA.generatedAt,
+      uniqueStrings: DATA.stats.uniqueStrings,
+      totalOccurrences: DATA.stats.totalOccurrences,
+    },
+    generalNotes: comments.generalNotes,
+    viewComments: Object.entries(comments.viewComments).map(([view, c]) => ({
+      view, body: c.body, savedAt: c.savedAt,
+    })),
+    stringComments: Object.entries(comments.stringComments).map(([value, c]) => {
+      const rec = DATA.strings.find((s) => s.value === value);
+      return {
+        stringValue: value,
+        displayValue: rec ? rec.displayValue : value,
+        tag: c.tag,
+        body: c.body,
+        savedAt: c.savedAt,
+        occurrenceCount: rec ? rec.occurrenceCount : null,
+        uniqueViewCount: rec ? rec.uniqueViewCount : null,
+        views: rec ? rec.views : null,
+      };
+    }),
+  };
+}
+
+function downloadJson(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function setStringComment(value, tag, body) {
+  const trimmed = (body || "").trim();
+  if (!trimmed) {
+    delete comments.stringComments[value];
+  } else {
+    comments.stringComments[value] = { tag: tag || "general", body, savedAt: new Date().toISOString() };
+  }
+  saveComments();
+  renderViewList();
+}
+
+function setViewComment(view, body) {
+  const trimmed = (body || "").trim();
+  if (!trimmed) {
+    delete comments.viewComments[view];
+  } else {
+    comments.viewComments[view] = { body, savedAt: new Date().toISOString() };
+  }
+  saveComments();
+  renderViewList();
+}
+
+function fmtN(n) {
+  return n.toLocaleString();
+}
+
+function renderHeader() {
+  $("meta").textContent =
+    `Generated ${DATA.generatedAt} · ${fmtN(DATA.fileCount)} files scanned under ${DATA.srcRoot}`;
+  const s = DATA.stats;
+  $("stats").innerHTML = `
+    <div class="stat"><div class="n">${fmtN(s.uniqueStrings)}</div><div class="l">Unique strings</div></div>
+    <div class="stat"><div class="n">${fmtN(s.totalOccurrences)}</div><div class="l">Total occurrences</div></div>
+    <div class="stat"><div class="n">${fmtN(s.uniqueChars)}</div><div class="l">Unique chars</div></div>
+    <div class="stat"><div class="n">${fmtN(s.weightedChars)}</div><div class="l">Weighted chars (occ × len)</div></div>
+    <div class="stat"><div class="n">${fmtN(s.repeatedStringCount)}</div><div class="l">Repeated strings</div></div>
+    <div class="stat"><div class="n">${fmtN(s.crossViewRepeatedCount)}</div><div class="l">Cross-view repeats</div></div>
+    <div class="stat"><div class="n">${fmtN(Object.keys(s.byView).length)}</div><div class="l">View buckets</div></div>
+  `;
+}
+
+function renderViewList() {
+  const items = Object.entries(DATA.stats.byView);
+  const allCount = items.reduce((n, [, v]) => n + v.totalOccurrences, 0);
+  const html = [
+    `<li data-view="" class="${state.view === null ? "active" : ""}"><span>All views</span><span class="count">${fmtN(allCount)}</span></li>`,
+    ...items.map(([name, v]) => {
+      const dot = comments.viewComments[name] ? `<span class="has-comment-dot" title="${escape(comments.viewComments[name].body)}"></span>` : "";
+      return `<li data-view="${name.replace(/"/g, "&quot;")}" class="${state.view === name ? "active" : ""}"><span>${escape(name)}${dot}</span><span class="count">${fmtN(v.totalOccurrences)} · ${fmtN(v.uniqueStrings)}u</span></li>`;
+    }),
+  ].join("");
+  $("viewList").innerHTML = html;
+}
+
+function escape(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function cursorHref(o) {
+  // cursor:// honors the same scheme VS Code uses for jump-to-file with line + col.
+  // file is monorepo-packages-relative; prepend fileBaseAbsolute for an abs path.
+  const abs = `${DATA.fileBaseAbsolute}/${o.file}`;
+  return `cursor://file/${abs}:${o.line}:${o.column}`;
+}
+
+function matches(rec) {
+  if (state.view && !rec.views.includes(state.view)) return false;
+  if (state.query) {
+    const q = state.query.toLowerCase();
+    if (!rec.value.toLowerCase().includes(q)) return false;
+  }
+  switch (state.filter) {
+    case "repeats": return rec.occurrenceCount >= 2;
+    case "cross": return rec.uniqueViewCount >= 2;
+    case "templates": return rec.hasTemplate;
+    case "unique": return rec.occurrenceCount === 1;
+    default: return true;
+  }
+}
+
+function sortFn(a, b) {
+  switch (state.sort) {
+    case "weight":
+      return b.occurrenceCount * b.charCount - a.occurrenceCount * a.charCount;
+    case "len":
+      return b.charCount - a.charCount || b.occurrenceCount - a.occurrenceCount;
+    case "alpha":
+      return a.value.localeCompare(b.value);
+    case "occ":
+    default:
+      return b.occurrenceCount - a.occurrenceCount || b.charCount - a.charCount;
+  }
+}
+
+function renderRows() {
+  const filtered = DATA.strings.filter(matches).sort(sortFn);
+  $("resultCount").textContent =
+    `${fmtN(filtered.length)} of ${fmtN(DATA.strings.length)} strings` +
+    (state.view ? ` · view: ${state.view}` : "");
+
+  const rows = filtered.map((rec, idx) => {
+    const expanded = state.expanded.has(rec.value);
+    const occ = state.view ? rec.occurrences.filter((o) => o.view === state.view) : rec.occurrences;
+    const badges = [];
+    if (rec.occurrenceCount >= 2) badges.push(`<span class="badge repeat">×${rec.occurrenceCount}</span>`);
+    if (rec.uniqueViewCount >= 2) badges.push(`<span class="badge cross">${rec.uniqueViewCount} views</span>`);
+    if (rec.hasTemplate) badges.push(`<span class="badge">template</span>`);
+    const existing = comments.stringComments[rec.value];
+    if (existing) badges.push(`<span class="badge has-comment" title="${escape(existing.body)}">${escape(existing.tag || "general")}: commented</span>`);
+
+    let detail = "";
+    if (expanded) {
+      const items = occ.map((o) => {
+        const attr = o.attr ? `<span class="occ-attr">[${escape(o.attr)}]</span> ` : "";
+        const callee = o.callee ? `<span class="occ-attr">[${escape(o.callee)}]</span> ` : "";
+        const cmp = o.componentContext ? ` <span class="occ-cmp">in ${escape(o.componentContext)}</span>` : "";
+        const href = cursorHref(o);
+        return `<li><span class="occ-kind">${o.kind}</span> ${attr}${callee}<a class="occ-file" href="${href}" title="Open in Cursor">${escape(o.file)}:${o.line}:${o.column}</a> <span class="occ-kind">· ${escape(o.view)}</span>${cmp}</li>`;
+      }).join("");
+      const tagOptions = COMMENT_TAGS.map((t) =>
+        `<option value="${t}" ${existing && existing.tag === t ? "selected" : ""}>${t}</option>`
+      ).join("");
+      const commentEditor = `
+        <div class="comment-block">
+          <label for="cmt-${idx}">Audit comment for this string</label>
+          <textarea id="cmt-${idx}" data-comment-input="${escape(rec.value)}" placeholder="What should change about this string? Why? Suggested rename / target view / blockers / questions.">${escape(existing ? existing.body : "")}</textarea>
+          <div class="comment-row">
+            <label>Tag:
+              <select data-comment-tag="${escape(rec.value)}">${tagOptions}</select>
+            </label>
+            ${existing ? `<span class="comment-saved">saved ${escape(existing.savedAt)}</span>` : ""}
+          </div>
+        </div>
+      `;
+      detail = `<tr class="detail"><td colspan="4"><ul class="occurrences">${items}</ul>${commentEditor}</td></tr>`;
+    }
+
+    return `
+      <tr class="row ${expanded ? "expanded" : ""}" data-key="${escape(rec.value)}">
+        <td><div class="val ${rec.hasTemplate ? "template" : ""}">${escape(rec.displayValue)}</div><div class="badges">${badges.join("")}</div></td>
+        <td class="num">${rec.occurrenceCount}</td>
+        <td class="num">${rec.uniqueViewCount}</td>
+        <td class="num">${rec.charCount}</td>
+      </tr>
+      ${detail}
+    `;
+  }).join("");
+
+  $("rows").innerHTML = rows;
+  // No per-render listener wiring here — see the init block at the bottom of
+  // this script for the single permanent delegated listeners on $("rows") and
+  // $("viewList"). innerHTML replaces children but keeps the parent's
+  // listeners intact, so delegation handles all rebinding for free.
+}
+
+function onRowClick(e) {
+  // Don't toggle expand state when interacting with the comment editor.
+  if (e.target.closest(".comment-block")) return;
+  const row = e.target.closest("tr.row");
+  if (!row) return;
+  // Allow clicks on the occurrence file link to navigate normally.
+  if (e.target.closest("a.occ-file")) return;
+  const key = row.dataset.key;
+  if (state.expanded.has(key)) state.expanded.delete(key);
+  else state.expanded.add(key);
+  renderRows();
+}
+
+// Wire controls
+$("q").addEventListener("input", (e) => {
+  state.query = e.target.value;
+  renderRows();
+});
+$("filter").addEventListener("change", (e) => {
+  state.filter = e.target.value;
+  renderRows();
+});
+$("sort").addEventListener("change", (e) => {
+  state.sort = e.target.value;
+  renderRows();
+});
+
+// Sortable headers
+document.querySelectorAll("th[data-col]").forEach((th) => {
+  th.addEventListener("click", () => {
+    const col = th.dataset.col;
+    if (col === "value") state.sort = "alpha";
+    else if (col === "occurrenceCount") state.sort = "occ";
+    else if (col === "uniqueViewCount") state.sort = "occ";
+    else if (col === "charCount") state.sort = "len";
+    $("sort").value = state.sort;
+    renderRows();
+  });
+});
+
+$("footMeta").textContent =
+  `Attribute allowlist: ${DATA.attrAllowlist.join(", ")} · Callee allowlist: ${DATA.calleeAllowlist.join(", ")}`;
+
+/* -------------------- Comments panel wiring -------------------- */
+
+function renderCommentsPanel() {
+  $("generalNotes").value = comments.generalNotes;
+  $("panelCount").textContent = `${commentCount()} entries total`;
+
+  // Per-view list — every view, click to set/edit.
+  const viewListHtml = Object.keys(DATA.stats.byView).map((name) => {
+    const existing = comments.viewComments[name];
+    return `
+      <li>
+        <strong>${escape(name)}</strong>
+        <div class="comment-block" style="margin:4px 0">
+          <textarea data-view-comment="${escape(name)}" placeholder="Comment for the ${escape(name)} view…">${escape(existing ? existing.body : "")}</textarea>
+        </div>
+      </li>`;
+  }).join("");
+  $("viewCommentsSummary").innerHTML = viewListHtml;
+
+  // Per-string list — only ones with comments (read-only summary; edit in row).
+  const items = Object.entries(comments.stringComments);
+  $("stringCommentsSummary").innerHTML = items.length === 0
+    ? `<li class="meta">No per-string comments yet. Expand any row in the table to add one.</li>`
+    : items.map(([value, c]) => `
+        <li>
+          <strong>${escape(c.tag || "general")}</strong> — <code>${escape(value.slice(0, 60))}${value.length > 60 ? "…" : ""}</code><br>
+          <span class="meta">${escape(c.body)}</span>
+        </li>`).join("");
+
+  // Wire view-comment editors
+  $("viewCommentsSummary").querySelectorAll("[data-view-comment]").forEach((ta) => {
+    ta.addEventListener("change", (e) => {
+      setViewComment(e.target.getAttribute("data-view-comment"), e.target.value);
+      renderCommentsPanel();
+    });
+  });
+}
+
+$("openCommentsPanel").addEventListener("click", () => {
+  renderCommentsPanel();
+  $("commentsPanel").classList.add("open");
+});
+$("closeCommentsPanel").addEventListener("click", () => {
+  $("commentsPanel").classList.remove("open");
+});
+$("commentsPanel").addEventListener("click", (e) => {
+  if (e.target.id === "commentsPanel") $("commentsPanel").classList.remove("open");
+});
+
+$("generalNotes").addEventListener("change", (e) => {
+  comments.generalNotes = e.target.value;
+  saveComments();
+});
+
+$("exportComments").addEventListener("click", () => {
+  const date = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  downloadJson(buildExportPayload(), `strings-audit-comments-${date}.json`);
+});
+
+$("importComments").addEventListener("click", () => $("importInput").click());
+$("importInput").addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      // Accept both the export shape and the storage shape.
+      comments.generalNotes = parsed.generalNotes || "";
+      comments.viewComments = {};
+      (parsed.viewComments || []).forEach((c) => {
+        if (c.view && c.body) {
+          comments.viewComments[c.view] = { body: c.body, savedAt: c.savedAt || new Date().toISOString() };
+        }
+      });
+      comments.stringComments = {};
+      (parsed.stringComments || []).forEach((c) => {
+        const key = c.stringValue;
+        if (key && c.body) {
+          comments.stringComments[key] = {
+            tag: c.tag || "general",
+            body: c.body,
+            savedAt: c.savedAt || new Date().toISOString(),
+          };
+        }
+      });
+      saveComments();
+      renderViewList();
+      renderRows();
+      renderCommentsPanel();
+    } catch (err) {
+      alert(`Import failed: ${err.message}`);
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = "";
+});
+
+$("clearComments").addEventListener("click", () => {
+  if (!confirm("Discard all comments? This cannot be undone.")) return;
+  comments.stringComments = {};
+  comments.viewComments = {};
+  comments.generalNotes = "";
+  saveComments();
+  renderViewList();
+  renderRows();
+  renderCommentsPanel();
+});
+
+/* -------------------- Init: permanent delegated listeners -------------------- */
+
+// One-time event delegation. innerHTML inside renderViewList / renderRows
+// replaces children but leaves the parent listener intact, so we never need
+// to re-bind. Avoids the listener-leak pattern that accumulated handlers
+// across rerenders.
+$("viewList").addEventListener("click", (e) => {
+  const li = e.target.closest("li");
+  if (!li) return;
+  state.view = li.dataset.view || null;
+  state.expanded.clear();
+  renderViewList();
+  renderRows();
+});
+
+$("rows").addEventListener("click", onRowClick);
+
+// Delegated change handler for per-row comment editors. Each row's textarea
+// and tag select live inside the dynamically-rebuilt <tbody>, so a permanent
+// listener on the tbody catches their change events via bubbling.
+$("rows").addEventListener("change", (e) => {
+  const inputKey = e.target.getAttribute?.("data-comment-input");
+  if (inputKey) {
+    const tag = $("rows").querySelector(`[data-comment-tag="${CSS.escape(inputKey)}"]`)?.value || "general";
+    setStringComment(inputKey, tag, e.target.value);
+    return;
+  }
+  const tagKey = e.target.getAttribute?.("data-comment-tag");
+  if (tagKey) {
+    const body = $("rows").querySelector(`[data-comment-input="${CSS.escape(tagKey)}"]`)?.value || "";
+    setStringComment(tagKey, e.target.value, body);
+  }
+});
+
+loadComments();
+renderHeader();
+renderViewList();
+renderRows();
+updateCommentCount();
+</script>
+</body>
+</html>
