@@ -254,3 +254,26 @@ describe('PropertyPanel error rendering', () => {
     expect(html).toContain('data-key="title"');
   });
 });
+
+describe('PropertyPanel template-doc suppression', () => {
+  test('root template docName suppresses override badge', () => {
+    const provider = makeProvider('.ok/templates/article');
+    seedYTextFm(provider, '---\ntitle: Article Template\ntags:\n  - article\n---\n');
+    const html = renderPanel(provider);
+    expect(html).not.toContain('data-testid="property-override-badge"');
+  });
+
+  test('folder-scoped template docName suppresses override badge', () => {
+    const provider = makeProvider('meetings/.ok/templates/prep-notes');
+    seedYTextFm(provider, '---\ntitle: Meeting Prep Notes\ntags:\n  - meeting\n---\n');
+    const html = renderPanel(provider);
+    expect(html).not.toContain('data-testid="property-override-badge"');
+  });
+
+  test('nested-folder template docName suppresses override badge', () => {
+    const provider = makeProvider('research/auth/.ok/templates/finding');
+    seedYTextFm(provider, '---\ntitle: Finding\n---\n');
+    const html = renderPanel(provider);
+    expect(html).not.toContain('data-testid="property-override-badge"');
+  });
+});

@@ -186,7 +186,7 @@ describe('normalizeDocName', () => {
 
 describe('HOCUSPOCUS_NOT_RUNNING_ERROR', () => {
   test('contains actionable guidance', () => {
-    expect(HOCUSPOCUS_NOT_RUNNING_ERROR).toContain('open-knowledge start');
+    expect(HOCUSPOCUS_NOT_RUNNING_ERROR).toContain('ok start');
     expect(HOCUSPOCUS_NOT_RUNNING_ERROR).toContain('native Edit tool');
   });
 });

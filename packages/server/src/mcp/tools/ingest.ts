@@ -68,7 +68,7 @@ tags:
 After preservation, briefly surface back to the user what the source actually contains — in **chat**, not in the raw file. This is Karpathy's "discussing takeaways" step: the raw file stays verbatim, but the human collaborator gets a quick orientation.
 
 - 3–5 bullet points capturing the source's main claims, with no editorializing.
-- Note any **tensions** with existing knowledge-base docs you already surfaced in Step 0 — agents that ingest in isolation miss the "wait, this contradicts \`[[prior-article]]\`" signal.
+- Note any **tensions** with existing knowledge-base docs you already surfaced in Step 0 — agents that ingest in isolation miss the "wait, this contradicts \`[prior article](./path/to/prior.md)\`" signal.
 - Offer next steps: "Shall I \`research\` this topic now, or is preservation enough?" Don't silently chain into \`research\` — the user may have just wanted the archive.
 
 ## Step 6 (optional): Update neighbor docs to link the new source

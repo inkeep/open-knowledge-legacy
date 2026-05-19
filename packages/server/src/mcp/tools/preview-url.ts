@@ -36,7 +36,7 @@ type PreviewAttachWarning =
     };
 
 const START_UI_MESSAGE =
-  'No UI is running for this project. Start one to see the preview: `open-knowledge ui` (terminal), `preview_start("open-knowledge-ui")` (Claude Code Desktop), or open the project in OK Electron.';
+  'No UI is running for this project. Start one to see the preview: `ok ui` (terminal), `preview_start("open-knowledge-ui")` (Claude Code Desktop), or open the project in OK Electron.';
 const ATTACH_PREVIEW_ONCE_MESSAGE = 'Open the previewUrl in your preview browser.';
 
 export function buildPreviewAttachWarning(preview: { url: string } | null): PreviewAttachWarning {

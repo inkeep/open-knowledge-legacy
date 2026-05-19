@@ -122,9 +122,9 @@ Structure:
 
 Canonical articles are destinations — they should be **linked heavily from everywhere they're relevant** and link **out to every related page** themselves. Underlinked canonical articles lose most of their value.
 
-- **Inside this article:** every noun-phrase that names another document (other canonical articles, related research, external-source pages, sibling topics) should be a \`[[Page Name]]\` link, not plain prose. Prefer \`[[Page]]\` over Markdown \`[text](./page.md)\` — only wiki-links participate in the backlinks index.
-- **Redlinks are fine.** If you mention a concept that *should* have a page but doesn't yet, \`[[link it anyway]]\`. The redlink signals future work.
-- **Update neighbors.** After writing, find 2–3 closely-related existing pages (via \`exec("grep -rn <topic> ${contentDir}")\`) and add a \`[[<new article>]]\` link from each — usually under a "See also" section or inline where the new article is relevant. This makes the article discoverable via backlinks, not just by remembering the path.
+- **Inside this article:** every noun-phrase that names another document (other canonical articles, related research, external-source pages, sibling topics) should be a standard markdown link \`[text](./relative/path.md)\`, not plain prose. (Wiki-link syntax \`[[Page]]\` is still parsed for legacy content but no longer the default; matches the OK skill guidance.)
+- **Redlinks are fine.** If you mention a concept that *should* have a page but doesn't yet, link it anyway — \`[link text](./path/that-should-exist.md)\`. The redlink signals future work; \`get_dead_links\` will surface it.
+- **Update neighbors.** After writing, find 2–3 closely-related existing pages (via \`exec("grep -rn <topic> ${contentDir}")\`) and add a link to the new article from each — usually under a "See also" section or inline where the new article is relevant. This makes the article discoverable via backlinks, not just by remembering the path.
 - **Link to the sources and superseded research** from "Further reading" — readers who want the trail can follow.
 
 ### 5. Supersede the research

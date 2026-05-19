@@ -330,7 +330,7 @@ describe('frontmatter_patch — MCP tool over real CRDT path', () => {
     expect(structured.warning).toBeDefined();
     expect(structured.warning?.action).toBe('start-ui');
     expect(structured.warning?.previewUrl).toBeNull();
-    expect(structured.warning?.message).toContain('open-knowledge ui');
+    expect(structured.warning?.message).toContain('ok ui');
     expect(structured.warning?.message).toContain('preview_start');
     expect(structured.warning?.message).toContain('OK Electron');
   });

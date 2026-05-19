@@ -496,8 +496,14 @@ function Widget({ keyName, value, widgetType, onCommit }: WidgetProps) {
   return <TextWidget keyName={keyName} value={str} onCommit={onCommit} />;
 }
 
-export function InheritedBadge({ source }: { source: string }) {
-  const path = source === '' ? '.ok/frontmatter.yml' : `${source}/.ok/frontmatter.yml`;
+export function InheritedBadge({
+  source,
+  target = 'frontmatter.yml',
+}: {
+  source: string;
+  target?: string;
+}) {
+  const path = source === '' ? `.ok/${target}` : `${source}/.ok/${target}`;
   return (
     <Badge
       variant="gray"
