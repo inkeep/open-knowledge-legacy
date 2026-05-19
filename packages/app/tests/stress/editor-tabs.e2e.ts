@@ -112,7 +112,7 @@ function sidebarTreeItem(page: Page, accessibleLabel: string): Locator {
 }
 
 function editorTabChrome(tabButton: Locator): Locator {
-  return tabButton.locator('xpath=ancestor::div[@role="presentation"][1]');
+  return tabButton.locator('xpath=ancestor::div[@aria-roledescription="sortable"][1]');
 }
 
 async function expectActiveTab(tabButton: Locator) {
@@ -163,7 +163,7 @@ async function expectPersistedPinnedTabs(page: Page, expected: string[]) {
 }
 
 async function editorTabOrder(page: Page): Promise<string[]> {
-  return page.locator('header div[role="presentation"]').evaluateAll((tabEls) =>
+  return page.locator('header div[aria-roledescription="sortable"]').evaluateAll((tabEls) =>
     tabEls.flatMap((tabEl) => {
       const newTabButton = tabEl.querySelector('button[aria-label="Activate new tab"]');
       if (newTabButton) return ['new-tab'];
@@ -394,6 +394,10 @@ test.describe('Editor tabs', () => {
     api,
     workerServer,
   }) => {
+    test.skip(
+      true,
+      'Stale contract — PR #1010 US-002 focus-in-place no longer duplicates already-open tabs. See issue #1056.',
+    );
     const id = testId();
     const docName = `asset-new-tab-doc-${id}`;
     const assetPath = `asset-new-tab-${id}.png`;
@@ -427,6 +431,10 @@ test.describe('Editor tabs', () => {
     page,
     api,
   }) => {
+    test.skip(
+      true,
+      'Stale contract — PR #1010 US-002 focus-in-place no longer duplicates already-open tabs. See issue #1056.',
+    );
     const id = testId();
     const folder = `folder-new-tab-${id}`;
     const nestedDoc = `${folder}/nested-${id}`;
@@ -458,6 +466,10 @@ test.describe('Editor tabs', () => {
   });
 
   test('sidebar click replaces active bar.md with a second foo.md tab', async ({ page, api }) => {
+    test.skip(
+      true,
+      'Stale contract — PR #1010 US-002 focus-in-place no longer duplicates already-open tabs. See issue #1056.',
+    );
     const id = testId();
     const fooDoc = `foo-${id}`;
     const barDoc = `bar-${id}`;
@@ -493,6 +505,10 @@ test.describe('Editor tabs', () => {
     page,
     api,
   }) => {
+    test.skip(
+      true,
+      'Stale contract — PR #1010 US-002 focus-in-place no longer duplicates already-open tabs. See issue #1056.',
+    );
     const id = testId();
     const fooDoc = `foo-restored-${id}`;
     const barDoc = `bar-restored-${id}`;
@@ -531,6 +547,10 @@ test.describe('Editor tabs', () => {
   });
 
   test('refresh preserves three tabs when two point at the same file', async ({ page, api }) => {
+    test.skip(
+      true,
+      'Stale contract — PR #1010 US-002 focus-in-place no longer duplicates already-open tabs. See issue #1056.',
+    );
     const id = testId();
     const fooDoc = `foo-refresh-${id}`;
     const barDoc = `bar-refresh-${id}`;
@@ -646,6 +666,10 @@ test.describe('Editor tabs', () => {
     api,
     workerServer,
   }) => {
+    test.skip(
+      true,
+      'Stale contract — PR #1010 US-002 focus-in-place no longer duplicates already-open tabs. See issue #1056.',
+    );
     const id = testId();
     const folder = `tab-${id}`;
     const barDoc = `${folder}/bar-${id}`;
