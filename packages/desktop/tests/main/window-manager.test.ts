@@ -182,6 +182,7 @@ describe('WindowManager', () => {
         host: 'localhost',
         didEnsureGit: false,
         consentVersion: 1,
+        reactShellDistDir: '/fake/renderer',
       },
     });
 

@@ -155,7 +155,7 @@ describe('write_document — previewUrl emission', () => {
     );
   });
 
-  test('emits attach-preview-once hint with null previewUrl when systemSubscriberCount=0 and no resolver', async () => {
+  test('emits start-ui hint with null previewUrl when systemSubscriberCount=0 and no resolver', async () => {
     mockSubscriberCount = 0;
     mockSystemSubscriberCount = 0;
     const { server, getTool } = createFakeServer();
@@ -169,11 +169,14 @@ describe('write_document — previewUrl emission', () => {
 
     expect(result.structuredContent).toMatchObject({
       warning: {
-        action: 'attach-preview-once',
-        message: 'Open the previewUrl in your preview browser.',
+        action: 'start-ui',
         previewUrl: null,
       },
     });
+    const warning = (result.structuredContent as { warning: { message: string } }).warning;
+    expect(warning.message).toContain('open-knowledge ui');
+    expect(warning.message).toContain('preview_start');
+    expect(warning.message).toContain('OK Electron');
     expect(result.structuredContent).not.toHaveProperty('previewUrl');
   });
 

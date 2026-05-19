@@ -1,6 +1,6 @@
 ---
 name: open-knowledge
-description: "MUST invoke when the project contains a .ok/ directory — before any read or edit of .md / .mdx files, any mcp__open-knowledge__ tool call, and any write_document / edit_document. Skip if no .ok/ — not an Open Knowledge project. Carries preview-attach (open preview browser at session start; one-shot on `action: attach-preview-once`), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with opt-in nested .ok/ frontmatter + templates, and the anti-pattern table."
+description: "MUST invoke when the project contains a .ok/ directory — before any read or edit of .md / .mdx files, any mcp__open-knowledge__ tool call, and any write_document / edit_document. Skip if no .ok/ — not an Open Knowledge project. Carries preview-attach (open preview browser at session start; one-shot on `action: attach-preview-once`; surface to user on `action: start-ui` when no UI is running), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with opt-in nested .ok/ frontmatter + templates, and the anti-pattern table."
 compatibility: "Claude Code, Claude Desktop, Claude Cowork, Claude.ai web. Requires Open Knowledge MCP server + code execution."
 metadata:
   version: "0.5.0-beta.5"
@@ -19,7 +19,7 @@ Open Knowledge (OK) is a markdown-CRDT collaboration platform exposed via MCP. T
 
 1. **Reads:** `exec("cat …")` for a single doc, `exec("ls -A …")` for a directory, `search` for ranked, `grep` for literal. Native `Read` / `Grep` only on source code (`.ts` / `.py` / …), never on in-scope `.md` / `.mdx`.
 2. **Writes:** `write_document` for new or full-replace, `edit_document` for body-only patches. Frontmatter changes go through `write_document({ position: "replace" })` — `edit_document` rejects frontmatter edits with HTTP 400.
-3. **Preview:** open the browser at session start (or when a write response carries `warning: { action: "attach-preview-once" }`). Don't `preview_screenshot` after every edit.
+3. **Preview:** open the browser at session start (or when a write response carries `warning: { action: "attach-preview-once" }` — or surface to the user when `warning: { action: "start-ui" }` says no UI is running). Don't `preview_screenshot` after every edit.
 4. **Workflow tools** (`ingest` / `research` / `consolidate` / `discover`) return procedural guides, not data. Use them when the work fits the layer; follow their numbered steps.
 
 Everything below is depth. Read on demand.
@@ -60,10 +60,15 @@ Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project
 **How to know if it's already open.** You usually can't pre-check from the agent side — rely on these signals:
 
 1. You already opened it earlier in this session → don't reopen.
-2. A `write_document` / `edit_document` response returns `previewUrl` but NO `warning: { action: "attach-preview-once" }` → a browser is attached somewhere; do nothing.
-3. A response DOES include `warning: { action: "attach-preview-once", previewUrl, message }` → no browser is attached; open immediately, one-shot. The hint fires only when needed (server tracks `__system__` subscribers) and at most once per session in the normal fresh-start case.
+2. A `write_document` / `edit_document` response returns `previewUrl` but NO `warning` → a browser is attached somewhere; do nothing.
+3. A response DOES include `warning: { action: "attach-preview-once", previewUrl, message }` → a UI server is reachable but no browser is attached; open the URL immediately, one-shot.
+4. A response includes `warning: { action: "start-ui", previewUrl: null, message }` → no UI is running anywhere for this project. Surface the message to the user (the in-band copy names the recovery options: `open-knowledge ui` in a terminal, `preview_start("open-knowledge-ui")` in Claude Code Desktop, or opening the project in OK Electron). Don't loop on retries — the user has to act.
 
-If the server isn't running, you'll see a `"Hocuspocus server is not running"` error or `previewUrl: null`. Start the UI (`open-knowledge ui` from a terminal, or `preview_start("open-knowledge-ui")` in Claude Code), then retry. NEVER construct preview URLs by hand — always use the `previewUrl` returned in tool responses.
+Both warning shapes fire only when needed (server tracks `__system__` subscribers) and at most once per session in the normal fresh-start case.
+
+If the server isn't running, you'll see a `"Hocuspocus server is not running"` error. If `previewUrl` is `null` in a tool response, no UI is reachable for this project — neither a CLI `open-knowledge ui` process nor an OK Electron window. Start one (`open-knowledge ui` from a terminal, `preview_start("open-knowledge-ui")` in Claude Code, or just open the project in OK Electron), then retry. NEVER construct preview URLs by hand — always use the `previewUrl` returned in tool responses.
+
+OK Electron and the CLI's `ok ui` cannot serve the same project at the same time — they both hold the same `ui.lock`. If `ok ui` errors with a UI-lock collision, an OK Electron window is open for that project (use that window, or quit it and re-run `ok ui`). The reverse holds for the user-facing case: opening a project in OK Electron while a standalone `ok ui` is running for the same project will fail the lock acquire.
 
 **No screenshots after edits.** Do NOT take `preview_screenshot` after every `edit_document` / `write_document`. Trust the CRDT tool response as confirmation the edit landed. Only screenshot when debugging a visual issue or when explicitly asked.
 

@@ -17,7 +17,11 @@ import {
 import sirv from 'sirv';
 import { createAssetServeMiddleware } from './asset-serve-middleware.ts';
 import type { McpHttpHandler } from './mcp-http.ts';
-import { type MountMcpAndApiHandle, mountMcpAndApi } from './mcp-mount.ts';
+import {
+  type MountMcpAndApiHandle,
+  type MountMcpAndApiOptions,
+  mountMcpAndApi,
+} from './mcp-mount.ts';
 
 const log = {
   error: () => {},
@@ -316,6 +320,121 @@ describe('mountMcpAndApi content-asset middleware', () => {
     const body = (await res.json()) as { type?: string; status?: number };
     expect(body.type).toBe('urn:ok:error:internal-server-error');
     expect(body.status).toBe(500);
+  });
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('mountMcpAndApi react-shell middleware', () => {
+  const tmpDirs: string[] = [];
+
+  function makeShellDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'ok-mcp-mount-shell-'));
+    tmpDirs.push(dir);
+    writeFileSync(
+      join(dir, 'index.html'),
+      '<!DOCTYPE html><html><body data-test="shell">ok</body></html>',
+    );
+    mkdirSync(join(dir, 'assets'));
+    writeFileSync(join(dir, 'assets', 'app-abc123.js'), 'console.log("bundle");');
+    return dir;
+  }
+
+  async function startWithShell(opts?: {
+    contentAssetMiddleware?: MountMcpAndApiOptions['contentAssetMiddleware'];
+  }): Promise<{ port: number; shellDir: string }> {
+    const shellDir = makeShellDir();
+    const httpServer = createServer();
+    const mount = mountMcpAndApi({
+      httpServer,
+      hocuspocus,
+      log,
+      contentAssetMiddleware: opts?.contentAssetMiddleware,
+      reactShellMiddleware: sirv(shellDir, {
+        single: true,
+        gzip: true,
+        immutable: true,
+      }),
+    });
+    const port = await getFreePort();
+    await new Promise<void>((resolve) => httpServer.listen(port, '127.0.0.1', () => resolve()));
+    servers.push({ httpServer, mount });
+    return { port, shellDir };
+  }
+
+  test('serves index.html on root request (SPA shell entry)', async () => {
+    const { port } = await startWithShell();
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('data-test="shell"');
+  });
+
+  test('serves a bundled asset under /assets/<hash>.js', async () => {
+    const { port } = await startWithShell();
+    const res = await fetch(`http://127.0.0.1:${port}/assets/app-abc123.js`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('console.log');
+  });
+
+  test('SPA fallback: unknown deep-link route returns index.html (single: true)', async () => {
+    const { port } = await startWithShell();
+    const res = await fetch(`http://127.0.0.1:${port}/some/deep/route`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('data-test="shell"');
+  });
+
+  test('does NOT shadow /api/* or /mcp routes', async () => {
+    const { port } = await startWithShell();
+    const res = await fetch(`http://127.0.0.1:${port}/api/nonexistent-endpoint`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+  });
+
+  test('content-asset middleware takes priority when both are wired', async () => {
+    const contentDir = mkdtempSync(join(tmpdir(), 'ok-mcp-mount-shell-content-'));
+    tmpDirs.push(contentDir);
+    mkdirSync(join(contentDir, 'assets'));
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    writeFileSync(join(contentDir, 'assets', 'user-upload.png'), bytes);
+    const filter = { isPathIgnored: () => false };
+    const contentAssetMiddleware = createAssetServeMiddleware({
+      contentFilter: filter,
+      contentSirv: sirv(contentDir, { dev: true, dotfiles: false }),
+      inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,
+      assetExtensions: ASSET_EXTENSIONS,
+      blocklistExtensions: EXECUTABLE_BLOCKLIST_EXTENSIONS,
+    });
+    const { port } = await startWithShell({ contentAssetMiddleware });
+
+    const res = await fetch(`http://127.0.0.1:${port}/assets/user-upload.png`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-disposition')).toBe('inline');
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(got.equals(bytes)).toBe(true);
+  });
+
+  test('content-miss falls through to react-shell SPA fallback', async () => {
+    const contentDir = mkdtempSync(join(tmpdir(), 'ok-mcp-mount-shell-empty-'));
+    tmpDirs.push(contentDir);
+    const filter = { isPathIgnored: () => false };
+    const contentAssetMiddleware = createAssetServeMiddleware({
+      contentFilter: filter,
+      contentSirv: sirv(contentDir, { dev: true, dotfiles: false }),
+      inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,
+      assetExtensions: ASSET_EXTENSIONS,
+      blocklistExtensions: EXECUTABLE_BLOCKLIST_EXTENSIONS,
+    });
+    const { port } = await startWithShell({ contentAssetMiddleware });
+
+    const res = await fetch(`http://127.0.0.1:${port}/docs/some-page`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('data-test="shell"');
   });
 
   afterEach(() => {

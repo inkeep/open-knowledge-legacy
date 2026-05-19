@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { getLocalDir } from '@inkeep/open-knowledge-server';
 import { sendToRenderer } from '../shared/ipc-send.ts';
 import type { ShowGateRegistry } from './show-gate.ts';
@@ -303,6 +303,8 @@ export class WindowManager {
         }, INIT_TIMEOUT_MS);
       });
 
+      const reactShellDistDir = dirname(this.deps.rendererEntryPath);
+
       utility.postMessage({
         type: 'init',
         opts: {
@@ -312,6 +314,7 @@ export class WindowManager {
           host: 'localhost',
           didEnsureGit: opts.didEnsureGit === true,
           consentVersion: opts.consentVersion ?? 1,
+          reactShellDistDir,
           ...(opts.localOpCliArgs ? { localOpCliArgs: opts.localOpCliArgs } : {}),
         },
       });

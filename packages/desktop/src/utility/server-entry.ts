@@ -17,7 +17,14 @@ export interface UtilityInitMessage {
   type: 'init';
   opts: Pick<
     BootServerOptions,
-    'contentDir' | 'projectDir' | 'port' | 'host' | 'debounce' | 'maxDebounce' | 'localOpCliArgs'
+    | 'contentDir'
+    | 'projectDir'
+    | 'port'
+    | 'host'
+    | 'debounce'
+    | 'maxDebounce'
+    | 'localOpCliArgs'
+    | 'reactShellDistDir'
   > & {
     didEnsureGit?: boolean;
     consentVersion?: number;
@@ -187,6 +194,7 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
         skipAutoInit: true,
         autoInitFn: undefined,
         serveContentAssets: true,
+        ...(msg.opts.reactShellDistDir ? { reactShellDistDir: msg.opts.reactShellDistDir } : {}),
       });
       const readyMsg: UtilityReadyMessage = {
         type: 'ready',
@@ -212,7 +220,8 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
         message: (err as Error).message,
         stack: (err as Error).stack,
       };
-      if (err && typeof err === 'object' && (err as Error).name === 'ServerLockCollisionError') {
+      const errName = err && typeof err === 'object' ? (err as Error).name : '';
+      if (errName === 'ServerLockCollisionError' || errName === 'UiLockCollisionError') {
         const existing = (err as { existing?: UtilityErrorMessage['existingLock'] }).existing;
         if (existing) {
           errMsg.kind = 'lock-collision';

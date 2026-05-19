@@ -251,6 +251,181 @@ describe('bootServer — idle-shutdown runs full destroy', () => {
   });
 });
 
+describe('bootServer — reactShellDistDir + ui.lock lifecycle', () => {
+  test('writes ui.lock under projectDir and updates with the real bound port', async () => {
+    const projectDir = mkdtempSync(resolve(tmpDir, 'fake-repo-shell-'));
+    await execFileAsync('git', ['init', '--initial-branch=main', projectDir]);
+    seedOkScaffold(projectDir);
+
+    const shellDistDir = mkdtempSync(resolve(tmpDir, 'fake-shell-dist-'));
+    writeFileSync(resolve(shellDistDir, 'index.html'), '<html>shell</html>', 'utf-8');
+
+    const booted = await bootServer({
+      config: TEST_CONFIG,
+      projectDir,
+      contentDir: projectDir,
+      port: 0,
+      quiet: true,
+      gitEnabled: false,
+      idleShutdownMs: null,
+      attachUiSibling: false,
+      reactShellDistDir: shellDistDir,
+    });
+    try {
+      await booted.ready;
+      const uiLockPath = resolve(projectDir, '.ok', 'local', 'ui.lock');
+      expect(existsSync(uiLockPath)).toBe(true);
+      const raw = await import('node:fs/promises').then((m) => m.readFile(uiLockPath, 'utf-8'));
+      const parsed = JSON.parse(raw) as { port: number; pid: number };
+      expect(parsed.port).toBeGreaterThan(0);
+      expect(parsed.port).toBe(booted.port);
+      expect(parsed.pid).toBe(process.pid);
+    } finally {
+      await booted.destroy();
+    }
+  });
+
+  test('does NOT write ui.lock when reactShellDistDir is omitted (CLI default)', async () => {
+    const projectDir = mkdtempSync(resolve(tmpDir, 'fake-repo-no-shell-'));
+    await execFileAsync('git', ['init', '--initial-branch=main', projectDir]);
+    seedOkScaffold(projectDir);
+
+    const booted = await bootServer({
+      config: TEST_CONFIG,
+      contentDir: projectDir,
+      port: 0,
+      quiet: true,
+      gitEnabled: false,
+      idleShutdownMs: null,
+      attachUiSibling: false,
+    });
+    try {
+      await booted.ready;
+      const uiLockPath = resolve(projectDir, '.ok', 'local', 'ui.lock');
+      expect(existsSync(uiLockPath)).toBe(false);
+    } finally {
+      await booted.destroy();
+    }
+  });
+
+  test('destroy() releases ui.lock so a re-boot for the same project can acquire', async () => {
+    const projectDir = mkdtempSync(resolve(tmpDir, 'fake-repo-release-'));
+    await execFileAsync('git', ['init', '--initial-branch=main', projectDir]);
+    seedOkScaffold(projectDir);
+
+    const shellDistDir = mkdtempSync(resolve(tmpDir, 'fake-shell-dist-release-'));
+    writeFileSync(resolve(shellDistDir, 'index.html'), '<html>shell</html>', 'utf-8');
+
+    const booted1 = await bootServer({
+      config: TEST_CONFIG,
+      projectDir,
+      contentDir: projectDir,
+      port: 0,
+      quiet: true,
+      gitEnabled: false,
+      idleShutdownMs: null,
+      attachUiSibling: false,
+      reactShellDistDir: shellDistDir,
+    });
+    await booted1.ready;
+    const uiLockPath = resolve(projectDir, '.ok', 'local', 'ui.lock');
+    expect(existsSync(uiLockPath)).toBe(true);
+    await booted1.destroy();
+    expect(existsSync(uiLockPath)).toBe(false);
+
+    const booted2 = await bootServer({
+      config: TEST_CONFIG,
+      projectDir,
+      contentDir: projectDir,
+      port: 0,
+      quiet: true,
+      gitEnabled: false,
+      idleShutdownMs: null,
+      attachUiSibling: false,
+      reactShellDistDir: shellDistDir,
+    });
+    try {
+      await booted2.ready;
+      expect(existsSync(uiLockPath)).toBe(true);
+    } finally {
+      await booted2.destroy();
+    }
+  });
+});
+
+describe('bootServer — reactShellDistDir end-to-end HTTP shape', () => {
+  test('serves the React shell, bundled assets, content assets, and API on one port', async () => {
+    const projectDir = mkdtempSync(resolve(tmpDir, 'shell-e2e-'));
+    await execFileAsync('git', ['init', '--initial-branch=main', projectDir]);
+    seedOkScaffold(projectDir);
+
+    const shellDistDir = mkdtempSync(resolve(tmpDir, 'shell-e2e-dist-'));
+    writeFileSync(
+      resolve(shellDistDir, 'index.html'),
+      '<!DOCTYPE html><html><body data-test="shell">ok</body></html>',
+      'utf-8',
+    );
+    mkdirSync(resolve(shellDistDir, 'assets'));
+    writeFileSync(
+      resolve(shellDistDir, 'assets', 'app-deadbeef.js'),
+      'console.log("bundle");',
+      'utf-8',
+    );
+
+    mkdirSync(resolve(projectDir, 'docs'), { recursive: true });
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    writeFileSync(resolve(projectDir, 'docs', 'image.png'), pngBytes);
+
+    const booted = await bootServer({
+      config: TEST_CONFIG,
+      projectDir,
+      contentDir: projectDir,
+      port: 0,
+      quiet: true,
+      gitEnabled: false,
+      idleShutdownMs: null,
+      attachUiSibling: false,
+      serveContentAssets: true,
+      reactShellDistDir: shellDistDir,
+    });
+    try {
+      await booted.ready;
+      const base = `http://localhost:${booted.port}`;
+
+      const rootRes = await fetch(`${base}/`);
+      expect(rootRes.status).toBe(200);
+      const rootBody = await rootRes.text();
+      expect(rootBody).toContain('data-test="shell"');
+
+      const deepRes = await fetch(`${base}/some/unknown/route`);
+      expect(deepRes.status).toBe(200);
+      expect(await deepRes.text()).toContain('data-test="shell"');
+
+      const bundleRes = await fetch(`${base}/assets/app-deadbeef.js`);
+      expect(bundleRes.status).toBe(200);
+      expect(await bundleRes.text()).toContain('console.log');
+
+      const imageRes = await fetch(`${base}/docs/image.png`);
+      expect(imageRes.status).toBe(200);
+      expect(imageRes.headers.get('content-disposition')).toBe('inline');
+      const imageGot = Buffer.from(await imageRes.arrayBuffer());
+      expect(imageGot.equals(pngBytes)).toBe(true);
+
+      const apiRes = await fetch(`${base}/api/nonexistent-endpoint`);
+      expect(apiRes.status).toBe(404);
+      expect(apiRes.headers.get('content-type')).toBe('application/problem+json');
+
+      const uiLockPath = resolve(projectDir, '.ok', 'local', 'ui.lock');
+      expect(existsSync(uiLockPath)).toBe(true);
+      const lockRaw = await import('node:fs/promises').then((m) => m.readFile(uiLockPath, 'utf-8'));
+      const parsed = JSON.parse(lockRaw) as { port: number };
+      expect(parsed.port).toBe(booted.port);
+    } finally {
+      await booted.destroy();
+    }
+  });
+});
+
 describe('bootServer — ok.boot OTel span attributes', () => {
   let exporter: InMemorySpanExporter | null = null;
   let provider: BasicTracerProvider | null = null;

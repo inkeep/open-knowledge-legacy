@@ -311,4 +311,27 @@ describe('frontmatter_patch — MCP tool over real CRDT path', () => {
     const session = await harness.sessionManager.getSession('test-doc');
     expect(readFmRegion(session.dc.document)).toBe('title: My Doc');
   });
+
+  test('emits start-ui warning when no UI is attached + no preview URL resolves', async () => {
+    await seedDoc('test-doc', '---\ntitle: My Doc\n---\n# Body\n');
+
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({
+      docName: 'test-doc',
+      patch: { status: 'reviewed' },
+    });
+
+    expect(result.isError).toBeUndefined();
+    const structured = result.structuredContent as {
+      warning?: { action: string; previewUrl: unknown; message: string };
+    };
+    expect(structured.warning).toBeDefined();
+    expect(structured.warning?.action).toBe('start-ui');
+    expect(structured.warning?.previewUrl).toBeNull();
+    expect(structured.warning?.message).toContain('open-knowledge ui');
+    expect(structured.warning?.message).toContain('preview_start');
+    expect(structured.warning?.message).toContain('OK Electron');
+  });
 });

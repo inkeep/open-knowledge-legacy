@@ -2,7 +2,7 @@ import { FRONTMATTER_TYPES, FrontmatterValueSchema } from '@inkeep/open-knowledg
 import { z } from 'zod';
 import { resolveLockDir } from '../../config/paths.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
-import { resolvePreviewUrl } from './preview-url.ts';
+import { buildPreviewAttachWarning, resolvePreviewUrl, START_UI_TEXT_HINT } from './preview-url.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
@@ -142,11 +142,7 @@ export function register(server: ServerInstance, deps: FrontmatterPatchDeps): vo
       ];
       if (preview) lines.push(`Preview: ${preview.url}`);
       if (noPreviewAnywhere) {
-        lines.push(
-          preview
-            ? `Open ${preview.url} in your preview browser.`
-            : `No preview attached. Start the UI.`,
-        );
+        lines.push(preview ? `Open ${preview.url} in your preview browser.` : START_UI_TEXT_HINT);
       }
       if (summaryHint) lines.push(summaryHint);
       const text = lines.join('\n');
@@ -161,11 +157,7 @@ export function register(server: ServerInstance, deps: FrontmatterPatchDeps): vo
         structured.previewUrlSource = preview.source;
       }
       if (noPreviewAnywhere) {
-        structured.warning = {
-          message: `Open the previewUrl in your preview browser.`,
-          action: 'attach-preview-once' as const,
-          previewUrl: preview?.url ?? null,
-        };
+        structured.warning = buildPreviewAttachWarning(preview);
       }
       if (summaryResult) {
         structured.summary = summaryResult;

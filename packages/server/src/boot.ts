@@ -20,6 +20,7 @@ import { mountMcpAndApi } from './mcp-mount.ts';
 import { MissingOkConfigError } from './missing-ok-config-error.ts';
 import { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 import { initTelemetry, shutdownTelemetry, withSpan } from './telemetry.ts';
+import { acquireUiLock, releaseUiLock, updateUiLockPort } from './ui-lock.ts';
 
 const LEGACY_RUNTIME_FILENAMES = [
   'server.lock',
@@ -107,6 +108,7 @@ export interface BootServerOptions
   attachUiSibling?: boolean;
   idleShutdownMs?: number | null;
   serveContentAssets?: boolean;
+  reactShellDistDir?: string;
   autoInitFn?: () => boolean | Promise<boolean>;
   spawnUiSiblingFn?: (ctx: { lockDir: string; log: PinoLogger }) => void | Promise<void>;
   idleShutdownHandler?: (destroyServer: () => Promise<void>) => () => Promise<void>;
@@ -247,6 +249,26 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
       })
     : undefined;
 
+  if (opts.reactShellDistDir) {
+    try {
+      acquireUiLock(lockDir, {
+        port: 0,
+        worktreeRoot: opts.projectDir ?? opts.contentDir,
+      });
+    } catch (err) {
+      await destroyHocuspocus().catch(() => {});
+      throw err;
+    }
+  }
+
+  const reactShellMiddleware = opts.reactShellDistDir
+    ? sirv(opts.reactShellDistDir, {
+        single: true,
+        gzip: true,
+        immutable: true,
+      })
+    : undefined;
+
   const mount = mountMcpAndApi({
     httpServer,
     hocuspocus,
@@ -257,6 +279,7 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
     agentPresenceBroadcaster,
     keepaliveGraceMs: opts.keepaliveGraceMs,
     contentAssetMiddleware,
+    reactShellMiddleware,
   });
 
   let destroy: () => Promise<void> = async () => {
@@ -281,19 +304,34 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
     });
   }
 
-  await new Promise<void>((resolveListen, reject) => {
-    const onError = (err: Error) => reject(err);
-    httpServer.once('error', onError);
-    httpServer.listen(opts.port, opts.host, () => {
-      httpServer.removeListener('error', onError);
-      resolveListen();
+  try {
+    await new Promise<void>((resolveListen, reject) => {
+      const onError = (err: Error) => reject(err);
+      httpServer.once('error', onError);
+      httpServer.listen(opts.port, opts.host, () => {
+        httpServer.removeListener('error', onError);
+        resolveListen();
+      });
     });
-  });
+  } catch (err) {
+    if (opts.reactShellDistDir) {
+      try {
+        releaseUiLock(lockDir);
+      } catch (releaseErr) {
+        log.warn({ err: releaseErr }, 'releaseUiLock failed during listen-error cleanup');
+      }
+    }
+    await destroyHocuspocus().catch(() => {});
+    throw err;
+  }
 
   const addr = httpServer.address();
   const realPort = typeof addr === 'object' && addr !== null ? addr.port : (opts.port ?? 0);
   boundPort = realPort;
   updateServerLockPort(lockDir, realPort);
+  if (opts.reactShellDistDir) {
+    updateUiLockPort(lockDir, realPort);
+  }
 
   if (attachUi && opts.spawnUiSiblingFn) {
     try {
@@ -364,6 +402,9 @@ async function bootServerInner(opts: BootServerOptions): Promise<BootedServer> {
         }),
     );
     await runStep('destroyHocuspocus', () => destroyHocuspocus());
+    if (opts.reactShellDistDir) {
+      await runStep('releaseUiLock', async () => releaseUiLock(lockDir));
+    }
     await runStep('shutdownTelemetry', () => shutdownTelemetry());
 
     if (errors.length > 0) {
