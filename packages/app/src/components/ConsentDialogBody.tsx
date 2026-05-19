@@ -1,7 +1,10 @@
+import { ChevronRight } from 'lucide-react';
 import type React from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { toast as sonnerToast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Dialog,
   DialogBody,
@@ -70,6 +73,7 @@ interface ConsentDialogFormProps {
 
 function ConsentDialogForm({ payload, store, toast }: ConsentDialogFormProps) {
   const initGit = true;
+  const formId = useId();
   const [contentDir, setContentDir] = useState(payload.defaultContentDir);
   const [additionalIgnores, setAdditionalIgnores] = useState('');
   const [editorIds, setEditorIds] = useState<ReadonlySet<OkMcpWiringEditorId>>(
@@ -177,49 +181,40 @@ function ConsentDialogForm({ payload, store, toast }: ConsentDialogFormProps) {
         <DialogHeader>
           <DialogTitle>Open this folder with Open Knowledge</DialogTitle>
           <DialogDescription>
-            Open Knowledge will create a <code>.ok/</code> folder to track this project's metadata.
-            Click Start to proceed with the defaults below — adjust any field first, or Cancel to
-            leave the folder untouched.
+            Open Knowledge will create a <code>.ok/</code> folder here to track this project's
+            metadata.
           </DialogDescription>
         </DialogHeader>
 
-        {/* Transparent flex column — DialogBody's flex-1/min-h-0/overflow-y-auto
-            and DialogFooter's shrink-0 require a flex parent (see dialog.tsx
-            layout contract). Without these classes the footer is pushed
-            off-screen on tall content. */}
-        <form
-          onSubmit={onSubmit}
-          data-testid="consent-form"
-          className="flex min-h-0 flex-1 flex-col"
-        >
-          <DialogBody className="space-y-4">
-            {payload.gitRootPromoted ? (
-              <p className="text-sm text-muted-foreground">
-                OK will be initialized at <code>{payload.projectDir}</code> — the parent of{' '}
-                <code>
-                  {relativeToProject(payload.projectDir, payload.pickedPath) ?? payload.pickedPath}
-                </code>{' '}
-                because it contains a <code>.git</code> folder (one .ok/ per git repo).{' '}
-                <code>Content directory</code> defaults to <code>.</code> (the whole repo); type a
-                sub-folder below to narrow it.
-              </p>
-            ) : null}
+        <DialogBody className="space-y-4">
+          {payload.gitRootPromoted ? (
+            <p className="text-sm text-muted-foreground">
+              OK will be initialized at <code>{payload.projectDir}</code> — the parent of{' '}
+              <code>
+                {relativeToProject(payload.projectDir, payload.pickedPath) ?? payload.pickedPath}
+              </code>{' '}
+              because it contains a <code>.git</code> folder (one .ok/ per git repo).{' '}
+              <code>Content directory</code> defaults to <code>.</code> (the whole repo); type a
+              sub-folder below to narrow it.
+            </p>
+          ) : null}
 
-            {payload.warnings.length > 0 ? (
-              <div
-                role="alert"
-                className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
-              >
-                {payload.warnings.map((w) => (
-                  <p key={w.kind} className="mb-1 last:mb-0">
-                    {WARNING_COPY[w.kind]}
-                  </p>
-                ))}
-              </div>
-            ) : null}
+          {payload.warnings.length > 0 ? (
+            <div
+              role="alert"
+              className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+            >
+              {payload.warnings.map((w) => (
+                <p key={w.kind} className="mb-1 last:mb-0">
+                  {WARNING_COPY[w.kind]}
+                </p>
+              ))}
+            </div>
+          ) : null}
 
-            <div>
-              <label htmlFor="consent-content-dir" className="mb-1 block text-sm font-medium">
+          <form id={formId} onSubmit={onSubmit} data-testid="consent-form" className="space-y-4">
+            <div className="flex flex-col gap-2">
+              <label htmlFor="consent-content-dir" className="text-sm font-medium">
                 Content directory
               </label>
               <div className="flex items-stretch gap-2">
@@ -247,30 +242,22 @@ function ConsentDialogForm({ payload, store, toast }: ConsentDialogFormProps) {
               </div>
               {browseError !== null ? (
                 <p
-                  className="mt-1 text-xs text-destructive"
+                  className="text-1sm text-destructive"
                   data-testid="consent-content-dir-browse-error"
                 >
                   {browseError}
                 </p>
               ) : !contentDirSafe ? (
-                <p
-                  className="mt-1 text-xs text-destructive"
-                  data-testid="consent-content-dir-error"
-                >
+                <p className="text-1sm text-destructive" data-testid="consent-content-dir-error">
                   Content directory must be inside the project
                 </p>
               ) : (
-                <p className="mt-1 text-xs text-muted-foreground" data-testid="consent-preview">
-                  {renderProbeLine(probe)}
-                </p>
+                <ProbePreview probe={probe} />
               )}
             </div>
 
-            <div>
-              <label
-                htmlFor="consent-additional-ignores"
-                className="mb-1 block text-sm font-medium"
-              >
+            <div className="flex flex-col gap-2">
+              <label htmlFor="consent-additional-ignores" className="text-sm font-medium">
                 Ignore patterns
               </label>
               <Textarea
@@ -282,69 +269,112 @@ function ConsentDialogForm({ payload, store, toast }: ConsentDialogFormProps) {
                 rows={3}
                 data-testid="consent-additional-ignores"
               />
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="text-1sm text-muted-foreground">
                 One pattern per line — appended to <code>.okignore</code>.
               </p>
             </div>
 
-            <fieldset className="space-y-2 pb-2">
+            <fieldset className="flex flex-col space-y-2 pb-2">
               <legend className="text-sm font-medium">Connect to AI tools</legend>
-              <p className="text-xs text-muted-foreground">
-                All editors are checked by default — uncheck the ones you don't use. Each checked
-                editor's project-MCP config is written; the Claude entry also scaffolds{' '}
+              <p className="text-1sm text-muted-foreground">
+                Writes a project-MCP config for each selected tool; Claude also gets{' '}
                 <code>.claude/launch.json</code>.
               </p>
-              {payload.editorOptions.map((editor) => (
-                <label key={editor.id} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={editorIds.has(editor.id)}
-                    onChange={() => toggleEditor(editor.id)}
-                    disabled={busy}
-                    className="size-4 shrink-0 rounded accent-primary"
-                    data-testid={`consent-editor-${editor.id}`}
-                  />
-                  <span>{editor.label}</span>
-                  <span
-                    className="text-xs text-muted-foreground"
-                    data-testid={`consent-editor-${editor.id}-scope`}
+              {payload.editorOptions.map((editor) => {
+                const checkboxId = `consent-editor-${editor.id}-cb`;
+                return (
+                  <label
+                    key={editor.id}
+                    htmlFor={checkboxId}
+                    className="flex items-center gap-2 text-sm"
                   >
-                    {editor.hasProjectConfig ? '(project + user)' : '(user-level only)'}
-                  </span>
-                </label>
-              ))}
+                    <Checkbox
+                      id={checkboxId}
+                      checked={editorIds.has(editor.id)}
+                      onCheckedChange={() => toggleEditor(editor.id)}
+                      disabled={busy}
+                      data-testid={`consent-editor-${editor.id}`}
+                    />
+                    <span>{editor.label}</span>
+                    <span
+                      className="text-xs text-muted-foreground"
+                      data-testid={`consent-editor-${editor.id}-scope`}
+                    >
+                      {editor.hasProjectConfig ? '(project + user)' : '(user-level only)'}
+                    </span>
+                  </label>
+                );
+              })}
             </fieldset>
-          </DialogBody>
+          </form>
+        </DialogBody>
 
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="font-mono uppercase"
-              onClick={() => void onCancel()}
-              disabled={busy}
-              data-testid="consent-cancel"
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={startDisabled} data-testid="consent-start">
-              Start
-            </Button>
-          </DialogFooter>
-        </form>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            className="font-mono uppercase"
+            onClick={() => void onCancel()}
+            disabled={busy}
+            data-testid="consent-cancel"
+          >
+            Cancel
+          </Button>
+          <Button type="submit" form={formId} disabled={startDisabled} data-testid="consent-start">
+            Start
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-function renderProbeLine(probe: OkOnboardingProbeContentResult | null): string {
-  if (probe === null) return 'Counting markdown files';
-  if (!probe.ok) return `Preview unavailable: ${probe.error}`;
-  const countDisplay = probe.truncated ? '≥ 50,000' : String(probe.count);
-  if (probe.sample.length === 0) {
-    return `Found ${countDisplay} markdown files`;
+function ProbePreview({ probe }: { probe: OkOnboardingProbeContentResult | null }) {
+  if (probe === null) {
+    return (
+      <p className="text-1sm text-muted-foreground" data-testid="consent-preview">
+        Counting markdown files
+      </p>
+    );
   }
-  return `Found ${countDisplay} markdown files; sample: ${probe.sample.join(', ')}`;
+  if (!probe.ok) {
+    return (
+      <p className="text-1sm text-muted-foreground" data-testid="consent-preview">
+        Preview unavailable: {probe.error}
+      </p>
+    );
+  }
+  const countDisplay = probe.truncated ? '≥ 50,000' : String(probe.count);
+  const countLine = `Found ${countDisplay} markdown files`;
+  if (probe.sample.length === 0) {
+    return (
+      <p className="text-1sm text-muted-foreground" data-testid="consent-preview">
+        {countLine}
+      </p>
+    );
+  }
+  const remaining = probe.truncated ? null : probe.count - probe.sample.length;
+  return (
+    <Collapsible data-testid="consent-preview">
+      <CollapsibleTrigger className="flex items-center gap-1 text-1sm text-muted-foreground hover:text-foreground [&[data-state=open]>svg]:rotate-90">
+        <ChevronRight
+          className="size-3 transition-transform motion-reduce:transition-none"
+          aria-hidden
+        />
+        <span>{countLine}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="pt-1 pl-4 text-1sm text-muted-foreground">
+        <ul className="space-y-1.5 font-mono">
+          {probe.sample.map((path) => (
+            <li key={path}>{path}</li>
+          ))}
+        </ul>
+        {probe.truncated || (remaining !== null && remaining > 0) ? (
+          <p className="mt-1 italic">and {probe.truncated ? 'more' : `${remaining} more`}</p>
+        ) : null}
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }
 
 export default ConsentDialogBody;

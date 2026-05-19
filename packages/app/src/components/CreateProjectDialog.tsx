@@ -6,7 +6,7 @@ import {
   EDITOR_LABELS,
   sanitizeFolderName,
 } from '@inkeep/open-knowledge-core';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type {
   OkDesktopBridge,
@@ -152,6 +153,7 @@ function errorCopy(err: CreateNewError): string {
 }
 
 export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjectDialogProps) {
+  const formId = useId();
   const [picked, setPicked] = useState('');
   const [defaultPath, setDefaultPath] = useState('');
   const [editorIds, setEditorIds] = useState<ReadonlySet<OkMcpWiringEditorId>>(
@@ -163,6 +165,8 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
   const [submitError, setSubmitError] = useState<CreateNewError | null>(null);
   const [removeGitState, setRemoveGitState] = useState<RemoveGitState>({ kind: 'idle' });
   const [probeNonce, setProbeNonce] = useState(0);
+  const [needsSubfolder, setNeedsSubfolder] = useState(false);
+  const [subfolderName, setSubfolderName] = useState('');
 
   const firedBanners = useRef<Set<CreateNewBannerKind>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
@@ -180,6 +184,8 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     setPicked('');
     setEditorIds(new Set(ALL_EDITOR_IDS));
     setRemoveGitState({ kind: 'idle' });
+    setNeedsSubfolder(false);
+    setSubfolderName('');
     removeGitCallIdRef.current += 1;
 
     let cancelled = false;
@@ -214,8 +220,12 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
       setProbeLifecycle('idle');
       return;
     }
-    const parent = dirnamePreview(picked);
-    const sanitized = sanitizeFolderName(basenamePreview(picked));
+    const subfolderTrimmed = subfolderName.trim();
+    const subfolderActive = needsSubfolder && subfolderTrimmed !== '';
+    const parent = subfolderActive ? picked : dirnamePreview(picked);
+    const sanitized = subfolderActive
+      ? sanitizeFolderName(subfolderTrimmed)
+      : sanitizeFolderName(basenamePreview(picked));
     if (parent === '' || sanitized === '') {
       setCascade({ kind: 'idle' });
       setProbeLifecycle('idle');
@@ -223,11 +233,11 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     }
     const target = joinPathPreview(parent, sanitized);
 
-    setProbeLifecycle('in-flight');
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
     debounceRef.current = setTimeout(() => {
+      setProbeLifecycle('in-flight');
       Promise.all([
         bridge.fs.findEnclosingProjectRoot(parent),
         bridge.fs.findEnclosingGitRoot(parent),
@@ -236,15 +246,17 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
         .then(([enclosingProject, enclosingGit, targetState]) => {
           if (ctrl.signal.aborted) return;
           setProbeLifecycle('idle');
-          setCascade(
-            computeCascade({
-              parent,
-              sanitizedName: sanitized,
-              enclosingProject,
-              enclosingGit,
-              targetState,
-            }),
-          );
+          const nextCascade = computeCascade({
+            parent,
+            sanitizedName: sanitized,
+            enclosingProject,
+            enclosingGit,
+            targetState,
+          });
+          setCascade(nextCascade);
+          if (nextCascade.kind === 'block-nonempty') {
+            setNeedsSubfolder(true);
+          }
         })
         .catch((err) => {
           if (ctrl.signal.aborted) return;
@@ -258,7 +270,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
       if (debounceRef.current !== null) clearTimeout(debounceRef.current);
       ctrl.abort();
     };
-  }, [open, picked, bridge, probeNonce]);
+  }, [open, picked, bridge, probeNonce, needsSubfolder, subfolderName]);
 
   useEffect(() => {
     if (!open) return;
@@ -311,11 +323,13 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     bridge.project.recordCreateNewBannerShown(banner).catch(() => {});
   }, [open, cascade, bridge]);
 
-  const rawBasename = picked === '' ? '' : basenamePreview(picked);
-  const sanitized = picked === '' ? '' : sanitizeFolderName(rawBasename);
-  const sanitizeDiverged = picked !== '' && sanitized !== rawBasename && sanitized !== '';
-  const sanitizeErased = picked !== '' && rawBasename !== '' && sanitized === '';
-  const previewPath = picked;
+  const subfolderTrimmed = subfolderName.trim();
+  const subfolderActive = needsSubfolder && subfolderTrimmed !== '';
+  const rawName = picked === '' ? '' : subfolderActive ? subfolderTrimmed : basenamePreview(picked);
+  const sanitized = picked === '' ? '' : sanitizeFolderName(rawName);
+  const sanitizeDiverged = picked !== '' && sanitized !== rawName && sanitized !== '';
+  const sanitizeErased = picked !== '' && rawName !== '' && sanitized === '';
+  const previewPath = subfolderActive ? joinPathPreview(picked, sanitized) : picked;
   const canSubmit =
     !busy &&
     picked !== '' &&
@@ -341,6 +355,8 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
       setPicked(pickedNew);
       setProbeNonce((n) => n + 1);
       setSubmitError(null);
+      setNeedsSubfolder(false);
+      setSubfolderName('');
     } catch (err) {
       console.warn('[CreateProjectDialog] dialog.openFolder failed:', err);
     }
@@ -353,7 +369,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
     setSubmitError(null);
     try {
       await bridge.project.createNew({
-        parent: dirnamePreview(picked),
+        parent: subfolderActive ? picked : dirnamePreview(picked),
         name: sanitized,
         editors: Array.from(editorIds),
       });
@@ -416,20 +432,19 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
         <DialogHeader>
           <DialogTitle>Create new project</DialogTitle>
           <DialogDescription>
-            Make a new folder for a brand-new Open Knowledge project.
+            Create a new Open Knowledge project in the folder of your choice.
           </DialogDescription>
         </DialogHeader>
 
-        <form
-          onSubmit={onSubmit}
-          data-testid="create-project-form"
-          className="flex min-h-0 flex-1 flex-col"
-        >
-          <DialogBody className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="create-location" className="block">
-                Location
-              </Label>
+        <DialogBody className="space-y-4">
+          <form
+            id={formId}
+            onSubmit={onSubmit}
+            data-testid="create-project-form"
+            className="space-y-4"
+          >
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="create-location">Location</Label>
               <div className="flex items-stretch gap-2">
                 <Button
                   id="create-location"
@@ -446,7 +461,7 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
               </div>
               <p
                 id="create-target-caption"
-                className="text-xs text-muted-foreground"
+                className="text-1sm text-muted-foreground"
                 aria-live="polite"
                 data-testid="create-target-caption"
               >
@@ -456,30 +471,80 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
               </p>
             </div>
 
-            {sanitizeDiverged ? (
+            {needsSubfolder ? (
+              <div className="flex flex-col gap-2" data-testid="create-subfolder-rescue">
+                <Label htmlFor="create-subfolder-name">Subfolder name</Label>
+                <Input
+                  id="create-subfolder-name"
+                  value={subfolderName}
+                  placeholder="my-project"
+                  onChange={(e) => setSubfolderName(e.target.value)}
+                  disabled={busy}
+                  autoFocus
+                  aria-invalid={
+                    subfolderActive && (sanitizeErased || cascade.kind === 'block-nonempty')
+                  }
+                  data-testid="create-subfolder-input"
+                />
+                {subfolderTrimmed === '' ? (
+                  <p
+                    role="status"
+                    aria-live="polite"
+                    className="text-1sm text-muted-foreground"
+                    data-testid="create-subfolder-empty-error"
+                  >
+                    This folder already has files. Add a name to create a new subfolder inside it.
+                  </p>
+                ) : sanitizeErased ? (
+                  <p
+                    role="alert"
+                    className="text-1sm text-destructive"
+                    data-testid="create-subfolder-erased-error"
+                  >
+                    This name has no characters that are safe for a folder identifier. Try a name
+                    with at least one letter or number.
+                  </p>
+                ) : cascade.kind === 'block-nonempty' ? (
+                  <p
+                    role="alert"
+                    className="text-1sm text-destructive"
+                    data-testid="create-subfolder-taken-error"
+                  >
+                    A folder named <code className="font-mono break-all">{sanitized}</code> already
+                    has files at this location. Pick a different name.
+                  </p>
+                ) : sanitizeDiverged ? (
+                  <p className="text-1sm text-muted-foreground">
+                    Will be saved as <code className="font-mono break-all">{sanitized}</code>.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {!needsSubfolder && sanitizeDiverged ? (
               <div
                 role="status"
                 aria-live="polite"
                 className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
                 data-testid="create-banner-sanitize-diverged"
               >
-                The folder name <code className="font-mono break-all">{rawBasename}</code> contains
+                The folder name <code className="font-mono break-all">{rawName}</code> contains
                 characters that aren't safe for the project's on-disk identifier. The project will
                 be created as <code className="font-mono break-all">{sanitized}</code>. Click Browse
                 again to pick a folder with a safer name.
               </div>
             ) : null}
 
-            {sanitizeErased ? (
+            {!needsSubfolder && sanitizeErased ? (
               <div
                 role="status"
                 aria-live="polite"
                 className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
                 data-testid="create-banner-sanitize-erased"
               >
-                The folder name <code className="font-mono break-all">{rawBasename}</code> can't be
-                used as a project identifier — it has no characters left after sanitization. Click
-                Browse to pick a folder whose name contains at least one alphanumeric character.
+                The folder name <code className="font-mono break-all">{rawName}</code> can't be used
+                as a project identifier — it has no characters left after sanitization. Click Browse
+                to pick a folder whose name contains at least one alphanumeric character.
               </div>
             ) : null}
 
@@ -492,10 +557,10 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
               onConfirmRemoveGit={onConfirmRemoveGit}
             />
 
-            <fieldset className="space-y-2 pb-2">
-              <legend className="text-sm font-medium">Connect AI editors</legend>
-              <p className="text-xs text-muted-foreground">
-                All editors are checked by default — uncheck the ones you don't use.
+            <fieldset className="flex flex-col space-y-2 pb-2">
+              <legend className="text-sm font-medium">Connect to AI tools</legend>
+              <p className="text-1sm text-muted-foreground">
+                Each selected tool gets an Open Knowledge MCP entry.
               </p>
               {ALL_EDITOR_IDS.map((id) => {
                 const inputId = `create-editor-${id}`;
@@ -523,24 +588,24 @@ export function CreateProjectDialog({ open, onOpenChange, bridge }: CreateProjec
                 {errorCopy(submitError)}
               </div>
             ) : null}
-          </DialogBody>
+          </form>
+        </DialogBody>
 
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="font-mono uppercase"
-              onClick={() => onOpenChange(false)}
-              disabled={busy}
-              data-testid="create-cancel"
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!canSubmit} data-testid="create-submit">
-              {busy ? 'Creating' : 'Create'}
-            </Button>
-          </DialogFooter>
-        </form>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            className="font-mono uppercase"
+            onClick={() => onOpenChange(false)}
+            disabled={busy}
+            data-testid="create-cancel"
+          >
+            Cancel
+          </Button>
+          <Button type="submit" form={formId} disabled={!canSubmit} data-testid="create-submit">
+            {busy ? 'Creating' : 'Create'}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -563,7 +628,7 @@ function CascadeBanner({
   onCancelRemoveGit,
   onConfirmRemoveGit,
 }: CascadeBannerProps) {
-  if (cascade.kind === 'idle' || cascade.kind === 'free') {
+  if (cascade.kind === 'idle' || cascade.kind === 'free' || cascade.kind === 'block-nonempty') {
     return null;
   }
   if (cascade.kind === 'block-nested') {
@@ -665,13 +730,5 @@ function CascadeBanner({
       </div>
     );
   }
-  return (
-    <div
-      role="alert"
-      className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
-      data-testid="create-banner-nonempty"
-    >
-      <p>A non-empty folder already exists at this path. Use "Open folder on disk" instead.</p>
-    </div>
-  );
+  return null;
 }

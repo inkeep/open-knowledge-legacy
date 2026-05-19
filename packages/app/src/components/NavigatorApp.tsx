@@ -2,7 +2,6 @@ import { FolderOpenIcon, Loader2Icon, PlusIcon, XIcon } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { type ComponentType, useEffect, useState } from 'react';
 import { useThemeBridge } from '@/hooks/use-theme-bridge';
-import { useUpdateChannel } from '@/hooks/use-update-channel';
 import type {
   OkDesktopBridge,
   OkLocalOpAuthStatusResponse,
@@ -59,7 +58,6 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   >(null);
   const isElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
-  const { channel } = useUpdateChannel();
   const { theme: themeValue } = useTheme();
 
   useThemeBridge(bridge, themeValue ?? 'system');
@@ -125,7 +123,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
         }`}
         data-testid="nav-chrome-row"
       />
-      <div className="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden px-12 py-6">
+      <div className="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden px-12 py-12">
         <div className="my-auto flex min-h-0 flex-col space-y-10">
           <header className="shrink-0 flex-wrap flex items-center gap-2.5">
             <OkIcon className="size-12 shrink-0" />
@@ -134,14 +132,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
                 <h1 className="font-medium text-xl tracking-tight">Open Knowledge</h1>
                 <BetaBadge />
               </div>
-              <div className="flex items-center gap-2">
-                <p className="text-muted-foreground text-xs font-mono">v{bridge.appVersion}</p>
-                {channel !== null && (
-                  <Badge variant="gray" className="text-2xs font-mono">
-                    {channel === 'beta' ? 'Beta' : 'Stable'}
-                  </Badge>
-                )}
-              </div>
+              <p className="text-muted-foreground text-xs font-mono">v{bridge.appVersion}</p>
             </div>
           </header>
 
@@ -162,7 +153,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
             />
             <NavigatorCard
               title="Create new project"
-              description="Make a new folder for a brand-new project."
+              description="Start a new Open Knowledge project."
               onClick={onCreate}
               dataTestId="nav-create-new"
               Icon={PlusIcon}
@@ -197,7 +188,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
                 Recent
               </h2>
               <ul
-                className="min-h-0 max-h-48 subtle-scrollbar overflow-y-auto space-y-0.5 -mx-4"
+                className="min-h-0 max-h-48 subtle-scrollbar scroll-fade-mask overflow-y-auto space-y-0.5 -mx-4"
                 data-testid="nav-recent-list"
               >
                 {recents.map((r) => (
