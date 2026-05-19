@@ -423,7 +423,7 @@ export function TypeIconButton({
             </button>
           </span>
         </TooltipTrigger>
-        <TooltipContent>Inherited — set a value to override.</TooltipContent>
+        <TooltipContent>Inherited — set a value here to replace it.</TooltipContent>
       </Tooltip>
     );
   }

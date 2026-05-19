@@ -36,7 +36,6 @@ import {
 } from '@/components/FrontmatterRow';
 import { useProperties } from '@/components/PropertyContext';
 import { coerceValue, DEFAULT_VALUE_FOR_TYPE } from '@/components/PropertyWidgets';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useFolderConfig } from '@/hooks/use-folder-config';
@@ -84,7 +83,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   const [resetCounters, setResetCounters] = useState<Record<string, number>>({});
   const docName = provider.configuration.name ?? '';
 
-  const isTemplateDoc = TEMPLATE_DOCNAME_RE.test(docName);
+  const isTemplateDoc = isTemplateDocName(docName);
   const parentFolder = parentFolderOfDoc(docName);
   const folderConfig = useFolderConfig(isTemplateDoc ? null : parentFolder);
   const cascade =
@@ -388,10 +387,6 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
                 const declared = overrides[key] ?? inferType(value);
                 const renameState = renaming?.key === key ? renaming : null;
                 const isDuplicate = (dupCount.get(key) ?? 0) > 1;
-                const overridesCascade = Object.hasOwn(cascade, key);
-                const overrideBadge = overridesCascade ? (
-                  <OverrideBadge source={cascadeSources[key] ?? ''} />
-                ) : undefined;
                 return (
                   <FrontmatterRow
                     // biome-ignore lint/suspicious/noArrayIndexKey: position-aware key for dup-name rows.
@@ -403,7 +398,6 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
                     error={errors[key] ?? null}
                     resetCounter={resetCounters[key] ?? 0}
                     isDuplicate={isDuplicate}
-                    badge={overrideBadge}
                     rename={{
                       state: renameState,
                       onBegin: () => beginRename(key),
@@ -493,6 +487,10 @@ function parentFolderOfDoc(docName: string): string {
 
 const TEMPLATE_DOCNAME_RE = /(^|\/)\.ok\/templates\//;
 
+export function isTemplateDocName(docName: string): boolean {
+  return TEMPLATE_DOCNAME_RE.test(docName);
+}
+
 function cascadeValueToFrontmatter(value: unknown): FrontmatterValue {
   if (typeof value === 'string') return value;
   if (typeof value === 'number') return value;
@@ -502,18 +500,4 @@ function cascadeValueToFrontmatter(value: unknown): FrontmatterValue {
   }
   if (value === null || value === undefined) return '';
   return JSON.stringify(value);
-}
-
-function OverrideBadge({ source }: { source: string }) {
-  const path = source === '' ? '.ok/frontmatter.yml' : `${source}/.ok/frontmatter.yml`;
-  return (
-    <Badge
-      variant="primary"
-      data-testid="property-override-badge"
-      title={`Overrides default from ${path}. Remove to revert.`}
-      className="text-2xs"
-    >
-      overrides
-    </Badge>
-  );
 }
