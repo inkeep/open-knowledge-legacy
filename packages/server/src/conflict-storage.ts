@@ -187,6 +187,11 @@ export class ConflictStore {
           { err: e },
           '[conflicts] failed to commit merge after all conflicts resolved — unmerged files re-added',
         );
+        const causeText = e instanceof Error ? e.message : String(e);
+        throw new Error(
+          `Merge commit failed after resolving ${file}; ${reAdded ? 'unmerged files re-added' : 'original file re-added'} — ${causeText}`,
+          { cause: e },
+        );
       }
     }
   }

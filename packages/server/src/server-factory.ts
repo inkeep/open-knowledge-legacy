@@ -631,6 +631,14 @@ export function createServer(options: ServerOptions): ServerInstance {
   const applyToDoc = (docName: string, content: string): void =>
     applyExternalChange(hocuspocus, docName, content, resolveEmbed, resolveSize);
 
+  function clearLifecycleConflict(document: Document): void {
+    const lifecycleMap = document.getMap('lifecycle');
+    if (lifecycleMap.get('status') === 'conflict') {
+      lifecycleMap.delete('status');
+      lifecycleMap.delete('reason');
+    }
+  }
+
   const rerenderDocsReferencingAssetBasename = (assetBasename: string): void => {
     if (!assetBasename) return;
     const needle = `[[${assetBasename}]]`;
@@ -735,6 +743,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           switch (result.kind) {
             case 'noop':
+              clearLifecycleConflict(document);
               backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
               scheduleSaveToDisk();
               tagIndex.updateDocumentFromMarkdown(docName, theirs);
@@ -748,6 +757,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 applyToDoc(docName, result.newContent);
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
+                clearLifecycleConflict(document);
                 backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
                 scheduleSaveToDisk();
                 tagIndex.updateDocumentFromMarkdown(docName, theirs);
@@ -760,6 +770,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   `[reconcile] failed to apply clean content to Y.Doc for ${docName}`,
                 );
                 setReconciledBase(docName, theirs);
+                clearLifecycleConflict(document);
               }
               break;
 
@@ -768,6 +779,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 applyToDoc(docName, result.newContent);
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
+                clearLifecycleConflict(document);
                 backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
                 scheduleSaveToDisk();
                 tagIndex.updateDocumentFromMarkdown(docName, theirs);
@@ -780,6 +792,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   `[reconcile] failed to apply merged content to Y.Doc for ${docName}`,
                 );
                 setReconciledBase(docName, theirs);
+                clearLifecycleConflict(document);
               }
               break;
 
@@ -933,6 +946,16 @@ export function createServer(options: ServerOptions): ServerInstance {
           const { docName } = event;
           const document = hocuspocus.documents.get(docName);
           if (!document) return;
+
+          const ours = serializeDoc(docName);
+          if (ours !== null) {
+            setReconciledBase(docName, ours);
+          } else {
+            log.warn(
+              { docName },
+              `[reconcile] case 'conflict': serializeDoc returned null for ${docName}; reconciledBase snapshot skipped — post-resolution reconcile may degrade to 3-way merge`,
+            );
+          }
 
           const lifecycleMap = document.getMap('lifecycle');
           lifecycleMap.set('status', 'conflict');

@@ -465,15 +465,26 @@ export class SyncEngine {
     strategy: import('./conflict-storage.ts').ResolveStrategy,
     content?: string,
   ): Promise<void> {
-    await this.conflictStore.resolveConflict(file, strategy, content);
-    this.conflictCount = this.conflictStore.count();
-    if (this.conflictCount === 0 && this.state === 'conflict') {
-      this.transitionTo('idle');
-      this.pausedReason = undefined;
-      this.schedulePull();
-      this.schedulePush();
+    this.setBatchInProgress?.(true);
+    try {
+      try {
+        await this.conflictStore.resolveConflict(file, strategy, content);
+      } catch (e) {
+        this.conflictCount = this.conflictStore.count();
+        this.scheduleSaveState();
+        throw e;
+      }
+      this.conflictCount = this.conflictStore.count();
+      if (this.conflictCount === 0 && this.state === 'conflict') {
+        this.transitionTo('idle');
+        this.pausedReason = undefined;
+        this.schedulePull();
+        this.schedulePush();
+      }
+      this.scheduleSaveState();
+    } finally {
+      this.setBatchInProgress?.(false);
     }
-    this.scheduleSaveState();
   }
 
   updateCurrentBranch(branch: string | null): void {
